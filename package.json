@@ -1,0 +1,29 @@
+{
+  "name": "trade-follower",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:seed": "tsx src/db/seed.ts",
+    "web": "cd web && npm run dev",
+    "backtest": "tsx src/backtest/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@libsql/client": "^0.17.0",
+    "@microsoft/signalr": "^10.0.0",
+    "cheerio": "^1.2.0",
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.45.1",
+    "playwright": "^1.58.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "drizzle-kit": "^0.31.9",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
