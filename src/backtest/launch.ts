@@ -1,20 +1,24 @@
 /**
- * Lightweight backtest launcher used by the web UI.
- * Accepts --run-id to reuse an existing backtest_runs row
- * (the web action creates the row before spawning this process).
+ * Backtest launcher — single CLI entry point.
+ * When --run-id is provided (web UI), reuses an existing backtest_runs row.
+ * Otherwise, creates a new DB row automatically (CLI usage).
  */
 import { loadSecrets } from '../lib/secrets/index.js';
 await loadSecrets();
 
 import { runBacktest } from './runner.js';
 import { printReport } from './report.js';
+import { setLogLevel, createLogger } from '../lib/logger.js';
+import type { LogLevel } from '../lib/logger.js';
 import type { BacktestConfig, FillModel } from './types.js';
+import { db, schema } from '../db/client.js';
+import type { BacktestRunConfig } from '../db/schema.js';
 
 async function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 3) {
-    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--agent] [--max-agent-calls N] [--slippage N] [--fill-model orats|midpoint|natural] [--quote-tape] [--run-id ID]');
+    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--fill-model orats|midpoint|natural] [--quote-tape] [--agent-provider NAME] [--agent-model NAME] [--refresh-quote-cache] [--log-level debug|info|warn|error] [--run-id ID]');
     process.exit(1);
   }
 
@@ -27,19 +31,7 @@ async function main() {
     process.exit(1);
   }
 
-  const useAgent = args.includes('--agent');
-  const useQuoteTape = args.includes('--quote-tape');
-  let maxAgentCalls = 100;
-  const maxAgentIdx = args.indexOf('--max-agent-calls');
-  if (maxAgentIdx !== -1 && args[maxAgentIdx + 1]) {
-    maxAgentCalls = parseInt(args[maxAgentIdx + 1]);
-  }
-
-  let slippagePct = 0.01;
-  const slippageIdx = args.indexOf('--slippage');
-  if (slippageIdx !== -1 && args[slippageIdx + 1]) {
-    slippagePct = parseFloat(args[slippageIdx + 1]);
-  }
+  const useDatabento = args.includes('--quote-tape');
 
   let fillModel: FillModel = 'orats';
   const fillModelIdx = args.indexOf('--fill-model');
@@ -64,14 +56,44 @@ async function main() {
     agentModel = args[modelIdx + 1];
   }
 
+  const refreshQuoteCache = args.includes('--refresh-quote-cache');
+
+  let logLevel: LogLevel = 'debug';
+  const logLevelIdx = args.indexOf('--log-level');
+  if (logLevelIdx !== -1 && args[logLevelIdx + 1]) {
+    const val = args[logLevelIdx + 1] as LogLevel;
+    if (!['debug', 'info', 'warn', 'error'].includes(val)) {
+      console.error(`Invalid log level "${val}". Must be one of: debug, info, warn, error`);
+      process.exit(1);
+    }
+    logLevel = val;
+  }
+  setLogLevel(logLevel);
+
   let runId: string | undefined;
   const runIdIdx = args.indexOf('--run-id');
   if (runIdIdx !== -1 && args[runIdIdx + 1]) {
     runId = args[runIdIdx + 1];
   }
 
+  // Auto-create DB run row when launched from CLI (no --run-id)
+  if (!runId) {
+    runId = crypto.randomUUID();
+    const runConfig: BacktestRunConfig = {
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      traders,
+      useQuoteTape: useDatabento,
+    };
+    await db.insert(schema.backtestRuns).values({
+      id: runId,
+      status: 'PENDING',
+      config: runConfig,
+    });
+  }
+
   const databentoApiKey = process.env.DATABENTO_API_KEY;
-  if (useQuoteTape && !databentoApiKey) {
+  if (useDatabento && !databentoApiKey) {
     console.error('DATABENTO_API_KEY env var is required when using --quote-tape');
     process.exit(1);
   }
@@ -80,34 +102,33 @@ async function main() {
     startDate,
     endDate,
     traders,
-    useAgent,
-    maxAgentCalls,
-    slippagePct,
     fillModel,
-    useQuoteTape,
-    databentoApiKey,
+    databentoApiKey: useDatabento ? databentoApiKey : undefined,
     databentoDataset: process.env.DATABENTO_DATASET ?? 'DBEQ.BASIC',
     agentProvider,
     agentModel,
+    refreshQuoteCache,
+    logLevel,
   };
 
-  console.log(`[Backtest] Starting (run ${runId ?? 'no-id'})...`);
+  const log = createLogger('Backtest');
+  log.info(`Starting (run ${runId ?? 'no-id'})...`);
   const startTime = Date.now();
 
   const report = await runBacktest(config, runId);
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[Backtest] Completed in ${elapsed}s`);
+  log.info(`Completed in ${elapsed}s`);
 
   printReport(report);
 }
 
 process.on('SIGTERM', () => {
-  console.log('[Backtest] Received SIGTERM, exiting.');
+  createLogger('Backtest').info('Received SIGTERM, exiting.');
   process.exit(0);
 });
 
 main().catch((err) => {
-  console.error('[Backtest] Fatal error:', err);
+  createLogger('Backtest').error('Fatal error:', err);
   process.exit(1);
 });

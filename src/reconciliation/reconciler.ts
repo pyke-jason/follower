@@ -14,11 +14,69 @@ export type ReconciliationAlertInput = {
 };
 
 /**
+ * Auto-resolve stale reconciliation alerts that are no longer valid.
+ * Runs before the comparison logic using the already-fetched broker positions.
+ */
+async function autoResolveAlerts(brokerPositions: BrokerPosition[]): Promise<void> {
+  const unresolved = await db.select()
+    .from(schema.reconciliationAlerts)
+    .where(eq(schema.reconciliationAlerts.resolved, false));
+
+  if (unresolved.length === 0) return;
+
+  const brokerSymbols = new Set(brokerPositions.map(p => extractUnderlying(p.symbol)));
+  const now = new Date().toISOString();
+
+  for (const alert of unresolved) {
+    let reason: string | null = null;
+
+    if (alert.type === 'DB_ONLY') {
+      // Trade in DB, not at broker — blocks all trading
+      if (alert.tradeId) {
+        const trades = await db.select()
+          .from(schema.trades)
+          .where(eq(schema.trades.id, alert.tradeId))
+          .limit(1);
+        const trade = trades[0];
+
+        if (trade && trade.status !== 'OPEN') {
+          reason = `Trade status changed to ${trade.status}`;
+        } else if (brokerSymbols.has(alert.symbol)) {
+          reason = `Broker position now exists for ${alert.symbol}`;
+        }
+      }
+    } else if (alert.type === 'BROKER_ONLY') {
+      // Position at broker, not in DB
+      if (!brokerSymbols.has(alert.symbol)) {
+        reason = 'Broker position no longer exists';
+      }
+    } else if (alert.type === 'QUANTITY_MISMATCH') {
+      // Auto-resolve after 24 hours (will be re-raised if still relevant)
+      const alertAge = Date.now() - new Date(alert.createdAt!).getTime();
+      if (alertAge > 24 * 60 * 60 * 1000) {
+        reason = 'Alert expired (will be re-raised if still relevant)';
+      }
+    }
+
+    if (reason) {
+      await db.update(schema.reconciliationAlerts)
+        .set({ resolved: true, resolvedAt: now, resolvedReason: reason })
+        .where(eq(schema.reconciliationAlerts.id, alert.id));
+      console.log(`[RECON] Auto-resolved ${alert.type} alert for ${alert.symbol}: ${reason}`);
+    }
+  }
+}
+
+/**
  * Compare broker positions vs DB open trades and produce alerts
  * for any discrepancies.
  */
 export async function runReconciliation(broker: BrokerService): Promise<ReconciliationAlertInput[]> {
   const brokerPositions = await broker.getPositions();
+
+  // Auto-resolve stale alerts before running comparison
+  await autoResolveAlerts(brokerPositions);
+
   const dbTrades = await db.select()
     .from(schema.trades)
     .where(and(

@@ -1,19 +1,21 @@
-import { getClosedTrades } from '@/lib/queries';
+import { getClosedTrades, getTradeHistorySummary } from '@/lib/queries';
 import { TradeRow } from '../components/trade-row';
-import { RunBanner } from '../components/run-banner';
+import { MetricStrip } from '../components/metric-strip';
+import type { Metric } from '../components/metric-strip';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { buildHref } from '@/lib/run-scope';
 import Link from 'next/link';
+import { Filter, X } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function TradeHistoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ trader?: string; symbol?: string; page?: string; run?: string }>;
+  searchParams: Promise<{ trader?: string; symbol?: string; strategy?: string; page?: string; run?: string }>;
 }) {
   const params = await searchParams;
   const runId = params.run;
@@ -21,54 +23,120 @@ export default async function TradeHistoryPage({
   const limit = 50;
   const offset = (page - 1) * limit;
 
-  const trades = await getClosedTrades({
-    trader: params.trader,
-    symbol: params.symbol,
-    limit,
-    offset,
-    runId,
-  });
+  const hasFilters = !!(params.trader || params.symbol || params.strategy);
+
+  const [trades, summary] = await Promise.all([
+    getClosedTrades({
+      trader: params.trader,
+      symbol: params.symbol,
+      strategy: params.strategy,
+      limit,
+      offset,
+      runId,
+    }),
+    getTradeHistorySummary({
+      trader: params.trader,
+      symbol: params.symbol,
+      strategy: params.strategy,
+      runId,
+    }),
+  ]);
+
+  const metrics: Metric[] = [
+    {
+      label: 'Total P&L',
+      value: summary.totalPnl,
+      format: 'currency',
+      colorBySign: true,
+    },
+    {
+      label: 'Trades',
+      value: summary.totalTrades,
+      format: 'integer',
+    },
+    {
+      label: 'Win Rate',
+      value: summary.winRate,
+      format: 'percent',
+    },
+    {
+      label: 'Best Trade',
+      value: summary.bestTrade,
+      format: 'currency',
+      colorBySign: true,
+    },
+    {
+      label: 'Worst Trade',
+      value: summary.worstTrade,
+      format: 'currency',
+      colorBySign: true,
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      {runId && <RunBanner runId={runId} currentPath="/trades" />}
-
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-foreground">Trade History</h2>
+        <h2 className="text-lg font-semibold text-foreground">Trade History</h2>
+      </div>
+
+      {/* Summary strip */}
+      {summary.totalTrades > 0 && (
+        <MetricStrip metrics={metrics} />
+      )}
+
+      {/* Filters */}
+      <div className="flex items-center gap-2">
         <form className="flex gap-2 items-center">
           {runId && <input type="hidden" name="run" value={runId} />}
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Filter className="h-3.5 w-3.5" />
+          </div>
           <Input
             name="trader"
             placeholder="Trader"
             defaultValue={params.trader ?? ''}
-            className="w-24 h-8 text-xs"
+            className="w-28 h-8 text-xs"
           />
           <Input
             name="symbol"
             placeholder="Symbol"
             defaultValue={params.symbol ?? ''}
-            className="w-20 h-8 text-xs"
+            className="w-24 h-8 text-xs"
+          />
+          <Input
+            name="strategy"
+            placeholder="Strategy"
+            defaultValue={params.strategy ?? ''}
+            className="w-24 h-8 text-xs"
           />
           <Button type="submit" variant="secondary" size="xs">
             Filter
           </Button>
         </form>
+        {hasFilters && (
+          <Button variant="ghost" size="xs" asChild className="text-muted-foreground">
+            <Link href={buildHref('/trades', runId)}>
+              <X className="h-3 w-3 mr-1" />
+              Clear
+            </Link>
+          </Button>
+        )}
       </div>
 
-      <Card className="py-0 gap-0 overflow-hidden">
+      <Card className="py-0 gap-0 overflow-hidden animate-in-up">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-xs text-muted-foreground uppercase">Symbol</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Trader</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Direction</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Strategy</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Entry</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Exit</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">P&L</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Opened</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Status</TableHead>
+                <TableHead>Symbol</TableHead>
+                <TableHead>Trader</TableHead>
+                <TableHead>Direction</TableHead>
+                <TableHead>Strategy</TableHead>
+                <TableHead className="text-right">Entry</TableHead>
+                <TableHead className="text-right">Exit</TableHead>
+                <TableHead className="text-right">P&L</TableHead>
+                <TableHead>Opened</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -79,7 +147,7 @@ export default async function TradeHistoryPage({
           </Table>
           {trades.length === 0 && (
             <p className="px-4 py-6 text-sm text-muted-foreground text-center">
-              No closed trades
+              No closed trades{hasFilters ? ' matching filters' : ''}
             </p>
           )}
         </CardContent>
@@ -89,17 +157,17 @@ export default async function TradeHistoryPage({
         {page > 1 && (
           <Button variant="ghost" size="sm" asChild>
             <Link
-              href={buildHref(`/trades?page=${page - 1}${params.trader ? `&trader=${params.trader}` : ''}${params.symbol ? `&symbol=${params.symbol}` : ''}`, runId)}
+              href={buildHref(`/trades?page=${page - 1}${params.trader ? `&trader=${params.trader}` : ''}${params.symbol ? `&symbol=${params.symbol}` : ''}${params.strategy ? `&strategy=${params.strategy}` : ''}`, runId)}
             >
               Previous
             </Link>
           </Button>
         )}
-        <span className="text-sm text-muted-foreground">Page {page}</span>
+        <span className="text-sm text-muted-foreground tabular-nums">Page {page}</span>
         {trades.length === limit && (
           <Button variant="ghost" size="sm" asChild>
             <Link
-              href={buildHref(`/trades?page=${page + 1}${params.trader ? `&trader=${params.trader}` : ''}${params.symbol ? `&symbol=${params.symbol}` : ''}`, runId)}
+              href={buildHref(`/trades?page=${page + 1}${params.trader ? `&trader=${params.trader}` : ''}${params.symbol ? `&symbol=${params.symbol}` : ''}${params.strategy ? `&strategy=${params.strategy}` : ''}`, runId)}
             >
               Next
             </Link>

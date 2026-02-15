@@ -4,6 +4,8 @@ import { db, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { getTradesByBacktestRun, getRunDecisions } from '@/lib/queries';
+import { generateReportFromTrades } from '../../../src/backtest/report';
 import type { BacktestRunConfig } from '../../../src/db/schema';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
@@ -12,12 +14,11 @@ export async function startBacktest(formData: FormData) {
   const startDate = formData.get('startDate') as string;
   const endDate = formData.get('endDate') as string;
   const tradersRaw = formData.get('traders') as string;
-  const useAgent = formData.get('useAgent') === 'on';
   const useQuoteTape = formData.get('useQuoteTape') === 'on';
-  const maxAgentCalls = parseInt(formData.get('maxAgentCalls') as string) || 100;
-  const slippagePct = parseFloat(formData.get('slippagePct') as string) || 0.01;
+  const refreshQuoteCache = formData.get('refreshQuoteCache') === 'on';
   const agentProvider = (formData.get('agentProvider') as string) || undefined;
   const agentModel = (formData.get('agentModel') as string) || undefined;
+  const logLevel = (formData.get('logLevel') as string) || 'debug';
 
   if (!startDate || !endDate || !tradersRaw) {
     throw new Error('Missing required fields');
@@ -32,12 +33,10 @@ export async function startBacktest(formData: FormData) {
     startDate: new Date(startDate + 'T00:00:00Z').toISOString(),
     endDate: new Date(endDate + 'T23:59:59Z').toISOString(),
     traders,
-    useAgent,
-    maxAgentCalls,
-    slippagePct,
     useQuoteTape,
-    ...(useAgent && agentProvider ? { agentProvider } : {}),
-    ...(useAgent && agentModel ? { agentModel } : {}),
+    ...(agentProvider ? { agentProvider } : {}),
+    ...(agentModel ? { agentModel } : {}),
+    ...(refreshQuoteCache ? { refreshQuoteCache } : {}),
   };
 
   const runId = crypto.randomUUID();
@@ -55,12 +54,11 @@ export async function startBacktest(formData: FormData) {
       startDate,
       endDate,
       traders,
-      useAgent,
-      maxAgentCalls,
-      slippagePct,
       useQuoteTape,
-      ...(useAgent && agentProvider ? { agentProvider } : {}),
-      ...(useAgent && agentModel ? { agentModel } : {}),
+      ...(agentProvider ? { agentProvider } : {}),
+      ...(agentModel ? { agentModel } : {}),
+      ...(refreshQuoteCache ? { refreshQuoteCache } : {}),
+      logLevel,
     }),
   });
 
@@ -104,6 +102,40 @@ export async function cancelBacktestRun(formData: FormData) {
     });
   }
 
+  // Compute partial stats from whatever trades/decisions were persisted before cancel
+  const [trades, rawDecisions] = await Promise.all([
+    getTradesByBacktestRun(runId, { includeOpen: true }),
+    getRunDecisions(runId),
+  ]);
+
+  if (trades.length > 0) {
+    const decisions = rawDecisions.map((d) => ({
+      path: d.decision.path,
+      decision: d.decision.decision,
+    }));
+    const report = generateReportFromTrades({
+      trades: trades.map((t) => ({
+        pnl: t.pnl,
+        status: t.status,
+        trader: t.trader,
+        strategy: t.strategy,
+        entryPrice: t.entryPrice,
+        openedAt: t.openedAt,
+        closedAt: t.closedAt,
+      })),
+      decisions,
+    });
+    await db.update(schema.backtestRuns)
+      .set({
+        summary: report.summary,
+        byTrader: report.byTrader,
+        byStrategy: report.byStrategy,
+        equityCurve: report.equityCurve,
+        extendedMetrics: report.extendedMetrics,
+      })
+      .where(eq(schema.backtestRuns.id, runId));
+  }
+
   revalidatePath('/backtests');
 }
 
@@ -139,6 +171,24 @@ export async function deleteBacktestRun(formData: FormData) {
 
   // Clean up log file via local API
   await fetch(`${LOCAL_API_URL}/logs/${runId}`, { method: 'DELETE' }).catch(() => {});
+
+  revalidatePath('/backtests');
+}
+
+export async function togglePin(formData: FormData) {
+  const runId = formData.get('runId') as string;
+  if (!runId) return;
+
+  const [run] = await db
+    .select({ pinned: schema.backtestRuns.pinned })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, runId));
+
+  if (!run) return;
+
+  await db.update(schema.backtestRuns)
+    .set({ pinned: !run.pinned })
+    .where(eq(schema.backtestRuns.id, runId));
 
   revalidatePath('/backtests');
 }

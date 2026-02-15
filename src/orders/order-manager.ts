@@ -1,5 +1,9 @@
 import type { BrokerService } from '../broker/interface.js';
 import type { OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
+import { createLogger } from '../lib/logger.js';
+import { roundCents } from '../lib/numbers.js';
+
+const log = createLogger('OrderMgr');
 
 export type OrderManagerConfig = {
   broker: BrokerService;
@@ -27,13 +31,17 @@ export class OrderManager {
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
+    const legCount = params.legs.length || 1;
+    const ruleCount = params.adjustmentRules?.length ?? 0;
+    log.debug(`submit: ${params.orderType} ${params.symbol} legs=${legCount} limit=$${params.limitPrice ?? 'MKT'} cancelAfter=${params.cancelAfterSec ?? 'none'}s rules=${ruleCount}`);
+
     // Defense-in-depth: enforce max allocation before sending to broker
     if (this.maxAllocation) {
-      const totalQuantity = params.legs.reduce((sum, leg) => Math.max(sum, leg.quantity), 0);
+      const perLegQuantity = params.legs.reduce((sum, leg) => Math.max(sum, leg.quantity), 0);
       const entryPrice = params.limitPrice ?? 0;
       const isOption = params.legs.some((l) => l.type === 'CALL' || l.type === 'PUT');
       const multiplier = isOption ? 100 : 1;
-      const estimatedCost = entryPrice * totalQuantity * multiplier;
+      const estimatedCost = entryPrice * perLegQuantity * multiplier;
       if (estimatedCost > this.maxAllocation) {
         throw new Error(
           `Order cost $${estimatedCost.toFixed(2)} exceeds max allocation $${this.maxAllocation}`,
@@ -84,6 +92,7 @@ export class OrderManager {
       if (order.params.cancelAfterSec) {
         const elapsed = (now.getTime() - order.placedAt.getTime()) / 1000;
         if (elapsed >= order.params.cancelAfterSec) {
+          log.debug(`Auto-cancel: ${orderId} after ${order.params.cancelAfterSec}s`);
           await this.broker.cancelOrder(orderId);
           order.status = 'CANCELLED';
           order.cancelledAt = now;
@@ -114,7 +123,8 @@ export class OrderManager {
             ? order.currentLimitPrice + rule.stepAmount
             : order.currentLimitPrice - rule.stepAmount;
 
-          const roundedPrice = Math.round(newPrice * 100) / 100;
+          const roundedPrice = roundCents(newPrice);
+          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${order.currentLimitPrice} -> $${roundedPrice} (step ${order.adjustmentCount + 1}/${rule.maxSteps ?? '∞'})`);
           await this.broker.modifyOrder(orderId, roundedPrice);
           order.currentLimitPrice = roundedPrice;
           order.lastAdjustedAt = now;
@@ -125,6 +135,7 @@ export class OrderManager {
       // 3. Check fill status
       const status = await this.broker.getOrderStatus(orderId);
       if (status.status === 'FILLED') {
+        log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
         order.status = 'FILLED';
         order.filledPrice = status.filledPrice;
         order.filledAt = now;

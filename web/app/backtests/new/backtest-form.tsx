@@ -14,11 +14,13 @@ import {
 } from '@/components/ui/select';
 import { startBacktest } from '../actions';
 import Link from 'next/link';
+import type { BacktestRunConfig } from '../../../../src/db/schema';
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: [
     'claude-sonnet-4-5-20250929',
     'claude-haiku-4-5-20251001',
+    'claude-opus-4-6',
   ],
   xai: [
     'grok-3',
@@ -26,10 +28,17 @@ const MODELS_BY_PROVIDER: Record<string, string[]> = {
   ],
 };
 
-export function BacktestForm({ defaultTraders }: { defaultTraders: string }) {
-  const [useAgent, setUseAgent] = useState(false);
-  const [provider, setProvider] = useState('anthropic');
-  const [model, setModel] = useState(MODELS_BY_PROVIDER.anthropic[0]);
+export function BacktestForm({
+  defaultTraders,
+  defaultConfig,
+}: {
+  defaultTraders: string;
+  defaultConfig?: BacktestRunConfig;
+}) {
+  const [provider, setProvider] = useState(defaultConfig?.agentProvider ?? 'anthropic');
+  const [model, setModel] = useState(
+    defaultConfig?.agentModel ?? MODELS_BY_PROVIDER[defaultConfig?.agentProvider ?? 'anthropic']?.[0] ?? MODELS_BY_PROVIDER.anthropic[0],
+  );
 
   function handleProviderChange(value: string) {
     setProvider(value);
@@ -45,7 +54,7 @@ export function BacktestForm({ defaultTraders }: { defaultTraders: string }) {
             name="startDate"
             type="date"
             required
-            defaultValue="2025-09-01"
+            defaultValue={defaultConfig?.startDate?.split('T')[0] ?? '2025-09-01'}
             className="h-9"
           />
         </div>
@@ -55,7 +64,7 @@ export function BacktestForm({ defaultTraders }: { defaultTraders: string }) {
             name="endDate"
             type="date"
             required
-            defaultValue="2025-12-27"
+            defaultValue={defaultConfig?.endDate?.split('T')[0] ?? '2025-12-27'}
             className="h-9"
           />
         </div>
@@ -66,83 +75,45 @@ export function BacktestForm({ defaultTraders }: { defaultTraders: string }) {
         <Input
           name="traders"
           required
-          placeholder="Arethra, Pete"
-          defaultValue={defaultTraders}
+          placeholder="Dave W, Hariseldon, Pete"
+          defaultValue={defaultConfig?.traders?.join(', ') ?? defaultTraders}
           className="h-9"
         />
       </div>
 
-      <div className="flex items-center gap-3">
-        <Switch
-          name="useAgent"
-          id="useAgent"
-          checked={useAgent}
-          onCheckedChange={setUseAgent}
-        />
-        <Label htmlFor="useAgent" className="text-sm">Use agent for low-confidence messages</Label>
-      </div>
-
-      {useAgent && (
-        <>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1">Agent Provider</Label>
-              <input type="hidden" name="agentProvider" value={provider} />
-              <Select value={provider} onValueChange={handleProviderChange}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="anthropic">Anthropic</SelectItem>
-                  <SelectItem value="xai">xAI (Grok)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1">Agent Model</Label>
-              <input type="hidden" name="agentModel" value={model} />
-              <Select value={model} onValueChange={setModel}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MODELS_BY_PROVIDER[provider].map((m) => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </>
-      )}
-
-      <div className="flex items-center gap-3">
-        <Switch name="useQuoteTape" id="useQuoteTape" defaultChecked />
-        <Label htmlFor="useQuoteTape" className="text-sm">Use quote tape (Databento)</Label>
-      </div>
-
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <Label className="text-xs text-muted-foreground mb-1">Max Agent Calls</Label>
-          <Input
-            name="maxAgentCalls"
-            type="number"
-            defaultValue="100"
-            min="0"
-            className="h-9"
-          />
+          <Label className="text-xs text-muted-foreground mb-1">Agent Provider</Label>
+          <input type="hidden" name="agentProvider" value={provider} />
+          <Select value={provider} onValueChange={handleProviderChange}>
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="anthropic">Anthropic</SelectItem>
+              <SelectItem value="xai">xAI (Grok)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div>
-          <Label className="text-xs text-muted-foreground mb-1">Slippage %</Label>
-          <Input
-            name="slippagePct"
-            type="number"
-            step="0.001"
-            defaultValue="0.01"
-            min="0"
-            className="h-9"
-          />
+          <Label className="text-xs text-muted-foreground mb-1">Agent Model</Label>
+          <input type="hidden" name="agentModel" value={model} />
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MODELS_BY_PROVIDER[provider].map((m) => (
+                <SelectItem key={m} value={m}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Switch name="useQuoteTape" id="useQuoteTape" defaultChecked={defaultConfig?.useQuoteTape ?? true} />
+        <Label htmlFor="useQuoteTape" className="text-sm">Use quote tape (Databento)</Label>
       </div>
 
       <div className="flex gap-2 pt-2">

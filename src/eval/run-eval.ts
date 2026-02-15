@@ -8,7 +8,7 @@ import { classifyMessage } from '../parsing/classify.js';
 // ─── Types ───────────────────────────────────────────
 
 type FieldResult = { correct: number; total: number };
-type FieldName = 'action' | 'direction' | 'strategy' | 'price' | 'strikes' | 'quantity' | 'expiry';
+type FieldName = 'action' | 'direction' | 'strategy' | 'price' | 'strikes' | 'quantity' | 'expiry' | 'exitPercent';
 
 type Failure = {
   cleanText: string;
@@ -82,16 +82,17 @@ async function main() {
     ? ` [${rows[0].label.modelProvider}/${rows[0].label.modelName}]`
     : '';
   console.log(`\nEval Report (${labelSet}${modelInfo}, ${rows.length} reviewed labels)`);
-  console.log('─'.repeat(50));
+  console.log('─'.repeat(60));
 
   const fields: Record<FieldName, FieldResult> = {
-    action:    { correct: 0, total: 0 },
-    direction: { correct: 0, total: 0 },
-    strategy:  { correct: 0, total: 0 },
-    price:     { correct: 0, total: 0 },
-    strikes:   { correct: 0, total: 0 },
-    quantity:  { correct: 0, total: 0 },
-    expiry:    { correct: 0, total: 0 },
+    action:      { correct: 0, total: 0 },
+    direction:   { correct: 0, total: 0 },
+    strategy:    { correct: 0, total: 0 },
+    price:       { correct: 0, total: 0 },
+    strikes:     { correct: 0, total: 0 },
+    quantity:    { correct: 0, total: 0 },
+    expiry:      { correct: 0, total: 0 },
+    exitPercent: { correct: 0, total: 0 },
   };
 
   let allCorrect = 0;
@@ -151,7 +152,7 @@ async function main() {
       });
     }
 
-    // Price
+    // Price (ingestion path)
     fields.price.total++;
     const parsedPrice = normalizeNull(topStrategy?.price != null ? String(topStrategy.price) : null);
     const labelPrice = normalizeNull(label.price);
@@ -213,25 +214,77 @@ async function main() {
       });
     }
 
+    // Exit percent (only compare when label has an exit percent)
+    if (label.exitPercent != null) {
+      fields.exitPercent.total++;
+      // Ingestion parser doesn't extract exitPercent — only agent labels will have it
+      // For now, mark as N/A unless we have a parsed exit percent to compare
+      const parsedExitPct: number | null = null; // ingestion parser doesn't produce this
+      const tolerance = 0.1; // ±10% tolerance
+      if (parsedExitPct != null && Math.abs(parsedExitPct - label.exitPercent) <= tolerance) {
+        fields.exitPercent.correct++;
+      } else if (parsedExitPct == null) {
+        // Don't count as a failure if the parser doesn't produce exit percent
+        fields.exitPercent.total--;
+      } else {
+        rowAllCorrect = false;
+        failures.push({
+          cleanText: message.cleanText.slice(0, 60),
+          field: 'exitPercent',
+          expected: String(label.exitPercent),
+          got: String(parsedExitPct),
+        });
+      }
+    }
+
     if (rowAllCorrect) allCorrect++;
   }
 
   // Print summary
   const overallPct = ((allCorrect / rows.length) * 100).toFixed(1);
   console.log(`Overall accuracy:    ${overallPct}%  (${allCorrect}/${rows.length} all fields match)`);
-  console.log('─'.repeat(50));
-  console.log(`${'Field'.padEnd(14)} ${'Correct'.padStart(8)} ${'Total'.padStart(8)} ${'Accuracy'.padStart(10)}`);
+  console.log('─'.repeat(60));
 
-  for (const [name, result] of Object.entries(fields)) {
+  console.log('\nIngestion Parser:');
+  console.log(`${'  Field'.padEnd(16)} ${'Correct'.padStart(8)} ${'Total'.padStart(8)} ${'Accuracy'.padStart(10)}`);
+  for (const name of ['action', 'direction', 'strategy', 'price', 'strikes', 'quantity', 'expiry', 'exitPercent'] as FieldName[]) {
+    const result = fields[name];
     const pct = result.total > 0 ? ((result.correct / result.total) * 100).toFixed(1) : 'N/A';
     console.log(
-      `${name.padEnd(14)} ${String(result.correct).padStart(8)} ${String(result.total).padStart(8)} ${(pct + '%').padStart(10)}`
+      `${'  ' + name.padEnd(14)} ${String(result.correct).padStart(8)} ${String(result.total).padStart(8)} ${(pct + '%').padStart(10)}`
     );
   }
 
+  // Compute accuracy values for persistence
+  function accuracy(f: FieldResult): number | null {
+    return f.total > 0 ? f.correct / f.total : null;
+  }
+
+  const totalMislabelings = failures.length;
+
+  // Persist to eval_runs table
+  const runId = crypto.randomUUID();
+  await db.insert(schema.evalRuns).values({
+    id: runId,
+    labelSet,
+    ranAt: new Date().toISOString(),
+    totalLabels: rows.length,
+    actionAccuracy: accuracy(fields.action),
+    directionAccuracy: accuracy(fields.direction),
+    strategyAccuracy: accuracy(fields.strategy),
+    priceAccuracy: accuracy(fields.price),
+    exitPriceAccuracy: null,
+    strikesAccuracy: accuracy(fields.strikes),
+    overallAccuracy: allCorrect / rows.length,
+    totalMislabelings,
+    failuresJson: failures.slice(0, 100),
+  });
+
+  console.log(`\nResults persisted to eval_runs (id: ${runId.slice(0, 8)}...)`);
+
   // Print failures
   if (failures.length > 0) {
-    console.log('\n' + '─'.repeat(50));
+    console.log('\n' + '─'.repeat(60));
     console.log(`Failures (showing first 20 of ${failures.length}):\n`);
     for (const f of failures.slice(0, 20)) {
       console.log(`  "${f.cleanText}..."`);

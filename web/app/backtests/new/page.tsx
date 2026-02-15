@@ -1,13 +1,27 @@
-import { getTrackedTraders } from '@/lib/queries';
+import { getTrackedTraders, getBacktestRunById } from '@/lib/queries';
 import { Card, CardContent } from '@/components/ui/card';
 import { BacktestForm } from './backtest-form';
 import Link from 'next/link';
+import type { BacktestRunConfig } from '../../../../src/db/schema';
 
 export const dynamic = 'force-dynamic';
 
-export default async function NewBacktestPage() {
+export default async function NewBacktestPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clone?: string }>;
+}) {
+  const { clone } = await searchParams;
   const traders = await getTrackedTraders();
   const traderNames = traders.map((t) => t.name).join(', ');
+
+  let defaultConfig: BacktestRunConfig | undefined;
+  if (clone) {
+    const sourceRun = await getBacktestRunById(clone);
+    if (sourceRun) {
+      defaultConfig = sourceRun.config as BacktestRunConfig;
+    }
+  }
 
   return (
     <div className="space-y-4 max-w-2xl">
@@ -15,12 +29,14 @@ export default async function NewBacktestPage() {
         <Link href="/backtests" className="text-sm text-muted-foreground hover:text-foreground">
           &larr; Backtests
         </Link>
-        <h2 className="text-xl font-bold text-foreground">New Backtest</h2>
+        <h2 className="text-lg font-semibold text-foreground">
+          {defaultConfig ? 'Clone Backtest' : 'New Backtest'}
+        </h2>
       </div>
 
       <Card className="py-4 gap-3">
         <CardContent>
-          <BacktestForm defaultTraders={traderNames} />
+          <BacktestForm defaultTraders={traderNames} defaultConfig={defaultConfig} />
         </CardContent>
       </Card>
     </div>

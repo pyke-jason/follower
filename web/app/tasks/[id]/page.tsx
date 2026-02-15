@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getTaskById, getTradeSteps, getMessageById } from '@/lib/queries';
 import { Badge } from '../../components/badge';
-import { RunBanner } from '../../components/run-banner';
+import { InfoChip } from '../../components/info-chip';
 import { StepViewer } from '../../components/step-viewer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { formatDate } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import { skipTask } from '../actions';
 import Link from 'next/link';
+import { AutoRefresh } from '../../components/auto-refresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,13 +35,12 @@ export default async function TaskDetailPage({
 
   return (
     <div className="space-y-6 max-w-4xl">
-      {runId && <RunBanner runId={runId} currentPath={`/tasks/${id}`} />}
-
+      <AutoRefresh />
       <div className="flex items-center gap-3">
         <Link href={buildHref('/tasks', runId)} className="text-sm text-muted-foreground hover:text-foreground">
           &larr; Tasks
         </Link>
-        <h2 className="text-xl font-bold text-foreground">{task.taskType}</h2>
+        <h2 className="text-lg font-semibold text-foreground">{task.taskType}</h2>
         <Badge label={task.status} />
       </div>
 
@@ -48,22 +48,28 @@ export default async function TaskDetailPage({
       <Card className="py-4 gap-0">
         <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
-            <p className="text-xs text-muted-foreground">Assignee</p>
-            <p className="text-foreground">{task.assignee}</p>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Assignee</p>
+            <p className="text-foreground font-medium">{task.assignee}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Priority</p>
-            <p className="text-foreground">{task.priority}</p>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Priority</p>
+            <p className="text-foreground font-medium">{task.priority}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Created</p>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Created</p>
             <p className="text-foreground">{formatDate(task.createdAt)}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Completed</p>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Completed</p>
             <p className="text-foreground">{formatDate(task.completedAt)}</p>
           </div>
         </CardContent>
+        {(task.modelProvider || task.modelName) && (
+          <CardContent className="pt-0 flex items-center gap-2 flex-wrap">
+            {task.modelName && <InfoChip label={task.modelName} />}
+            {task.modelProvider && <InfoChip label={task.modelProvider} />}
+          </CardContent>
+        )}
       </Card>
 
       {/* Context */}

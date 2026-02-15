@@ -1,27 +1,13 @@
-import type { HistoricalMessage, SimPosition, SimLeg, FillModel } from './types.js';
-import type { MessagePriceProvider } from './market-data.js';
+import type { HistoricalMessage, SimPosition, SimLeg, FillModel, SizingService, RiskService, ExecutionResult } from './types.js';
+import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker, computeModelFillPrice } from './sim-broker.js';
 import { PositionTracker } from './position-tracker.js';
 import type { SimClock } from './clock.js';
 import type { DetectedStrategy } from '../db/schema.js';
-import type { PositionSize } from '../position-sizing/index.js';
+import { extractPriceFromText, seedOptionPrices } from './helpers.js';
+import { roundCents } from '../lib/numbers.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
-
-export interface SizingService {
-  calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }): Promise<PositionSize>;
-}
-
-export interface RiskService {
-  check(input: { symbol: string; strategy: string; trader: string }): Promise<{ allowed: boolean; reason?: string }>;
-}
-
-export type ExecutionResult = {
-  action: 'OPEN' | 'CLOSE' | 'SKIP';
-  position?: SimPosition;
-  reason: string;
-  usedAgent: boolean;
-};
 
 /**
  * DeterministicExecutor: Fast path for high-confidence messages.
@@ -32,7 +18,7 @@ export class DeterministicExecutor {
     private broker: SimBroker,
     private tracker: PositionTracker,
     private clock: SimClock,
-    private priceProvider: MessagePriceProvider,
+    private priceProvider: BacktestPriceProvider,
     private fillModel: FillModel = 'orats',
     private sizingService: SizingService,
     private riskService: RiskService,
@@ -79,7 +65,7 @@ export class DeterministicExecutor {
     const direction = msg.directionHint ?? 'LONG';
 
     // Extract price from strategy or text
-    const price = strategy.price ?? this.extractPriceFromText(msg.cleanText);
+    const price = strategy.price ?? extractPriceFromText(msg.cleanText);
     if (price === undefined) {
       return { action: 'SKIP', reason: 'no price detected', usedAgent: false };
     }
@@ -112,28 +98,24 @@ export class DeterministicExecutor {
     const isOption = strategy.strategy !== 'STOCK';
     const legCount = legs.length || 1;
 
-    // Seed price provider with realistic spread width for options
-    const spreadPct = isOption ? (legCount > 1 ? 0.08 : 0.10) : 0.001;
-    this.priceProvider.setPrice(symbol, price, msg.timestamp, spreadPct);
-
-    // Seed option prices for spreads
-    if (strategy.strikes) {
-      for (const strike of strategy.strikes) {
-        const optType = strategy.strategy === 'PDS' || strategy.strategy === 'PUT' ? 'PUT' : 'CALL';
-        this.priceProvider.setOptionPrice(
-          `${symbol}:${optType}:${strike}`,
-          price,
-          msg.timestamp,
-        );
-      }
+    // Use real Databento quote when available; only self-seed as fallback
+    const hasRealQuote = this.priceProvider.hasQuote(symbol, msg.timestamp);
+    if (!hasRealQuote) {
+      // Widen spreads for more realistic fills:
+      // Options: 15% (real option spreads are wide), Stocks: 0.5% (small/mid cap)
+      const spreadPct = isOption ? 0.15 : 0.005;
+      this.priceProvider.setPrice(symbol, price, msg.timestamp, spreadPct);
     }
+
+    // Seed option prices for spreads (Databento DBEQ.BASIC has no options data)
+    seedOptionPrices(this.priceProvider, [strategy], [symbol], msg.timestamp);
 
     // Compute ORATS-estimated fill price and place LIMIT order
     const quote = await this.broker.getQuote(symbol);
     const isBuy = legs[0]?.action === 'BUY';
-    let limitPrice = computeModelFillPrice(this.fillModel, quote.bid, quote.ask, isBuy, legCount);
+    let limitPrice = computeModelFillPrice({ fillModel: this.fillModel, bid: quote.bid, ask: quote.ask, isBuy, legCount });
     if (legCount > 1) limitPrice = Math.abs(limitPrice);
-    limitPrice = Math.round(limitPrice * 100) / 100;
+    limitPrice = roundCents(limitPrice);
 
     const result = await this.broker.placeOrder({
       symbol,
@@ -149,6 +131,11 @@ export class DeterministicExecutor {
       orderType: 'LIMIT',
       limitPrice,
     });
+
+    // If the limit order didn't fill, don't fake a fill
+    if (result.status !== 'FILLED') {
+      return { action: 'SKIP', reason: `limit order not filled (status: ${result.status})`, usedAgent: false };
+    }
 
     // Track position
     const fillPrice = result.filledPrice ?? limitPrice;
@@ -187,7 +174,7 @@ export class DeterministicExecutor {
     }
 
     // Extract exit price
-    const exitPrice = this.extractPriceFromText(msg.cleanText);
+    const exitPrice = extractPriceFromText(msg.cleanText);
     if (exitPrice) {
       this.priceProvider.setPrice(symbol, exitPrice, msg.timestamp);
     }
@@ -195,7 +182,7 @@ export class DeterministicExecutor {
     const quote = await this.broker.getQuote(symbol);
     const fillPrice = exitPrice ?? quote.last;
 
-    const pos = this.tracker.closeMatching(symbol, msg.author, fillPrice, msg.timestamp);
+    const pos = this.tracker.closeMatching({ symbol, trader: msg.author, exitPrice: fillPrice, closedAt: msg.timestamp });
     if (!pos) {
       return { action: 'SKIP', reason: 'failed to close position', usedAgent: false };
     }
@@ -262,23 +249,6 @@ export class DeterministicExecutor {
         ];
       }
     }
-  }
-
-  private extractPriceFromText(text: string): number | undefined {
-    // Try "for $X.XX" or "at $X.XX" patterns first
-    const priceMatch = text.match(/(?:for|at|@)\s*\$?([\d,]+\.?\d*)/i);
-    if (priceMatch) return parseFloat(priceMatch[1].replace(/,/g, ''));
-
-    // Try trailing number after symbol text (e.g., "Long CSCO 73.41")
-    // Negative lookbehind (?<!:) avoids matching timestamps like "10:30"
-    const trailingMatch = text.match(/(?<!:)\b(\d+\.?\d+)\s*(?:-|$|\.|!|\s*starter)/i);
-    if (trailingMatch) {
-      const val = parseFloat(trailingMatch[1]);
-      // Skip strike-like numbers and very large numbers
-      if (val > 0.01 && val < 10000) return val;
-    }
-
-    return undefined;
   }
 
   private getNextFriday(): string {

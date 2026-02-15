@@ -1,19 +1,23 @@
 import type { BacktestConfig, BacktestReport, TraderStats, StrategyStats, EquityPoint, ExtendedMetrics } from './types.js';
 import { PositionTracker } from './position-tracker.js';
+import { roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
 
-export function generateReport(
-  config: BacktestConfig,
-  tracker: PositionTracker,
-  totalMessages: number,
-  tradableMessages: number,
+export type GenerateReportParams = {
+  config: BacktestConfig;
+  tracker: PositionTracker;
+  totalMessages: number;
+  tradableMessages: number;
   stats: {
     agentCallsUsed: number;
     deterministicTrades: number;
     agentTrades: number;
     skippedLowConfidence: number;
-  },
-  startingEquity: number = 100_000,
-): BacktestReport {
+  };
+  startingEquity?: number;
+};
+
+export function generateReport(params: GenerateReportParams): BacktestReport {
+  const { config, tracker, totalMessages, tradableMessages, stats, startingEquity = 100_000 } = params;
   const closed = tracker.getClosed();
   const open = tracker.getOpen();
   const all = tracker.getAll();
@@ -38,8 +42,8 @@ export function generateReport(
 
   const grossWins = wins.reduce((sum, p) => sum + safePnl(p), 0);
   const grossLosses = Math.abs(losses.reduce((sum, p) => sum + safePnl(p), 0));
-  // Use 999.99 as a sentinel for Infinity to stay within DB numeric bounds
-  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? 999.99 : 0;
+  // Use PROFIT_FACTOR_INF as a sentinel for Infinity to stay within DB numeric bounds
+  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
 
   // Max drawdown
   let peak = 0;
@@ -101,16 +105,16 @@ export function generateReport(
     cumPnl += data.pnl;
     equityCurve.push({
       date,
-      pnl: Math.round(data.pnl * 100) / 100,
-      cumPnl: Math.round(cumPnl * 100) / 100,
+      pnl: roundCents(data.pnl),
+      cumPnl: roundCents(cumPnl),
       trades: data.trades,
     });
   }
 
   // Extended metrics
-  const extendedMetrics = computeExtendedMetrics(
+  const extendedMetrics = computeExtendedMetrics({
     sortedClosed, equityCurve, totalPnl, maxDrawdown, startingEquity,
-  );
+  });
 
   return {
     config,
@@ -122,11 +126,11 @@ export function generateReport(
       wins: wins.length,
       losses: losses.length,
       winRate: closed.length > 0 ? wins.length / closed.length : 0,
-      totalPnl: Math.round(totalPnl * 100) / 100,
-      avgWin: Math.round(avgWin * 100) / 100,
-      avgLoss: Math.round(avgLoss * 100) / 100,
-      maxDrawdown: Math.round(maxDrawdown * 100) / 100,
-      profitFactor: Math.round(profitFactor * 100) / 100,
+      totalPnl: roundCents(totalPnl),
+      avgWin: roundCents(avgWin),
+      avgLoss: roundCents(avgLoss),
+      maxDrawdown: roundCents(maxDrawdown),
+      profitFactor: roundCents(profitFactor),
       agentCallsUsed: stats.agentCallsUsed,
       deterministicTrades: stats.deterministicTrades,
       agentTrades: stats.agentTrades,
@@ -139,14 +143,14 @@ export function generateReport(
   };
 }
 
-function computeExtendedMetrics(
-  sortedClosed: { pnl?: number; openedAt: Date; closedAt?: Date }[],
-  equityCurve: EquityPoint[],
-  totalPnl: number,
-  maxDrawdown: number,
-  startingEquity: number,
-): ExtendedMetrics {
-  const r2 = (v: number) => Math.round(v * 100) / 100;
+function computeExtendedMetrics(params: {
+  sortedClosed: { pnl?: number; openedAt: Date; closedAt?: Date }[];
+  equityCurve: EquityPoint[];
+  totalPnl: number;
+  maxDrawdown: number;
+  startingEquity: number;
+}): ExtendedMetrics {
+  const { sortedClosed, equityCurve, totalPnl, maxDrawdown, startingEquity } = params;
 
   // Daily PnL array from equity curve
   const dailyPnls = equityCurve.map((pt) => pt.pnl);
@@ -164,7 +168,7 @@ function computeExtendedMetrics(
 
   // Sharpe: (mean daily return / std dev) * sqrt(252)
   const sharpeRatio = dailyStdDev > 0
-    ? r2((meanDailyPnl / dailyStdDev) * Math.sqrt(252))
+    ? roundCents((meanDailyPnl / dailyStdDev) * Math.sqrt(252))
     : 0;
 
   // Sortino: same but downside deviation only
@@ -174,18 +178,18 @@ function computeExtendedMetrics(
     : 0;
   const downsideDev = Math.sqrt(downsideVariance);
   const sortinoRatio = downsideDev > 0
-    ? r2((meanDailyPnl / downsideDev) * Math.sqrt(252))
+    ? roundCents((meanDailyPnl / downsideDev) * Math.sqrt(252))
     : 0;
 
   // Calmar: annualized return / max drawdown %
   const annualizedReturn = (totalPnl / startingEquity) * (252 / tradingDays);
   const maxDrawdownPct = maxDrawdown / startingEquity;
   const calmarRatio = maxDrawdownPct > 0
-    ? r2(annualizedReturn / maxDrawdownPct)
+    ? roundCents(annualizedReturn / maxDrawdownPct)
     : 0;
 
   // Recovery factor: totalPnl / maxDrawdown
-  const recoveryFactor = maxDrawdown > 0 ? r2(totalPnl / maxDrawdown) : 0;
+  const recoveryFactor = maxDrawdown > 0 ? roundCents(totalPnl / maxDrawdown) : 0;
 
   // Consecutive win/loss streaks
   let maxConsecutiveWins = 0;
@@ -209,7 +213,7 @@ function computeExtendedMetrics(
     .filter((p) => p.closedAt && p.openedAt)
     .map((p) => (p.closedAt!.getTime() - p.openedAt.getTime()) / (1000 * 60 * 60));
   const avgHoldingPeriodHours = holdingHours.length > 0
-    ? r2(holdingHours.reduce((s, v) => s + v, 0) / holdingHours.length)
+    ? roundCents(holdingHours.reduce((s, v) => s + v, 0) / holdingHours.length)
     : 0;
 
   // Per-trade PnL array
@@ -218,7 +222,7 @@ function computeExtendedMetrics(
   // Median PnL
   const sortedPnls = [...tradePnls].sort((a, b) => a - b);
   const medianPnl = sortedPnls.length > 0
-    ? r2(sortedPnls.length % 2 === 1
+    ? roundCents(sortedPnls.length % 2 === 1
       ? sortedPnls[Math.floor(sortedPnls.length / 2)]
       : (sortedPnls[sortedPnls.length / 2 - 1] + sortedPnls[sortedPnls.length / 2]) / 2)
     : 0;
@@ -230,7 +234,7 @@ function computeExtendedMetrics(
   const pnlVariance = tradePnls.length > 1
     ? tradePnls.reduce((s, v) => s + (v - meanPnl) ** 2, 0) / (tradePnls.length - 1)
     : 0;
-  const pnlStdDev = r2(Math.sqrt(pnlVariance));
+  const pnlStdDev = roundCents(Math.sqrt(pnlVariance));
 
   return {
     sharpeRatio,
@@ -245,6 +249,147 @@ function computeExtendedMetrics(
   };
 }
 
+/**
+ * Compute report stats from raw DB trade rows (used for cancelled runs
+ * where the PositionTracker is no longer available).
+ */
+export function generateReportFromTrades(params: {
+  trades: { pnl: string | null; status: string; trader: string; strategy: string;
+            entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
+  decisions: { path: string; decision: string }[];
+}): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
+  const { trades, decisions } = params;
+
+  const closed = trades.filter((t) => t.status === 'CLOSED');
+  const open = trades.filter((t) => t.status === 'OPEN');
+
+  const safePnl = (pnlStr: string | null): number => {
+    if (pnlStr == null) return 0;
+    const n = parseFloat(pnlStr);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const wins = closed.filter((t) => safePnl(t.pnl) > 0);
+  const losses = closed.filter((t) => safePnl(t.pnl) <= 0);
+
+  const totalPnl = closed.reduce((sum, t) => sum + safePnl(t.pnl), 0);
+  const avgWin = wins.length > 0
+    ? wins.reduce((sum, t) => sum + safePnl(t.pnl), 0) / wins.length
+    : 0;
+  const avgLoss = losses.length > 0
+    ? losses.reduce((sum, t) => sum + safePnl(t.pnl), 0) / losses.length
+    : 0;
+
+  const grossWins = wins.reduce((sum, t) => sum + safePnl(t.pnl), 0);
+  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + safePnl(t.pnl), 0));
+  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
+
+  // Max drawdown
+  let peak = 0;
+  let maxDrawdown = 0;
+  let running = 0;
+  const sortedClosed = [...closed].sort(
+    (a, b) => (a.closedAt ?? '').localeCompare(b.closedAt ?? ''),
+  );
+  for (const t of sortedClosed) {
+    running += safePnl(t.pnl);
+    if (running > peak) peak = running;
+    const dd = peak - running;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+
+  // By-trader stats
+  const byTrader: Record<string, TraderStats> = {};
+  for (const t of closed) {
+    if (!byTrader[t.trader]) {
+      byTrader[t.trader] = { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
+    }
+    const ts = byTrader[t.trader];
+    ts.trades++;
+    if (safePnl(t.pnl) > 0) ts.wins++;
+    else ts.losses++;
+    ts.totalPnl += safePnl(t.pnl);
+    ts.winRate = ts.trades > 0 ? ts.wins / ts.trades : 0;
+  }
+
+  // By-strategy stats
+  const byStrategy: Record<string, StrategyStats> = {};
+  for (const t of closed) {
+    if (!byStrategy[t.strategy]) {
+      byStrategy[t.strategy] = { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
+    }
+    const ss = byStrategy[t.strategy];
+    ss.trades++;
+    if (safePnl(t.pnl) > 0) ss.wins++;
+    else ss.losses++;
+    ss.totalPnl += safePnl(t.pnl);
+    ss.winRate = ss.trades > 0 ? ss.wins / ss.trades : 0;
+    ss.avgPnl = ss.trades > 0 ? ss.totalPnl / ss.trades : 0;
+  }
+
+  // Equity curve (daily)
+  const equityCurve: EquityPoint[] = [];
+  const dailyMap = new Map<string, { pnl: number; trades: number }>();
+  for (const t of sortedClosed) {
+    const date = t.closedAt?.split('T')[0] ?? 'unknown';
+    const existing = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
+    existing.pnl += safePnl(t.pnl);
+    existing.trades++;
+    dailyMap.set(date, existing);
+  }
+  let cumPnl = 0;
+  for (const [date, data] of [...dailyMap.entries()].sort()) {
+    cumPnl += data.pnl;
+    equityCurve.push({
+      date,
+      pnl: roundCents(data.pnl),
+      cumPnl: roundCents(cumPnl),
+      trades: data.trades,
+    });
+  }
+
+  // Derive execution stats from decisions
+  const agentTrades = decisions.filter((d) => d.path === 'agent' && d.decision === 'EXECUTE').length;
+  const deterministicTrades = decisions.filter((d) => d.path === 'deterministic' && d.decision === 'EXECUTE').length;
+  const agentCallsUsed = decisions.filter((d) => d.path === 'agent').length;
+  const skippedLowConfidence = decisions.filter((d) => d.path === 'skipped').length;
+
+  // Extended metrics
+  const sortedForMetrics = sortedClosed.map((t) => ({
+    pnl: safePnl(t.pnl),
+    openedAt: new Date(t.openedAt ?? 0),
+    closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
+  }));
+  const extendedMetrics = computeExtendedMetrics({
+    sortedClosed: sortedForMetrics, equityCurve, totalPnl, maxDrawdown, startingEquity: 100_000,
+  });
+
+  return {
+    summary: {
+      totalMessages: 0,
+      tradedMessages: 0,
+      totalTrades: trades.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: closed.length > 0 ? wins.length / closed.length : 0,
+      totalPnl: roundCents(totalPnl),
+      avgWin: roundCents(avgWin),
+      avgLoss: roundCents(avgLoss),
+      maxDrawdown: roundCents(maxDrawdown),
+      profitFactor: roundCents(profitFactor),
+      agentCallsUsed,
+      deterministicTrades,
+      agentTrades,
+      skippedLowConfidence,
+      openAtEnd: open.length,
+    },
+    byTrader,
+    byStrategy,
+    equityCurve,
+    extendedMetrics,
+  };
+}
+
 export function printReport(report: BacktestReport): void {
   const s = report.summary;
 
@@ -253,7 +398,7 @@ export function printReport(report: BacktestReport): void {
   console.log('='.repeat(60));
   console.log(`  Period:     ${report.config.startDate.toISOString().split('T')[0]} to ${report.config.endDate.toISOString().split('T')[0]}`);
   console.log(`  Traders:    ${report.config.traders.join(', ')}`);
-  console.log(`  Agent mode: ${report.config.useAgent ? 'hybrid' : 'deterministic only'}`);
+  console.log(`  Agent:      ${report.config.agentProvider ?? 'anthropic'}/${report.config.agentModel ?? 'default'}`);
   console.log('');
 
   console.log('  SUMMARY');
@@ -262,7 +407,7 @@ export function printReport(report: BacktestReport): void {
   console.log(`  Tradable messages:   ${s.tradedMessages}`);
   console.log(`  Total trades:        ${s.totalTrades}`);
   console.log(`  Wins / Losses:       ${s.wins} / ${s.losses}`);
-  console.log(`  Win rate:            ${(s.winRate * 100).toFixed(1)}%`);
+  console.log(`  Win rate:            ${pctDisplay(s.winRate)}`);
   console.log(`  Total P&L:           $${s.totalPnl.toFixed(2)}`);
   console.log(`  Avg win:             $${s.avgWin.toFixed(2)}`);
   console.log(`  Avg loss:            $${s.avgLoss.toFixed(2)}`);
@@ -287,17 +432,15 @@ export function printReport(report: BacktestReport): void {
 
   console.log('  EXECUTION');
   console.log('  ' + '-'.repeat(40));
-  console.log(`  Deterministic:       ${s.deterministicTrades}`);
-  console.log(`  Agent:               ${s.agentTrades}`);
-  console.log(`  Agent calls used:    ${s.agentCallsUsed}`);
-  console.log(`  Skipped (low conf):  ${s.skippedLowConfidence}`);
+  console.log(`  Agent trades:        ${s.agentTrades}`);
+  console.log(`  Agent calls:         ${s.agentCallsUsed}`);
   console.log('');
 
   if (Object.keys(report.byTrader).length > 0) {
     console.log('  BY TRADER');
     console.log('  ' + '-'.repeat(40));
     for (const [name, ts] of Object.entries(report.byTrader)) {
-      console.log(`  ${name.padEnd(15)} ${ts.trades} trades | ${(ts.winRate * 100).toFixed(1)}% WR | $${ts.totalPnl.toFixed(2)}`);
+      console.log(`  ${name.padEnd(15)} ${ts.trades} trades | ${pctDisplay(ts.winRate)} WR | $${ts.totalPnl.toFixed(2)}`);
     }
     console.log('');
   }
@@ -306,7 +449,7 @@ export function printReport(report: BacktestReport): void {
     console.log('  BY STRATEGY');
     console.log('  ' + '-'.repeat(40));
     for (const [name, ss] of Object.entries(report.byStrategy)) {
-      console.log(`  ${name.padEnd(8)} ${ss.trades} trades | ${(ss.winRate * 100).toFixed(1)}% WR | $${ss.totalPnl.toFixed(2)} | avg $${ss.avgPnl.toFixed(2)}`);
+      console.log(`  ${name.padEnd(8)} ${ss.trades} trades | ${pctDisplay(ss.winRate)} WR | $${ss.totalPnl.toFixed(2)} | avg $${ss.avgPnl.toFixed(2)}`);
     }
     console.log('');
   }

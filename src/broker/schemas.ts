@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { sendSystemAlert } from '../lib/alert.js';
+import { zFiniteNum, zNonNegPrice } from '../lib/zod-financial.js';
 
 // --- TradeStation API response schemas (PascalCase, raw API shape) ---
 
 export const TsQuoteSchema = z.object({
-  Bid: z.number(),
-  Ask: z.number(),
-  Last: z.number(),
+  Bid: zNonNegPrice,
+  Ask: zNonNegPrice,
+  Last: zNonNegPrice,
   Volume: z.number(),
   TradeTime: z.string(),
 });
@@ -16,19 +17,19 @@ export const TsQuotesResponseSchema = z.object({
 });
 
 export const TsOptionSchema = z.object({
-  StrikePrice: z.number(),
-  Bid: z.number(),
-  Ask: z.number(),
-  Last: z.number(),
-  ImpliedVolatility: z.number(),
-  Delta: z.number(),
-  Gamma: z.number(),
-  Theta: z.number(),
+  StrikePrice: zNonNegPrice,
+  Bid: zNonNegPrice,
+  Ask: zNonNegPrice,
+  Last: zNonNegPrice,
+  ImpliedVolatility: zFiniteNum,
+  Delta: zFiniteNum,
+  Gamma: zFiniteNum,
+  Theta: zFiniteNum,
   OpenInterest: z.number(),
 });
 
 export const TsOptionsResponseSchema = z.object({
-  Options: z.array(TsOptionSchema).optional().default([]),
+  Options: z.array(TsOptionSchema),
 });
 
 const TsOrderLegSchema = z.object({
@@ -67,7 +68,7 @@ export const TsPositionSchema = z.object({
 });
 
 export const TsPositionsResponseSchema = z.object({
-  Positions: z.array(TsPositionSchema).optional().default([]),
+  Positions: z.array(TsPositionSchema),
 });
 
 export const TsBalanceSchema = z.object({
@@ -86,15 +87,15 @@ export const TsBalancesResponseSchema = z.object({
 
 export const TsBarSchema = z.object({
   TimeStamp: z.string(),
-  Open: z.number(),
-  High: z.number(),
-  Low: z.number(),
-  Close: z.number(),
+  Open: zNonNegPrice,
+  High: zNonNegPrice,
+  Low: zNonNegPrice,
+  Close: zNonNegPrice,
   TotalVolume: z.number(),
 });
 
 export const TsBarsResponseSchema = z.object({
-  Bars: z.array(TsBarSchema).default([]),
+  Bars: z.array(TsBarSchema),
 });
 
 // --- Validation helper ---

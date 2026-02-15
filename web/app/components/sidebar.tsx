@@ -2,60 +2,139 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { Button } from '@/components/ui/button';
+import {
+  LayoutDashboard,
+  Users,
+  TrendingUp,
+  History,
+  MessageSquare,
+  ListTodo,
+  FlaskConical,
+  BarChart3,
+  Settings,
+  ShieldAlert,
+} from 'lucide-react';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+} from '@/components/ui/sidebar';
+import { isRunScopedPath } from '@/lib/run-scope';
 
-const links = [
-  { href: '/', label: 'Overview' },
-  { href: '/traders', label: 'Traders' },
-  { href: '/trades/open', label: 'Open Trades' },
-  { href: '/trades', label: 'Trade History' },
-  { href: '/messages', label: 'Messages' },
-  { href: '/tasks', label: 'Tasks' },
-  { href: '/backtests', label: 'Backtests' },
-  { href: '/eval', label: 'Eval' },
-  { href: '/settings', label: 'Settings' },
+const navLinks = [
+  { href: '/', label: 'Overview', icon: LayoutDashboard },
+  { href: '/traders', label: 'Traders', icon: Users },
+  { href: '/trades/open', label: 'Open Trades', icon: TrendingUp },
+  { href: '/trades', label: 'Trade History', icon: History },
+  { href: '/messages', label: 'Messages', icon: MessageSquare },
+  { href: '/tasks', label: 'Tasks', icon: ListTodo },
+  { href: '/backtests', label: 'Backtests', icon: FlaskConical },
+  { href: '/eval', label: 'Eval', icon: BarChart3 },
+  { href: '/reconciliation', label: 'Reconciliation', icon: ShieldAlert },
 ];
 
-export function Sidebar() {
+export function AppSidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const runId = searchParams.get('run');
 
   function buildHref(path: string): string {
-    if (!runId) return path;
+    if (!runId || !isRunScopedPath(path)) return path;
     return `${path}?run=${runId}`;
   }
 
+  function isActive(href: string): boolean {
+    if (href === '/') return pathname === '/';
+    return pathname.startsWith(href) && (href !== '/trades' || pathname === '/trades');
+  }
+
+  const linkClass = (href: string, active: boolean) => {
+    const base = active ? 'border-l-2 border-sidebar-primary rounded-l-none bg-sidebar-accent/50' : '';
+    if (runId && !isRunScopedPath(href)) return `${base} opacity-40`;
+    return base;
+  };
+
   return (
-    <aside className="w-56 bg-card border-r flex flex-col min-h-screen">
-      <div className="p-4 border-b">
-        <h1 className="text-lg font-bold text-foreground">Trade Follower</h1>
-        <p className="text-xs text-muted-foreground">Dashboard</p>
-      </div>
-      <nav className="flex-1 p-2 flex flex-col gap-0.5">
-        {links.map((link) => {
-          const isActive =
-            link.href === '/'
-              ? pathname === '/'
-              : pathname.startsWith(link.href) &&
-                (link.href !== '/trades' || pathname === '/trades');
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" asChild>
+              <Link href={buildHref('/')}>
+                <div
+                  className={`flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-bold ${
+                    runId
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-sidebar-primary text-sidebar-primary-foreground'
+                  }`}
+                >
+                  TF
+                </div>
+                <div className="flex flex-col gap-0.5 leading-none">
+                  <span className="font-semibold">Trade Follower</span>
+                  <span className="text-xs text-sidebar-foreground/60">
+                    {runId ? 'Backtest Mode' : 'Dashboard'}
+                  </span>
+                </div>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
 
-          // Don't propagate ?run= to backtests or eval pages
-          const href = (link.href === '/backtests' || link.href === '/eval' || link.href === '/settings') ? link.href : buildHref(link.href);
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navLinks.map((link) => {
+                const active = isActive(link.href);
+                return (
+                  <SidebarMenuItem key={link.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={active}
+                      tooltip={link.label}
+                      className={linkClass(link.href, active)}
+                    >
+                      <Link href={buildHref(link.href)}>
+                        <link.icon />
+                        <span>{link.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
 
-          return (
-            <Button
-              key={link.href}
-              variant={isActive ? 'secondary' : 'ghost'}
-              size="sm"
-              className="justify-start"
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
               asChild
+              isActive={isActive('/settings')}
+              tooltip="Settings"
+              className={linkClass('/settings', isActive('/settings'))}
             >
-              <Link href={href}>{link.label}</Link>
-            </Button>
-          );
-        })}
-      </nav>
-    </aside>
+              <Link href="/settings">
+                <Settings />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+
+      <SidebarRail />
+    </Sidebar>
   );
 }

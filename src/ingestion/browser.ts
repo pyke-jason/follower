@@ -166,6 +166,11 @@ export function startAuthMonitor(intervalMs = 30_000): void {
       }
     } catch (err) {
       console.error('[Browser] Auth monitor check failed:', err);
+      sendSystemAlert({
+        title: 'Auth monitor error',
+        message: `Auth check threw: ${err instanceof Error ? err.message : String(err)}`,
+        severity: 'warning',
+      });
     }
   }, intervalMs);
 }

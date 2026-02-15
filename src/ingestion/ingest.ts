@@ -4,6 +4,58 @@ import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
 
+// ─── Message Watchdog ────────────────────────────────
+// Detects silent SignalR death: connection alive but no messages arriving.
+
+let lastMessageReceivedAt: Date | null = null;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+let watchdogAlertFired = false;
+
+const WATCHDOG_CHECK_INTERVAL_MS = 60_000; // check every minute
+const WATCHDOG_SILENCE_THRESHOLD_MS = 5 * 60_000; // alert after 5 min silence
+
+function isMarketHours(): boolean {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  if (day === 0 || day === 6) return false; // weekend
+  const minutes = et.getHours() * 60 + et.getMinutes();
+  return minutes >= 570 && minutes <= 960; // 9:30 - 16:00 ET
+}
+
+function startMessageWatchdog(): void {
+  watchdogTimer = setInterval(() => {
+    if (!isMarketHours()) {
+      watchdogAlertFired = false; // reset so it can fire again next session
+      return;
+    }
+    if (!lastMessageReceivedAt) return; // haven't received any messages yet
+
+    const silenceMs = Date.now() - lastMessageReceivedAt.getTime();
+    if (silenceMs >= WATCHDOG_SILENCE_THRESHOLD_MS && !watchdogAlertFired) {
+      watchdogAlertFired = true;
+      const silenceMin = Math.round(silenceMs / 60_000);
+      sendSystemAlert({
+        title: 'Message watchdog: no messages received',
+        message: `No SignalR messages received for ${silenceMin} minutes during market hours. Connection may be silently dead.`,
+        severity: 'critical',
+      });
+    }
+    if (silenceMs < WATCHDOG_SILENCE_THRESHOLD_MS) {
+      watchdogAlertFired = false; // reset once messages resume
+    }
+  }, WATCHDOG_CHECK_INTERVAL_MS);
+}
+
+export function stopMessageWatchdog(): void {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+}
+
+// ─── Ingestion ───────────────────────────────────────
+
 export async function startIngestion(onMessage?: (msg: SignalRMessage) => void): Promise<void> {
   const page = await launchBrowser();
 
@@ -28,9 +80,11 @@ export async function startIngestion(onMessage?: (msg: SignalRMessage) => void):
   });
 
   startAuthMonitor();
+  startMessageWatchdog();
 
   // Inject SignalR listener
   await injectSignalRListener(page, async (msg) => {
+    lastMessageReceivedAt = new Date();
     try {
       await processMessage(msg);
       onMessage?.(msg);
@@ -39,7 +93,7 @@ export async function startIngestion(onMessage?: (msg: SignalRMessage) => void):
       sendSystemAlert({
         title: 'Ingestion error',
         message: `Failed to process message from ${msg.User?.Name ?? 'unknown'}: ${err instanceof Error ? err.message : String(err)}`,
-        severity: 'warning',
+        severity: 'critical',
       });
     }
   });

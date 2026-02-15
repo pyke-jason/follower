@@ -15,7 +15,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold text-foreground">Settings</h2>
+      <h2 className="text-lg font-semibold text-foreground">Settings</h2>
 
       <Card>
         <CardHeader>

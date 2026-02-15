@@ -1,7 +1,11 @@
 import { and, gte, lte, inArray, asc } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/client.js';
+import { createLogger } from '../lib/logger.js';
 import type { HistoricalMessage } from './types.js';
+import { safeParseFloat } from '../lib/numbers.js';
+
+const log = createLogger('HistoricalLoader');
 
 const ActionHintEnum = z.enum(['OPEN', 'CLOSE']).nullable();
 const DirectionHintEnum = z.enum(['LONG', 'SHORT']).nullable();
@@ -35,16 +39,13 @@ export async function loadHistoricalMessages(opts: {
     const directionParsed = DirectionHintEnum.safeParse(row.directionHint);
 
     if (!actionParsed.success && row.actionHint != null) {
-      console.warn(`[HistoricalLoader] Invalid actionHint "${row.actionHint}" for message ${row.id}, treating as null`);
+      log.warn(`Invalid actionHint "${row.actionHint}" for message ${row.id}, treating as null`);
     }
     if (!directionParsed.success && row.directionHint != null) {
-      console.warn(`[HistoricalLoader] Invalid directionHint "${row.directionHint}" for message ${row.id}, treating as null`);
+      log.warn(`Invalid directionHint "${row.directionHint}" for message ${row.id}, treating as null`);
     }
 
-    const confidence = row.confidence ? parseFloat(row.confidence) : 0;
-    if (Number.isNaN(confidence)) {
-      console.warn(`[HistoricalLoader] Non-numeric confidence "${row.confidence}" for message ${row.id}, using 0`);
-    }
+    const confidence = safeParseFloat(row.confidence);
 
     return {
       id: row.id,
@@ -58,7 +59,7 @@ export async function loadHistoricalMessages(opts: {
       directionHint: directionParsed.success ? directionParsed.data : null,
       detectedStrategies: row.detectedStrategies ?? [],
       isPaperTrade: row.isPaperTrade ?? false,
-      confidence: Number.isNaN(confidence) ? 0 : confidence,
+      confidence,
     };
   });
 }

@@ -8,12 +8,21 @@ async function seed() {
 
   await db.insert(schema.trackedTraders).values([
     {
-      name: 'Arethra',
+      name: 'Dave W',
       enabled: true,
       strategies: ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'],
       maxAllocation: '5000',
       maxDailyAlloc: '10000',
-      notes: 'Primary trader to follow',
+      notes: '',
+      positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
+    },
+    {
+      name: 'Hariseldon',
+      enabled: true,
+      strategies: ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'],
+      maxAllocation: '5000',
+      maxDailyAlloc: '10000',
+      notes: '',
       positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
     },
     {
@@ -22,7 +31,7 @@ async function seed() {
       strategies: ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'],
       maxAllocation: '3000',
       maxDailyAlloc: '6000',
-      notes: 'Secondary trader',
+      notes: '',
       positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
     },
   ]).onConflictDoNothing();

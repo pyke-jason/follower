@@ -2,7 +2,7 @@ import { loadSecrets } from './lib/secrets/index.js';
 await loadSecrets();
 
 import { startIngestion, closeBrowser } from './ingestion/ingest.js';
-import { startTaskRunner, stopTaskRunner } from './tasks/runner.js';
+import { startTaskRunner, stopTaskRunner, awaitCurrentTask } from './tasks/runner.js';
 import { createTaskFromMessage } from './tasks/factory.js';
 import { classifyMessage } from './parsing/classify.js';
 import { db, schema } from './db/client.js';
@@ -16,6 +16,7 @@ import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
 import { startHealthcheck, stopHealthcheck } from './lib/healthcheck.js';
 import { PATHS } from './lib/paths.js';
+import { sendSystemAlert } from './lib/alert.js';
 
 const LOCK_PATH = PATHS.lockFile;
 
@@ -110,10 +111,28 @@ async function main() {
 
 async function shutdown() {
   console.log('\nShutting down...');
+  stopTaskRunner();               // sets running = false, stops polling
   stopHealthcheck();
-  reconScheduler?.stop();
-  fillSweep?.stop();
-  stopTaskRunner();
+
+  // Wait for in-flight task (the critical window: placeOrder → recordTrade)
+  try {
+    await Promise.race([
+      awaitCurrentTask(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30_000)),
+    ]);
+    console.log('[Shutdown] In-flight task completed');
+  } catch {
+    console.error('[Shutdown] Timed out waiting for in-flight task');
+    sendSystemAlert({
+      title: 'Ungraceful shutdown',
+      message: 'In-flight task did not complete within 30s. Check for orphaned orders.',
+      severity: 'critical',
+    });
+  }
+
+  // Drain background services
+  await reconScheduler?.stop();
+  await fillSweep?.stop();
   await closeBrowser();
   releaseLock(LOCK_PATH);
   process.exit(0);

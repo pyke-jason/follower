@@ -28,10 +28,14 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async chatWithTools(params: ChatWithToolsParams): Promise<LLMTurnResult> {
-    const tools: Anthropic.Tool[] = params.tools.map((t) => ({
+    const tools: Anthropic.Tool[] = params.tools.map((t, i) => ({
       name: t.name,
       description: t.description,
       input_schema: t.input_schema as Anthropic.Tool.InputSchema,
+      // Mark the last tool so the API caches system + tools prefix
+      ...(i === params.tools.length - 1
+        ? { cache_control: { type: 'ephemeral' as const } }
+        : {}),
     }));
 
     const response = await this.client.messages.create({
@@ -85,6 +89,12 @@ export class AnthropicProvider implements LLMProvider {
       toolCalls,
       stopReason,
       rawAssistantMessage: { role: 'assistant', content: response.content },
+      usage: {
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? undefined,
+        cacheReadInputTokens: response.usage.cache_read_input_tokens ?? undefined,
+      },
     };
   }
 }

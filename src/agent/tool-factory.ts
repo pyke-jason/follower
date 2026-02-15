@@ -1,6 +1,12 @@
 import type { BrokerService } from '../broker/interface.js';
-import type { ToolDef } from './tools.js';
 import type { Trade } from '../db/schema.js';
+
+export type ToolDef = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  execute: (input: Record<string, unknown>) => Promise<unknown>;
+};
 import type { OrderManager } from '../orders/order-manager.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import {
@@ -24,6 +30,8 @@ export type RiskCheckResult = {
   currentDrawdownPct?: number;
   buyingPower?: number;
   reconciliationAlerts?: number;
+  totalOpenPositions?: number;
+  maxTotalPositions?: number;
 };
 
 export type ToolDependencies = {

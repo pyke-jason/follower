@@ -1,6 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
+import { safeParseFloat } from '../lib/numbers.js';
 
 /**
  * Capture today's starting balance from the broker.
@@ -54,8 +55,8 @@ export async function getTodayStartingBalance(): Promise<{
   if (!row) return null;
 
   return {
-    equity: parseFloat(row.equity),
-    buyingPower: parseFloat(row.buyingPower),
-    cashBalance: parseFloat(row.cashBalance),
+    equity: safeParseFloat(row.equity),
+    buyingPower: safeParseFloat(row.buyingPower),
+    cashBalance: safeParseFloat(row.cashBalance),
   };
 }

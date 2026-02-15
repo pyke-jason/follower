@@ -1,14 +1,16 @@
 import { getTasks } from '@/lib/queries';
 import { Badge } from '../components/badge';
-import { RunBanner } from '../components/run-banner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { formatDate } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import Link from 'next/link';
+import { AutoRefresh } from '../components/auto-refresh';
 
 export const dynamic = 'force-dynamic';
+
+const statuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'SKIPPED'];
 
 export default async function TasksPage({
   searchParams,
@@ -28,62 +30,65 @@ export default async function TasksPage({
     runId,
   });
 
-  const statuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'SKIPPED'];
-
   return (
     <div className="space-y-4">
-      {runId && <RunBanner runId={runId} currentPath="/tasks" />}
-
+      <AutoRefresh />
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-foreground">Tasks</h2>
-        <div className="flex gap-1">
+        <h2 className="text-lg font-semibold text-foreground">Tasks</h2>
+      </div>
+
+      {/* Status filters */}
+      <div className="flex gap-1 flex-wrap">
+        <Button
+          variant={!params.status ? 'secondary' : 'ghost'}
+          size="xs"
+          asChild
+        >
+          <Link href={buildHref('/tasks', runId)}>All</Link>
+        </Button>
+        {statuses.map((s) => (
           <Button
-            variant={!params.status ? 'secondary' : 'ghost'}
+            key={s}
+            variant={params.status === s ? 'secondary' : 'ghost'}
             size="xs"
             asChild
           >
-            <Link href={buildHref('/tasks', runId)}>All</Link>
+            <Link href={buildHref(`/tasks?status=${s}`, runId)}>
+              {s.replace('_', ' ')}
+            </Link>
           </Button>
-          {statuses.map((s) => (
-            <Button
-              key={s}
-              variant={params.status === s ? 'secondary' : 'ghost'}
-              size="xs"
-              asChild
-            >
-              <Link href={buildHref(`/tasks?status=${s}`, runId)}>{s}</Link>
-            </Button>
-          ))}
-        </div>
+        ))}
       </div>
 
-      <Card className="py-0 gap-0 overflow-hidden">
+      <Card className="py-0 gap-0 overflow-hidden animate-in-up">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-xs text-muted-foreground uppercase">Type</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Status</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Assignee</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Created</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Completed</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Error</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Assignee</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Completed</TableHead>
+                <TableHead>Error</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {tasks.map((t) => (
-                <TableRow key={t.id}>
+                <TableRow key={t.id} className="hover:bg-accent/40 transition-colors">
                   <TableCell>
-                    <Link href={buildHref(`/tasks/${t.id}`, runId)} className="text-blue-400 hover:underline">
+                    <Link href={buildHref(`/tasks/${t.id}`, runId)} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
                       {t.taskType}
                     </Link>
                   </TableCell>
                   <TableCell><Badge label={t.status} /></TableCell>
-                  <TableCell className="text-muted-foreground">{t.assignee}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{t.assignee}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">{formatDate(t.createdAt)}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">{formatDate(t.completedAt)}</TableCell>
-                  <TableCell className="text-red-400 text-xs max-w-xs truncate">
-                    {t.error ?? ''}
+                  <TableCell className="text-xs max-w-xs truncate">
+                    {t.error && (
+                      <span className="text-red-400/80">{t.error}</span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -105,7 +110,7 @@ export default async function TasksPage({
             </Link>
           </Button>
         )}
-        <span className="text-sm text-muted-foreground">Page {page}</span>
+        <span className="text-sm text-muted-foreground tabular-nums">Page {page}</span>
         {tasks.length === limit && (
           <Button variant="ghost" size="sm" asChild>
             <Link href={buildHref(`/tasks?page=${page + 1}${params.status ? `&status=${params.status}` : ''}`, runId)}>

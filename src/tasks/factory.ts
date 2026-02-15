@@ -1,6 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { isTrackedTrader } from '../config/traders.js';
 import type { Message, TaskContext } from '../db/schema.js';
+import { safeParseFloat } from '../lib/numbers.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
 
@@ -15,8 +16,7 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
 
   if (message.isPaperTrade) return null;
 
-  const rawConfidence = message.confidence ? parseFloat(message.confidence) : 0;
-  const confidence = Number.isNaN(rawConfidence) ? 0 : rawConfidence;
+  const confidence = safeParseFloat(message.confidence);
 
   const taskType = confidence >= CONFIDENCE_THRESHOLD ? 'EXECUTE_TRADE' : 'REVIEW_MESSAGE';
 
@@ -38,7 +38,12 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
     status: 'PENDING',
     assignee: 'agent',
     context,
-  }).returning();
+  }).onConflictDoNothing().returning();
+
+  if (!task) {
+    console.log(`[Factory] Duplicate task skipped for message ${message.id}`);
+    return null;
+  }
 
   console.log(`[Factory] Created ${taskType} task ${task.id} for ${message.author} (confidence: ${confidence})`);
   return task.id;

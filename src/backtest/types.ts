@@ -1,4 +1,5 @@
 import type { DetectedStrategy } from '../db/schema.js';
+import type { PositionSize } from '../position-sizing/index.js';
 
 export type FillModel = 'orats' | 'midpoint' | 'natural';
 
@@ -16,6 +17,11 @@ export type SimPosition = {
   exitPrice?: number;
   pnl?: number;
   sourceMessageId?: string;
+  closeMessageId?: string;
+  /** For partial close slices: links back to the original position */
+  parentPositionId?: string;
+  /** True if this position represents a partial close slice (not a standalone position) */
+  isPartialClose?: boolean;
 };
 
 export type SimLeg = {
@@ -56,15 +62,15 @@ export type BacktestConfig = {
   startDate: Date;
   endDate: Date;
   traders: string[];
-  useAgent: boolean;
-  maxAgentCalls: number;
-  slippagePct: number;
   fillModel?: FillModel;
-  useQuoteTape?: boolean;
   databentoApiKey?: string;
   databentoDataset?: string;  // default 'DBEQ.BASIC' (uses mbp-1 schema; OPRA.PILLAR uses cbbo-1s)
   agentProvider?: string;     // 'anthropic' | 'xai' — default 'anthropic'
   agentModel?: string;        // e.g. 'claude-sonnet-4-5-20250929'
+  useAgent?: boolean;
+  maxAgentCalls?: number;
+  refreshQuoteCache?: boolean; // delete and re-download Databento cache entries
+  logLevel?: 'debug' | 'info' | 'warn' | 'error';
 };
 
 export type ExtendedMetrics = {
@@ -127,4 +133,19 @@ export type EquityPoint = {
   pnl: number;
   cumPnl: number;
   trades: number;
+};
+
+export interface SizingService {
+  calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }): Promise<PositionSize>;
+}
+
+export interface RiskService {
+  check(input: { symbol: string; strategy: string; trader: string }): Promise<{ allowed: boolean; reason?: string }>;
+}
+
+export type ExecutionResult = {
+  action: 'OPEN' | 'CLOSE' | 'SKIP';
+  position?: SimPosition;
+  reason: string;
+  usedAgent: boolean;
 };

@@ -1,4 +1,4 @@
-import type { ToolDef } from './tools.js';
+import type { ToolDef } from './tool-factory.js';
 
 // ─── Identity ────────────────────────────────────────
 
@@ -17,12 +17,20 @@ export type LLMToolCall = {
   input: Record<string, unknown>;
 };
 
+export type LLMUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+};
+
 export type LLMTurnResult = {
   textBlocks: string[];
   toolCalls: LLMToolCall[];
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens';
   /** Native SDK message — pushed back into conversation history as-is */
   rawAssistantMessage: unknown;
+  usage?: LLMUsage;
 };
 
 export type ToolResult = {

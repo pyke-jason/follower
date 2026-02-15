@@ -52,7 +52,16 @@ export class ATRPositionSizer implements PositionSizingStrategy {
 
     // Fetch enough bars to compute ATR (need period + 1 for true range calc)
     const bars = await this.fetchBars(symbol, atrPeriod + 1);
-    const atr = computeATR(bars, atrPeriod);
+
+    let atr: number;
+    let atrFallback = false;
+    if (bars.length < 2) {
+      // Insufficient data — use synthetic ATR of 2% of entry price
+      atr = entryPrice * 0.02;
+      atrFallback = true;
+    } else {
+      atr = computeATR(bars, atrPeriod);
+    }
 
     // riskPerTrade = equity × riskPercent
     const riskPerTrade = equity * riskPercent;
@@ -73,7 +82,9 @@ export class ATRPositionSizer implements PositionSizingStrategy {
     const quantity = maxQuantity ? Math.min(rawQuantity, maxQuantity) : rawQuantity;
 
     const reasoning = [
-      `ATR(${atrPeriod}) = $${atr.toFixed(2)}`,
+      atrFallback
+        ? `ATR fallback: 2% of $${entryPrice.toFixed(2)} (only ${bars.length} bar${bars.length === 1 ? '' : 's'} available)`
+        : `ATR(${atrPeriod}) = $${atr.toFixed(2)}`,
       `Risk/trade = $${riskPerTrade.toFixed(0)} (${(riskPercent * 100).toFixed(1)}% of $${equity.toFixed(0)})`,
       `Per-unit risk = $${effectiveRisk.toFixed(2)} (ATR × ${atrMultiplier})`,
       `From risk: ${sharesFromRisk} units`,

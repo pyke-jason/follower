@@ -2,6 +2,7 @@ import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 import type { TaskResult, TradeMetadata } from '../db/schema.js';
 import type { OrderResult } from '../broker/types.js';
+import { safeParseFloat, roundCents } from '../lib/numbers.js';
 
 export async function recordStep(
   taskId: string,
@@ -80,10 +81,8 @@ export async function enrichTradeWithFill(
   // Compute slippage if we have both entry and fill prices
   let slippage: number | undefined;
   if (trade.entryPrice && fillData.filledPrice != null) {
-    const entry = parseFloat(trade.entryPrice);
-    if (!isNaN(entry)) {
-      slippage = Math.round((fillData.filledPrice - entry) * 100) / 100;
-    }
+    const entry = safeParseFloat(trade.entryPrice);
+    slippage = roundCents(fillData.filledPrice - entry);
   }
 
   await db.update(schema.trades)

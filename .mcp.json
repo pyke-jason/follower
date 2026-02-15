@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "label-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "src/mcp/label-server.ts"],
+      "env": {
+        "LOAD_QUOTES": "1"
+      }
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
+    }
+  }
+}

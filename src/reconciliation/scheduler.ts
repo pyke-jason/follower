@@ -1,10 +1,12 @@
 import type { BrokerService } from '../broker/interface.js';
 import { runReconciliation, type ReconciliationAlertInput } from './reconciler.js';
+import { sendSystemAlert } from '../lib/alert.js';
 
 export class ReconciliationScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastResult: ReconciliationAlertInput[] = [];
   private running = false;
+  private currentRun: Promise<void> | null = null;
 
   constructor(
     private broker: BrokerService,
@@ -17,22 +19,34 @@ export class ReconciliationScheduler {
     this.timer = setInterval(() => this.run(), this.intervalMs);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.currentRun) await this.currentRun;
   }
 
   private async run(): Promise<void> {
     if (this.running) return; // prevent overlapping runs
     this.running = true;
+    this.currentRun = this._run();
+    await this.currentRun;
+  }
+
+  private async _run(): Promise<void> {
     try {
       this.lastResult = await runReconciliation(this.broker);
     } catch (err) {
       console.error('[RECON] Reconciliation failed:', err);
+      sendSystemAlert({
+        title: 'Reconciliation failed',
+        message: `Scheduled reconciliation threw: ${err instanceof Error ? err.message : String(err)}`,
+        severity: 'warning',
+      });
     } finally {
       this.running = false;
+      this.currentRun = null;
     }
   }
 
@@ -48,8 +62,12 @@ export class ReconciliationScheduler {
       return { safe, alerts };
     } catch (err) {
       console.error('[RECON] Pre-trade check failed:', err);
-      // If reconciliation fails, don't block trading
-      return { safe: true, alerts: [] };
+      sendSystemAlert({
+        title: 'Pre-trade check crashed',
+        message: `Safety check itself failed — blocking trades as precaution: ${err instanceof Error ? err.message : String(err)}`,
+        severity: 'critical',
+      });
+      return { safe: false, alerts: [] };
     }
   }
 

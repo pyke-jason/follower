@@ -43,6 +43,15 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-profit: var(--profit);
+  --color-profit-strong: var(--profit-strong);
+  --color-profit-mild: var(--profit-mild);
+  --color-loss: var(--loss);
+  --color-loss-strong: var(--loss-strong);
+  --color-loss-mild: var(--loss-mild);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -81,36 +90,54 @@
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
+  --background: oklch(0.11 0.003 285);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
+  --card: oklch(0.16 0.004 285.885);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
+  --popover: oklch(0.18 0.005 285.885);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.92 0.004 286.32);
   --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
+  --secondary: oklch(0.22 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
+  --muted: oklch(0.22 0.006 286.033);
   --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
+  --accent: oklch(0.22 0.006 286.033);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
   --ring: oklch(0.552 0.016 285.938);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.21 0.006 285.885);
+
+  /* P&L colors — strong and confident */
+  --profit: oklch(0.72 0.19 155);
+  --profit-strong: oklch(0.78 0.22 150);
+  --profit-mild: oklch(0.55 0.12 160);
+  --loss: oklch(0.68 0.22 25);
+  --loss-strong: oklch(0.75 0.25 22);
+  --loss-mild: oklch(0.52 0.14 28);
+  --warning: oklch(0.82 0.19 86);
+  --info: oklch(0.55 0.24 264);
+
+  /* Chart palette — vivid */
+  --chart-1: oklch(0.55 0.24 264);
+  --chart-2: oklch(0.72 0.19 155);
+  --chart-3: oklch(0.82 0.19 86);
+  --chart-4: oklch(0.65 0.27 304);
+  --chart-5: oklch(0.68 0.25 16);
+
+  /* Glass card surface */
+  --card-glass: oklch(1 0 0 / 3%);
+  --card-glass-border: oklch(1 0 0 / 6%);
+
+  /* Sidebar */
+  --sidebar: oklch(0.13 0.004 285);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.55 0.24 264);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
+  --sidebar-accent: oklch(0.20 0.006 286.033);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
 }
 
@@ -123,11 +150,77 @@
   }
 }
 
+/* P&L magnitude colors */
+@utility pnl-positive {
+  color: var(--profit);
+}
+@utility pnl-negative {
+  color: var(--loss);
+}
+
+/* Animations */
 @keyframes quote-flash {
   0% { background-color: rgba(250, 204, 21, 0.15); }
   100% { background-color: transparent; }
 }
 
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .quote-highlight {
   animation: quote-flash 1.5s ease-out;
+}
+
+.animate-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}
+
+.animate-in-right {
+  animation: slide-in-right 0.3s ease-out both;
+}
+
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+
+/* Glass card effect */
+.glass-card {
+  background: var(--card-glass);
+  border-color: var(--card-glass-border);
+  backdrop-filter: blur(12px);
+}
+
+/* Subtle hover lift for cards */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px oklch(0 0 0 / 20%);
 }

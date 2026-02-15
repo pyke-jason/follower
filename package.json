@@ -9,13 +9,15 @@
     "db:seed": "tsx src/db/seed.ts",
     "local-api": "tsx watch src/local-api/server.ts",
     "web": "cd web && npm run dev",
-    "backtest": "tsx src/backtest/index.ts",
+    "backtest": "tsx src/backtest/launch.ts",
     "label": "tsx src/eval/label-agent.ts",
     "eval": "tsx src/eval/run-eval.ts",
     "secrets:import": "tsx src/lib/secrets/manage.ts import",
     "secrets:set": "tsx src/lib/secrets/manage.ts set",
     "secrets:get": "tsx src/lib/secrets/manage.ts get",
     "secrets:list": "tsx src/lib/secrets/manage.ts list",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build:backend": "tsc",
     "build": "npm run build:backend && cd web && npm run build",
     "start": "node dist/index.js",
@@ -26,7 +28,7 @@
     "@anthropic-ai/sdk": "^0.74.0",
     "@hono/node-server": "^1.19.9",
     "@libsql/client": "^0.17.0",
-    "@microsoft/signalr": "^10.0.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "cheerio": "^1.2.0",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.1",
@@ -39,6 +41,7 @@
     "@types/node": "^25.2.3",
     "drizzle-kit": "^0.31.9",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }

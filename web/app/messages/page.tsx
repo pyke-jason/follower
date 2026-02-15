@@ -1,5 +1,6 @@
 import { getMessages, getDistinctAuthors } from '@/lib/queries';
 import { ChatRoom } from './chat-room';
+import { AutoRefresh } from '../components/auto-refresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,8 @@ export default async function MessagesPage() {
 
   return (
     // -m-6 counteracts the parent p-6 for full-bleed chat layout
-    <div className="-m-6 h-[calc(100vh)] flex flex-col">
+    <div className="-m-6 h-full flex flex-col">
+      <AutoRefresh />
       <ChatRoom
         initialMessages={initialMessages}
         initialCursor={nextCursor}

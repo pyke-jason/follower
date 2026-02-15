@@ -3,6 +3,7 @@ import { MessageContent } from './message-content';
 import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
 import type { Message } from '../../../src/db/schema';
+import { safeParseFloat } from '../../../src/lib/numbers';
 
 function getAccentBorder(message: Message): string {
   const action = message.actionHint;
@@ -61,7 +62,7 @@ export function ChatBubble({ message }: { message: Message }) {
             <span className="inline-flex items-center gap-1.5 ml-2 align-middle">
               {message.confidence && (
                 <span className="text-[11px] text-muted-foreground">
-                  {Math.round(parseFloat(message.confidence) * 100)}%
+                  {Math.round(safeParseFloat(message.confidence) * 100)}%
                 </span>
               )}
               {message.isPaperTrade && (

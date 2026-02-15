@@ -1,13 +1,22 @@
-import { getLabels, getLabelStats } from '@/lib/queries';
+import { getLabels, getLabelStats, getEvalRuns } from '@/lib/queries';
+import { MetricStrip } from '../components/metric-strip';
+import type { Metric } from '../components/metric-strip';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { LabelEditor } from './label-editor';
+import { AccuracyChart } from './accuracy-chart';
 import type { DetectedStrategy } from '../../../src/db/schema';
+import { pctDisplay } from '../../../src/lib/numbers';
 
 export const dynamic = 'force-dynamic';
+
+function pct(v: number | null): string {
+  if (v == null) return '–';
+  return pctDisplay(v);
+}
 
 export default async function EvalPage({
   searchParams,
@@ -21,10 +30,13 @@ export default async function EvalPage({
   const limit = 50;
   const offset = (page - 1) * limit;
 
-  const [rows, stats] = await Promise.all([
+  const [rows, stats, evalRuns] = await Promise.all([
     getLabels({ reviewed: reviewedFilter, strategy: strategyFilter, limit, offset }),
     getLabelStats(),
+    getEvalRuns({ limit: 50 }),
   ]);
+
+  const latestRun = evalRuns.length > 0 ? evalRuns[evalRuns.length - 1] : null;
 
   // Build filter URL helper
   function filterUrl(overrides: Record<string, string | undefined>) {
@@ -40,11 +52,92 @@ export default async function EvalPage({
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-foreground">Eval</h2>
-        <div className="text-sm text-muted-foreground">
-          {stats.total} labeled / {stats.reviewed} reviewed / {stats.unreviewed} pending review
-        </div>
+        <h2 className="text-lg font-semibold text-foreground">Eval</h2>
       </div>
+
+      {/* Stats MetricStrip */}
+      <MetricStrip metrics={[
+        { label: 'Total Labels', value: stats.total, format: 'integer' },
+        { label: 'Reviewed', value: stats.total > 0 ? (stats.reviewed / stats.total) * 100 : 0, format: 'percent' },
+        ...(latestRun ? [
+          { label: 'Overall Accuracy', value: (latestRun.overallAccuracy ?? 0) * 100, format: 'percent' as const },
+          { label: 'Action Accuracy', value: (latestRun.actionAccuracy ?? 0) * 100, format: 'percent' as const },
+          { label: 'Direction Accuracy', value: (latestRun.directionAccuracy ?? 0) * 100, format: 'percent' as const },
+        ] : []),
+      ] satisfies Metric[]} />
+
+      {/* Accuracy Trend Chart */}
+      {evalRuns.length >= 2 && (
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Accuracy Trend</h3>
+            <AccuracyChart evalRuns={evalRuns} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Eval Runs Trend */}
+      {evalRuns.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Eval Run History</h3>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Labels</TableHead>
+                    <TableHead className="text-right">Mislabelings</TableHead>
+                    <TableHead className="text-right">Overall</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                    <TableHead className="text-right">Direction</TableHead>
+                    <TableHead className="text-right">Strategy</TableHead>
+                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead className="text-right">Exit Price</TableHead>
+                    <TableHead className="text-right">Strikes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {evalRuns.map((run) => (
+                    <TableRow key={run.id}>
+                      <TableCell className="text-xs font-mono">
+                        {new Date(run.ranAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{run.totalLabels}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">
+                        <span className={run.totalMislabelings && run.totalMislabelings > 0 ? 'text-red-500 font-medium' : 'text-green-500'}>
+                          {run.totalMislabelings ?? 0}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{pct(run.overallAccuracy)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{pct(run.actionAccuracy)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{pct(run.directionAccuracy)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{pct(run.strategyAccuracy)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{pct(run.priceAccuracy)}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">
+                        <span className={run.exitPriceAccuracy != null && run.exitPriceAccuracy < 0.8 ? 'text-red-500 font-medium' : ''}>
+                          {pct(run.exitPriceAccuracy)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{pct(run.strikesAccuracy)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            {evalRuns.length >= 2 && (
+              <div className="mt-3 text-xs text-muted-foreground">
+                Mislabeling trend: {evalRuns[0].totalMislabelings ?? 0} → {evalRuns[evalRuns.length - 1].totalMislabelings ?? 0}
+                {(evalRuns[evalRuns.length - 1].totalMislabelings ?? 0) < (evalRuns[0].totalMislabelings ?? 0)
+                  ? ' (improving)'
+                  : (evalRuns[evalRuns.length - 1].totalMislabelings ?? 0) === (evalRuns[0].totalMislabelings ?? 0)
+                    ? ' (stable)'
+                    : ' (regressing)'}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filters */}
       <div className="flex gap-2 flex-wrap">
@@ -76,11 +169,11 @@ export default async function EvalPage({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-xs text-muted-foreground uppercase w-[300px]">Message</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Parse Output</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase">Label</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase w-[60px]">Status</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase w-[80px]">Actions</TableHead>
+                <TableHead className="w-[300px]">Message</TableHead>
+                <TableHead>Parse Output</TableHead>
+                <TableHead>Label</TableHead>
+                <TableHead className="w-[60px]">Status</TableHead>
+                <TableHead className="w-[80px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

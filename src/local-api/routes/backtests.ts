@@ -30,25 +30,24 @@ app.post('/spawn', async (c) => {
     startDate: string;
     endDate: string;
     traders: string[];
-    useAgent?: boolean;
-    maxAgentCalls?: number;
-    slippagePct?: number;
     useQuoteTape?: boolean;
     agentProvider?: string;
     agentModel?: string;
+    refreshQuoteCache?: boolean;
+    logLevel?: string;
   }>();
 
-  const { runId, startDate, endDate, traders, useAgent, maxAgentCalls, slippagePct, useQuoteTape, agentProvider, agentModel } = body;
+  const { runId, startDate, endDate, traders, useQuoteTape, agentProvider, agentModel, refreshQuoteCache, logLevel } = body;
 
   const args = [
     startDate,
     endDate,
     traders.join(','),
-    ...(useAgent ? ['--agent', '--max-agent-calls', String(maxAgentCalls ?? 100)] : []),
-    ...(useAgent && agentProvider ? ['--agent-provider', agentProvider] : []),
-    ...(useAgent && agentModel ? ['--agent-model', agentModel] : []),
-    '--slippage', String(slippagePct ?? 0.01),
+    ...(agentProvider ? ['--agent-provider', agentProvider] : []),
+    ...(agentModel ? ['--agent-model', agentModel] : []),
     ...(useQuoteTape ? ['--quote-tape'] : []),
+    ...(refreshQuoteCache ? ['--refresh-quote-cache'] : []),
+    '--log-level', logLevel ?? 'debug',
     '--run-id', runId,
   ];
 
@@ -108,6 +107,11 @@ app.post('/spawn', async (c) => {
       });
     } catch (err) {
       console.error('[backtests/spawn] exit handler error:', err);
+      sendSystemAlert({
+        title: 'Backtest exit handler error',
+        message: `Failed to update DB after backtest crash: ${err instanceof Error ? err.message : String(err)}`,
+        severity: 'warning',
+      });
     }
   });
 

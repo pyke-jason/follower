@@ -1,4 +1,4 @@
-import { getTrackedTraders } from '@/lib/queries';
+import { getTrackedTraders, getDistinctAuthors } from '@/lib/queries';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
@@ -6,28 +6,32 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { addTrader } from './actions';
 import { TraderEditRow } from './trader-edit-row';
+import { TraderCombobox } from './trader-combobox';
 
 export const dynamic = 'force-dynamic';
 
 export default async function TradersPage() {
-  const traders = await getTrackedTraders();
+  const [traders, authors] = await Promise.all([
+    getTrackedTraders(),
+    getDistinctAuthors(),
+  ]);
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-bold text-foreground">Tracked Traders</h2>
+      <h2 className="text-lg font-semibold text-foreground">Tracked Traders</h2>
 
       <Card className="py-0 gap-0 overflow-hidden">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Name</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Enabled</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Strategies</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Max Alloc</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Max Daily</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Notes</TableHead>
-                <TableHead className="text-xs text-muted-foreground uppercase px-4">Actions</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Enabled</TableHead>
+                <TableHead>Strategies</TableHead>
+                <TableHead>Max Alloc</TableHead>
+                <TableHead>Max Daily</TableHead>
+                <TableHead>Notes</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -48,11 +52,10 @@ export default async function TradersPage() {
           <form action={addTrader} className="flex items-end gap-3 flex-wrap">
             <div>
               <Label className="text-xs text-muted-foreground mb-1">Name</Label>
-              <Input
-                name="name"
-                required
-                placeholder="Trader name"
-                className="h-8 text-sm"
+              <TraderCombobox
+                key={traders.length}
+                existingTraders={traders.map((t) => t.name)}
+                authors={authors}
               />
             </div>
             <div>

@@ -2,9 +2,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { ChevronRight } from 'lucide-react';
 
-export function LogViewer({ runId, isRunning }: { runId: string; isRunning: boolean }) {
+export function LogViewer({
+  runId,
+  isRunning,
+  defaultCollapsed = false,
+}: {
+  runId: string;
+  isRunning: boolean;
+  defaultCollapsed?: boolean;
+}) {
   const [logs, setLogs] = useState('');
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const preRef = useRef<HTMLPreElement>(null);
   const wasAtBottom = useRef(true);
 
@@ -35,10 +45,10 @@ export function LogViewer({ runId, isRunning }: { runId: string; isRunning: bool
 
   useEffect(() => {
     const el = preRef.current;
-    if (el && wasAtBottom.current) {
+    if (el && wasAtBottom.current && !collapsed && isRunning) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [logs]);
+  }, [logs, collapsed, isRunning]);
 
   function handleScroll() {
     const el = preRef.current;
@@ -49,20 +59,37 @@ export function LogViewer({ runId, isRunning }: { runId: string; isRunning: bool
 
   if (!logs) return null;
 
+  const lineCount = logs.split('\n').length;
+
   return (
     <Card className="py-0 gap-0">
-      <CardHeader className="border-b py-3 px-4">
-        <CardTitle className="text-sm">Process Logs</CardTitle>
+      <CardHeader
+        className="border-b py-3 px-4 cursor-pointer select-none flex items-center gap-2"
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <ChevronRight
+          className={`size-4 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`}
+        />
+        <CardTitle className="text-sm">
+          Process Logs
+          {collapsed && (
+            <span className="ml-2 text-muted-foreground font-normal">
+              &middot; {lineCount.toLocaleString()} lines
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
-      <CardContent className="p-0">
-        <pre
-          ref={preRef}
-          onScroll={handleScroll}
-          className="max-h-96 overflow-y-auto p-4 text-xs font-mono text-muted-foreground whitespace-pre-wrap"
-        >
-          {logs}
-        </pre>
-      </CardContent>
+      {!collapsed && (
+        <CardContent className="p-0">
+          <pre
+            ref={preRef}
+            onScroll={handleScroll}
+            className="max-h-96 overflow-y-auto p-4 text-xs font-mono text-muted-foreground whitespace-pre-wrap"
+          >
+            {logs}
+          </pre>
+        </CardContent>
+      )}
     </Card>
   );
 }

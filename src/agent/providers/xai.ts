@@ -7,7 +7,7 @@ import type {
   ChatWithToolsParams,
   ToolResult,
 } from '../providers.js';
-import type { ToolDef } from '../tools.js';
+import type { ToolDef } from '../tool-factory.js';
 
 type OAIMessage = OpenAI.ChatCompletionMessageParam;
 type OAITool = OpenAI.ChatCompletionTool;
@@ -121,6 +121,10 @@ export class XAIProvider implements LLMProvider {
       toolCalls,
       stopReason,
       rawAssistantMessage: msg,
+      usage: response.usage ? {
+        inputTokens: response.usage.prompt_tokens,
+        outputTokens: response.usage.completion_tokens,
+      } : undefined,
     };
   }
 }

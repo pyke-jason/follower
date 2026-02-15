@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 
@@ -46,6 +47,7 @@ export const messageLabels = sqliteTable('message_labels', {
   source:     text('source').notNull().default('manual'), // manual | agent
   reviewed:   integer('reviewed', { mode: 'boolean' }).default(false),
   notes:         text('notes'),
+  exitPercent:   real('exit_percent'),     // 0.0 to 1.0 for TRIM actions
   modelProvider: text('model_provider'),  // 'anthropic' | 'xai' | null (null for manual)
   modelName:     text('model_name'),      // full model ID or null
   createdAt:     text('created_at').$defaultFn(() => new Date().toISOString()),
@@ -77,6 +79,7 @@ export const tasks = sqliteTable('tasks', {
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_message').on(table.messageId),
   index('idx_tasks_backtest_run').on(table.backtestRunId),
+  uniqueIndex('idx_tasks_message_unique').on(table.messageId).where(sql`message_id IS NOT NULL`),
 ]);
 
 // ─── Task Steps ──────────────────────────────────────
@@ -117,6 +120,9 @@ export const trades = sqliteTable('trades', {
   isBacktest:      integer('is_backtest', { mode: 'boolean' }).default(false),
   backtestRunId:   text('backtest_run_id').references(() => backtestRuns.id),
   metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().default({}),
+  parentTradeId:   text('parent_trade_id').references((): any => trades.id),
+  exitPercent:     real('exit_percent'),
+  avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
   brokerFillQty:   integer('broker_fill_qty'),
   brokerCommission: text('broker_commission'),
@@ -127,6 +133,7 @@ export const trades = sqliteTable('trades', {
   index('idx_trades_symbol').on(table.symbol),
   index('idx_trades_status').on(table.status),
   index('idx_trades_backtest_run').on(table.backtestRunId),
+  index('idx_trades_parent').on(table.parentTradeId),
 ]);
 
 // ─── Backtest Runs ───────────────────────────────────
@@ -215,9 +222,10 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
   tradeId:    text('trade_id'),
   expected:   text('expected', { mode: 'json' }),
   actual:     text('actual', { mode: 'json' }),
-  resolved:   integer('resolved', { mode: 'boolean' }).default(false),
-  resolvedAt: text('resolved_at'),
-  createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
+  resolved:       integer('resolved', { mode: 'boolean' }).default(false),
+  resolvedAt:     text('resolved_at'),
+  resolvedReason: text('resolved_reason'),
+  createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   index('idx_recon_alerts_resolved').on(table.resolved),
   index('idx_recon_alerts_symbol').on(table.symbol),
@@ -259,20 +267,36 @@ export const historicalFetchChunks = sqliteTable('historical_fetch_chunks', {
   index('idx_fetch_chunks_status').on(table.status),
 ]);
 
+// ─── Eval Runs ──────────────────────────────────────
+
+export const evalRuns = sqliteTable('eval_runs', {
+  id:                  text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  labelSet:            text('label_set').notNull(),
+  ranAt:               text('ran_at').notNull(),
+  totalLabels:         integer('total_labels').notNull(),
+  actionAccuracy:      real('action_accuracy'),
+  directionAccuracy:   real('direction_accuracy'),
+  strategyAccuracy:    real('strategy_accuracy'),
+  priceAccuracy:       real('price_accuracy'),
+  exitPriceAccuracy:   real('exit_price_accuracy'),
+  strikesAccuracy:     real('strikes_accuracy'),
+  overallAccuracy:     real('overall_accuracy'),
+  totalMislabelings:   integer('total_mislabelings'),
+  failuresJson:        text('failures_json', { mode: 'json' }),
+});
+
 // ─── Backtest Config/Summary Types ───────────────────
 
 export type BacktestRunConfig = {
   startDate: string;   // ISO date
   endDate: string;     // ISO date
   traders: string[];
-  useAgent: boolean;
-  maxAgentCalls: number;
-  slippagePct: number;
   useQuoteTape: boolean;
   agentProvider?: string;  // 'anthropic' | 'xai'
   agentModel?: string;     // e.g. 'claude-sonnet-4-5-20250929'
   fillModel?: string;      // 'orats' | 'midpoint' | 'natural'
   name?: string;           // human label for the run
+  refreshQuoteCache?: boolean;
 };
 
 export type BacktestRunSummary = {
@@ -361,3 +385,4 @@ export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
+export type EvalRun = typeof evalRuns.$inferSelect;

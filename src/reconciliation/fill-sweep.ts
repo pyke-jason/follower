@@ -3,6 +3,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
 import type { TradeMetadata } from '../db/schema.js';
 import { enrichTradeWithFill } from '../tasks/recorder.js';
+import { sendSystemAlert } from '../lib/alert.js';
 
 /**
  * Periodically sweep for trades that have a broker order ID but haven't
@@ -11,6 +12,7 @@ import { enrichTradeWithFill } from '../tasks/recorder.js';
  */
 export class FillSweep {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private currentRun: Promise<number> | null = null;
 
   constructor(
     private broker: BrokerService,
@@ -18,17 +20,23 @@ export class FillSweep {
   ) {}
 
   start(): void {
-    this.sweep().catch((err) => console.warn('Fill sweep error:', err));
-    this.timer = setInterval(() => {
-      this.sweep().catch((err) => console.warn('Fill sweep error:', err));
-    }, this.intervalMs);
+    this._runSweep();
+    this.timer = setInterval(() => this._runSweep(), this.intervalMs);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.currentRun) await this.currentRun;
+  }
+
+  private _runSweep(): void {
+    this.currentRun = this.sweep().catch((err) => {
+      console.warn('Fill sweep error:', err);
+      return 0;
+    });
   }
 
   async sweep(): Promise<number> {
@@ -50,6 +58,24 @@ export class FillSweep {
         const status = await this.broker.getOrderStatus(metadata.brokerOrderId);
         if (status.status === 'FILLED' && status.filledPrice != null) {
           await enrichTradeWithFill(trade.id, status);
+          enriched++;
+        } else if (status.status === 'REJECTED' || status.status === 'CANCELLED') {
+          await db.update(schema.trades)
+            .set({
+              status: 'CANCELLED',
+              metadata: {
+                ...metadata,
+                fillEnriched: true,
+                fillEnrichedAt: new Date().toISOString(),
+                brokerFinalStatus: status.status,
+              },
+            })
+            .where(eq(schema.trades.id, trade.id));
+          sendSystemAlert({
+            title: `Order ${status.status}`,
+            message: `Order ${metadata.brokerOrderId} for ${trade.symbol} was ${status.status}. Trade marked CANCELLED.`,
+            severity: 'warning',
+          });
           enriched++;
         }
       } catch (err) {

@@ -57,6 +57,27 @@
       "when": 1771128231250,
       "tag": "0007_lonely_longshot",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1771130124220,
+      "tag": "0008_mysterious_hemingway",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1771234800000,
+      "tag": "0009_partial_exits",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1771188611190,
+      "tag": "0010_good_sentry",
+      "breakpoints": true
     }
   ]
 }
