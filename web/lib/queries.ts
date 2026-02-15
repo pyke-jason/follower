@@ -1,5 +1,5 @@
 import { db, schema } from './db';
-import { eq, and, desc, sql, isNull, count } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
 /** Scoping helper: when runId is set, show that backtest's data. Otherwise, live only. */
@@ -90,11 +90,49 @@ export async function getTradeSteps(taskId: string) {
 
 export async function getMessages(opts: {
   author?: string;
+  authors?: string[];
   limit?: number;
   offset?: number;
+  cursor?: string;
+  startDate?: string;
+  endDate?: string;
+  signalsOnly?: boolean;
 } = {}) {
-  const conditions = [];
+  const conditions: SQL[] = [];
+
+  // Single author filter (legacy)
   if (opts.author) conditions.push(eq(schema.messages.author, opts.author));
+
+  // Multi-author filter
+  if (opts.authors && opts.authors.length > 0) {
+    conditions.push(
+      or(...opts.authors.map((a) => eq(schema.messages.author, a)))!
+    );
+  }
+
+  // Cursor-based pagination: fetch messages older than cursor
+  if (opts.cursor) {
+    conditions.push(lt(schema.messages.timestamp, opts.cursor));
+  }
+
+  // Date range
+  if (opts.startDate) {
+    conditions.push(gte(schema.messages.timestamp, opts.startDate));
+  }
+  if (opts.endDate) {
+    conditions.push(lte(schema.messages.timestamp, opts.endDate));
+  }
+
+  // Signals only: has actionHint OR non-empty badges OR non-empty symbols
+  if (opts.signalsOnly) {
+    conditions.push(
+      or(
+        isNotNull(schema.messages.actionHint),
+        sql`json_array_length(${schema.messages.symbols}) > 0`,
+        sql`json_array_length(${schema.messages.badges}) > 0`,
+      )!
+    );
+  }
 
   const query = db
     .select()
@@ -181,4 +219,87 @@ export async function getBacktestRunById(id: string) {
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, id));
   return run ?? null;
+}
+
+// ─── Label / Eval Queries ───────────────────────────
+
+export async function getLabels(opts: {
+  reviewed?: boolean;
+  labelSet?: string;
+  strategy?: string;
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const conditions: SQL[] = [];
+  if (opts.reviewed !== undefined) {
+    conditions.push(eq(schema.messageLabels.reviewed, opts.reviewed));
+  }
+  if (opts.labelSet) {
+    conditions.push(eq(schema.messageLabels.labelSet, opts.labelSet));
+  }
+  if (opts.strategy) {
+    conditions.push(eq(schema.messageLabels.strategy, opts.strategy));
+  }
+
+  const query = db
+    .select({
+      label: schema.messageLabels,
+      message: schema.messages,
+    })
+    .from(schema.messageLabels)
+    .innerJoin(schema.messages, eq(schema.messageLabels.messageId, schema.messages.id))
+    .orderBy(desc(schema.messageLabels.createdAt))
+    .limit(opts.limit ?? 50)
+    .offset(opts.offset ?? 0);
+
+  if (conditions.length > 0) {
+    return query.where(and(...conditions));
+  }
+  return query;
+}
+
+export async function getLabelStats() {
+  const [totals] = await db
+    .select({
+      total: count(),
+      reviewed: sql<number>`SUM(CASE WHEN ${schema.messageLabels.reviewed} = 1 THEN 1 ELSE 0 END)`,
+      unreviewed: sql<number>`SUM(CASE WHEN ${schema.messageLabels.reviewed} = 0 OR ${schema.messageLabels.reviewed} IS NULL THEN 1 ELSE 0 END)`,
+    })
+    .from(schema.messageLabels);
+
+  const byStrategy = await db
+    .select({
+      strategy: schema.messageLabels.strategy,
+      count: count(),
+    })
+    .from(schema.messageLabels)
+    .groupBy(schema.messageLabels.strategy);
+
+  const bySource = await db
+    .select({
+      source: schema.messageLabels.source,
+      count: count(),
+    })
+    .from(schema.messageLabels)
+    .groupBy(schema.messageLabels.source);
+
+  return {
+    total: totals?.total ?? 0,
+    reviewed: totals?.reviewed ?? 0,
+    unreviewed: totals?.unreviewed ?? 0,
+    byStrategy: Object.fromEntries(byStrategy.map((r) => [r.strategy ?? 'null', r.count])),
+    bySource: Object.fromEntries(bySource.map((r) => [r.source, r.count])),
+  };
+}
+
+export async function getLabelWithMessage(labelId: string) {
+  const [result] = await db
+    .select({
+      label: schema.messageLabels,
+      message: schema.messages,
+    })
+    .from(schema.messageLabels)
+    .innerJoin(schema.messages, eq(schema.messageLabels.messageId, schema.messages.id))
+    .where(eq(schema.messageLabels.id, labelId));
+  return result ?? null;
 }

@@ -1,14 +1,16 @@
 import { chromium, type Browser, type Page } from 'playwright';
-import { resolve } from 'path';
+import { sendSystemAlert } from '../lib/alert.js';
+import { PATHS } from '../lib/paths.js';
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated';
 
 const CHAT_URL = process.env.CHAT_URL || 'https://app.oneoption.com/chat';
-const USER_DATA_DIR = process.env.USER_DATA_DIR || resolve(import.meta.dirname, '../../../data/browser-session');
+const USER_DATA_DIR = process.env.USER_DATA_DIR || PATHS.browserSession;
 
 let browser: Browser | null = null;
 let page: Page | null = null;
 let authState: AuthState = 'unknown';
+let authMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
 export async function launchBrowser(): Promise<Page> {
   if (page) return page;
@@ -63,6 +65,10 @@ async function checkAuth(p: Page): Promise<AuthState> {
     return 'authenticated';
   }
 
+  if (!result.isJson && !result.isRedirect) {
+    console.warn('[Browser] Auth check returned ambiguous result — response was neither JSON nor a redirect');
+  }
+
   console.log('[Browser] Not authenticated');
   return 'unauthenticated';
 }
@@ -83,7 +89,7 @@ export async function attemptLogin(): Promise<boolean> {
     await page.fill('input#Email, input[name="Email"]', email);
     await page.fill('input#Password, input[name="Password"]', password);
 
-    const rememberMe = page.locator('input#RememberMe, input[name="RememberMe"]');
+    const rememberMe = page.locator('#RememberMe[type="checkbox"]');
     if (await rememberMe.count() > 0 && !(await rememberMe.isChecked())) {
       await rememberMe.check();
     }
@@ -123,7 +129,57 @@ export function getAuthState(): AuthState {
   return authState;
 }
 
+export function startAuthMonitor(intervalMs = 30_000): void {
+  if (authMonitorTimer) return;
+
+  console.log(`[Browser] Starting auth monitor (every ${intervalMs / 1000}s)`);
+  authMonitorTimer = setInterval(async () => {
+    if (!page) return;
+
+    try {
+      const previous = authState;
+      authState = await checkAuth(page);
+
+      if (previous === 'authenticated' && authState === 'unauthenticated') {
+        sendSystemAlert({
+          title: 'Chat room access lost',
+          message: 'Session expired or login required — attempting re-login',
+          severity: 'critical',
+        });
+
+        const recovered = await attemptLogin();
+        if (!recovered) {
+          sendSystemAlert({
+            title: 'Re-login failed',
+            message: 'Automatic re-login failed — manual intervention required',
+            severity: 'critical',
+          });
+        }
+      }
+
+      if (previous === 'unauthenticated' && authState === 'authenticated') {
+        sendSystemAlert({
+          title: 'Chat room access restored',
+          message: 'Successfully re-authenticated to chat room',
+          severity: 'info',
+        });
+      }
+    } catch (err) {
+      console.error('[Browser] Auth monitor check failed:', err);
+    }
+  }, intervalMs);
+}
+
+export function stopAuthMonitor(): void {
+  if (authMonitorTimer) {
+    clearInterval(authMonitorTimer);
+    authMonitorTimer = null;
+    console.log('[Browser] Auth monitor stopped');
+  }
+}
+
 export async function closeBrowser(): Promise<void> {
+  stopAuthMonitor();
   if (browser) {
     await browser.close();
     browser = null;

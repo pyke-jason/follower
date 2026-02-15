@@ -1,6 +1,18 @@
 import * as broker from '../broker/tradestation.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
+import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
+import { getTrader } from '../config/traders.js';
+import { buildPositionSizer } from '../position-sizing/index.js';
+import {
+  GetQuoteInput,
+  GetOptionsChainInput,
+  GetOpenPositionsInput,
+  CheckRiskLimitsInput,
+  PlaceOrderInput,
+  CalculatePositionSizeInput,
+  FlagForReviewInput,
+} from './schemas.js';
 
 export type ToolDef = {
   name: string;
@@ -21,7 +33,8 @@ export const tools: ToolDef[] = [
       required: ['symbol'],
     },
     execute: async (input) => {
-      return await broker.getQuote(input.symbol as string);
+      const { symbol } = GetQuoteInput.parse(input);
+      return await broker.getQuote(symbol);
     },
   },
   {
@@ -37,11 +50,8 @@ export const tools: ToolDef[] = [
       required: ['symbol', 'expiry', 'optionType'],
     },
     execute: async (input) => {
-      return await broker.getOptionsChain(
-        input.symbol as string,
-        input.expiry as string,
-        input.optionType as 'CALL' | 'PUT',
-      );
+      const { symbol, expiry, optionType } = GetOptionsChainInput.parse(input);
+      return await broker.getOptionsChain(symbol, expiry, optionType);
     },
   },
   {
@@ -55,9 +65,10 @@ export const tools: ToolDef[] = [
       },
     },
     execute: async (input) => {
+      const parsed = GetOpenPositionsInput.parse(input);
       const conditions = [eq(schema.trades.status, 'OPEN')];
-      if (input.symbol) conditions.push(eq(schema.trades.symbol, input.symbol as string));
-      if (input.trader) conditions.push(eq(schema.trades.trader, input.trader as string));
+      if (parsed.symbol) conditions.push(eq(schema.trades.symbol, parsed.symbol));
+      if (parsed.trader) conditions.push(eq(schema.trades.trader, parsed.trader));
 
       return await db.select().from(schema.trades).where(and(...conditions));
     },
@@ -76,8 +87,7 @@ export const tools: ToolDef[] = [
       required: ['symbol', 'strategy', 'trader'],
     },
     execute: async (input) => {
-      const trader = input.trader as string;
-      const symbol = input.symbol as string;
+      const { trader, symbol } = CheckRiskLimitsInput.parse(input);
 
       const traderConfig = await db.select()
         .from(schema.trackedTraders)
@@ -101,25 +111,74 @@ export const tools: ToolDef[] = [
           eq(schema.trades.status, 'OPEN'),
         ));
 
-      const maxAlloc = traderConfig[0]?.maxAllocation
+      const maxAllocRaw = traderConfig[0]?.maxAllocation
         ? parseFloat(traderConfig[0].maxAllocation)
         : null;
-      const maxDailyAlloc = traderConfig[0]?.maxDailyAlloc
+      if (maxAllocRaw != null && !Number.isFinite(maxAllocRaw)) {
+        throw new Error(`[RiskCheck] Non-numeric maxAllocation for trader "${trader}": ${traderConfig[0]?.maxAllocation}`);
+      }
+      const maxAlloc = maxAllocRaw;
+
+      const maxDailyAllocRaw = traderConfig[0]?.maxDailyAlloc
         ? parseFloat(traderConfig[0].maxDailyAlloc)
         : null;
+      if (maxDailyAllocRaw != null && !Number.isFinite(maxDailyAllocRaw)) {
+        throw new Error(`[RiskCheck] Non-numeric maxDailyAlloc for trader "${trader}": ${traderConfig[0]?.maxDailyAlloc}`);
+      }
+      const maxDailyAlloc = maxDailyAllocRaw;
+
       const dailyPnl = parseFloat(todayPnl[0]?.total ?? '0');
+      if (!Number.isFinite(dailyPnl)) {
+        throw new Error(`[RiskCheck] Non-numeric dailyPnl for trader "${trader}": ${todayPnl[0]?.total}`);
+      }
+
+      // Drawdown check using starting balance
+      const startingBalance = await getTodayStartingBalance();
+      let currentDrawdownPct: number | undefined;
+      let drawdownBlocked = false;
+      if (startingBalance && startingBalance.equity > 0) {
+        currentDrawdownPct = Math.round((Math.abs(dailyPnl) / startingBalance.equity) * 10000) / 100;
+        const maxDrawdownPct = 5; // 5% default, configurable per-trader later
+        if (currentDrawdownPct >= maxDrawdownPct) {
+          drawdownBlocked = true;
+        }
+      }
+
+      // Check for unresolved reconciliation alerts (DB_ONLY = dangerous)
+      const unresolvedAlerts = await db.select({
+        count: sql<number>`COUNT(*)`,
+      })
+        .from(schema.reconciliationAlerts)
+        .where(and(
+          eq(schema.reconciliationAlerts.resolved, false),
+          eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
+        ));
+      const alertCount = unresolvedAlerts[0]?.count ?? 0;
 
       const allowed = (
         (!maxDailyAlloc || Math.abs(dailyPnl) < maxDailyAlloc) &&
-        (openPositions[0]?.count ?? 0) < 5  // max 5 open positions per symbol
+        (openPositions[0]?.count ?? 0) < 5 &&
+        !drawdownBlocked &&
+        alertCount === 0
       );
+
+      const reason = drawdownBlocked
+        ? `Drawdown limit exceeded (${currentDrawdownPct}%)`
+        : alertCount > 0
+          ? `${alertCount} unresolved DB_ONLY reconciliation alert(s)`
+          : undefined;
 
       return {
         allowed,
+        reason,
         traderDailyPnl: dailyPnl,
         openPositionsOnSymbol: openPositions[0]?.count ?? 0,
         traderMaxAllocation: maxAlloc,
         traderMaxDailyAllocation: maxDailyAlloc,
+        startingEquity: startingBalance?.equity,
+        currentDrawdownPct,
+        buyingPower: startingBalance?.buyingPower,
+        reconciliationAlerts: alertCount,
       };
     },
   },
@@ -152,13 +211,49 @@ export const tools: ToolDef[] = [
       required: ['symbol', 'strategy', 'direction', 'legs'],
     },
     execute: async (input) => {
+      const parsed = PlaceOrderInput.parse(input);
       return await broker.placeOrder({
-        symbol: input.symbol as string,
-        strategy: input.strategy as string,
-        direction: input.direction as 'LONG' | 'SHORT',
-        legs: input.legs as any[],
-        orderType: (input.orderType as 'MARKET' | 'LIMIT') || 'LIMIT',
-        limitPrice: input.limitPrice as number | undefined,
+        symbol: parsed.symbol,
+        strategy: parsed.strategy,
+        direction: parsed.direction,
+        legs: parsed.legs,
+        orderType: parsed.orderType,
+        limitPrice: parsed.limitPrice,
+      });
+    },
+  },
+  {
+    name: 'calculate_position_size',
+    description: 'Calculate position size based on account equity, ATR volatility, and risk limits.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        trader: { type: 'string' },
+        symbol: { type: 'string' },
+        entryPrice: { type: 'number' },
+        strategy: { type: 'string', description: 'STOCK, CALL, PUT, CDS, PDS' },
+        spreadMaxRisk: { type: 'number', description: 'For spreads: width minus credit. Omit for stocks.' },
+      },
+      required: ['trader', 'symbol', 'entryPrice', 'strategy'],
+    },
+    execute: async (input) => {
+      const parsed = CalculatePositionSizeInput.parse(input);
+      const traderConfig = await getTrader(parsed.trader);
+      const maxAllocation = traderConfig?.maxAllocation ? parseFloat(traderConfig.maxAllocation) : 5000;
+
+      const sizingConfig = traderConfig?.positionSizingConfig;
+      const balance = await broker.getAccountBalance();
+
+      const sizer = buildPositionSizer(sizingConfig, (symbol, barsBack) =>
+        broker.getBars({ symbol, interval: '1', barsBack }),
+      );
+
+      return await sizer.calculateSize({
+        symbol: parsed.symbol,
+        entryPrice: parsed.entryPrice,
+        equity: balance.equity,
+        maxAllocation,
+        spreadMaxRisk: parsed.spreadMaxRisk,
       });
     },
   },
@@ -174,10 +269,11 @@ export const tools: ToolDef[] = [
       required: ['reason'],
     },
     execute: async (input) => {
+      const parsed = FlagForReviewInput.parse(input);
       return {
         flagged: true,
-        reason: input.reason,
-        uncertainty: input.uncertainty,
+        reason: parsed.reason,
+        uncertainty: parsed.uncertainty,
       };
     },
   },

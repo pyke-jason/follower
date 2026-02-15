@@ -122,3 +122,12 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes quote-flash {
+  0% { background-color: rgba(250, 204, 21, 0.15); }
+  100% { background-color: transparent; }
+}
+
+.quote-highlight {
+  animation: quote-flash 1.5s ease-out;
+}

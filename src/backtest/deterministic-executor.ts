@@ -1,11 +1,20 @@
-import type { HistoricalMessage, SimPosition, SimLeg } from './types.js';
+import type { HistoricalMessage, SimPosition, SimLeg, FillModel } from './types.js';
 import type { MessagePriceProvider } from './market-data.js';
-import { SimBroker } from './sim-broker.js';
+import { SimBroker, computeModelFillPrice } from './sim-broker.js';
 import { PositionTracker } from './position-tracker.js';
 import type { SimClock } from './clock.js';
 import type { DetectedStrategy } from '../db/schema.js';
+import type { PositionSize } from '../position-sizing/index.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
+
+export interface SizingService {
+  calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }): Promise<PositionSize>;
+}
+
+export interface RiskService {
+  check(input: { symbol: string; strategy: string; trader: string }): Promise<{ allowed: boolean; reason?: string }>;
+}
 
 export type ExecutionResult = {
   action: 'OPEN' | 'CLOSE' | 'SKIP';
@@ -24,6 +33,9 @@ export class DeterministicExecutor {
     private tracker: PositionTracker,
     private clock: SimClock,
     private priceProvider: MessagePriceProvider,
+    private fillModel: FillModel = 'orats',
+    private sizingService: SizingService,
+    private riskService: RiskService,
   ) {}
 
   canHandle(msg: HistoricalMessage): boolean {
@@ -56,6 +68,9 @@ export class DeterministicExecutor {
 
   private async handleOpen(msg: HistoricalMessage): Promise<ExecutionResult> {
     const strategy = msg.detectedStrategies[0];
+    if (!strategy) {
+      return { action: 'SKIP', reason: 'no detected strategy', usedAgent: false };
+    }
     const symbol = msg.symbols[0];
     if (!symbol) {
       return { action: 'SKIP', reason: 'no symbol detected', usedAgent: false };
@@ -65,12 +80,41 @@ export class DeterministicExecutor {
 
     // Extract price from strategy or text
     const price = strategy.price ?? this.extractPriceFromText(msg.cleanText);
-    if (!price) {
+    if (price === undefined) {
       return { action: 'SKIP', reason: 'no price detected', usedAgent: false };
     }
+    if (!Number.isFinite(price)) {
+      return { action: 'SKIP', reason: `invalid price: ${price}`, usedAgent: false };
+    }
 
-    // Seed price provider
-    this.priceProvider.setPrice(symbol, price, msg.timestamp);
+    // Always size from our portfolio — never use the trader's quantity
+    const isSpread = ['CDS', 'PDS'].includes(strategy.strategy);
+    const sizing = await this.sizingService.calculateSize({
+      trader: msg.author,
+      symbol,
+      entryPrice: price,
+      strategy: strategy.strategy,
+      spreadMaxRisk: isSpread ? price : undefined,
+    });
+    const quantity = sizing.quantity;
+    if (quantity <= 0) {
+      return { action: 'SKIP', reason: `sizing returned 0: ${sizing.reasoning}`, usedAgent: false };
+    }
+
+    // Risk gate
+    const risk = await this.riskService.check({ symbol, strategy: strategy.strategy, trader: msg.author });
+    if (!risk.allowed) {
+      return { action: 'SKIP', reason: `risk blocked: ${risk.reason}`, usedAgent: false };
+    }
+
+    // Build legs with our computed quantity
+    const legs = this.buildLegs(strategy, symbol, direction, quantity);
+    const isOption = strategy.strategy !== 'STOCK';
+    const legCount = legs.length || 1;
+
+    // Seed price provider with realistic spread width for options
+    const spreadPct = isOption ? (legCount > 1 ? 0.08 : 0.10) : 0.001;
+    this.priceProvider.setPrice(symbol, price, msg.timestamp, spreadPct);
 
     // Seed option prices for spreads
     if (strategy.strikes) {
@@ -84,11 +128,13 @@ export class DeterministicExecutor {
       }
     }
 
-    // Build legs
-    const legs = this.buildLegs(strategy, symbol, direction);
-    const quantity = strategy.quantity ?? 1;
+    // Compute ORATS-estimated fill price and place LIMIT order
+    const quote = await this.broker.getQuote(symbol);
+    const isBuy = legs[0]?.action === 'BUY';
+    let limitPrice = computeModelFillPrice(this.fillModel, quote.bid, quote.ask, isBuy, legCount);
+    if (legCount > 1) limitPrice = Math.abs(limitPrice);
+    limitPrice = Math.round(limitPrice * 100) / 100;
 
-    // Simulate order
     const result = await this.broker.placeOrder({
       symbol,
       strategy: strategy.strategy,
@@ -100,11 +146,12 @@ export class DeterministicExecutor {
         action: l.action,
         quantity: l.quantity,
       })),
-      orderType: 'MARKET',
+      orderType: 'LIMIT',
+      limitPrice,
     });
 
     // Track position
-    const fillPrice = result.filledPrice ?? price;
+    const fillPrice = result.filledPrice ?? limitPrice;
     const position = this.tracker.open({
       symbol,
       direction,
@@ -165,33 +212,45 @@ export class DeterministicExecutor {
     strategy: DetectedStrategy,
     symbol: string,
     direction: 'LONG' | 'SHORT',
+    quantity: number,
   ): SimLeg[] {
     const expiry = strategy.expiry ?? this.getNextFriday();
-    const quantity = strategy.quantity ?? 1;
 
     switch (strategy.strategy) {
       case 'CDS': {
-        const [lower, upper] = strategy.strikes ?? [0, 0];
+        if (!strategy.strikes || strategy.strikes.length < 2) {
+          throw new Error(`[Backtest] CDS strategy for ${symbol} missing strikes (got ${JSON.stringify(strategy.strikes)})`);
+        }
+        const [lower, upper] = strategy.strikes;
         return [
           { symbol, strike: lower, expiry, type: 'CALL', action: 'BUY', quantity, fillPrice: 0 },
           { symbol, strike: upper, expiry, type: 'CALL', action: 'SELL', quantity, fillPrice: 0 },
         ];
       }
       case 'PDS': {
-        const [higher, lower] = strategy.strikes ?? [0, 0];
+        if (!strategy.strikes || strategy.strikes.length < 2) {
+          throw new Error(`[Backtest] PDS strategy for ${symbol} missing strikes (got ${JSON.stringify(strategy.strikes)})`);
+        }
+        const [higher, lower] = strategy.strikes;
         return [
           { symbol, strike: higher, expiry, type: 'PUT', action: 'BUY', quantity, fillPrice: 0 },
           { symbol, strike: lower, expiry, type: 'PUT', action: 'SELL', quantity, fillPrice: 0 },
         ];
       }
       case 'CALL': {
-        const strike = strategy.strikes?.[0] ?? 0;
+        const strike = strategy.strikes?.[0];
+        if (strike == null) {
+          throw new Error(`[Backtest] CALL strategy for ${symbol} missing strike (got ${JSON.stringify(strategy.strikes)})`);
+        }
         return [
           { symbol, strike, expiry, type: 'CALL', action: 'BUY', quantity, fillPrice: 0 },
         ];
       }
       case 'PUT': {
-        const strike = strategy.strikes?.[0] ?? 0;
+        const strike = strategy.strikes?.[0];
+        if (strike == null) {
+          throw new Error(`[Backtest] PUT strategy for ${symbol} missing strike (got ${JSON.stringify(strategy.strikes)})`);
+        }
         return [
           { symbol, strike, expiry, type: 'PUT', action: 'BUY', quantity, fillPrice: 0 },
         ];
@@ -211,7 +270,8 @@ export class DeterministicExecutor {
     if (priceMatch) return parseFloat(priceMatch[1].replace(/,/g, ''));
 
     // Try trailing number after symbol text (e.g., "Long CSCO 73.41")
-    const trailingMatch = text.match(/\b(\d+\.?\d+)\s*(?:-|$|\.|!|\s*starter)/i);
+    // Negative lookbehind (?<!:) avoids matching timestamps like "10:30"
+    const trailingMatch = text.match(/(?<!:)\b(\d+\.?\d+)\s*(?:-|$|\.|!|\s*starter)/i);
     if (trailingMatch) {
       const val = parseFloat(trailingMatch[1]);
       // Skip strike-like numbers and very large numbers

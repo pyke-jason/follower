@@ -76,7 +76,15 @@ export class PositionTracker {
   }
 
   private computePnl(pos: SimPosition): number {
-    if (pos.exitPrice == null || isNaN(pos.exitPrice) || isNaN(pos.entryPrice)) return 0;
+    if (pos.exitPrice == null) {
+      throw new Error(`[PositionTracker] Cannot compute PnL for ${pos.id}: exitPrice is null`);
+    }
+    if (!Number.isFinite(pos.exitPrice)) {
+      throw new Error(`[PositionTracker] Cannot compute PnL for ${pos.id}: exitPrice is ${pos.exitPrice}`);
+    }
+    if (!Number.isFinite(pos.entryPrice)) {
+      throw new Error(`[PositionTracker] Cannot compute PnL for ${pos.id}: entryPrice is ${pos.entryPrice}`);
+    }
 
     const diff = pos.exitPrice - pos.entryPrice;
     const multiplier = pos.direction === 'LONG' ? 1 : -1;
@@ -86,7 +94,10 @@ export class PositionTracker {
       pos.strategy === 'STOCK' ? 1 : 100;
 
     const result = diff * multiplier * pos.quantity * contractMultiplier;
-    return isNaN(result) ? 0 : result;
+    if (!Number.isFinite(result)) {
+      throw new Error(`[PositionTracker] PnL computation produced ${result} for ${pos.id} (entry=${pos.entryPrice}, exit=${pos.exitPrice}, qty=${pos.quantity})`);
+    }
+    return result;
   }
 
   getDailyPnl(date: Date): number {

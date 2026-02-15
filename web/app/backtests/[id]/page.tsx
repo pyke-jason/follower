@@ -7,9 +7,11 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/format';
-import { deleteBacktestRun } from '../actions';
+import { deleteBacktestRun, cancelBacktestRun } from '../actions';
+import { LogViewer } from './log-viewer';
 import Link from 'next/link';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
+import type { ExtendedMetrics } from '../../../../src/backtest/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +29,7 @@ export default async function BacktestDetailPage({
   const byTrader = run.byTrader as Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> | null;
   const byStrategy = run.byStrategy as Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> | null;
   const equityCurve = run.equityCurve as { date: string; pnl: number; cumPnl: number; trades: number }[] | null;
+  const extendedMetrics = run.extendedMetrics as ExtendedMetrics | null;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
 
   return (
@@ -69,6 +72,9 @@ export default async function BacktestDetailPage({
         </CardContent>
       </Card>
 
+      {/* Process Logs */}
+      <LogViewer runId={id} isRunning={isRunning} />
+
       {/* Summary Metrics */}
       {summary && (
         <>
@@ -89,7 +95,10 @@ export default async function BacktestDetailPage({
               value={formatCurrency(summary.maxDrawdown)}
               color="text-red-400"
             />
-            <StatCard label="Profit Factor" value={summary.profitFactor.toFixed(2)} />
+            <StatCard 
+              label="Profit Factor" 
+              value={summary.profitFactor >= 999.99 ? '∞' : (summary.profitFactor?.toFixed(2) ?? '0.00')} 
+            />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -99,6 +108,59 @@ export default async function BacktestDetailPage({
             <StatCard label="Agent Trades" value={summary.agentTrades} />
           </div>
         </>
+      )}
+
+      {/* Extended Metrics */}
+      {extendedMetrics && (
+        <Card className="py-0 gap-0">
+          <CardHeader className="border-b py-3 px-4">
+            <CardTitle className="text-sm">Risk Metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4 py-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Sharpe Ratio</p>
+              <p className="text-foreground font-medium">{extendedMetrics.sharpeRatio.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Sortino Ratio</p>
+              <p className="text-foreground font-medium">{extendedMetrics.sortinoRatio.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Calmar Ratio</p>
+              <p className="text-foreground font-medium">{extendedMetrics.calmarRatio.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Recovery Factor</p>
+              <p className="text-foreground font-medium">{extendedMetrics.recoveryFactor.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Max Consec. Wins</p>
+              <p className="text-emerald-400 font-medium">{extendedMetrics.maxConsecutiveWins}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Max Consec. Losses</p>
+              <p className="text-red-400 font-medium">{extendedMetrics.maxConsecutiveLosses}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Avg Holding Period</p>
+              <p className="text-foreground font-medium">
+                {extendedMetrics.avgHoldingPeriodHours >= 24
+                  ? `${(extendedMetrics.avgHoldingPeriodHours / 24).toFixed(1)}d`
+                  : `${extendedMetrics.avgHoldingPeriodHours.toFixed(1)}h`}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Median P&L</p>
+              <p className={`font-medium ${extendedMetrics.medianPnl > 0 ? 'text-emerald-400' : extendedMetrics.medianPnl < 0 ? 'text-red-400' : 'text-foreground'}`}>
+                {formatCurrency(extendedMetrics.medianPnl)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">P&L Std Dev</p>
+              <p className="text-foreground font-medium">{formatCurrency(extendedMetrics.pnlStdDev)}</p>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* By Trader */}
@@ -212,7 +274,7 @@ export default async function BacktestDetailPage({
 
       {/* Action Buttons */}
       <div className="flex gap-2">
-        {run.status === 'COMPLETED' && (
+        {(run.status === 'COMPLETED' || run.status === 'RUNNING') && (
           <>
             <Button size="sm" asChild>
               <Link href={`/?run=${run.id}`}>Browse Dashboard</Link>
@@ -224,6 +286,14 @@ export default async function BacktestDetailPage({
               <Link href={`/tasks?run=${run.id}`}>Browse Tasks</Link>
             </Button>
           </>
+        )}
+        {isRunning && (
+          <form action={cancelBacktestRun}>
+            <input type="hidden" name="runId" value={run.id} />
+            <Button type="submit" variant="secondary" size="sm">
+              Cancel Run
+            </Button>
+          </form>
         )}
         <form action={deleteBacktestRun}>
           <input type="hidden" name="runId" value={run.id} />

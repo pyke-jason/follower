@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { TrackedTrader } from '../../../src/db/schema';
 import { updateTrader, deleteTrader, toggleTrader } from './actions';
 import { TableRow, TableCell } from '@/components/ui/table';
@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 
 export function TraderEditRow({ trader }: { trader: TrackedTrader }) {
   const [editing, setEditing] = useState(false);
+  const toggleFormRef = useRef<HTMLFormElement>(null);
   const strategies = (trader.strategies as string[]) || [];
 
   if (editing) {
@@ -76,17 +77,14 @@ export function TraderEditRow({ trader }: { trader: TrackedTrader }) {
     <TableRow>
       <TableCell className="px-4 font-medium text-foreground">{trader.name}</TableCell>
       <TableCell className="px-4">
-        <form action={toggleTrader} className="inline">
+        <form ref={toggleFormRef} action={toggleTrader} className="inline">
           <input type="hidden" name="name" value={trader.name} />
           <input type="hidden" name="enabled" value={String(trader.enabled)} />
-          <button type="submit">
-            <Switch
-              checked={!!trader.enabled}
-              size="sm"
-              tabIndex={-1}
-              className="pointer-events-none"
-            />
-          </button>
+          <Switch
+            checked={!!trader.enabled}
+            size="sm"
+            onCheckedChange={() => toggleFormRef.current?.requestSubmit()}
+          />
         </form>
       </TableCell>
       <TableCell className="px-4 text-xs text-muted-foreground">{strategies.join(', ')}</TableCell>

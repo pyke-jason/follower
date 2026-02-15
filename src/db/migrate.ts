@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { loadSecrets } from '../lib/secrets/index.js';
+await loadSecrets();
+
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { db, sqliteClient } from './client.js';
 

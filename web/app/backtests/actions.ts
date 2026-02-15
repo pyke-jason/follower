@@ -4,9 +4,9 @@ import { db, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { spawn } from 'child_process';
-import path from 'path';
 import type { BacktestRunConfig } from '../../../src/db/schema';
+
+const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 
 export async function startBacktest(formData: FormData) {
   const startDate = formData.get('startDate') as string;
@@ -16,6 +16,8 @@ export async function startBacktest(formData: FormData) {
   const useQuoteTape = formData.get('useQuoteTape') === 'on';
   const maxAgentCalls = parseInt(formData.get('maxAgentCalls') as string) || 100;
   const slippagePct = parseFloat(formData.get('slippagePct') as string) || 0.01;
+  const agentProvider = (formData.get('agentProvider') as string) || undefined;
+  const agentModel = (formData.get('agentModel') as string) || undefined;
 
   if (!startDate || !endDate || !tradersRaw) {
     throw new Error('Missing required fields');
@@ -34,6 +36,8 @@ export async function startBacktest(formData: FormData) {
     maxAgentCalls,
     slippagePct,
     useQuoteTape,
+    ...(useAgent && agentProvider ? { agentProvider } : {}),
+    ...(useAgent && agentModel ? { agentModel } : {}),
   };
 
   const runId = crypto.randomUUID();
@@ -43,34 +47,81 @@ export async function startBacktest(formData: FormData) {
     config,
   });
 
-  // Spawn the backtest as a child process to avoid webpack bundling issues.
-  // The CLI entry point creates the run row itself, but we already created it above,
-  // so we use a small inline script that calls runBacktest directly.
-  const projectRoot = path.resolve(process.cwd(), '..');
-  const args = [
-    startDate,
-    endDate,
-    traders.join(','),
-    ...(useAgent ? ['--agent', '--max-agent-calls', String(maxAgentCalls)] : []),
-    '--slippage', String(slippagePct),
-    ...(useQuoteTape ? ['--quote-tape'] : []),
-    '--run-id', runId,
-  ];
-
-  const child = spawn('npx', ['tsx', 'src/backtest/launch.ts', ...args], {
-    cwd: projectRoot,
-    stdio: 'ignore',
-    detached: true,
-    env: { ...process.env },
+  const res = await fetch(`${LOCAL_API_URL}/backtests/spawn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId,
+      startDate,
+      endDate,
+      traders,
+      useAgent,
+      maxAgentCalls,
+      slippagePct,
+      useQuoteTape,
+      ...(useAgent && agentProvider ? { agentProvider } : {}),
+      ...(useAgent && agentModel ? { agentModel } : {}),
+    }),
   });
-  child.unref();
+
+  if (!res.ok) {
+    throw new Error(`Local API error: ${res.status} ${await res.text()}`);
+  }
+
+  const { pid } = await res.json() as { pid: number | null };
+
+  if (pid) {
+    await db.update(schema.backtestRuns)
+      .set({ pid })
+      .where(eq(schema.backtestRuns.id, runId));
+  }
 
   redirect('/backtests');
+}
+
+export async function cancelBacktestRun(formData: FormData) {
+  const runId = formData.get('runId') as string;
+  if (!runId) return;
+
+  const [run] = await db
+    .select({ status: schema.backtestRuns.status, pid: schema.backtestRuns.pid })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, runId));
+
+  if (!run || (run.status !== 'RUNNING' && run.status !== 'PENDING')) return;
+
+  await db.update(schema.backtestRuns)
+    .set({
+      status: 'CANCELLED',
+      completedAt: new Date().toISOString(),
+      error: 'Cancelled by user',
+    })
+    .where(eq(schema.backtestRuns.id, runId));
+
+  if (run.pid) {
+    await fetch(`${LOCAL_API_URL}/backtests/${runId}/cancel?pid=${run.pid}`, {
+      method: 'POST',
+    });
+  }
+
+  revalidatePath('/backtests');
 }
 
 export async function deleteBacktestRun(formData: FormData) {
   const runId = formData.get('runId') as string;
   if (!runId) return;
+
+  // Kill running process if any
+  const [run] = await db
+    .select({ status: schema.backtestRuns.status, pid: schema.backtestRuns.pid })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, runId));
+
+  if (run && (run.status === 'RUNNING' || run.status === 'PENDING') && run.pid) {
+    await fetch(`${LOCAL_API_URL}/backtests/${runId}/cancel?pid=${run.pid}`, {
+      method: 'POST',
+    });
+  }
 
   // Delete associated trades and tasks first
   const tasks = await db
@@ -85,6 +136,9 @@ export async function deleteBacktestRun(formData: FormData) {
   await db.delete(schema.trades).where(eq(schema.trades.backtestRunId, runId));
   await db.delete(schema.tasks).where(eq(schema.tasks.backtestRunId, runId));
   await db.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, runId));
+
+  // Clean up log file via local API
+  await fetch(`${LOCAL_API_URL}/logs/${runId}`, { method: 'DELETE' }).catch(() => {});
 
   revalidatePath('/backtests');
 }

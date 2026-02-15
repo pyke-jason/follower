@@ -1,3 +1,18 @@
+export type Bar = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type GetBarsParams = {
+  symbol: string;
+  interval: string;
+  barsBack: number;
+};
+
 export type Quote = {
   symbol: string;
   bid: number;
@@ -28,10 +43,45 @@ export type OptionsChain = {
 
 export type OrderStatus = 'PENDING' | 'OPEN' | 'FILLED' | 'CANCELLED' | 'REJECTED';
 
+export type LegFill = {
+  symbol: string;
+  filledPrice: number;
+  filledQuantity: number;
+  commission?: number;
+};
+
 export type OrderResult = {
   orderId: string;
   status: OrderStatus;
   filledPrice?: number;
+  filledQuantity?: number;
+  commission?: number;
+  fillTimestamp?: string;
+  legFills?: LegFill[];
+};
+
+export type BrokerPosition = {
+  symbol: string;
+  quantity: number;
+  averageCost: number;
+  marketValue: number;
+  unrealizedPnl: number;
+  assetType: string;
+  strikePrice?: number;
+  expiry?: string;
+  optionType?: 'CALL' | 'PUT';
+};
+
+export type AccountBalance = {
+  accountId: string;
+  cashBalance: number;
+  buyingPower: number;
+  equity: number;
+  marketValue: number;
+  dayTradingBuyingPower?: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  timestamp: string;
 };
 
 export type AdjustmentRule = {
@@ -57,6 +107,10 @@ export type WorkingOrder = {
   filledPrice?: number;
   filledAt?: Date;
   cancelledAt?: Date;
+  filledQuantity?: number;
+  commission?: number;
+  fillTimestamp?: string;
+  legFills?: LegFill[];
 };
 
 export type OrderParams = {

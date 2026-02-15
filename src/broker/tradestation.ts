@@ -1,6 +1,15 @@
-import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus } from './types.js';
+import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill, Bar, GetBarsParams } from './types.js';
 import type { BrokerService } from './interface.js';
 import { getAccessToken } from './auth.js';
+import {
+  TsQuotesResponseSchema,
+  TsOptionsResponseSchema,
+  TsOrdersResponseSchema,
+  TsPositionsResponseSchema,
+  TsBalancesResponseSchema,
+  TsBarsResponseSchema,
+  parseApiResponse,
+} from './schemas.js';
 
 const BASE = process.env.TS_BASE_URL || 'https://api.tradestation.com/v3';
 
@@ -23,7 +32,8 @@ async function ts(path: string, options?: RequestInit) {
 
 export async function getQuote(symbol: string): Promise<Quote> {
   const data = await ts(`/marketdata/quotes/${encodeURIComponent(symbol)}`);
-  const q = (data as any).Quotes[0];
+  const validated = parseApiResponse(TsQuotesResponseSchema, data, `GET /marketdata/quotes/${symbol}`);
+  const q = validated.Quotes[0];
   return {
     symbol,
     bid: q.Bid,
@@ -42,11 +52,12 @@ export async function getOptionsChain(
   const data = await ts(
     `/marketdata/options/chains/${encodeURIComponent(symbol)}?expiration=${expiry}&optionType=${optionType}`
   );
+  const validated = parseApiResponse(TsOptionsResponseSchema, data, `GET /marketdata/options/chains/${symbol}`);
   return {
     symbol,
     expiry,
     optionType,
-    strikes: ((data as any).Options || []).map((o: any) => ({
+    strikes: validated.Options.map((o) => ({
       strike: o.StrikePrice,
       bid: o.Bid,
       ask: o.Ask,
@@ -89,11 +100,12 @@ export async function placeOrder(params: OrderParams): Promise<OrderResult> {
     body: JSON.stringify(body),
   });
 
-  const order = (data as any).Orders?.[0];
+  const validated = parseApiResponse(TsOrdersResponseSchema, data, 'POST /orderexecution/orders');
+  const order = validated.Orders[0];
   return {
-    orderId: order?.OrderID ?? 'unknown',
-    status: mapTsStatus(order?.StatusDescription),
-    filledPrice: order?.FilledPrice ? parseFloat(order.FilledPrice) : undefined,
+    orderId: order.OrderID,
+    status: mapTsStatus(order.StatusDescription),
+    filledPrice: order.FilledPrice ? parseFloat(order.FilledPrice) : undefined,
   };
 }
 
@@ -109,11 +121,12 @@ export async function modifyOrder(orderId: string, newLimitPrice: number): Promi
     }),
   });
 
-  const order = (data as any).Orders?.[0];
+  const validated = parseApiResponse(TsOrdersResponseSchema, data, `PUT /orderexecution/orders/${orderId}`);
+  const order = validated.Orders[0];
   return {
-    orderId: order?.OrderID ?? orderId,
-    status: mapTsStatus(order?.StatusDescription),
-    filledPrice: order?.FilledPrice ? parseFloat(order.FilledPrice) : undefined,
+    orderId: order.OrderID,
+    status: mapTsStatus(order.StatusDescription),
+    filledPrice: order.FilledPrice ? parseFloat(order.FilledPrice) : undefined,
   };
 }
 
@@ -122,21 +135,107 @@ export async function cancelOrder(orderId: string): Promise<OrderResult> {
     method: 'DELETE',
   });
 
-  const order = (data as any).Orders?.[0];
+  const validated = parseApiResponse(TsOrdersResponseSchema, data, `DELETE /orderexecution/orders/${orderId}`);
+  const order = validated.Orders[0];
   return {
-    orderId: order?.OrderID ?? orderId,
-    status: mapTsStatus(order?.StatusDescription ?? 'Cancelled'),
+    orderId: order.OrderID,
+    status: mapTsStatus(order.StatusDescription),
   };
 }
 
 export async function getOrderStatus(orderId: string): Promise<OrderResult> {
   const data = await ts(`/orderexecution/orders/${encodeURIComponent(orderId)}`);
 
-  const order = (data as any).Orders?.[0] ?? data;
+  const validated = parseApiResponse(TsOrdersResponseSchema, data, `GET /orderexecution/orders/${orderId}`);
+  const order = validated.Orders[0];
+
+  // Extract per-leg fill details if available (these fields are genuinely optional)
+  let legFills: LegFill[] | undefined;
+  if (order.Legs) {
+    legFills = order.Legs
+      .filter((leg) => leg.ExecPrice != null)
+      .map((leg) => ({
+        symbol: leg.Symbol ?? '',
+        filledPrice: parseFloat(leg.ExecPrice!),
+        filledQuantity: parseInt(leg.ExecQuantity ?? leg.QuantityOrdered ?? '0', 10),
+        commission: leg.CommissionFee ? parseFloat(leg.CommissionFee) : undefined,
+      }));
+    if (legFills.length === 0) legFills = undefined;
+  }
+
   return {
-    orderId: order?.OrderID ?? orderId,
-    status: mapTsStatus(order?.StatusDescription ?? order?.Status),
-    filledPrice: order?.FilledPrice ? parseFloat(order.FilledPrice) : undefined,
+    orderId: order.OrderID,
+    status: mapTsStatus(order.StatusDescription ?? order.Status),
+    filledPrice: order.FilledPrice ? parseFloat(order.FilledPrice) : undefined,
+    filledQuantity: order.FilledQuantity ? parseInt(order.FilledQuantity, 10) : undefined,
+    commission: order.CommissionFee ? parseFloat(order.CommissionFee) : undefined,
+    fillTimestamp: order.ClosedDateTime ?? undefined,
+    legFills,
+  };
+}
+
+export async function getPositions(): Promise<BrokerPosition[]> {
+  const accountId = process.env.TS_ACCOUNT_ID;
+  if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
+
+  const data = await ts(`/brokerage/accounts/${encodeURIComponent(accountId)}/positions`);
+  const validated = parseApiResponse(TsPositionsResponseSchema, data, `GET /brokerage/accounts/.../positions`);
+
+  return validated.Positions.map((p) => {
+    const pos: BrokerPosition = {
+      symbol: p.Symbol,
+      quantity: parseFloat(p.Quantity),
+      averageCost: parseFloat(p.AveragePrice),
+      marketValue: parseFloat(p.MarketValue),
+      unrealizedPnl: parseFloat(p.UnrealizedProfitLoss),
+      assetType: p.AssetType,
+    };
+    if (p.AssetType === 'OP') {
+      pos.strikePrice = p.StrikePrice ? parseFloat(p.StrikePrice) : undefined;
+      pos.expiry = p.ExpirationDate ?? undefined;
+      pos.optionType = p.OptionType === 'C' ? 'CALL' : p.OptionType === 'P' ? 'PUT' : undefined;
+    }
+    return pos;
+  });
+}
+
+export async function getBars(params: GetBarsParams): Promise<Bar[]> {
+  const data = await ts(
+    `/marketdata/barcharts/${encodeURIComponent(params.symbol)}?interval=${params.interval}&barsback=${params.barsBack}`
+  );
+  const validated = parseApiResponse(
+    TsBarsResponseSchema,
+    data,
+    `GET /marketdata/barcharts/${params.symbol}`,
+  );
+  return validated.Bars.map((b) => ({
+    timestamp: b.TimeStamp,
+    open: b.Open,
+    high: b.High,
+    low: b.Low,
+    close: b.Close,
+    volume: b.TotalVolume,
+  }));
+}
+
+export async function getAccountBalance(): Promise<AccountBalance> {
+  const accountId = process.env.TS_ACCOUNT_ID;
+  if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
+
+  const data = await ts(`/brokerage/accounts/${encodeURIComponent(accountId)}/balances`);
+  const validated = parseApiResponse(TsBalancesResponseSchema, data, `GET /brokerage/accounts/.../balances`);
+  const bal = validated.Balances[0];
+
+  return {
+    accountId,
+    cashBalance: parseFloat(bal.CashBalance),
+    buyingPower: parseFloat(bal.BuyingPower),
+    equity: parseFloat(bal.Equity),
+    marketValue: parseFloat(bal.MarketValue),
+    dayTradingBuyingPower: bal.DayTradingBuyingPower ? parseFloat(bal.DayTradingBuyingPower) : undefined,
+    unrealizedPnl: parseFloat(bal.UnrealizedProfitLoss),
+    realizedPnl: parseFloat(bal.RealizedProfitLoss),
+    timestamp: new Date().toISOString(),
   };
 }
 
@@ -152,6 +251,7 @@ function mapTsStatus(tsStatus: string | undefined): OrderStatus {
 
 export const liveService: BrokerService = {
   getQuote, getOptionsChain, placeOrder, modifyOrder, cancelOrder, getOrderStatus,
+  getPositions, getAccountBalance, getBars,
 };
 
 function resolveTradeAction(action: 'BUY' | 'SELL', type: string): string {

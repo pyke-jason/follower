@@ -6,6 +6,7 @@ export type OrderManagerConfig = {
   clock: () => Date;
   onFill?: (order: WorkingOrder) => void;
   onCancel?: (order: WorkingOrder) => void;
+  maxAllocation?: number;
 };
 
 export class OrderManager {
@@ -13,6 +14,7 @@ export class OrderManager {
   private clock: () => Date;
   private onFill?: (order: WorkingOrder) => void;
   private onCancel?: (order: WorkingOrder) => void;
+  private maxAllocation?: number;
   private workingOrders = new Map<string, WorkingOrder>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -21,9 +23,24 @@ export class OrderManager {
     this.clock = config.clock;
     this.onFill = config.onFill;
     this.onCancel = config.onCancel;
+    this.maxAllocation = config.maxAllocation;
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
+    // Defense-in-depth: enforce max allocation before sending to broker
+    if (this.maxAllocation) {
+      const totalQuantity = params.legs.reduce((sum, leg) => Math.max(sum, leg.quantity), 0);
+      const entryPrice = params.limitPrice ?? 0;
+      const isOption = params.legs.some((l) => l.type === 'CALL' || l.type === 'PUT');
+      const multiplier = isOption ? 100 : 1;
+      const estimatedCost = entryPrice * totalQuantity * multiplier;
+      if (estimatedCost > this.maxAllocation) {
+        throw new Error(
+          `Order cost $${estimatedCost.toFixed(2)} exceeds max allocation $${this.maxAllocation}`,
+        );
+      }
+    }
+
     const hasRules = params.adjustmentRules?.length || params.cancelAfterSec;
     const isLimit = params.orderType === 'LIMIT';
 
@@ -88,7 +105,11 @@ export class OrderManager {
           if (rule.maxSteps && order.adjustmentCount >= rule.maxSteps) continue;
 
           // BUY chases UP, SELL chases DOWN
-          const isBuy = order.params.legs[0]?.action === 'BUY';
+          const firstLeg = order.params.legs[0];
+          if (!firstLeg) {
+            throw new Error(`Working order ${orderId} has no legs — cannot determine price chase direction`);
+          }
+          const isBuy = firstLeg.action === 'BUY';
           const newPrice = isBuy
             ? order.currentLimitPrice + rule.stepAmount
             : order.currentLimitPrice - rule.stepAmount;
@@ -107,6 +128,10 @@ export class OrderManager {
         order.status = 'FILLED';
         order.filledPrice = status.filledPrice;
         order.filledAt = now;
+        order.filledQuantity = status.filledQuantity;
+        order.commission = status.commission;
+        order.fillTimestamp = status.fillTimestamp;
+        order.legFills = status.legFills;
         this.workingOrders.delete(orderId);
         this.onFill?.(order);
         this.stopTimerIfEmpty();

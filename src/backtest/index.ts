@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { loadSecrets } from '../lib/secrets/index.js';
+await loadSecrets();
+
 import { runBacktest } from './runner.js';
 import { printReport } from './report.js';
 import { db, schema } from '../db/client.js';

@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { loadSecrets } from '../lib/secrets/index.js';
+await loadSecrets();
+
 import { db, schema, sqliteClient } from './client.js';
 
 async function seed() {
@@ -12,6 +14,7 @@ async function seed() {
       maxAllocation: '5000',
       maxDailyAlloc: '10000',
       notes: 'Primary trader to follow',
+      positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
     },
     {
       name: 'Pete',
@@ -20,6 +23,7 @@ async function seed() {
       maxAllocation: '3000',
       maxDailyAlloc: '6000',
       notes: 'Secondary trader',
+      positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
     },
   ]).onConflictDoNothing();
 

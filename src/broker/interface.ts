@@ -1,4 +1,4 @@
-import type { Quote, OptionsChain, OrderResult, OrderParams } from './types.js';
+import type { Quote, OptionsChain, OrderResult, OrderParams, BrokerPosition, AccountBalance, Bar, GetBarsParams } from './types.js';
 
 export interface BrokerService {
   getQuote(symbol: string): Promise<Quote>;
@@ -7,4 +7,7 @@ export interface BrokerService {
   modifyOrder(orderId: string, newLimitPrice: number): Promise<OrderResult>;
   cancelOrder(orderId: string): Promise<OrderResult>;
   getOrderStatus(orderId: string): Promise<OrderResult>;
+  getPositions(): Promise<BrokerPosition[]>;
+  getAccountBalance(): Promise<AccountBalance>;
+  getBars(params: GetBarsParams): Promise<Bar[]>;
 }

@@ -3,15 +3,19 @@ import { MessagePriceProvider } from './market-data.js';
 import { SimBroker } from './sim-broker.js';
 import { PositionTracker } from './position-tracker.js';
 import { DeterministicExecutor } from './deterministic-executor.js';
+import type { SizingService, RiskService } from './deterministic-executor.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReport } from './report.js';
 import { createTools } from '../agent/tool-factory.js';
 import { runAgent } from '../agent/trade-agent.js';
 import type { AgentStep } from '../agent/trade-agent.js';
+import type { LLMProvider } from '../agent/providers.js';
+import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { OrderManager } from '../orders/order-manager.js';
+import { buildPositionSizer } from '../position-sizing/index.js';
 import { loadQuoteTape } from './databento-tape.js';
 import { db, schema } from '../db/client.js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { QuoteTick } from './databento-tape.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
 import type { TaskContext } from '../db/schema.js';
@@ -25,6 +29,8 @@ type TradeRecord = {
   agentSteps?: AgentStep[];
   agentResult?: { decision: string; reasoning: string } | null;
   taskType: string;
+  modelProvider?: string;
+  modelName?: string;
 };
 
 type TimelineEvent =
@@ -76,6 +82,7 @@ export async function runBacktest(config: BacktestConfig, runId?: string): Promi
           byTrader: report.byTrader,
           byStrategy: report.byStrategy,
           equityCurve: report.equityCurve,
+          extendedMetrics: report.extendedMetrics,
         })
         .where(eq(schema.backtestRuns.id, runId));
     }
@@ -83,14 +90,22 @@ export async function runBacktest(config: BacktestConfig, runId?: string): Promi
     return report;
   } catch (err) {
     if (runId) {
-      await db.update(schema.backtestRuns)
-        .set({
-          status: 'FAILED',
-          completedAt: new Date().toISOString(),
-          durationMs: Date.now() - startTime,
-          error: err instanceof Error ? err.message : String(err),
-        })
+      // Check if already cancelled — don't overwrite CANCELLED status
+      const [current] = await db
+        .select({ status: schema.backtestRuns.status })
+        .from(schema.backtestRuns)
         .where(eq(schema.backtestRuns.id, runId));
+
+      if (!current || current.status !== 'CANCELLED') {
+        await db.update(schema.backtestRuns)
+          .set({
+            status: 'FAILED',
+            completedAt: new Date().toISOString(),
+            durationMs: Date.now() - startTime,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          .where(eq(schema.backtestRuns.id, runId));
+      }
     }
     throw err;
   }
@@ -120,13 +135,77 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   const clock = new SimClock(config.startDate);
   const priceProvider = new MessagePriceProvider();
   const tracker = new PositionTracker();
-  const broker = new SimBroker(priceProvider, clock, tracker, config.slippagePct);
-  const executor = new DeterministicExecutor(broker, tracker, clock, priceProvider);
+  const fillModel = config.fillModel ?? 'orats';
+  const broker = new SimBroker(priceProvider, clock, tracker, fillModel);
+
+  const startingEquity = 100_000;
+
+  const sizer = buildPositionSizer(
+    null, // default ATR config: 5% risk, 2x ATR, 14 period
+    (symbol, barsBack) => broker.getBars({ symbol, interval: '1', barsBack }),
+  );
+
+  const MAX_CONTRACTS: Record<string, number> = {
+    CALL: 20, PUT: 20, CDS: 20, PDS: 20,
+  };
+
+  const sizingService = {
+    async calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }) {
+      const balance = await broker.getAccountBalance();
+      return sizer.calculateSize({
+        symbol: input.symbol,
+        entryPrice: input.entryPrice,
+        equity: balance.equity,
+        maxAllocation: balance.equity * 0.05,
+        spreadMaxRisk: input.spreadMaxRisk,
+        maxQuantity: MAX_CONTRACTS[input.strategy],
+      });
+    },
+  };
+
+  const riskService = {
+    async check(input: { symbol: string; strategy: string; trader: string }) {
+      const openOnSymbol = tracker.getOpenBySymbol(input.symbol).length;
+      const totalOpen = tracker.getOpen().length;
+      const totalOpenNotional = tracker.getOpen().reduce(
+        (sum, p) => sum + Math.abs(p.entryPrice * p.quantity * (p.strategy !== 'STOCK' ? 100 : 1)), 0,
+      );
+      const dailyPnl = tracker.getDailyPnl(clock.now());
+      const balance = await broker.getAccountBalance();
+
+      if (openOnSymbol >= 3) {
+        return { allowed: false, reason: `${openOnSymbol} positions already open on ${input.symbol}` };
+      }
+      if (totalOpen >= 20) {
+        return { allowed: false, reason: `${totalOpen} total open positions (max 20)` };
+      }
+      if (totalOpenNotional > balance.equity * 2) {
+        return { allowed: false, reason: `notional exposure $${totalOpenNotional.toFixed(0)} > 2x equity $${(balance.equity * 2).toFixed(0)}` };
+      }
+      if (dailyPnl < 0 && Math.abs(dailyPnl) > startingEquity * 0.05) {
+        return { allowed: false, reason: `daily loss $${dailyPnl.toFixed(0)} > 5% of starting equity` };
+      }
+
+      return { allowed: true };
+    },
+  };
+
+  const executor = new DeterministicExecutor(broker, tracker, clock, priceProvider, fillModel, sizingService, riskService);
 
   const orderManager = new OrderManager({
     broker,
     clock: () => clock.now(),
   });
+
+  // Create LLM provider for agent calls
+  const agentIdentity = {
+    provider: (config.agentProvider ?? DEFAULT_TRADE_MODEL.provider) as 'anthropic' | 'xai',
+    model: config.agentModel ?? DEFAULT_TRADE_MODEL.model,
+  };
+  const agentProvider = config.useAgent ? await createProvider(agentIdentity) : undefined;
+  if (agentProvider) {
+    console.log(`[Backtest] Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
+  }
 
   // Stats tracking
   let agentCallsUsed = 0;
@@ -143,21 +222,24 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       throw new Error('databentoApiKey is required when useQuoteTape is true');
     }
 
-    // Collect unique symbols from messages
-    const symbols = new Set<string>();
+    // Collect unique symbols and the specific days each symbol is referenced
+    const symbolDates = new Map<string, Date[]>();
     for (const msg of tradableMessages) {
       for (const sym of msg.symbols) {
-        symbols.add(sym);
+        let dates = symbolDates.get(sym);
+        if (!dates) { dates = []; symbolDates.set(sym, dates); }
+        dates.push(msg.timestamp);
       }
     }
 
-    if (symbols.size > 0) {
+    if (symbolDates.size > 0) {
       const ticks = await loadQuoteTape({
         apiKey: config.databentoApiKey,
         dataset: config.databentoDataset ?? 'DBEQ.BASIC',
-        symbols: Array.from(symbols),
+        symbols: Array.from(symbolDates.keys()),
         start: config.startDate,
         end: config.endDate,
+        symbolDates,
       });
 
       console.log(`[Backtest] Running merged timeline (${tradableMessages.length} messages + ${ticks.length} ticks)...`);
@@ -177,7 +259,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
             event.message, broker, tracker, priceProvider, clock, executor,
             orderManager, config, { agentCallsUsed, deterministicTrades, agentTrades, skippedLowConfidence },
             (stats) => { agentCallsUsed = stats.agentCallsUsed; deterministicTrades = stats.deterministicTrades; agentTrades = stats.agentTrades; skippedLowConfidence = stats.skippedLowConfidence; },
-            tradeRecords,
+            tradeRecords, agentProvider, sizingService, riskService, startingEquity, runId,
           );
         }
       }
@@ -196,7 +278,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
         msg, broker, tracker, priceProvider, clock, executor,
         orderManager, config, { agentCallsUsed, deterministicTrades, agentTrades, skippedLowConfidence },
         (stats) => { agentCallsUsed = stats.agentCallsUsed; deterministicTrades = stats.deterministicTrades; agentTrades = stats.agentTrades; skippedLowConfidence = stats.skippedLowConfidence; },
-        tradeRecords,
+        tradeRecords, agentProvider, sizingService, riskService, startingEquity, runId,
       );
     }
   }
@@ -209,11 +291,13 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     deterministicTrades,
     agentTrades,
     skippedLowConfidence,
-  });
+  }, startingEquity);
 
   // Persist trades and tasks to DB
   if (runId) {
     await persistBacktestResults(runId, tracker, tradeRecords);
+    // Backfill PnL on runDecisions from the trades table
+    await backfillDecisionPnl(runId);
   }
 
   return report;
@@ -247,6 +331,8 @@ async function persistBacktestResults(
       taskType: record?.taskType ?? 'EXECUTE_TRADE',
       status: 'COMPLETED',
       assignee: record?.source === 'agent' ? 'agent' : 'deterministic',
+      modelProvider: record?.modelProvider ?? null,
+      modelName: record?.modelName ?? null,
       context: {
         messageId: pos.sourceMessageId,
         author: pos.trader,
@@ -298,10 +384,31 @@ async function persistBacktestResults(
       closedAt: pos.closedAt?.toISOString() ?? null,
       isBacktest: true,
       backtestRunId: runId,
+      metadata: record?.modelProvider
+        ? { agentModel: `${record.modelProvider}:${record.modelName}` }
+        : {},
     });
   }
 
   console.log(`[Backtest] Persisted ${allPositions.length} trades and tasks to DB.`);
+}
+
+/**
+ * Backfill PnL on run_decisions from the trades table in a single UPDATE.
+ */
+async function backfillDecisionPnl(runId: string): Promise<void> {
+  await db.run(sql`
+    UPDATE run_decisions
+    SET pnl = (
+      SELECT t.pnl FROM trades t
+      WHERE t.source_message_id = run_decisions.message_id
+        AND t.backtest_run_id = ${runId}
+        AND t.pnl IS NOT NULL
+      LIMIT 1
+    )
+    WHERE backtest_run_id = ${runId}
+      AND decision = 'EXECUTE'
+  `);
 }
 
 type Stats = {
@@ -323,8 +430,14 @@ async function processMessage(
   stats: Stats,
   updateStats: (stats: Stats) => void,
   tradeRecords: TradeRecord[],
+  agentProvider: LLMProvider | undefined,
+  sizingService: SizingService,
+  riskService: RiskService,
+  startingEquity: number,
+  runId?: string,
 ): Promise<void> {
   clock.advance(msg.timestamp);
+  const decisionStart = Date.now();
 
   // High confidence → deterministic
   if (executor.canHandle(msg)) {
@@ -337,6 +450,29 @@ async function processMessage(
         source: 'deterministic',
         taskType: result.action === 'CLOSE' ? 'CLOSE_POSITION' : 'EXECUTE_TRADE',
       });
+      if (runId) {
+        await db.insert(schema.runDecisions).values({
+          backtestRunId: runId,
+          messageId: msg.id,
+          path: 'deterministic',
+          decision: 'EXECUTE',
+          reasoning: 'High confidence deterministic execution',
+          tradeId: result.position.id,
+          durationMs: Date.now() - decisionStart,
+        });
+      }
+    } else {
+      // Deterministic handler returned SKIP (e.g. close with no matching position)
+      if (runId) {
+        await db.insert(schema.runDecisions).values({
+          backtestRunId: runId,
+          messageId: msg.id,
+          path: 'deterministic',
+          decision: 'SKIP',
+          reasoning: result.reason ?? 'Deterministic handler skipped',
+          durationMs: Date.now() - decisionStart,
+        });
+      }
     }
     updateStats(stats);
     return;
@@ -347,17 +483,62 @@ async function processMessage(
     try {
       const agentResult = await runAgentForBacktest(
         msg, broker, tracker, priceProvider, clock, orderManager,
-        tradeRecords,
+        tradeRecords, agentProvider, sizingService, riskService, startingEquity,
       );
       stats.agentCallsUsed++;
       if (agentResult) {
         stats.agentTrades++;
+        if (runId) {
+          const lastRecord = tradeRecords[tradeRecords.length - 1];
+          await db.insert(schema.runDecisions).values({
+            backtestRunId: runId,
+            messageId: msg.id,
+            path: 'agent',
+            decision: 'EXECUTE',
+            reasoning: lastRecord?.agentResult?.reasoning ?? 'Agent executed trade',
+            tradeId: lastRecord?.positionId,
+            durationMs: Date.now() - decisionStart,
+          });
+        }
+      } else {
+        if (runId) {
+          await db.insert(schema.runDecisions).values({
+            backtestRunId: runId,
+            messageId: msg.id,
+            path: 'agent',
+            decision: 'SKIP',
+            reasoning: 'Agent decided to skip',
+            durationMs: Date.now() - decisionStart,
+          });
+        }
       }
     } catch (err) {
       console.error(`[Backtest] Agent error for message ${msg.id}:`, err);
+      if (runId) {
+        await db.insert(schema.runDecisions).values({
+          backtestRunId: runId,
+          messageId: msg.id,
+          path: 'agent',
+          decision: 'SKIP',
+          reasoning: `Agent error: ${err instanceof Error ? err.message : String(err)}`,
+          durationMs: Date.now() - decisionStart,
+        });
+      }
     }
   } else {
     stats.skippedLowConfidence++;
+    if (runId) {
+      await db.insert(schema.runDecisions).values({
+        backtestRunId: runId,
+        messageId: msg.id,
+        path: 'skipped',
+        decision: 'SKIP',
+        reasoning: config.useAgent
+          ? 'Agent budget exhausted'
+          : 'Low confidence, agent disabled',
+        durationMs: Date.now() - decisionStart,
+      });
+    }
   }
   updateStats(stats);
 }
@@ -370,6 +551,10 @@ async function runAgentForBacktest(
   clock: SimClock,
   orderManager: OrderManager,
   tradeRecords: TradeRecord[],
+  agentProvider: LLMProvider | undefined,
+  sizingService: SizingService,
+  riskService: RiskService,
+  startingEquity: number,
 ): Promise<boolean> {
   // Seed price data from message
   if (msg.symbols[0] && msg.detectedStrategies[0]?.price) {
@@ -408,16 +593,17 @@ async function runAgentForBacktest(
       })) as Trade[];
     },
     checkRiskLimits: async (input) => {
-      const openOnSymbol = tracker.getOpenBySymbol(input.symbol).length;
-      const dailyPnl = tracker.getDailyPnl(clock.now());
+      const result = await riskService.check(input);
+      const balance = await broker.getAccountBalance();
       return {
-        allowed: openOnSymbol < 5 && Math.abs(dailyPnl) < 10000,
-        traderDailyPnl: dailyPnl,
-        openPositionsOnSymbol: openOnSymbol,
-        traderMaxAllocation: 5000,
-        traderMaxDailyAllocation: 10000,
+        ...result,
+        traderDailyPnl: tracker.getDailyPnl(clock.now()),
+        openPositionsOnSymbol: tracker.getOpenBySymbol(input.symbol).length,
+        traderMaxAllocation: balance.equity * 0.05,
+        traderMaxDailyAllocation: startingEquity * 0.05,
       };
     },
+    calculatePositionSize: async (input) => sizingService.calculateSize(input),
   });
 
   const taskContext: TaskContext = {
@@ -432,7 +618,7 @@ async function runAgentForBacktest(
     confidence: msg.confidence,
   };
 
-  const { steps, result } = await runAgent(taskContext, simTools);
+  const { steps, result, model } = await runAgent(taskContext, simTools, agentProvider);
 
   if (result?.decision === 'EXECUTE' && result.trade) {
     // Record the trade in the position tracker
@@ -466,6 +652,8 @@ async function runAgentForBacktest(
         agentSteps: steps,
         agentResult: { decision: result.decision, reasoning: result.reasoning },
         taskType: msg.actionHint === 'CLOSE' ? 'CLOSE_POSITION' : 'EXECUTE_TRADE',
+        modelProvider: model.provider,
+        modelName: model.model,
       });
     }
 

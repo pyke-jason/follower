@@ -1,0 +1,205 @@
+'use client';
+
+import { useState, useMemo } from 'react';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Input } from '@/components/ui/input';
+import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
+import { Users, X, Check } from 'lucide-react';
+import type { MessageFilters } from './actions';
+
+type TimePeriod = 'today' | '7d' | '30d' | 'all';
+
+function getDateRange(period: TimePeriod): { startDate?: string; endDate?: string } {
+  if (period === 'all') return {};
+  const now = new Date();
+  let start: Date;
+  if (period === 'today') {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else if (period === '7d') {
+    start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  } else {
+    start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
+  return { startDate: start.toISOString() };
+}
+
+export function ChatFilters({
+  authors,
+  filters,
+  onFilterChange,
+}: {
+  authors: string[];
+  filters: MessageFilters;
+  onFilterChange: (filters: MessageFilters) => void;
+}) {
+  const [search, setSearch] = useState('');
+
+  const selectedAuthors = filters.authors ?? [];
+
+  // Derive time period from current startDate
+  const timePeriod: TimePeriod = (() => {
+    if (!filters.startDate) return 'all';
+    const start = new Date(filters.startDate).getTime();
+    const now = Date.now();
+    const diff = now - start;
+    const dayMs = 24 * 60 * 60 * 1000;
+    if (diff < 1.5 * dayMs) return 'today';
+    if (diff < 10 * dayMs) return '7d';
+    if (diff < 35 * dayMs) return '30d';
+    return 'all';
+  })();
+
+  const filteredAuthors = useMemo(() => {
+    if (!search) return authors;
+    const q = search.toLowerCase();
+    return authors.filter((a) => a.toLowerCase().includes(q));
+  }, [authors, search]);
+
+  const handleTimePeriod = (value: string) => {
+    if (!value) return; // deselect not allowed
+    const range = getDateRange(value as TimePeriod);
+    onFilterChange({ ...filters, startDate: range.startDate, endDate: range.endDate });
+  };
+
+  const toggleAuthor = (author: string) => {
+    const next = selectedAuthors.includes(author)
+      ? selectedAuthors.filter((a) => a !== author)
+      : [...selectedAuthors, author];
+    onFilterChange({ ...filters, authors: next.length > 0 ? next : undefined });
+  };
+
+  const clearAuthors = () => {
+    onFilterChange({ ...filters, authors: undefined });
+  };
+
+  const toggleSignalsOnly = (checked: boolean) => {
+    onFilterChange({ ...filters, signalsOnly: checked || undefined });
+  };
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm flex-wrap sticky top-0 z-10">
+      {/* Time period */}
+      <ToggleGroup
+        type="single"
+        value={timePeriod}
+        onValueChange={handleTimePeriod}
+        variant="outline"
+        size="sm"
+      >
+        <ToggleGroupItem value="today" className="text-xs">Today</ToggleGroupItem>
+        <ToggleGroupItem value="7d" className="text-xs">7d</ToggleGroupItem>
+        <ToggleGroupItem value="30d" className="text-xs">30d</ToggleGroupItem>
+        <ToggleGroupItem value="all" className="text-xs">All</ToggleGroupItem>
+      </ToggleGroup>
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-border" />
+
+      {/* Author filter popover */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition-colors">
+            <Users className="w-3.5 h-3.5" />
+            <span>Authors</span>
+            {selectedAuthors.length > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-200 text-[10px] leading-none font-medium">
+                {selectedAuthors.length}
+              </span>
+            )}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-64 p-0">
+          <div className="p-2 border-b border-border">
+            <Input
+              placeholder="Search authors..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-7 text-xs"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1">
+            {filteredAuthors.map((author) => {
+              const isSelected = selectedAuthors.includes(author);
+              return (
+                <button
+                  key={author}
+                  onClick={() => toggleAuthor(author)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-800 transition-colors"
+                >
+                  <div className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0 ${
+                    isSelected ? 'bg-primary border-primary' : 'border-zinc-600'
+                  }`}>
+                    {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+                  </div>
+                  <span
+                    className="truncate"
+                    style={{ color: getAuthorTextColor(author) }}
+                  >
+                    {author}
+                  </span>
+                </button>
+              );
+            })}
+            {filteredAuthors.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-3">No authors found</p>
+            )}
+          </div>
+          {selectedAuthors.length > 0 && (
+            <div className="border-t border-border p-2">
+              <button
+                onClick={clearAuthors}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {/* Selected author chips (compact, dismissible) — max 3 visible */}
+      {selectedAuthors.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap">
+          {selectedAuthors.slice(0, 3).map((author) => (
+            <button
+              key={author}
+              onClick={() => toggleAuthor(author)}
+              className="inline-flex items-center gap-1 text-[11px] pl-2 pr-1 py-0.5 rounded-full border border-transparent transition-colors"
+              style={{
+                backgroundColor: getAuthorBgColor(author),
+                color: getAuthorTextColor(author),
+              }}
+            >
+              {author}
+              <X className="w-3 h-3 opacity-60 hover:opacity-100" />
+            </button>
+          ))}
+          {selectedAuthors.length > 3 && (
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-400">
+              +{selectedAuthors.length - 3}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-border" />
+
+      {/* Signals only toggle */}
+      <div className="flex items-center gap-1.5">
+        <Switch
+          size="sm"
+          checked={filters.signalsOnly ?? false}
+          onCheckedChange={toggleSignalsOnly}
+          id="signals-only"
+        />
+        <Label htmlFor="signals-only" className="text-xs text-muted-foreground cursor-pointer">
+          Signals only
+        </Label>
+      </div>
+    </div>
+  );
+}

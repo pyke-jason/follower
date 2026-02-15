@@ -3,16 +3,18 @@
  * Accepts --run-id to reuse an existing backtest_runs row
  * (the web action creates the row before spawning this process).
  */
-import 'dotenv/config';
+import { loadSecrets } from '../lib/secrets/index.js';
+await loadSecrets();
+
 import { runBacktest } from './runner.js';
 import { printReport } from './report.js';
-import type { BacktestConfig } from './types.js';
+import type { BacktestConfig, FillModel } from './types.js';
 
 async function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 3) {
-    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--agent] [--max-agent-calls N] [--slippage N] [--quote-tape] [--run-id ID]');
+    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--agent] [--max-agent-calls N] [--slippage N] [--fill-model orats|midpoint|natural] [--quote-tape] [--run-id ID]');
     process.exit(1);
   }
 
@@ -39,6 +41,29 @@ async function main() {
     slippagePct = parseFloat(args[slippageIdx + 1]);
   }
 
+  let fillModel: FillModel = 'orats';
+  const fillModelIdx = args.indexOf('--fill-model');
+  if (fillModelIdx !== -1 && args[fillModelIdx + 1]) {
+    const val = args[fillModelIdx + 1] as FillModel;
+    if (!['orats', 'midpoint', 'natural'].includes(val)) {
+      console.error(`Invalid fill model "${val}". Must be one of: orats, midpoint, natural`);
+      process.exit(1);
+    }
+    fillModel = val;
+  }
+
+  let agentProvider: string | undefined;
+  const providerIdx = args.indexOf('--agent-provider');
+  if (providerIdx !== -1 && args[providerIdx + 1]) {
+    agentProvider = args[providerIdx + 1];
+  }
+
+  let agentModel: string | undefined;
+  const modelIdx = args.indexOf('--agent-model');
+  if (modelIdx !== -1 && args[modelIdx + 1]) {
+    agentModel = args[modelIdx + 1];
+  }
+
   let runId: string | undefined;
   const runIdIdx = args.indexOf('--run-id');
   if (runIdIdx !== -1 && args[runIdIdx + 1]) {
@@ -58,9 +83,12 @@ async function main() {
     useAgent,
     maxAgentCalls,
     slippagePct,
+    fillModel,
     useQuoteTape,
     databentoApiKey,
     databentoDataset: process.env.DATABENTO_DATASET ?? 'DBEQ.BASIC',
+    agentProvider,
+    agentModel,
   };
 
   console.log(`[Backtest] Starting (run ${runId ?? 'no-id'})...`);
@@ -73,6 +101,11 @@ async function main() {
 
   printReport(report);
 }
+
+process.on('SIGTERM', () => {
+  console.log('[Backtest] Received SIGTERM, exiting.');
+  process.exit(0);
+});
 
 main().catch((err) => {
   console.error('[Backtest] Fatal error:', err);

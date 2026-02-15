@@ -1,7 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { tools as defaultTools } from './tools.js';
 import type { ToolDef } from './tools.js';
 import type { TaskContext, TaskResult } from '../db/schema.js';
+import type { LLMProvider, ModelIdentity } from './providers.js';
+import { createProvider, DEFAULT_TRADE_MODEL } from './providers.js';
+import { AgentDecisionSchema, FlagForReviewInput } from './schemas.js';
 
 const SYSTEM_PROMPT = `You are a trade-copy agent monitoring a live trading chat room.
 
@@ -13,8 +15,12 @@ their trades. You have tools for market data, position management, and execution
 2. IDENTIFY: What strategy? CDS, PDS, naked call, stock, etc.
 3. VALIDATE: Use get_quote / get_options_chain to check current prices.
    If the market has moved significantly since the message, flag for review.
-4. CHECK RISK: Use check_risk_limits before any execution.
-5. DECIDE: Execute, skip (with reason), or flag for human review.
+4. SIZE: Use calculate_position_size to determine quantity.
+   - For stocks: pass entryPrice
+   - For spreads (CDS/PDS): pass entryPrice as net debit, spreadMaxRisk as (width - credit)
+   Use the returned quantity for all legs.
+5. CHECK RISK: Use check_risk_limits before any execution.
+6. DECIDE: Execute, skip (with reason), or flag for human review.
 
 ## Strategy Knowledge
 - CDS (Call Debit Spread): Expires FRIDAY of current week unless stated.
@@ -33,7 +39,7 @@ their trades. You have tools for market data, position management, and execution
 - If unsure, use flag_for_review — don't guess on real money.
 - Always explain your reasoning. Your steps are audited.
 - If an exit arrives but we have no matching open position, skip.
-- Respect max allocation per trader and daily loss limits.
+- Position sizing is handled by the calculate_position_size tool — always use it for entries.
 
 ## Working Orders
 For LIMIT orders, you can attach rules so the system automatically adjusts the price over time:
@@ -50,8 +56,6 @@ After using tools, respond with a JSON block:
 }
 \`\`\``;
 
-const client = new Anthropic();
-
 export type AgentStep = {
   tool?: string;
   input?: unknown;
@@ -60,10 +64,22 @@ export type AgentStep = {
   durationMs?: number;
 };
 
+export type AgentRunResult = {
+  steps: AgentStep[];
+  result: TaskResult | null;
+  model: ModelIdentity;
+};
+
 export async function runAgent(
   taskContext: TaskContext,
   injectedTools?: ToolDef[],
-): Promise<{ steps: AgentStep[]; result: TaskResult | null }> {
+  provider?: LLMProvider,
+): Promise<AgentRunResult> {
+
+  // Lazily create default provider if not supplied
+  if (!provider) {
+    provider = await createProvider(DEFAULT_TRADE_MODEL);
+  }
 
   const userPrompt = `Review this trade message and decide what to do.
 
@@ -81,128 +97,100 @@ Use your tools to gather context, validate the trade, and make a decision.`;
 
   const activeTools = injectedTools ?? defaultTools;
 
-  const anthropicTools: Anthropic.Tool[] = activeTools.map(t => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.input_schema as Anthropic.Tool.InputSchema,
-  }));
-
   const steps: AgentStep[] = [];
   let result: TaskResult | null = null;
 
-  const messages: Anthropic.MessageParam[] = [
-    { role: 'user', content: userPrompt },
-  ];
+  // Messages array holds provider-native message objects
+  const messages: unknown[] = [provider.makeUserMessage(userPrompt)];
 
   // Agentic loop: keep going while the model wants to use tools
   for (let turn = 0; turn < 10; turn++) {
     const startTime = Date.now();
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 2048,
+    const response = await provider.chatWithTools({
       system: SYSTEM_PROMPT,
-      tools: anthropicTools,
       messages,
+      maxTokens: 2048,
+      tools: activeTools,
     });
 
     const durationMs = Date.now() - startTime;
 
-    // Process response blocks
-    const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
-
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        // Try to parse the final JSON result
-        const jsonMatch = block.text.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch) {
-          try {
-            result = JSON.parse(jsonMatch[1]);
-          } catch { /* not valid JSON, that's ok */ }
-        } else {
-          // Try parsing the whole text as JSON
-          try {
-            const parsed = JSON.parse(block.text);
-            if (parsed.decision) result = parsed;
-          } catch { /* intermediate reasoning */ }
-        }
-        steps.push({ reasoning: block.text, durationMs });
+    // Process text blocks — try to parse JSON result
+    for (const text of response.textBlocks) {
+      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        try {
+          const raw = JSON.parse(jsonMatch[1]);
+          const parsed = AgentDecisionSchema.safeParse(raw);
+          if (parsed.success) result = parsed.data as TaskResult;
+        } catch { /* not valid JSON, that's ok */ }
+      } else {
+        try {
+          const raw = JSON.parse(text);
+          const parsed = AgentDecisionSchema.safeParse(raw);
+          if (parsed.success) result = parsed.data as TaskResult;
+        } catch { /* intermediate reasoning */ }
       }
-
-      if (block.type === 'tool_use') {
-        toolUseBlocks.push(block);
-      }
+      steps.push({ reasoning: text, durationMs });
     }
 
     // If no tool use, we're done
-    if (toolUseBlocks.length === 0 || response.stop_reason === 'end_turn') {
+    if (response.toolCalls.length === 0 || response.stopReason === 'end_turn') {
       break;
     }
 
-    // Execute tool calls and build tool results
-    messages.push({ role: 'assistant', content: response.content });
+    // Push the raw assistant message into conversation history
+    messages.push(response.rawAssistantMessage);
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    // Execute tool calls and build results
+    const toolResults: Array<{ toolCallId: string; output: string; isError?: boolean }> = [];
 
-    for (const toolUse of toolUseBlocks) {
-      const toolDef = activeTools.find(t => t.name === toolUse.name);
+    for (const toolCall of response.toolCalls) {
+      const toolDef = activeTools.find((t) => t.name === toolCall.name);
       if (!toolDef) {
         toolResults.push({
-          type: 'tool_result',
-          tool_use_id: toolUse.id,
-          content: JSON.stringify({ error: `Unknown tool: ${toolUse.name}` }),
+          toolCallId: toolCall.id,
+          output: JSON.stringify({ error: `Unknown tool: ${toolCall.name}` }),
         });
-        steps.push({ tool: toolUse.name, input: toolUse.input, output: { error: 'unknown tool' } });
+        steps.push({ tool: toolCall.name, input: toolCall.input, output: { error: 'unknown tool' } });
         continue;
       }
 
       const toolStart = Date.now();
       try {
-        const output = await toolDef.execute(toolUse.input as Record<string, unknown>);
+        const output = await toolDef.execute(toolCall.input);
         const toolDuration = Date.now() - toolStart;
 
-        steps.push({
-          tool: toolUse.name,
-          input: toolUse.input,
-          output,
-          durationMs: toolDuration,
-        });
-
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: toolUse.id,
-          content: JSON.stringify(output),
-        });
+        steps.push({ tool: toolCall.name, input: toolCall.input, output, durationMs: toolDuration });
+        toolResults.push({ toolCallId: toolCall.id, output: JSON.stringify(output) });
 
         // If flag_for_review was called, capture as MANUAL_REVIEW
-        if (toolUse.name === 'flag_for_review') {
+        if (toolCall.name === 'flag_for_review') {
+          const flagParsed = FlagForReviewInput.safeParse(toolCall.input);
           result = {
             decision: 'MANUAL_REVIEW',
-            reasoning: (toolUse.input as any).reason ?? 'Flagged by agent',
+            reasoning: flagParsed.success ? flagParsed.data.reason : 'Flagged by agent',
           };
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         const toolDuration = Date.now() - toolStart;
 
-        steps.push({
-          tool: toolUse.name,
-          input: toolUse.input,
-          output: { error: errMsg },
-          durationMs: toolDuration,
-        });
-
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: toolUse.id,
-          content: JSON.stringify({ error: errMsg }),
-          is_error: true,
-        });
+        steps.push({ tool: toolCall.name, input: toolCall.input, output: { error: errMsg }, durationMs: toolDuration });
+        toolResults.push({ toolCallId: toolCall.id, output: JSON.stringify({ error: errMsg }), isError: true });
       }
     }
 
-    messages.push({ role: 'user', content: toolResults });
+    // Push tool results in provider-native format
+    const formattedResults = provider.formatToolResults(toolResults);
+    // OpenAI returns an array of messages (one per tool result), Anthropic returns one message
+    if (Array.isArray(formattedResults)) {
+      messages.push(...formattedResults);
+    } else {
+      messages.push(formattedResults);
+    }
   }
 
-  return { steps, result };
+  return { steps, result, model: provider.identity };
 }

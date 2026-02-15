@@ -1,5 +1,7 @@
 import type { DetectedStrategy } from '../db/schema.js';
 
+export type FillModel = 'orats' | 'midpoint' | 'natural';
+
 export type SimPosition = {
   id: string;
   symbol: string;
@@ -57,13 +59,29 @@ export type BacktestConfig = {
   useAgent: boolean;
   maxAgentCalls: number;
   slippagePct: number;
+  fillModel?: FillModel;
   useQuoteTape?: boolean;
   databentoApiKey?: string;
-  databentoDataset?: string;  // default 'DBEQ.BASIC'
+  databentoDataset?: string;  // default 'DBEQ.BASIC' (uses mbp-1 schema; OPRA.PILLAR uses cbbo-1s)
+  agentProvider?: string;     // 'anthropic' | 'xai' — default 'anthropic'
+  agentModel?: string;        // e.g. 'claude-sonnet-4-5-20250929'
+};
+
+export type ExtendedMetrics = {
+  sharpeRatio: number;
+  sortinoRatio: number;
+  calmarRatio: number;
+  recoveryFactor: number;
+  maxConsecutiveWins: number;
+  maxConsecutiveLosses: number;
+  avgHoldingPeriodHours: number;
+  medianPnl: number;
+  pnlStdDev: number;
 };
 
 export type BacktestReport = {
   config: BacktestConfig;
+  extendedMetrics: ExtendedMetrics;
   summary: {
     totalMessages: number;
     tradedMessages: number;

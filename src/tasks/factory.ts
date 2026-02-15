@@ -15,7 +15,8 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
 
   if (message.isPaperTrade) return null;
 
-  const confidence = message.confidence ? parseFloat(message.confidence) : 0;
+  const rawConfidence = message.confidence ? parseFloat(message.confidence) : 0;
+  const confidence = Number.isNaN(rawConfidence) ? 0 : rawConfidence;
 
   const taskType = confidence >= CONFIDENCE_THRESHOLD ? 'EXECUTE_TRADE' : 'REVIEW_MESSAGE';
 

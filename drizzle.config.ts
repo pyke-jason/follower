@@ -1,10 +1,11 @@
 import { defineConfig } from 'drizzle-kit';
+import { resolve } from 'node:path';
 
 export default defineConfig({
   schema: './src/db/schema.ts',
   out: './drizzle',
   dialect: 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'data/trade-follower.db',
+    url: process.env.DATABASE_URL ?? resolve(import.meta.dirname, 'data/trade-follower.db'),
   },
 });

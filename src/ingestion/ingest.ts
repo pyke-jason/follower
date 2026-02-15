@@ -1,7 +1,8 @@
-import { launchBrowser, attemptLogin, waitForAuth, getAuthState, getPage, closeBrowser } from './browser.js';
+import { launchBrowser, attemptLogin, waitForAuth, getAuthState, getPage, closeBrowser, startAuthMonitor, stopAuthMonitor } from './browser.js';
 import { injectSignalRListener, type SignalRMessage } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
+import { sendSystemAlert } from '../lib/alert.js';
 
 export async function startIngestion(onMessage?: (msg: SignalRMessage) => void): Promise<void> {
   const page = await launchBrowser();
@@ -11,10 +12,22 @@ export async function startIngestion(onMessage?: (msg: SignalRMessage) => void):
     console.log('[Ingest] Not authenticated, attempting login...');
     const success = await attemptLogin();
     if (!success) {
-      console.log('[Ingest] Auto-login failed. Waiting for manual login...');
+      sendSystemAlert({
+        title: 'Auto-login failed',
+        message: 'Automatic login failed — waiting for manual login',
+        severity: 'critical',
+      });
       await waitForAuth();
     }
   }
+
+  sendSystemAlert({
+    title: 'Chat room connected',
+    message: 'Authenticated and listening for messages',
+    severity: 'info',
+  });
+
+  startAuthMonitor();
 
   // Inject SignalR listener
   await injectSignalRListener(page, async (msg) => {
@@ -23,6 +36,11 @@ export async function startIngestion(onMessage?: (msg: SignalRMessage) => void):
       onMessage?.(msg);
     } catch (err) {
       console.error('[Ingest] Error processing message:', err);
+      sendSystemAlert({
+        title: 'Ingestion error',
+        message: `Failed to process message from ${msg.User?.Name ?? 'unknown'}: ${err instanceof Error ? err.message : String(err)}`,
+        severity: 'warning',
+      });
     }
   });
 

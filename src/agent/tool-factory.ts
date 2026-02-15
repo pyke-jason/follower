@@ -2,6 +2,29 @@ import type { BrokerService } from '../broker/interface.js';
 import type { ToolDef } from './tools.js';
 import type { Trade } from '../db/schema.js';
 import type { OrderManager } from '../orders/order-manager.js';
+import type { PositionSize } from '../position-sizing/index.js';
+import {
+  GetQuoteInput,
+  GetOptionsChainInput,
+  GetOpenPositionsInput,
+  CheckRiskLimitsInput,
+  PlaceOrderInput,
+  CalculatePositionSizeInput,
+  FlagForReviewInput,
+} from './schemas.js';
+
+export type RiskCheckResult = {
+  allowed: boolean;
+  reason?: string;
+  traderDailyPnl: number;
+  openPositionsOnSymbol: number;
+  traderMaxAllocation: number | null;
+  traderMaxDailyAllocation: number | null;
+  startingEquity?: number;
+  currentDrawdownPct?: number;
+  buyingPower?: number;
+  reconciliationAlerts?: number;
+};
 
 export type ToolDependencies = {
   broker: BrokerService;
@@ -12,13 +35,14 @@ export type ToolDependencies = {
     strategy: string;
     trader: string;
     maxRisk?: number;
-  }) => Promise<{
-    allowed: boolean;
-    traderDailyPnl: number;
-    openPositionsOnSymbol: number;
-    traderMaxAllocation: number | null;
-    traderMaxDailyAllocation: number | null;
-  }>;
+  }) => Promise<RiskCheckResult>;
+  calculatePositionSize: (input: {
+    trader: string;
+    symbol: string;
+    entryPrice: number;
+    strategy: string;
+    spreadMaxRisk?: number;
+  }) => Promise<PositionSize>;
 };
 
 export function createTools(deps: ToolDependencies): ToolDef[] {
@@ -34,7 +58,8 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         required: ['symbol'],
       },
       execute: async (input) => {
-        return await deps.broker.getQuote(input.symbol as string);
+        const { symbol } = GetQuoteInput.parse(input);
+        return await deps.broker.getQuote(symbol);
       },
     },
     {
@@ -50,11 +75,8 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         required: ['symbol', 'expiry', 'optionType'],
       },
       execute: async (input) => {
-        return await deps.broker.getOptionsChain(
-          input.symbol as string,
-          input.expiry as string,
-          input.optionType as 'CALL' | 'PUT',
-        );
+        const { symbol, expiry, optionType } = GetOptionsChainInput.parse(input);
+        return await deps.broker.getOptionsChain(symbol, expiry, optionType);
       },
     },
     {
@@ -68,9 +90,10 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         },
       },
       execute: async (input) => {
+        const parsed = GetOpenPositionsInput.parse(input);
         return await deps.getOpenPositions({
-          symbol: input.symbol as string | undefined,
-          trader: input.trader as string | undefined,
+          symbol: parsed.symbol,
+          trader: parsed.trader,
         });
       },
     },
@@ -88,11 +111,12 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         required: ['symbol', 'strategy', 'trader'],
       },
       execute: async (input) => {
+        const parsed = CheckRiskLimitsInput.parse(input);
         return await deps.checkRiskLimits({
-          symbol: input.symbol as string,
-          strategy: input.strategy as string,
-          trader: input.trader as string,
-          maxRisk: input.maxRisk as number | undefined,
+          symbol: parsed.symbol,
+          strategy: parsed.strategy,
+          trader: parsed.trader,
+          maxRisk: parsed.maxRisk,
         });
       },
     },
@@ -139,15 +163,16 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         required: ['symbol', 'strategy', 'direction', 'legs'],
       },
       execute: async (input) => {
+        const parsed = PlaceOrderInput.parse(input);
         const params = {
-          symbol: input.symbol as string,
-          strategy: input.strategy as string,
-          direction: input.direction as 'LONG' | 'SHORT',
-          legs: input.legs as any[],
-          orderType: (input.orderType as 'MARKET' | 'LIMIT') || 'LIMIT',
-          limitPrice: input.limitPrice as number | undefined,
-          adjustmentRules: input.adjustmentRules as any[] | undefined,
-          cancelAfterSec: input.cancelAfterSec as number | undefined,
+          symbol: parsed.symbol,
+          strategy: parsed.strategy,
+          direction: parsed.direction,
+          legs: parsed.legs,
+          orderType: parsed.orderType,
+          limitPrice: parsed.limitPrice,
+          adjustmentRules: parsed.adjustmentRules,
+          cancelAfterSec: parsed.cancelAfterSec,
         };
 
         if (deps.orderManager) {
@@ -156,6 +181,31 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         // Fallback: direct broker call (no adjustment rules support)
         const { adjustmentRules, cancelAfterSec, ...orderParams } = params;
         return await deps.broker.placeOrder(orderParams);
+      },
+    },
+    {
+      name: 'calculate_position_size',
+      description: 'Calculate position size based on account equity, ATR volatility, and risk limits.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          trader: { type: 'string' },
+          symbol: { type: 'string' },
+          entryPrice: { type: 'number' },
+          strategy: { type: 'string', description: 'STOCK, CALL, PUT, CDS, PDS' },
+          spreadMaxRisk: { type: 'number', description: 'For spreads: width minus credit. Omit for stocks.' },
+        },
+        required: ['trader', 'symbol', 'entryPrice', 'strategy'],
+      },
+      execute: async (input) => {
+        const parsed = CalculatePositionSizeInput.parse(input);
+        return await deps.calculatePositionSize({
+          trader: parsed.trader,
+          symbol: parsed.symbol,
+          entryPrice: parsed.entryPrice,
+          strategy: parsed.strategy,
+          spreadMaxRisk: parsed.spreadMaxRisk,
+        });
       },
     },
     {
@@ -170,10 +220,11 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
         required: ['reason'],
       },
       execute: async (input) => {
+        const parsed = FlagForReviewInput.parse(input);
         return {
           flagged: true,
-          reason: input.reason,
-          uncertainty: input.uncertainty,
+          reason: parsed.reason,
+          uncertainty: parsed.uncertainty,
         };
       },
     },

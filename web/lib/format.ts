@@ -27,6 +27,25 @@ export function formatDateShort(iso: string | null | undefined): string {
   });
 }
 
+/** "2:30 PM" — time only */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return '--';
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/** "Tuesday, January 14, 2025" — full day header for date separators */
+export function formatDayHeader(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
 export function pnlColor(value: number | string | null | undefined): string {
   if (value == null) return 'text-zinc-400';
   const num = typeof value === 'string' ? parseFloat(value) : value;

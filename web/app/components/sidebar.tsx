@@ -12,6 +12,8 @@ const links = [
   { href: '/messages', label: 'Messages' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/backtests', label: 'Backtests' },
+  { href: '/eval', label: 'Eval' },
+  { href: '/settings', label: 'Settings' },
 ];
 
 export function Sidebar() {
@@ -38,8 +40,8 @@ export function Sidebar() {
               : pathname.startsWith(link.href) &&
                 (link.href !== '/trades' || pathname === '/trades');
 
-          // Don't propagate ?run= to backtests pages
-          const href = link.href === '/backtests' ? link.href : buildHref(link.href);
+          // Don't propagate ?run= to backtests or eval pages
+          const href = (link.href === '/backtests' || link.href === '/eval' || link.href === '/settings') ? link.href : buildHref(link.href);
 
           return (
             <Button

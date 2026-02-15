@@ -4,6 +4,8 @@ import { db, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
+const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
+
 export async function forceExitTrade(formData: FormData) {
   const tradeId = formData.get('tradeId') as string;
   if (!tradeId) return;
@@ -15,9 +17,7 @@ export async function forceExitTrade(formData: FormData) {
 
   if (!trade || trade.status !== 'OPEN') return;
 
-  // Import the broker dynamically to avoid loading it at module level
   try {
-    const { placeOrder } = await import('../../../src/broker/tradestation.js');
     const legs = (trade.legs as any[]) || [];
 
     // Build closing legs (reverse each leg's action)
@@ -26,13 +26,22 @@ export async function forceExitTrade(formData: FormData) {
       action: leg.action === 'BUY' ? 'SELL' : 'BUY',
     }));
 
-    const result = await placeOrder({
-      symbol: trade.symbol,
-      strategy: trade.strategy,
-      direction: trade.direction as 'LONG' | 'SHORT',
-      legs: closingLegs,
-      orderType: 'MARKET' as const,
+    const res = await fetch(`${LOCAL_API_URL}/trades/force-exit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: trade.symbol,
+        strategy: trade.strategy,
+        direction: trade.direction,
+        legs: closingLegs,
+      }),
     });
+
+    if (!res.ok) {
+      throw new Error(`Local API error: ${res.status} ${await res.text()}`);
+    }
+
+    const result = await res.json() as { orderId: string; status: string; filledPrice: number | null };
 
     await db
       .update(schema.trades)
