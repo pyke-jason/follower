@@ -227,6 +227,14 @@ body::before {
 }
 
 /* ═══════════════════════════════════════════════
+   Scrollbar
+   ═══════════════════════════════════════════════ */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ═══════════════════════════════════════════════
    P&L magnitude colors
    ═══════════════════════════════════════════════ */
 @utility pnl-positive {

@@ -4,7 +4,7 @@ import { useRef, useCallback, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatBubble } from './chat-bubble';
 import { DateSeparator } from './date-separator';
-import { ArrowDown } from 'lucide-react';
+import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
 import type { Message } from '../../../src/db/schema';
 
@@ -107,7 +107,7 @@ export function ChatFeed({
         }}
         computeItemKey={(_index, item) => item.key}
         style={{ height: '100%' }}
-        className="[scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.700)_transparent]"
+        className="scrollbar-thin"
         components={onLoadOlder ? {
           Header: () =>
             isLoadingOlder ? (
@@ -122,15 +122,8 @@ export function ChatFeed({
         } : undefined}
       />
 
-      {/* Scroll-to-bottom FAB — only in full chat mode */}
       {onLoadOlder && showScrollBtn && (
-        <button
-          onClick={scrollToBottom}
-          className="absolute bottom-4 right-4 p-2 rounded-full bg-card border border-border text-muted-foreground hover:bg-accent shadow-warm-md transition-colors"
-          aria-label="Scroll to bottom"
-        >
-          <ArrowDown className="w-4 h-4" />
-        </button>
+        <ScrollToBottom onClick={scrollToBottom} />
       )}
     </div>
   );

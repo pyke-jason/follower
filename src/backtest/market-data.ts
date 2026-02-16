@@ -1,7 +1,7 @@
 import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js';
-import { loadQuoteTapeForDay, toDateKey, getFetchMeta } from './databento-tape.js';
+import { loadQuoteTapeForDay, loadChainDefinitions, loadSpecificContracts, toDateKey, getFetchMeta } from './databento-tape.js';
 import type { QuoteTick } from './databento-tape.js';
-import { isOccOptionSymbol, parseOccSymbol } from './occ-symbology.js';
+import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('MarketData');
@@ -33,7 +33,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   /** "SYMBOL:YYYY-MM-DD" -> sorted ticks (in-memory cache on top of disk cache) */
   private dayTicks = new Map<string, QuoteTick[]>();
   /** "SYMBOL:YYYY-MM-DD" -> all option ticks from parent symbology fetch */
-  private chainTicks = new Map<string, QuoteTick[]>();
   /** symbol -> most recent mid price (for getPriceSnapshot) */
   private latestQuotes = new Map<string, number>();
 
@@ -212,23 +211,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     at: Date,
   ): Promise<OptionsChain> {
     const day = toDateKey(at);
-    const chainKey = `${symbol}:${day}`;
-
-    // Check in-memory chain cache
-    let ticks = this.chainTicks.get(chainKey);
-    if (!ticks) {
-      // Fetch all option contracts via parent symbology
-      ticks = await loadQuoteTapeForDay({
-        apiKey: this.apiKey,
-        dataset: this.optionsDataset,
-        schema: 'cbbo-1m',
-        symbols: [`${symbol}.OPT`],
-        day,
-        refreshCache: this.refreshCache,
-        stypeIn: 'parent',
-      });
-      this.chainTicks.set(chainKey, ticks);
-    }
 
     // Get underlying price for strike filtering
     let underlyingPrice: number;
@@ -242,12 +224,60 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       );
     }
 
-    // Filter ticks by optionType, expiry, and ±20% of underlying price
     const strikeLow = underlyingPrice * 0.8;
     const strikeHigh = underlyingPrice * 1.2;
-    const targetMs = at.getTime();
 
-    // Build latest tick per matching strike
+    // Phase 1: Construct candidate OCC symbols directly (no API call).
+    // Standard strike intervals based on price — some may not exist, that's fine.
+    const candidateSymbols = buildOccSymbols({
+      underlying: symbol,
+      expiry,
+      optionType,
+      priceLow: strikeLow,
+      priceHigh: strikeHigh,
+    });
+
+    log.debug(
+      `${symbol} chain: ${candidateSymbols.length} constructed OCC symbols for ` +
+      `${optionType} ${expiry} strikes ${strikeLow.toFixed(0)}-${strikeHigh.toFixed(0)}`,
+    );
+
+    // Phase 2: Fetch prices for constructed symbols
+    const ticks = await loadSpecificContracts({
+      apiKey: this.apiKey,
+      dataset: this.optionsDataset,
+      symbols: candidateSymbols,
+      day,
+      refreshCache: this.refreshCache,
+    });
+
+    // Build latest tick per strike at or before `at`
+    const strikes = this.buildStrikesFromTicks(ticks, at);
+
+    if (strikes.length > 0) {
+      return { symbol, expiry, optionType, strikes };
+    }
+
+    // Fallback: constructed symbols returned nothing — wrong expiry?
+    // Use definition fetch to discover available expiries.
+    log.debug(`${symbol} chain: 0 strikes from constructed symbols, falling back to definition fetch`);
+    const definitions = await loadChainDefinitions({
+      apiKey: this.apiKey,
+      dataset: this.optionsDataset,
+      parentSymbol: `${symbol}.OPT`,
+      day,
+      refreshCache: this.refreshCache,
+    });
+
+    const callPutFilter = optionType === 'CALL' ? 'C' as const : 'P' as const;
+    const expiries = new Set(definitions.filter(d => d.callPut === callPutFilter).map(d => d.expiry));
+    log.debug(`${symbol} available ${optionType} expiries: ${[...expiries].sort().slice(0, 10).join(', ')}`);
+    return { symbol, expiry, optionType, strikes: [] };
+  }
+
+  /** Extract latest bid/ask per strike from ticks at or before a timestamp. */
+  private buildStrikesFromTicks(ticks: QuoteTick[], at: Date): OptionsStrike[] {
+    const targetMs = at.getTime();
     const latestByStrike = new Map<number, QuoteTick>();
 
     for (const tick of ticks) {
@@ -255,36 +285,20 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
       const parts = parseOccSymbol(tick.symbol);
       if (!parts) continue;
-      if (parts.type !== optionType) continue;
 
-      // Match expiry date (compare YYYY-MM-DD strings)
-      const tickExpiry = parts.expiration.toISOString().slice(0, 10);
-      if (tickExpiry !== expiry) continue;
-
-      // Strike filter
-      if (parts.strike < strikeLow || parts.strike > strikeHigh) continue;
-
-      // Keep latest tick at or before `at`
       const existing = latestByStrike.get(parts.strike);
       if (!existing || tick.timestamp.getTime() > existing.timestamp.getTime()) {
         latestByStrike.set(parts.strike, tick);
       }
     }
 
-    // Build OptionsStrike[] sorted by strike ascending
     const strikes: OptionsStrike[] = [];
     for (const [strike, tick] of latestByStrike) {
       const mid = (tick.bid + tick.ask) / 2;
-      strikes.push({
-        strike,
-        bid: tick.bid,
-        ask: tick.ask,
-        last: mid,
-      });
+      strikes.push({ strike, bid: tick.bid, ask: tick.ask, last: mid });
     }
     strikes.sort((a, b) => a.strike - b.strike);
-
-    return { symbol, expiry, optionType, strikes };
+    return strikes;
   }
 
   async getTicksInRange(symbol: string, from: Date, to: Date): Promise<QuoteTick[]> {

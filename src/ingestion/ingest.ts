@@ -3,6 +3,7 @@ import { injectSignalRListener, type SignalRMessage } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
+import { isMarketHours } from '../lib/et-date.js';
 
 // ─── Message Watchdog ────────────────────────────────
 // Detects silent SignalR death: connection alive but no messages arriving.
@@ -14,18 +15,9 @@ let watchdogAlertFired = false;
 const WATCHDOG_CHECK_INTERVAL_MS = 60_000; // check every minute
 const WATCHDOG_SILENCE_THRESHOLD_MS = 5 * 60_000; // alert after 5 min silence
 
-function isMarketHours(): boolean {
-  const now = new Date();
-  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = et.getDay();
-  if (day === 0 || day === 6) return false; // weekend
-  const minutes = et.getHours() * 60 + et.getMinutes();
-  return minutes >= 570 && minutes <= 960; // 9:30 - 16:00 ET
-}
-
 function startMessageWatchdog(): void {
   watchdogTimer = setInterval(() => {
-    if (!isMarketHours()) {
+    if (!isMarketHours(new Date())) {
       watchdogAlertFired = false; // reset so it can fire again next session
       return;
     }

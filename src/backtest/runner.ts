@@ -6,6 +6,7 @@ import { checkRiskLimits, type RiskCheckConfig, type RiskCheckDeps } from '../or
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import type { MtmSnapshot } from './report.js';
+import { toDateKeyET } from '../lib/et-date.js';
 import { formatOccSymbol } from './occ-symbology.js';
 import { createClassificationTools } from '../agent/tool-factory.js';
 import { executeSignals } from '../pipeline/execute.js';
@@ -427,7 +428,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   // Single message loop — broker.advanceTo() handles lazy tick replay for working orders
   for (let i = 0; i < tradableMessages.length; i++) {
     const msg = tradableMessages[i];
-    const msgDay = msg.timestamp.toISOString().split('T')[0];
+    const msgDay = toDateKeyET(msg.timestamp);
 
     // ── Day boundary: sweep expired options + MTM snapshot ──
     if (lastMsgDay && msgDay !== lastMsgDay) {
@@ -656,6 +657,7 @@ async function processMessage(
 
   const taskContext: TaskContext = {
     messageId: msg.id,
+    messageTimestamp: msg.timestamp.toISOString(),
     author: msg.author,
     cleanText: msg.cleanText,
     badges: msg.badges,
@@ -704,6 +706,10 @@ async function processMessage(
   if (agentResult.traded) {
     log.debug(`  agent: EXECUTE in ${agentDuration}ms (${agentResult.turns} turns${tokenStr})`);
     await recordExecute(ctx, agentResult.reasoning, agentResult.tradeId, agentResult.usage);
+  } else if (agentResult.pipelineFailure) {
+    const failReason = `[pipeline] ${agentResult.pipelineFailure} | Agent: ${agentResult.reasoning}`;
+    log.warn(`  agent: EXECUTE → pipeline failed in ${agentDuration}ms: ${agentResult.pipelineFailure}`);
+    await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason, agentResult.usage);
   } else {
     log.debug(`  agent: skip in ${agentDuration}ms (${agentResult.turns} turns${tokenStr})`);
     await recordSkip(ctx, 'agent', 'agent skip', agentResult.reasoning, agentResult.usage);
@@ -716,7 +722,7 @@ async function runAgentForBacktest(
   btCtx: BacktestContext,
   taskContext: TaskContext,
   prefetched?: PrefetchedData,
-): Promise<{ traded: boolean; tradeId?: string; reasoning: string; usage: LLMUsage; turns: number }> {
+): Promise<{ traded: boolean; tradeId?: string; reasoning: string; usage: LLMUsage; turns: number; pipelineFailure?: string }> {
   // Prefetch Databento data for the symbols in this message
   await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
 
@@ -737,6 +743,7 @@ async function runAgentForBacktest(
 
     let executedResults: { executed: boolean; tradeId?: string }[] = [];
     let firstTradeId: string | undefined;
+    let pipelineFailures: string[] = [];
 
     if (traded) {
       const pipelineResults = await executeSignals(
@@ -748,6 +755,11 @@ async function runAgentForBacktest(
 
       executedResults = pipelineResults.filter(r => r.executed);
       firstTradeId = executedResults[0]?.tradeId;
+
+      // Collect pipeline failure reasons for logging
+      pipelineFailures = pipelineResults
+        .filter(r => !r.executed && r.reason)
+        .map(r => `${r.signal.action} ${r.signal.symbol}: ${r.reason}`);
     }
 
     // Persist task + steps for ALL agent decisions (not just executes)
@@ -797,6 +809,9 @@ async function runAgentForBacktest(
       reasoning,
       usage,
       turns: toolTurns,
+      pipelineFailure: traded && executedResults.length === 0 && pipelineFailures.length > 0
+        ? pipelineFailures.join('; ')
+        : undefined,
     };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

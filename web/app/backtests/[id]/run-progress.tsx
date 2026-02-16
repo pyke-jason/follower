@@ -92,7 +92,11 @@ export function RunProgress({
         {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
           <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
         )}
-        {startMs != null && elapsed > 0 && <InfoChip label={elapsedStr} icon={Clock} />}
+        {startMs != null && elapsed > 0 && (
+          <span suppressHydrationWarning>
+            <InfoChip label={elapsedStr} icon={Clock} />
+          </span>
+        )}
       </div>
     </div>
   );

@@ -22,6 +22,7 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
 
   const context: TaskContext = {
     messageId: message.id,
+    messageTimestamp: message.timestamp,
     author: message.author,
     cleanText: message.cleanText,
     badges,

@@ -202,7 +202,7 @@ export function computeCoreStats<T extends {
   }
 
   const summary = {
-    totalTrades: trades.length,
+    totalTrades: closed.length,
     wins: wins.length,
     losses: losses.length,
     winRate: closed.length > 0 ? wins.length / closed.length : 0,

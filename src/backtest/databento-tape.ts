@@ -6,10 +6,15 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { zCoercePrice, formatZodError } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
+import { toDateKeyET, dayBoundsUTC, isTradingDay, isMarketHours, marketOpenUTC, parseDateKey } from '../lib/et-date.js';
+import { parseOccSymbol } from './occ-symbology.js';
 
 const log = createLogger('QuoteTape');
 
 const CACHE_DIR = '.cache/databento';
+
+/** Hard limit on bytes read from a single Databento streaming response. */
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 /** Per-symbol-day fetch metadata for downstream error enrichment. */
 type FetchMeta = {
@@ -141,28 +146,11 @@ async function writeCache(path: string, ticks: QuoteTick[]): Promise<void> {
   await writeFile(path, JSON.stringify(ticks));
 }
 
-/** Check if a timestamp falls within US equity market hours (9:30-16:00 ET, weekdays). */
-function isMarketHours(ts: Date): boolean {
-  const etStr = ts.toLocaleString('en-US', { timeZone: 'America/New_York' });
-  const et = new Date(etStr);
-  const day = et.getDay();
-  if (day === 0 || day === 6) return false;
-  const minutes = et.getHours() * 60 + et.getMinutes();
-  return minutes >= 570 && minutes <= 960; // 9:30 to 16:00
-}
+/** Re-export for existing callers. */
+export const toDateKey = toDateKeyET;
 
-/** Format a Date as YYYY-MM-DD in ET. */
-export function toDateKey(d: Date): string {
-  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD
-}
-
-/** Get the start-of-day and start-of-next-day in UTC for a given YYYY-MM-DD ET date. */
-function dayRangeUTC(day: string): { start: Date; end: Date } {
-  // Parse as ET midnight
-  const start = new Date(`${day}T00:00:00-05:00`);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-  return { start, end };
-}
+/** Re-export for existing callers. */
+const dayRangeUTC = dayBoundsUTC;
 
 // ── Retry logic for Databento API calls ───────────────────────────────
 
@@ -182,18 +170,14 @@ async function fetchWithRetry(
     try {
       const res = await fetch(url, init);
 
-      if (res.status === 200) return { res, retries: attempt };
-
-      // Non-200 2xx (e.g. 206) — Databento uses these for billing/quota errors
-      if (res.status >= 200 && res.status < 300 && res.status !== 200) {
-        const headers: Record<string, string> = {};
-        res.headers.forEach((v, k) => { headers[k] = v; });
-        const text = await res.text();
-        throw new Error(
-          `Databento ${res.status}: ${text.slice(0, 500) || '(empty body)'}` +
-          ` | day=${context.day ?? '?'} symbols=${(context.symbols ?? []).join(',')}` +
-          ` | headers=${JSON.stringify(headers)}`,
-        );
+      if (res.ok) {
+        if (res.status !== 200) {
+          log.warn(
+            `Databento ${res.status} (non-200 ok) | day=${context.day ?? '?'}` +
+            ` symbols=${(context.symbols ?? []).join(',')}`,
+          );
+        }
+        return { res, retries: attempt };
       }
 
       // 4xx (non-429) — not transient, don't retry
@@ -275,8 +259,7 @@ function buildFetchPlan(config: QuoteTapeConfig): Map<string, Set<string>> {
     const days = new Set<string>();
     const cur = new Date(config.start);
     while (cur < config.end) {
-      const dow = cur.getDay();
-      if (dow !== 0 && dow !== 6) days.add(toDateKey(cur));
+      if (isTradingDay(cur)) days.add(toDateKey(cur));
       cur.setDate(cur.getDate() + 1);
     }
     for (const day of days) {
@@ -383,6 +366,11 @@ export async function loadQuoteTapeForDay(params: {
 
   for await (const line of rl) {
     bytesRead += Buffer.byteLength(line) + 1;
+    if (bytesRead > MAX_RESPONSE_BYTES) {
+      rl.close();
+      reader.destroy();
+      throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for ${uncachedSymbols.join(',')} on ${params.day} (${bytesRead} bytes)`);
+    }
     const trimmed = line.trim();
     if (!trimmed) continue;
 
@@ -456,16 +444,14 @@ export async function loadQuoteTapeForDay(params: {
     });
   }
 
-  // Cache each symbol's day data (skip caching empty results on weekdays — likely a transient API issue)
-  const dayDate = new Date(params.day + 'T12:00:00Z');
-  const dayOfWeek = dayDate.getUTCDay(); // 0=Sun, 6=Sat
-  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+  // Cache each symbol's day data (skip caching empty results on trading days — likely a transient API issue)
+  const shouldHaveData = isTradingDay(parseDateKey(params.day));
 
   for (const [symbol, ticks] of ticksBySymbol) {
     ticks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const cachePath = getDayCachePath({ dataset: params.dataset, schema: resolvedSchema, symbol, day: params.day });
-    if (ticks.length === 0 && isWeekday) {
-      log.warn(`Skipping cache write for ${symbol} on ${params.day} (weekday with 0 ticks — possible transient API issue)`);
+    if (ticks.length === 0 && shouldHaveData) {
+      log.warn(`Skipping cache write for ${symbol} on ${params.day} (trading day with 0 ticks — possible transient API issue)`);
     } else {
       await writeCache(cachePath, ticks);
     }
@@ -581,12 +567,18 @@ async function loadParentSymbology(params: {
   let jsonErr = 0;
   let noQuote = 0;
   let outsideMktHrs = 0;
+  let sampleNoQuote: unknown = null;  // capture first null-price record for diagnostics
 
   const reader = Readable.from(res.body as any);
   const rl = createInterface({ input: reader, terminal: false });
 
   for await (const line of rl) {
     bytesRead += Buffer.byteLength(line) + 1;
+    if (bytesRead > MAX_RESPONSE_BYTES) {
+      rl.close();
+      reader.destroy();
+      throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for parent ${parentSymbol} on ${params.day} (${bytesRead} bytes)`);
+    }
     const trimmed = line.trim();
     if (!trimmed) continue;
 
@@ -603,7 +595,7 @@ async function loadParentSymbology(params: {
     if (!recordResult.success) continue; // skip malformed records in parent fetch
 
     const tick = parseTick(recordResult.data);
-    if (!tick) { noQuote++; continue; }
+    if (!tick) { noQuote++; if (!sampleNoQuote) sampleNoQuote = raw; continue; }
     if (!isMarketHours(tick.timestamp)) { outsideMktHrs++; continue; }
 
     allTicks.push(tick);
@@ -622,6 +614,9 @@ async function loadParentSymbology(params: {
   if (noQuote) parts.push(`noQuote=${noQuote}`);
   if (outsideMktHrs) parts.push(`outsideMktHrs=${outsideMktHrs}`);
   parts.push(`ticks=${allTicks.length}`);
+  if (noQuote > 0 && allTicks.length === 0 && sampleNoQuote) {
+    parts.push(`sampleRecord=${JSON.stringify(sampleNoQuote).slice(0, 300)}`);
+  }
   if (retries) parts.push(`retries=${retries}`);
   if (requestId) parts.push(`req=${requestId}`);
   parts.push(`dur=${durMs}ms`);
@@ -636,19 +631,328 @@ async function loadParentSymbology(params: {
   _apiStats.bytesRead += bytesRead;
   _apiStats.records += records;
 
-  // Cache all ticks atomically (skip on weekday with 0 ticks)
+  // Cache all ticks atomically (skip on trading day with 0 ticks — likely transient)
   allTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-  const dayDate = new Date(params.day + 'T12:00:00Z');
-  const dayOfWeek = dayDate.getUTCDay();
-  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
-
-  if (allTicks.length === 0 && isWeekday) {
-    log.warn(`Skipping parent cache write for ${parentSymbol} on ${params.day} (weekday with 0 ticks)`);
+  if (allTicks.length === 0 && isTradingDay(parseDateKey(params.day))) {
+    log.warn(`Skipping parent cache write for ${parentSymbol} on ${params.day} (trading day with 0 ticks)`);
   } else {
     await writeCache(cachePath, allTicks);
   }
 
+  return allTicks;
+}
+
+// ── Two-phase options chain helpers ─────────────────────────────────────
+
+export type ChainDefinition = {
+  rawSymbol: string;   // OCC format, e.g. "GE    250912C00280000"
+  expiry: string;      // YYYY-MM-DD
+  strike: number;
+  callPut: 'C' | 'P';
+};
+
+/** Zod schema for Databento definition records (instrument metadata, no prices). */
+const DefinitionRecord = z.object({
+  raw_symbol: z.string().optional(),
+  symbol: z.string().optional(),
+  hd: z.object({ symbol: z.string().optional() }).optional(),
+  expiration: z.coerce.number().optional(),   // nanosecond epoch
+  strike_price: z.coerce.number().optional(), // fixed-point price
+  instrument_class: z.string().optional(),    // "C" or "P"
+}).strip();
+
+/**
+ * Phase 1: Lightweight chain discovery via definition schema.
+ * Returns metadata for every listed option contract under a parent symbol.
+ * ~270KB vs 167MB for the full cbbo-1m parent fetch.
+ */
+export async function loadChainDefinitions(params: {
+  apiKey: string;
+  dataset: string;
+  parentSymbol: string;   // e.g. "GE.OPT"
+  day: string;            // YYYY-MM-DD
+  refreshCache?: boolean;
+}): Promise<ChainDefinition[]> {
+  const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
+  const cacheKey = [params.dataset, 'definition', params.parentSymbol, params.day, 'parent'].join('|');
+  const cachePath = join(CACHE_DIR, createHash('sha256').update(cacheKey).digest('hex') + '.json');
+
+  if (params.refreshCache) {
+    await unlink(cachePath).catch(() => {});
+  }
+
+  // Read from cache
+  try {
+    const raw = JSON.parse(await readFile(cachePath, 'utf-8'));
+    if (Array.isArray(raw) && raw.length >= 0) {
+      log.debug(`definition cache hit: ${params.parentSymbol} ${params.day} (${raw.length} contracts)`);
+      return raw as ChainDefinition[];
+    }
+  } catch { /* cache miss */ }
+
+  // Definitions are daily snapshots — use date-only range (Databento requires UTC midnight start)
+  const definitions = await fetchDefinitionSnapshot(authHeader, params.dataset, params.parentSymbol, params.day);
+
+  // Only cache non-empty results — empty may be transient (pre-market, API issues)
+  if (definitions.length > 0) {
+    await mkdir(CACHE_DIR, { recursive: true });
+    await writeFile(cachePath, JSON.stringify(definitions));
+  }
+
+  return definitions;
+}
+
+/** Fetch + parse definition snapshot for a single day. */
+async function fetchDefinitionSnapshot(
+  authHeader: string,
+  dataset: string,
+  parentSymbol: string,
+  day: string,
+): Promise<ChainDefinition[]> {
+  // Definitions are daily snapshots — Databento requires date-only (UTC midnight) boundaries
+  const nextDay = new Date(parseDateKey(day).getTime() + 24 * 60 * 60 * 1000);
+  const nextDayStr = nextDay.toISOString().slice(0, 10);
+  const fetchParams = new URLSearchParams({
+    dataset,
+    schema: 'definition',
+    encoding: 'json',
+    stype_in: 'parent',
+    symbols: parentSymbol,
+    start: day,
+    end: nextDayStr,
+  });
+
+  const fetchStart = Date.now();
+  const { res, retries } = await fetchWithRetry(
+    'https://hist.databento.com/v0/timeseries.get_range',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: fetchParams.toString(),
+    },
+    { day, symbols: [parentSymbol] },
+  );
+
+  if (!res.body) return [];
+
+  const definitions: ChainDefinition[] = [];
+  let bytesRead = 0;
+  let records = 0;
+  let skipped = 0;
+  const seenSymbols = new Set<string>();
+
+  const reader = Readable.from(res.body as any);
+  const rl = createInterface({ input: reader, terminal: false });
+
+  for await (const line of rl) {
+    bytesRead += Buffer.byteLength(line) + 1;
+    // No byte limit for definitions — we stream and only keep lightweight metadata.
+    // SPY.OPT is ~19MB raw but yields ~10K small ChainDefinition objects.
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let raw: unknown;
+    try { raw = JSON.parse(trimmed); } catch { continue; }
+    records++;
+
+    const parsed = DefinitionRecord.safeParse(raw);
+    if (!parsed.success) { skipped++; continue; }
+
+    const rec = parsed.data;
+    const sym = rec.raw_symbol ?? rec.symbol ?? rec.hd?.symbol;
+    if (!sym) { skipped++; continue; }
+
+    // Deduplicate — definition schema may emit multiple records per instrument
+    if (seenSymbols.has(sym)) continue;
+    seenSymbols.add(sym);
+
+    const callPut = rec.instrument_class;
+    if (callPut !== 'C' && callPut !== 'P') { skipped++; continue; }
+
+    // Parse expiry from nanosecond epoch
+    let expiry: string | null = null;
+    if (rec.expiration != null && rec.expiration > 0) {
+      const ms = rec.expiration / 1_000_000; // ns → ms
+      const d = new Date(ms);
+      if (!isNaN(d.getTime())) {
+        expiry = d.toISOString().slice(0, 10);
+      }
+    }
+
+    // Parse strike — Databento definition uses fixed-point (price * 1e9)
+    let strike: number | null = null;
+    if (rec.strike_price != null && rec.strike_price > 0) {
+      strike = rec.strike_price / 1_000_000_000;
+    }
+
+    // Fall back to OCC symbol parsing if fields are missing
+    if (!expiry || !strike) {
+      const occParts = parseOccSymbol(sym);
+      if (occParts) {
+        expiry = expiry ?? occParts.expiration.toISOString().slice(0, 10);
+        strike = strike ?? occParts.strike;
+      }
+    }
+
+    if (!expiry || strike == null) { skipped++; continue; }
+
+    definitions.push({ rawSymbol: sym, expiry, strike, callPut });
+  }
+
+  const durMs = Date.now() - fetchStart;
+  log.info(
+    `definition fetch ${parentSymbol} day=${day} ` +
+    `records=${records} contracts=${definitions.length} skipped=${skipped} ` +
+    `bytes=${bytesRead}${retries ? ` retries=${retries}` : ''} dur=${durMs}ms`,
+  );
+
+  return definitions;
+}
+
+/**
+ * Phase 2: Fetch cbbo-1m price data for specific OCC symbols.
+ * Uses stype_in=raw_symbol to fetch only the contracts we need.
+ */
+export async function loadSpecificContracts(params: {
+  apiKey: string;
+  dataset: string;
+  symbols: string[];       // OCC symbols, e.g. ["GE    250912C00280000", ...]
+  day: string;
+  schema?: string;
+  refreshCache?: boolean;
+}): Promise<QuoteTick[]> {
+  if (params.symbols.length === 0) return [];
+
+  const resolvedSchema = params.schema ?? 'cbbo-1m';
+
+  // Each symbol goes through the normal per-symbol-day cache
+  const allTicks: QuoteTick[] = [];
+  const uncached: string[] = [];
+
+  for (const sym of params.symbols) {
+    const cachePath = getDayCachePath({
+      dataset: params.dataset,
+      schema: resolvedSchema,
+      symbol: sym,
+      day: params.day,
+    });
+
+    if (params.refreshCache) {
+      await unlink(cachePath).catch(() => {});
+    }
+
+    const cached = await readCache(cachePath);
+    if (cached) {
+      allTicks.push(...cached);
+    } else {
+      uncached.push(sym);
+    }
+  }
+
+  if (uncached.length === 0) {
+    log.debug(`specific contracts cache hit: ${params.symbols.length} symbols ${params.day}`);
+    return allTicks;
+  }
+
+  const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
+  const { start, end } = dayRangeUTC(params.day);
+
+  const fetchParams = new URLSearchParams({
+    dataset: params.dataset,
+    schema: resolvedSchema,
+    encoding: 'json',
+    pretty_px: 'true',
+    pretty_ts: 'true',
+    map_symbols: 'true',
+    stype_in: 'raw_symbol',
+    symbols: uncached.join(','),
+    start: start.toISOString(),
+    end: end.toISOString(),
+  });
+
+  const fetchStart = Date.now();
+  const { res, retries } = await fetchWithRetry(
+    'https://hist.databento.com/v0/timeseries.get_range',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: fetchParams.toString(),
+    },
+    { day: params.day, symbols: uncached },
+  );
+
+  if (!res.body) {
+    throw new Error(`Response body is null for specific contracts fetch`);
+  }
+
+  // Stream and parse — same as loadQuoteTapeForDay
+  const ticksBySymbol = new Map<string, QuoteTick[]>();
+  for (const sym of uncached) ticksBySymbol.set(sym, []);
+
+  let bytesRead = 0;
+  let records = 0;
+  let noQuote = 0;
+
+  const reader = Readable.from(res.body as any);
+  const rl = createInterface({ input: reader, terminal: false });
+
+  for await (const line of rl) {
+    bytesRead += Buffer.byteLength(line) + 1;
+    if (bytesRead > MAX_RESPONSE_BYTES) {
+      rl.close();
+      reader.destroy();
+      throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for specific contracts on ${params.day} (${bytesRead} bytes)`);
+    }
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let raw: unknown;
+    try { raw = JSON.parse(trimmed); } catch { continue; }
+    records++;
+
+    const recordResult = DatabentoRecord.safeParse(raw);
+    if (!recordResult.success) continue;
+
+    const tick = parseTick(recordResult.data);
+    if (!tick) { noQuote++; continue; }
+    if (!isMarketHours(tick.timestamp)) continue;
+
+    let bucket = ticksBySymbol.get(tick.symbol);
+    if (!bucket) { bucket = []; ticksBySymbol.set(tick.symbol, bucket); }
+    bucket.push(tick);
+  }
+
+  const durMs = Date.now() - fetchStart;
+  let totalTicks = 0;
+  for (const ticks of ticksBySymbol.values()) totalTicks += ticks.length;
+
+  log.info(
+    `specific contracts fetch day=${params.day} symbols=${uncached.length} ` +
+    `records=${records} ticks=${totalTicks}${noQuote ? ` noQuote=${noQuote}` : ''} ` +
+    `bytes=${bytesRead}${retries ? ` retries=${retries}` : ''} dur=${durMs}ms`,
+  );
+
+  // Cache per symbol
+  for (const [sym, ticks] of ticksBySymbol) {
+    ticks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    const cachePath = getDayCachePath({
+      dataset: params.dataset,
+      schema: resolvedSchema,
+      symbol: sym,
+      day: params.day,
+    });
+    await writeCache(cachePath, ticks);
+    allTicks.push(...ticks);
+  }
+
+  allTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   return allTicks;
 }
 
@@ -743,8 +1047,7 @@ export async function loadQuoteTape(config: QuoteTapeConfig): Promise<QuoteTick[
     let boundingWeekdays = 0;
     const cur = new Date(dayRangeUTC(minDay).start);
     while (cur <= dayRangeUTC(maxDay).end) {
-      const dow = cur.getDay();
-      if (dow !== 0 && dow !== 6) boundingWeekdays++;
+      if (isTradingDay(cur)) boundingWeekdays++;
       cur.setDate(cur.getDate() + 1);
     }
 
@@ -790,9 +1093,7 @@ export async function loadQuoteTape(config: QuoteTapeConfig): Promise<QuoteTick[
   // Count trading days per symbol in the fetch plan
   const symbolTradingDays = new Map<string, number>();
   for (const [day, syms] of fetchPlan) {
-    const d = new Date(`${day}T12:00:00Z`);
-    const dow = d.getDay();
-    if (dow === 0 || dow === 6) continue;
+    if (!isTradingDay(parseDateKey(day))) continue;
     for (const s of syms) {
       symbolTradingDays.set(s, (symbolTradingDays.get(s) ?? 0) + 1);
     }
@@ -902,7 +1203,14 @@ export async function fetchTickWindow(params: {
   const reader = Readable.from(res.body as any);
   const rl = createInterface({ input: reader, terminal: false });
 
+  let bytesRead = 0;
   for await (const line of rl) {
+    bytesRead += Buffer.byteLength(line) + 1;
+    if (bytesRead > MAX_RESPONSE_BYTES) {
+      rl.close();
+      reader.destroy();
+      throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for tick window ${params.symbols.join(',')} (${bytesRead} bytes)`);
+    }
     const trimmed = line.trim();
     if (!trimmed) continue;
 

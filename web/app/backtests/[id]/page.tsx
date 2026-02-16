@@ -49,9 +49,17 @@ export default async function BacktestDetailPage({
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
 
+  // Clamp closedAt dates to the backtest end date so charts don't extend
+  // to today's wall-clock time (backtest trades use real timestamps).
+  const backtestEnd = config.endDate.split('T')[0];
+  const clampedTrades = allTrades.map((t) => {
+    if (!t.closedAt || t.closedAt.split('T')[0] <= backtestEnd) return t;
+    return { ...t, closedAt: `${backtestEnd}T16:00:00.000Z` };
+  });
+
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(allTrades, decisions);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -260,7 +268,7 @@ export default async function BacktestDetailPage({
             <>
               <Separator orientation="vertical" className="!h-4" />
               <div className="flex items-center gap-3 ml-auto tabular-nums">
-                <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades</span>
+                <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades{summary.openAtEnd > 0 && <span className="text-muted-foreground/60"> + {summary.openAtEnd} open</span>}</span>
                 <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
                 <span className={summary.totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>{formatCurrency(summary.totalPnl)}</span>
                 <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>

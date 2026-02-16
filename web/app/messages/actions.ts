@@ -1,6 +1,6 @@
 'use server';
 
-import { getMessages } from '@/lib/queries';
+import { getMessages, getMessageById } from '@/lib/queries';
 import type { Message } from '../../../src/db/schema';
 
 export type MessageFilters = {
@@ -35,4 +35,8 @@ export async function fetchMessages(
     : null;
 
   return { messages, nextCursor };
+}
+
+export async function fetchMessage(id: string): Promise<Message | null> {
+  return getMessageById(id);
 }

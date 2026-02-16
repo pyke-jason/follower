@@ -342,6 +342,7 @@ export type TradeLeg = {
 
 export type TaskContext = {
   messageId?: string;
+  messageTimestamp?: string;  // ISO 8601 — when the chat message was posted
   author?: string;
   cleanText?: string;
   badges?: string[];

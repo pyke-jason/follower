@@ -9,6 +9,7 @@ import { isOpen, isClosed, forRun } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
+import { formatOccSymbol } from './occ-symbology.js';
 
 const log = createLogger('SimBroker');
 
@@ -26,6 +27,7 @@ type WorkingEntry = {
   currentLimitPrice: number;
   status: OrderStatus;
   filledPrice?: number;
+  isOptionOrder: boolean;
 };
 
 /** ORATS fill percentages by leg count */
@@ -99,11 +101,69 @@ export class SimBroker implements BrokerService {
     return this.marketData.getOptionsChain(symbol, expiry, optionType, this.clock.now());
   }
 
+  /**
+   * Get a synthetic quote for an options order by fetching individual OCC leg quotes
+   * and computing net spread bid/ask. For single-leg options, returns the option's
+   * own bid/ask. For multi-leg spreads, computes net values and normalizes to positive.
+   */
+  private async getOptionSpreadQuote(params: OrderParams, at: Date): Promise<Quote> {
+    const optionLegs = params.legs.filter(l => l.type !== 'STOCK');
+    if (optionLegs.length === 0) {
+      throw new Error('getOptionSpreadQuote called with no option legs');
+    }
+
+    let netBid = 0;
+    let netAsk = 0;
+
+    for (const leg of optionLegs) {
+      const occSymbol = formatOccSymbol({
+        underlying: params.symbol,
+        expiration: leg.expiry,
+        type: leg.type as 'CALL' | 'PUT',
+        strike: leg.strike,
+      });
+
+      const quote = await this.marketData.getQuote(occSymbol, at);
+
+      if (leg.action === 'BUY') {
+        netBid += quote.bid;
+        netAsk += quote.ask;
+      } else {
+        netBid -= quote.ask;
+        netAsk -= quote.bid;
+      }
+    }
+
+    // For multi-leg spreads, normalize to positive values with bid <= ask
+    if (optionLegs.length > 1) {
+      const absBid = Math.abs(netBid);
+      const absAsk = Math.abs(netAsk);
+      netBid = Math.min(absBid, absAsk);
+      netAsk = Math.max(absBid, absAsk);
+    }
+
+    const mid = (netBid + netAsk) / 2;
+    return {
+      symbol: params.symbol,
+      bid: netBid,
+      ask: netAsk,
+      last: mid,
+      volume: 0,
+      timestamp: at.toISOString(),
+    };
+  }
+
+  private hasOptionLegs(params: OrderParams): boolean {
+    return params.legs.some(l => l.type !== 'STOCK');
+  }
+
   async placeOrder(params: OrderParams): Promise<OrderResult> {
     const orderId = `SIM-${++this.orderCounter}`;
     const legCount = params.legs.length || 1;
 
     log.debug(`placeOrder: ${params.orderType} ${params.symbol} legs=${legCount} limit=${params.limitPrice ?? 'MKT'}`);
+
+    const isOptions = this.hasOptionLegs(params);
 
     if (params.orderType === 'LIMIT') {
       if (params.limitPrice == null) {
@@ -112,9 +172,11 @@ export class SimBroker implements BrokerService {
       }
 
       // Fill immediately if limit is within the current spread
-      let quote: Awaited<ReturnType<typeof this.getQuote>>;
+      let quote: Quote;
       try {
-        quote = await this.getQuote(params.symbol);
+        quote = isOptions
+          ? await this.getOptionSpreadQuote(params, this.clock.now())
+          : await this.getQuote(params.symbol);
       } catch {
         log.debug(`  LIMIT rejected: no market data for ${params.symbol}`);
         return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
@@ -127,7 +189,7 @@ export class SimBroker implements BrokerService {
 
       if (withinSpread) {
         const filledPrice = roundCents(params.limitPrice);
-        log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid} ask=${quote.ask})`);
+        log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
         return { orderId, status: 'FILLED', filledPrice };
       }
 
@@ -136,15 +198,18 @@ export class SimBroker implements BrokerService {
         params,
         currentLimitPrice: params.limitPrice,
         status: 'OPEN',
+        isOptionOrder: isOptions,
       });
-      log.debug(`  LIMIT queued as working ${orderId} @ $${params.limitPrice}`);
+      log.debug(`  LIMIT queued as working ${orderId} @ $${params.limitPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
       return { orderId, status: 'OPEN' };
     }
 
     // MARKET orders fill instantly using the fill model
-    let quote: Awaited<ReturnType<typeof this.getQuote>>;
+    let quote: Quote;
     try {
-      quote = await this.getQuote(params.symbol);
+      quote = isOptions
+        ? await this.getOptionSpreadQuote(params, this.clock.now())
+        : await this.getQuote(params.symbol);
     } catch {
       log.debug(`  MARKET rejected: no market data for ${params.symbol}`);
       return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
@@ -152,7 +217,7 @@ export class SimBroker implements BrokerService {
     const fillPrice = this.computeFillPrice(params, quote);
     const roundedFill = roundCents(fillPrice);
 
-    log.debug(`  MARKET filled @ $${roundedFill} (bid=${quote.bid} ask=${quote.ask} model=${this.fillModel})`);
+    log.debug(`  MARKET filled @ $${roundedFill} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)} model=${this.fillModel}${isOptions ? ' [options]' : ''})`);
 
     return {
       orderId,
@@ -340,22 +405,73 @@ export class SimBroker implements BrokerService {
   /**
    * Replay ticks between the last advance time and `time` for all symbols
    * with working orders. No working orders = no I/O.
+   *
+   * Equity orders: replay underlying ticks via processQuoteTick().
+   * Option orders: re-quote net spread at target time via getOptionSpreadQuote().
    */
   async advanceTo(time: Date): Promise<SimFillEvent[]> {
-    const symbols = this.getWorkingSymbols();
-    if (symbols.length === 0) {
+    if (this.workingOrders.size === 0) {
       this.lastAdvanceTime = time;
       return [];
+    }
+
+    // Separate equity and option working orders
+    const equitySymbols = new Set<string>();
+    const optionOrderIds: string[] = [];
+
+    for (const [orderId, entry] of this.workingOrders) {
+      if (entry.status !== 'OPEN') continue;
+      if (entry.isOptionOrder) {
+        optionOrderIds.push(orderId);
+      } else {
+        equitySymbols.add(entry.params.symbol);
+      }
     }
 
     const from = this.lastAdvanceTime ?? time;
     const allFills: SimFillEvent[] = [];
 
-    for (const symbol of symbols) {
+    // Process equity working orders via tick replay (existing logic)
+    for (const symbol of equitySymbols) {
       const ticks = await this.marketData.getTicksInRange(symbol, from, time);
       for (const tick of ticks) {
         const fills = this.processQuoteTick(tick);
         allFills.push(...fills);
+      }
+    }
+
+    // Process option working orders via re-quote at target time
+    for (const orderId of optionOrderIds) {
+      const entry = this.workingOrders.get(orderId);
+      if (!entry || entry.status !== 'OPEN') continue;
+
+      try {
+        const quote = await this.getOptionSpreadQuote(entry.params, time);
+        const isBuy = entry.params.legs[0]?.action === 'BUY';
+        const shouldFill = isBuy
+          ? entry.currentLimitPrice >= quote.bid
+          : entry.currentLimitPrice <= quote.ask;
+
+        if (shouldFill) {
+          const roundedFill = roundCents(entry.currentLimitPrice);
+          entry.status = 'FILLED';
+          entry.filledPrice = roundedFill;
+          this.workingOrders.delete(orderId);
+
+          const side = isBuy ? 'BUY' : 'SELL';
+          log.debug(`Option fill: ${orderId} ${side} ${entry.params.symbol} @ $${roundedFill} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)})`);
+
+          allFills.push({
+            orderId,
+            symbol: entry.params.symbol,
+            side,
+            price: roundedFill,
+            quantity: entry.params.legs[0]?.quantity ?? 1,
+            timestamp: time,
+          });
+        }
+      } catch {
+        // No option market data at this time — leave order working
       }
     }
 

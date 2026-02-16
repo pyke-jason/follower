@@ -88,10 +88,12 @@ Only flag_for_review when:
 - **CLOSE**: Full exit. "Exit Long ATEC" → action CLOSE. Include symbol and direction.
   Note: "Exit META 625 call 9.10" → 9.10 is the TRADER'S fill price, not ours.
   Get a fresh quote and use that as limitPrice.
+  Do NOT include legs for CLOSE — the system reverses the existing position's legs.
 - **ADD**: Adding to existing position ("added more NVDA calls", "avg down on AAPL").
   Use get_open_positions to verify position exists. Include same fields as OPEN.
 - **TRIM**: Partial exit ("Exit RKLB 1/2", "trim 80% of AEO").
   Include exitPercent: 0.5 for half, 0.8 for 80%, etc.
+  Do NOT include legs for TRIM — the system uses the existing position's legs.
 
 ## Rules
 - Only classify trades for tracked traders in the whitelist.
@@ -118,7 +120,22 @@ After using tools, respond with a JSON block:
     }
   ]
 }
-\`\`\``;
+\`\`\`
+
+**IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
+
+const etFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+});
+
+/** Format ISO timestamp as "Tue, Sep 2, 2025, 10:32 AM ET" for the LLM. */
+function formatTimestampForLLM(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return etFormatter.format(d);
+}
 
 function parseTradeResult(text: string): TaskResult | null {
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
@@ -144,8 +161,13 @@ export function buildUserPrompt(
   context: TaskContext,
   prefetched?: PrefetchedData,
 ): string {
+  const dateStr = context.messageTimestamp
+    ? formatTimestampForLLM(context.messageTimestamp)
+    : 'unknown';
+
   let prompt = `Review this trade message and decide what to do.
 
+Current Date/Time: ${dateStr}
 Message ID: ${context.messageId}
 Author: ${context.author}
 Text: ${context.cleanText}

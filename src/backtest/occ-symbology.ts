@@ -74,3 +74,42 @@ export function formatOccSymbol(option: {
 
   return `${underlying}${dateStr}${optionType}${strikeStr}`;
 }
+
+/** Pick a strike interval based on underlying price. */
+function strikeInterval(price: number): number {
+  if (price < 25) return 0.5;
+  if (price < 50) return 1;
+  if (price < 200) return 2.5;
+  if (price < 500) return 5;
+  return 10;
+}
+
+/**
+ * Generate candidate OCC symbols for a given underlying, expiry, option type,
+ * and strike range. Uses standard strike intervals based on price.
+ * Some symbols may not correspond to real contracts — that's fine,
+ * Databento returns no data for non-existent symbols.
+ */
+export function buildOccSymbols(params: {
+  underlying: string;
+  expiry: string;       // YYYY-MM-DD
+  optionType: 'CALL' | 'PUT';
+  priceLow: number;
+  priceHigh: number;
+}): string[] {
+  const interval = strikeInterval((params.priceLow + params.priceHigh) / 2);
+  const start = Math.floor(params.priceLow / interval) * interval;
+  const end = Math.ceil(params.priceHigh / interval) * interval;
+
+  const symbols: string[] = [];
+  for (let strike = start; strike <= end; strike += interval) {
+    if (strike <= 0) continue;
+    symbols.push(formatOccSymbol({
+      underlying: params.underlying,
+      expiration: params.expiry,
+      type: params.optionType,
+      strike,
+    }));
+  }
+  return symbols;
+}

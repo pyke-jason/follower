@@ -40,7 +40,10 @@ export const SignalSchema = z.object({
   limitPrice: zPrice.optional(),
   exitPercent: zPct01.optional(),     // for TRIM: 0.5 = half
   legs: z.array(SignalLegSchema).optional(),
-});
+}).refine(
+  s => s.strategy === 'STOCK' || !['OPEN', 'ADD'].includes(s.action) || (s.legs && s.legs.length > 0),
+  { message: 'Options OPEN/ADD signals require legs with strike, expiry, optionType, and action' },
+);
 
 export type Signal = z.infer<typeof SignalSchema>;
 

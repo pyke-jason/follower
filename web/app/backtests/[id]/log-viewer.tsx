@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Terminal } from 'lucide-react';
 import { CopyButton } from '../../components/copy-button';
+import { ScrollToBottom } from '../../components/scroll-to-bottom';
 
 export function LogViewer({
   runId,
@@ -13,14 +14,26 @@ export function LogViewer({
   isRunning: boolean;
   defaultCollapsed?: boolean;
 }) {
-  const [logs, setLogs] = useState('');
   const [open, setOpen] = useState(!defaultCollapsed);
   const [height, setHeight] = useState(560);
+  const [lineCount, setLineCount] = useState(0);
+  const [pinned, setPinned] = useState(true);
   const preRef = useRef<HTMLPreElement>(null);
-  const wasAtBottom = useRef(true);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+  // Full log text lives in a ref so updates don't trigger React re-renders
+  // of the <pre> content (which would nuke the user's text selection).
+  const logsRef = useRef('');
+  const renderedLenRef = useRef(0);
 
-  const getLogs = useCallback(() => logs, [logs]);
+  const getLogs = useCallback(() => logsRef.current, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = preRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      setPinned(true);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,7 +43,24 @@ export function LogViewer({
         const res = await fetch(`/api/backtests/${runId}/logs`);
         if (!cancelled && res.ok) {
           const text = await res.text();
-          setLogs(text);
+          if (text === logsRef.current) return;
+          logsRef.current = text;
+          setLineCount(text ? text.split('\n').length : 0);
+
+          // Append only the new portion to the DOM so existing text
+          // nodes (and any user selection on them) are preserved.
+          const el = preRef.current;
+          if (el) {
+            const delta = text.slice(renderedLenRef.current);
+            if (delta) {
+              el.appendChild(document.createTextNode(delta));
+              renderedLenRef.current = text.length;
+            }
+            setPinned((p) => {
+              if (p) el.scrollTop = el.scrollHeight;
+              return p;
+            });
+          }
         }
       } catch {
         // ignore fetch errors
@@ -45,19 +75,25 @@ export function LogViewer({
     }
 
     return () => { cancelled = true; };
-  }, [runId, isRunning]);
+  }, [runId, isRunning, open]);
 
+  // When the panel opens, render the full log text we already have.
   useEffect(() => {
     const el = preRef.current;
-    if (el && wasAtBottom.current && open && isRunning) {
-      el.scrollTop = el.scrollHeight;
+    if (el && open) {
+      el.textContent = logsRef.current || 'No logs yet.';
+      renderedLenRef.current = logsRef.current.length;
+      if (pinned) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
-  }, [logs, open, isRunning]);
+  }, [open]);
 
   function handleScroll() {
     const el = preRef.current;
     if (el) {
-      wasAtBottom.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+      setPinned(atBottom);
     }
   }
 
@@ -76,8 +112,6 @@ export function LogViewer({
   const onResizeEnd = useCallback(() => {
     dragRef.current = null;
   }, []);
-
-  const lineCount = logs ? logs.split('\n').length : 0;
 
   return (
     <div className="sticky bottom-0 -mx-6 z-40 flex flex-col border-t border-border bg-card">
@@ -98,7 +132,13 @@ export function LogViewer({
         {lineCount > 0 && (
           <span className="text-muted-foreground/60 tabular-nums">{lineCount.toLocaleString()} lines</span>
         )}
-        {isRunning && (
+        {isRunning && open && (
+          <span
+            className={`size-1.5 rounded-full transition-colors ${pinned ? 'bg-profit animate-pulse' : 'bg-warning'}`}
+            title={pinned ? 'Following output' : 'Scrolled away'}
+          />
+        )}
+        {isRunning && !open && (
           <span className="size-1.5 rounded-full bg-profit animate-pulse" />
         )}
         <div className="ml-auto flex items-center gap-1">
@@ -114,14 +154,14 @@ export function LogViewer({
             onPointerUp={onResizeEnd}
             className="h-1 cursor-ns-resize hover:bg-border transition-colors border-t border-border/50"
           />
-          <pre
-            ref={preRef}
-            onScroll={handleScroll}
-            style={{ height }}
-            className="overflow-y-auto px-4 py-2 text-xs font-mono text-muted-foreground whitespace-pre-wrap"
-          >
-            {logs || 'No logs yet.'}
-          </pre>
+          <div className="relative" style={{ height }}>
+            <pre
+              ref={preRef}
+              onScroll={handleScroll}
+              className="absolute inset-0 overflow-y-auto px-4 py-2 text-xs font-mono text-muted-foreground whitespace-pre-wrap scrollbar-thin"
+            />
+            {!pinned && <ScrollToBottom onClick={scrollToBottom} />}
+          </div>
         </>
       )}
     </div>
