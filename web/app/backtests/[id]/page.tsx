@@ -22,7 +22,7 @@ import { AgentDecisions } from './agent-decisions';
 import { TradeRow } from '../../components/trade-row';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
-import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
+import type { BacktestRunConfig } from '../../../../src/db/schema';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 
 import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
@@ -273,7 +273,7 @@ export default async function BacktestDetailPage({
         {/* Progress / run stats — always visible for consistent layout */}
         <RunProgress
           processedMessages={decisions.length}
-          totalMessages={(run.summary as BacktestRunSummary | null)?.tradedMessages ?? 0}
+          totalMessages={run.summary?.tradedMessages ?? 0}
           agentModel={config.agentModel ?? 'default'}
           llmTokens={llmTokens}
           liveMetrics={liveMetrics}
@@ -380,7 +380,9 @@ function computeFromTrades(
     const dateGroups = new Map<string, TradeRow[]>();
     for (const t of sortedClosed) {
       const date = (t.closedAt ?? '').split('T')[0];
-      (dateGroups.get(date) ?? (() => { const a: TradeRow[] = []; dateGroups.set(date, a); return a; })()).push(t);
+      let group = dateGroups.get(date);
+      if (!group) { group = []; dateGroups.set(date, group); }
+      group.push(t);
     }
     for (const [date, trades] of [...dateGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       for (const t of trades) cumByStrategy[t.strategy] += safeParseFloat(t.pnl);

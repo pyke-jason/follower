@@ -8,6 +8,7 @@ import { SignalSheet } from './signal-sheet';
 import { ThemeToggle } from './theme-toggle';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useRunScope } from './run-scope-provider';
+import { pctDisplay } from '../../../src/lib/numbers';
 
 export function TopBar() {
   const { runId, runBrief: brief, status, selectRun } = useRunScope();
@@ -129,7 +130,7 @@ export function TopBar() {
 
           <span className="text-muted-foreground">&middot;</span>
           <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-            {Math.round(brief.winRate * 100)}% WR
+            {pctDisplay(brief.winRate)} WR
           </span>
 
           <span className="text-muted-foreground">&middot;</span>
