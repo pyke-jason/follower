@@ -1,6 +1,9 @@
 import type { BrokerService } from '../broker/interface.js';
 import { runReconciliation, type ReconciliationAlertInput } from './reconciler.js';
 import { sendSystemAlert } from '../lib/alert.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('Recon');
 
 export class ReconciliationScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -38,7 +41,7 @@ export class ReconciliationScheduler {
     try {
       this.lastResult = await runReconciliation(this.broker);
     } catch (err) {
-      console.error('[RECON] Reconciliation failed:', err);
+      log.error('Reconciliation failed:', err);
       sendSystemAlert({
         title: 'Reconciliation failed',
         message: `Scheduled reconciliation threw: ${err instanceof Error ? err.message : String(err)}`,
@@ -61,7 +64,7 @@ export class ReconciliationScheduler {
       const safe = !alerts.some((a) => a.type === 'DB_ONLY');
       return { safe, alerts };
     } catch (err) {
-      console.error('[RECON] Pre-trade check failed:', err);
+      log.error('Pre-trade check failed:', err);
       sendSystemAlert({
         title: 'Pre-trade check crashed',
         message: `Safety check itself failed — blocking trades as precaution: ${err instanceof Error ? err.message : String(err)}`,

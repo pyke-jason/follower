@@ -1,3 +1,7 @@
+import { createLogger } from './logger.js';
+
+const log = createLogger('Retry');
+
 export type ErrorCategory = 'auth' | 'transient' | 'permanent';
 
 export type RetryConfig = {
@@ -23,6 +27,14 @@ export const WRITE_DEFAULTS: RetryConfig = {
   maxBackoffMs: 10_000,
   multiplier: 2,
   timeoutMs: 15_000,
+};
+
+export const LLM_DEFAULTS: RetryConfig = {
+  maxRetries: 3,
+  initialBackoffMs: 1_000,
+  maxBackoffMs: 30_000,
+  multiplier: 2,
+  timeoutMs: 60_000,
 };
 
 /** Classify an error based on HTTP status codes and network error patterns. */
@@ -63,6 +75,19 @@ export function tsClassify(err: unknown): ErrorCategory {
   return classifyError(err);
 }
 
+/** OpenAI-compatible SDK error classifier: reads .status directly from error objects. */
+export function oaiClassify(err: unknown): ErrorCategory {
+  if (err != null && typeof err === 'object' && 'status' in err) {
+    const status = (err as { status: number }).status;
+    if (typeof status === 'number') {
+      if (status === 401 || status === 403) return 'auth';
+      if (status === 429 || (status >= 500 && status <= 599)) return 'transient';
+      if (status === 400 || status === 404 || status === 422) return 'permanent';
+    }
+  }
+  return classifyError(err);
+}
+
 export async function withRetry<T>(
   fn: (signal: AbortSignal) => Promise<T>,
   config: Partial<RetryConfig>,
@@ -91,7 +116,7 @@ export async function withRetry<T>(
       if (category === 'auth') {
         authRetries++;
         if (authRetries > MAX_AUTH_RETRIES) throw err;
-        console.warn(`[Retry:${label}] Auth error (attempt ${authRetries}/${MAX_AUTH_RETRIES}), retrying in 2s`);
+        log.warn(`${label}: Auth error (attempt ${authRetries}/${MAX_AUTH_RETRIES}), retrying in 2s`);
         await new Promise(r => setTimeout(r, 2000));
         continue;
       }
@@ -105,7 +130,7 @@ export async function withRetry<T>(
       const jitter = Math.random() * baseDelay * 0.2;
       const delay = baseDelay + jitter;
 
-      console.warn(`[Retry:${label}] Transient error (attempt ${attempt + 1}/${cfg.maxRetries}), retrying in ${Math.round(delay)}ms: ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`${label}: Transient error (attempt ${attempt + 1}/${cfg.maxRetries}), retrying in ${Math.round(delay)}ms: ${err instanceof Error ? err.message : String(err)}`);
       await new Promise(r => setTimeout(r, delay));
       attempt++;
     } finally {

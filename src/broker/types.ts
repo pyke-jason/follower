@@ -27,11 +27,11 @@ export type OptionsStrike = {
   bid: number;
   ask: number;
   last: number;
-  iv: number;
-  delta: number;
-  gamma: number;
-  theta: number;
-  openInterest: number;
+  iv?: number;
+  delta?: number;
+  gamma?: number;
+  theta?: number;
+  openInterest?: number;
 };
 
 export type OptionsChain = {

@@ -58,7 +58,10 @@ export function shouldSkipDeterministic(
   const hasPositions = prefetched && !prefetched.positions.failed;
 
   // 3. CLOSE with no open position for symbol+trader
-  if (context.actionHint === 'CLOSE' && symbols.length > 0 && hasPositions) {
+  // Guard: only when single symbol. Compound messages (e.g. "Exit TXN, Short TSLA")
+  // have multiple symbols and the message-level actionHint may not apply to all of them.
+  // Let the agent parse compound messages.
+  if (context.actionHint === 'CLOSE' && symbols.length === 1 && hasPositions) {
     if (prefetched.positions.forSymbol.length === 0) {
       return {
         category: 'no open position',
@@ -68,7 +71,8 @@ export function shouldSkipDeterministic(
   }
 
   // 4. OPEN + max positions on symbol reached
-  if (context.actionHint === 'OPEN' && symbols.length > 0 && hasPositions) {
+  // Same compound-message guard: with multiple symbols, some may be fine.
+  if (context.actionHint === 'OPEN' && symbols.length === 1 && hasPositions) {
     if (prefetched.positions.forSymbol.length >= opts.maxOnSymbol) {
       return {
         category: 'max on symbol',

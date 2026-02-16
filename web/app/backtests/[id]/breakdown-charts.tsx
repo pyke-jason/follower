@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { BarChartComponent } from '../../components/charts/bar-chart';
 import { formatCurrency } from '@/lib/format';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
@@ -14,6 +13,75 @@ type BreakdownEntry = {
   avgPnl?: number;
 };
 
+type RowData = {
+  name: string;
+  pnl: number;
+  trades: number;
+  winRate: number;
+};
+
+function BreakdownTable({
+  rows,
+  maxAbsPnl,
+  linkBuilder,
+}: {
+  rows: RowData[];
+  maxAbsPnl: number;
+  linkBuilder?: (name: string) => string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="flex items-center justify-center text-xs text-muted-foreground h-[120px]">
+        No data yet
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5 px-2 pb-2">
+      {rows.map((row) => {
+        const barWidth = maxAbsPnl > 0 ? Math.abs(row.pnl) / maxAbsPnl : 0;
+        const isPositive = row.pnl >= 0;
+        return (
+          <div key={row.name} className="flex items-center gap-2 text-xs group">
+            <div className="w-[90px] truncate shrink-0">
+              {linkBuilder ? (
+                <Link
+                  href={linkBuilder(row.name)}
+                  className="text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-dashed"
+                >
+                  {row.name}
+                </Link>
+              ) : (
+                <span className="text-muted-foreground">{row.name}</span>
+              )}
+            </div>
+            <div className="flex-1 h-5 relative rounded-sm overflow-hidden bg-muted/30">
+              <div
+                className={`absolute inset-y-0 left-0 rounded-sm transition-all ${
+                  isPositive ? 'bg-profit/25' : 'bg-loss/25'
+                }`}
+                style={{ width: `${Math.max(barWidth * 100, 2)}%` }}
+              />
+            </div>
+            <span className={`w-[72px] text-right tabular-nums font-medium shrink-0 ${
+              isPositive ? 'text-profit' : 'text-loss'
+            }`}>
+              {formatCurrency(row.pnl)}
+            </span>
+            <span className="w-[40px] text-right tabular-nums text-muted-foreground shrink-0">
+              {row.trades}t
+            </span>
+            <span className="w-[38px] text-right tabular-nums text-muted-foreground shrink-0">
+              {(row.winRate * 100).toFixed(0)}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function BreakdownCharts({
   byTrader,
   byStrategy,
@@ -23,23 +91,20 @@ export function BreakdownCharts({
   byStrategy: Record<string, BreakdownEntry> | null;
   runId?: string;
 }) {
-  const traderData = byTrader
+  const traderRows: RowData[] = byTrader
     ? Object.entries(byTrader)
         .map(([name, stats]) => ({ name, pnl: stats.totalPnl, trades: stats.trades, winRate: stats.winRate }))
         .sort((a, b) => b.pnl - a.pnl)
     : [];
 
-  const strategyData = byStrategy
+  const strategyRows: RowData[] = byStrategy
     ? Object.entries(byStrategy)
         .map(([name, stats]) => ({ name, pnl: stats.totalPnl, trades: stats.trades, winRate: stats.winRate }))
         .sort((a, b) => b.pnl - a.pnl)
     : [];
 
-  const noData = (
-    <div className="flex items-center justify-center text-xs text-muted-foreground h-[120px]">
-      No data yet
-    </div>
-  );
+  const allPnls = [...traderRows, ...strategyRows].map((r) => Math.abs(r.pnl));
+  const maxAbsPnl = allPnls.length > 0 ? Math.max(...allPnls) : 1;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -47,65 +112,29 @@ export function BreakdownCharts({
         <CardHeader className="border-b py-3 px-4">
           <CardTitle className="text-sm">P&L by Trader</CardTitle>
         </CardHeader>
-        <CardContent className="pt-4 pb-2 px-2">
-          {traderData.length > 0 ? (
-            <BarChartComponent
-              data={traderData}
-              xKey="name"
-              yKey="pnl"
-              layout="vertical"
-              colorByValue
-              height={Math.max(120, traderData.length * 40)}
-              formatY={(v: number) => formatCurrency(v)}
-              tooltipFormatter={(value: number) => [formatCurrency(value), 'P&L']}
-            />
-          ) : noData}
+        <CardContent className="pt-3 px-2">
+          <BreakdownTable
+            rows={traderRows}
+            maxAbsPnl={maxAbsPnl}
+            linkBuilder={(name) =>
+              `/trades?trader=${encodeURIComponent(name)}${runId ? `&run=${runId}` : ''}`
+            }
+          />
         </CardContent>
-        {traderData.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-4 pb-3">
-            {traderData.map((t) => (
-              <Link
-                key={t.name}
-                href={`/trades?trader=${encodeURIComponent(t.name)}${runId ? `&run=${runId}` : ''}`}
-                className="text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-dashed"
-              >
-                {t.name} →
-              </Link>
-            ))}
-          </div>
-        )}
       </Card>
       <Card className="py-0 gap-0">
         <CardHeader className="border-b py-3 px-4">
           <CardTitle className="text-sm">P&L by Strategy</CardTitle>
         </CardHeader>
-        <CardContent className="pt-4 pb-2 px-2">
-          {strategyData.length > 0 ? (
-            <BarChartComponent
-              data={strategyData}
-              xKey="name"
-              yKey="pnl"
-              layout="vertical"
-              colorByValue
-              height={Math.max(120, strategyData.length * 40)}
-              formatY={(v: number) => formatCurrency(v)}
-              tooltipFormatter={(value: number) => [formatCurrency(value), 'P&L']}
-            />
-          ) : noData}
+        <CardContent className="pt-3 px-2">
+          <BreakdownTable
+            rows={strategyRows}
+            maxAbsPnl={maxAbsPnl}
+            linkBuilder={(name) =>
+              `/trades?strategy=${encodeURIComponent(name)}${runId ? `&run=${runId}` : ''}`
+            }
+          />
         </CardContent>
-        {strategyData.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-4 pb-3">
-            {strategyData.map((s) => (
-              <Link
-                key={s.name}
-                href={`/trades?strategy=${encodeURIComponent(s.name)}${runId ? `&run=${runId}` : ''}`}
-                className="text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-dashed"
-              >
-                {s.name} →
-              </Link>
-            ))}
-          </div>
-        )}
       </Card>
     </div>
   );

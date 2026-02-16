@@ -6,7 +6,7 @@ export type ModelProvider = 'anthropic' | 'xai';
 
 export type ModelIdentity = {
   provider: ModelProvider;
-  model: string; // e.g. 'claude-sonnet-4-5-20250929', 'grok-3'
+  model: string; // e.g. 'claude-sonnet-4-5-20250929', 'grok-4-1-fast-reasoning'
 };
 
 // ─── Normalized types ────────────────────────────────

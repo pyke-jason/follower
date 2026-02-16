@@ -29,8 +29,9 @@ const PRICING: Record<string, ModelPricing> = {
   'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
   // Anthropic Claude Haiku 3.5
   'claude-haiku-4-5-20251001': { input: 0.80, output: 4.00, cacheWrite: 1.00, cacheRead: 0.08 },
-  // xAI Grok-3
-  'grok-3': { input: 3.00, output: 15.00, cacheWrite: 3.00, cacheRead: 0.30 },
+  // xAI Grok 4.1 Fast
+  'grok-4-1-fast-reasoning': { input: 0.20, output: 0.50, cacheWrite: 0.20, cacheRead: 0.02 },
+  'grok-4-1-fast-non-reasoning': { input: 0.20, output: 0.50, cacheWrite: 0.20, cacheRead: 0.02 },
 };
 
 // Conservative fallback — assumes Sonnet-class pricing

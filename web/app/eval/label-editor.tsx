@@ -374,15 +374,20 @@ function LabelEditSheet({
 
           {/* Footer */}
           <div className="border-t px-4 py-3 flex items-center gap-2 shrink-0">
-            <form action={async (formData: FormData) => {
-              await deleteLabel(formData);
-              onOpenChange(false);
-            }}>
-              <input type="hidden" name="id" value={label.id} />
-              <Button variant="ghost" size="sm" className="text-destructive" type="submit">
-                Delete
-              </Button>
-            </form>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive"
+              type="button"
+              onClick={async () => {
+                const fd = new FormData();
+                fd.set('id', label.id);
+                await deleteLabel(fd);
+                onOpenChange(false);
+              }}
+            >
+              Delete
+            </Button>
             <div className="flex-1" />
             <Button variant="ghost" size="sm" type="button" onClick={() => onOpenChange(false)}>
               Cancel

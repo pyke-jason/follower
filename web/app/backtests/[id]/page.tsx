@@ -15,7 +15,9 @@ import { BacktestTabs } from './backtest-tabs';
 import { EquityCurveChart } from './equity-curve-chart';
 import { DrawdownChart } from './drawdown-chart';
 import { BreakdownCharts } from './breakdown-charts';
-import { PnlDistribution } from './pnl-distribution';
+import { TradeScatter } from './trade-scatter';
+import { RollingWinRate } from './rolling-win-rate';
+import { StrategyEquityChart } from './strategy-equity';
 import { AgentDecisions } from './agent-decisions';
 import { TradeRow } from '../../components/trade-row';
 import Link from 'next/link';
@@ -39,17 +41,16 @@ export default async function BacktestDetailPage({
   const config = run.config as BacktestRunConfig;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
 
-  const showData = run.status === 'COMPLETED' || run.status === 'RUNNING' || run.status === 'CANCELLED';
   const [decisions, allTrades] = await Promise.all([
-    showData ? getRunDecisions(id) : Promise.resolve([]),
-    showData ? getTradesByBacktestRun(id, { includeOpen: true }) : Promise.resolve([]),
+    getRunDecisions(id),
+    getTradesByBacktestRun(id, { includeOpen: true }),
   ]);
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
 
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const { summary, byTrader, byStrategy, equityCurve } = computeFromTrades(closedTrades, allTrades.length, run.summary as BacktestRunSummary | null);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(closedTrades, allTrades.length, run.summary as BacktestRunSummary | null);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -81,7 +82,7 @@ export default async function BacktestDetailPage({
 
   const performanceContent = (
     <div className="space-y-4">
-      {/* Row 1: Equity Curve + Drawdown side by side */}
+      {/* Row 1: Equity Curve + Drawdown */}
       <div className="grid gap-4 grid-cols-1 md:grid-cols-[3fr_2fr]">
         <Card className="py-0 gap-0">
           <CardHeader className="border-b py-3 px-4">
@@ -105,20 +106,42 @@ export default async function BacktestDetailPage({
         </Card>
       </div>
 
-      {/* Row 2: Breakdown Charts (always 2-col) */}
+      {/* Row 2: Trade Scatter + Rolling Win Rate */}
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-[3fr_2fr]">
+        <Card className="py-0 gap-0">
+          <CardHeader className="border-b py-3 px-4">
+            <CardTitle className="text-sm">Trade Scatter</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 pb-2 px-2">
+            {tradeScatter.length > 0
+              ? <TradeScatter data={tradeScatter} />
+              : noData(280)}
+          </CardContent>
+        </Card>
+        <Card className="py-0 gap-0">
+          <CardHeader className="border-b py-3 px-4">
+            <CardTitle className="text-sm">Rolling Win Rate</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 pb-2 px-2">
+            <RollingWinRate data={rollingWinRate} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row 3: Breakdown Charts */}
       <BreakdownCharts byTrader={byTrader} byStrategy={byStrategy} runId={id} />
 
-      {/* Row 3: P&L Distribution */}
-      <Card className="py-0 gap-0">
-        <CardHeader className="border-b py-3 px-4">
-          <CardTitle className="text-sm">P&L Distribution</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4 pb-2 px-2">
-          {closedTrades.length > 0
-            ? <PnlDistribution trades={closedTrades} />
-            : noData(200)}
-        </CardContent>
-      </Card>
+      {/* Row 4: Strategy Equity (only if 2+ strategies) */}
+      {strategyEquity.length > 0 && strategies.length >= 2 && (
+        <Card className="py-0 gap-0">
+          <CardHeader className="border-b py-3 px-4">
+            <CardTitle className="text-sm">Strategy Equity</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 pb-2 px-2">
+            <StrategyEquityChart data={strategyEquity} strategies={strategies} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 
@@ -246,16 +269,15 @@ export default async function BacktestDetailPage({
           )}
         </div>
 
-        {/* Progress — only while running */}
-        {isRunning && (
-          <RunProgress
-            processedMessages={decisions.length}
-            totalMessages={summary?.totalMessages ?? 0}
-            agentModel={config.agentModel ?? 'default'}
-            llmTokens={llmTokens}
-            liveMetrics={liveMetrics}
-          />
-        )}
+        {/* Progress / run stats — always visible for consistent layout */}
+        <RunProgress
+          processedMessages={decisions.length}
+          totalMessages={summary?.tradedMessages ?? 0}
+          agentModel={config.agentModel ?? 'default'}
+          llmTokens={llmTokens}
+          liveMetrics={liveMetrics}
+          status={run.status}
+        />
 
         {/* Error — only when there is one (hide for cancelled runs) */}
         {run.error && run.status !== 'CANCELLED' && (
@@ -292,12 +314,27 @@ export default async function BacktestDetailPage({
 
 // ── Compute report data from the trades table ──────────────────────
 
-type TradeRow = { pnl: string | null; status: string; trader: string; strategy: string; closedAt: string | null };
+type TradeRow = {
+  pnl: string | null;
+  status: string;
+  trader: string;
+  strategy: string;
+  closedAt: string | null;
+  direction: string;
+  quantity: number | null;
+  symbol: string;
+  openedAt: string | null;
+};
+
+export type TradeScatterPoint = { date: string; pnl: number; strategy: string; direction: string; quantity: number; symbol: string; trader: string };
+export type RollingWinRatePoint = { tradeNum: number; date: string; winRate: number; windowSize: number };
+export type StrategyEquityPoint = Record<string, number | string>;
 
 function computeFromTrades(
   closed: TradeRow[],
   totalTradeCount: number,
   precomputedSummary: BacktestRunSummary | null,
+  storedEquityCurve?: { date: string; cumPnl: number; equity?: number; unrealizedPnl?: number }[] | null,
 ) {
   const pnl = (t: TradeRow) => { const n = parseFloat(t.pnl ?? ''); return Number.isFinite(n) ? n : 0; };
 
@@ -368,11 +405,87 @@ function computeFromTrades(
     d.trades++;
     dailyMap.set(date, d);
   }
-  const equityCurve: { date: string; pnl: number; cumPnl: number; trades: number }[] = [];
+  const equityCurve: { date: string; pnl: number; cumPnl: number; trades: number; equity?: number }[] = [];
   let cumPnl = 0;
-  for (const [date, d] of [...dailyMap.entries()].sort()) {
-    cumPnl += d.pnl;
-    equityCurve.push({ date, pnl: roundCents(d.pnl), cumPnl: roundCents(cumPnl), trades: d.trades });
+
+  // If we have a stored equity curve with equity data, use it and merge daily pnl
+  if (storedEquityCurve && storedEquityCurve.length > 0 && storedEquityCurve.some(pt => pt.equity != null)) {
+    const dailyPnlMap = new Map<string, number>();
+    const dailyTradesMap = new Map<string, number>();
+    for (const [date, d] of dailyMap.entries()) {
+      dailyPnlMap.set(date, d.pnl);
+      dailyTradesMap.set(date, d.trades);
+    }
+    for (const pt of storedEquityCurve) {
+      equityCurve.push({
+        date: pt.date,
+        pnl: roundCents(dailyPnlMap.get(pt.date) ?? 0),
+        cumPnl: roundCents(pt.cumPnl),
+        trades: dailyTradesMap.get(pt.date) ?? 0,
+        equity: pt.equity != null ? roundCents(pt.equity) : undefined,
+      });
+    }
+  } else {
+    for (const [date, d] of [...dailyMap.entries()].sort()) {
+      cumPnl += d.pnl;
+      equityCurve.push({ date, pnl: roundCents(d.pnl), cumPnl: roundCents(cumPnl), trades: d.trades });
+    }
+  }
+
+  // --- Trade Scatter data ---
+  const tradeScatter: TradeScatterPoint[] = sorted.map((t) => ({
+    date: (t.closedAt ?? t.openedAt ?? '').split('T')[0],
+    pnl: pnl(t),
+    strategy: t.strategy,
+    direction: t.direction,
+    quantity: t.quantity ?? 1,
+    symbol: t.symbol,
+    trader: t.trader,
+  }));
+
+  // --- Rolling Win Rate ---
+  const rollingWinRate: RollingWinRatePoint[] = [];
+  if (sorted.length >= 5) {
+    // Adaptive window: max(5, total/5) capped at 20
+    const windowSize = Math.min(20, Math.max(5, Math.floor(sorted.length / 5)));
+    for (let i = windowSize - 1; i < sorted.length; i++) {
+      const window = sorted.slice(i - windowSize + 1, i + 1);
+      const windowWins = window.filter((t) => pnl(t) > 0).length;
+      rollingWinRate.push({
+        tradeNum: i + 1,
+        date: (sorted[i].closedAt ?? '').split('T')[0],
+        winRate: roundCents(windowWins / windowSize),
+        windowSize,
+      });
+    }
+  }
+
+  // --- Strategy Equity (cumulative P&L per strategy) ---
+  const strategies = [...new Set(sorted.map((t) => t.strategy))];
+  const strategyEquity: StrategyEquityPoint[] = [];
+  if (strategies.length >= 2) {
+    const cumByStrategy: Record<string, number> = {};
+    for (const s of strategies) cumByStrategy[s] = 0;
+
+    // Group sorted trades by date
+    const dateGroups = new Map<string, TradeRow[]>();
+    for (const t of sorted) {
+      const date = (t.closedAt ?? '').split('T')[0];
+      const group = dateGroups.get(date) ?? [];
+      group.push(t);
+      dateGroups.set(date, group);
+    }
+
+    for (const [date, trades] of [...dateGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      for (const t of trades) {
+        cumByStrategy[t.strategy] += pnl(t);
+      }
+      const point: StrategyEquityPoint = { date };
+      for (const s of strategies) {
+        point[s] = roundCents(cumByStrategy[s]);
+      }
+      strategyEquity.push(point);
+    }
   }
 
   return {
@@ -380,5 +493,9 @@ function computeFromTrades(
     byTrader: Object.keys(byTrader).length > 0 ? byTrader : null,
     byStrategy: Object.keys(byStrategy).length > 0 ? byStrategy : null,
     equityCurve: equityCurve.length > 0 ? equityCurve : null,
+    tradeScatter,
+    rollingWinRate,
+    strategyEquity,
+    strategies,
   };
 }

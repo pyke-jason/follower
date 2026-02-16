@@ -1,6 +1,7 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
+import type { Signal } from '../agent/schemas.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 
 // SQLite doesn't have native enums — use text columns with TS types for safety.
@@ -355,7 +356,7 @@ export type TaskContext = {
 export type TaskResult = {
   decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
   reasoning: string;
-  trade?: Partial<typeof trades.$inferInsert> | null;
+  signals?: Signal[];
 };
 
 export type TradeMetadata = {

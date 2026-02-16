@@ -1,5 +1,8 @@
 import type { ReconciliationAlertInput } from './reconciler.js';
 import { sendPushover } from '../lib/alert.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('Discord');
 
 const COLORS: Record<string, number> = {
   DB_ONLY: 0xff0000,           // Red — dangerous
@@ -16,7 +19,7 @@ export async function sendDiscordAlert(alerts: ReconciliationAlertInput[]): Prom
 
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   if (!webhookUrl) {
-    console.warn('DISCORD_WEBHOOK_URL not set, skipping alert notification');
+    log.debug('DISCORD_WEBHOOK_URL not set, skipping alert notification');
     return;
   }
 
@@ -50,10 +53,10 @@ export async function sendDiscordAlert(alerts: ReconciliationAlertInput[]): Prom
         }),
       });
       if (!res.ok) {
-        console.warn(`Discord webhook responded ${res.status}: ${await res.text()}`);
+        log.warn(`Discord webhook responded ${res.status}: ${await res.text()}`);
       }
     } catch (err) {
-      console.warn('Discord webhook request failed:', err);
+      log.warn('Discord webhook request failed:', err);
     }
   }
 

@@ -1,100 +1,135 @@
-import { db, schema } from '../db/client.js';
-import { eq, and, sql } from 'drizzle-orm';
-import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
-import type { RiskCheckResult } from '../agent/tool-factory.js';
+import type { Trade } from '../db/schema.js';
 import { safeParseFloat } from '../lib/numbers.js';
 
-export type RiskCheckInput = {
-  symbol: string;
-  strategy: string;
-  trader: string;
-  maxRisk?: number;
+// ─── Types ──────────────────────────────────────────
+
+export type RiskCheckConfig = {
+  maxOnSymbol: number;           // live: 5, backtest: 3
+  maxTotalPositions: number;     // both: 20
+  maxDrawdownPct: number;        // both: 5
+  maxNotionalMultiplier: number; // both: 2 (2x equity leverage cap)
 };
 
-/**
- * Shared live risk-check: queries the DB for trader config, daily PnL,
- * open positions, drawdown, and reconciliation alerts.
- */
-export async function checkRiskLimits(input: RiskCheckInput): Promise<RiskCheckResult> {
-  const todayPnl = await db.select({
-    total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
-  })
-    .from(schema.trades)
-    .where(and(
-      eq(schema.trades.trader, input.trader),
-      sql`opened_at >= date('now')`,
-    ));
+export type RiskCheckDeps = {
+  getOpenTrades: (filters?: { symbol?: string; trader?: string }) => Promise<Trade[]>;
+  getDailyClosedPnl: () => Promise<number>;
+  getStartingEquity: () => Promise<number | null>;
+  getCurrentEquity: () => Promise<number>;
+  getReconciliationAlertCount?: () => Promise<number>; // live only
+};
 
-  const openPositions = await db.select({
-    count: sql<number>`COUNT(*)`,
-  })
-    .from(schema.trades)
-    .where(and(
-      eq(schema.trades.symbol, input.symbol),
-      eq(schema.trades.status, 'OPEN'),
-    ));
+export type RiskCheckResult = {
+  allowed: boolean;
+  reason?: string;
+  dailyPnl: number;
+  openPositionsOnSymbol: number;
+  totalOpenPositions: number;
+  maxTotalPositions: number;
+  startingEquity?: number;
+  currentDrawdownPct?: number;
+  reconciliationAlerts?: number;
+  totalNotional: number;
+  maxNotional: number;
+};
 
-  const dailyPnl = safeParseFloat(todayPnl[0]?.total);
+// ─── Implementation ─────────────────────────────────
 
-  const startingBalance = await getTodayStartingBalance();
+export async function checkRiskLimits(
+  input: { symbol: string; strategy: string; trader: string; action?: string },
+  deps: RiskCheckDeps,
+  config: RiskCheckConfig,
+): Promise<RiskCheckResult> {
+  // Position-reducing trades always pass — closing/trimming should never be blocked
+  // by the very exposure they're trying to reduce.
+  if (input.action === 'CLOSE' || input.action === 'TRIM') {
+    return {
+      allowed: true,
+      dailyPnl: 0,
+      openPositionsOnSymbol: 0,
+      totalOpenPositions: 0,
+      maxTotalPositions: config.maxTotalPositions,
+      totalNotional: 0,
+      maxNotional: 0,
+    };
+  }
+
+  // 1. Open positions — used for position limits + notional
+  const allOpen = await deps.getOpenTrades();
+  const onSymbol = allOpen.filter(t => t.symbol === input.symbol);
+  const totalOpenPositions = allOpen.length;
+  const openPositionsOnSymbol = onSymbol.length;
+
+  // 2. Daily closed PnL + drawdown
+  const dailyPnl = await deps.getDailyClosedPnl();
+  const startingEquity = await deps.getStartingEquity();
   let currentDrawdownPct: number | undefined;
   let drawdownBlocked = false;
-  if (startingBalance && startingBalance.equity > 0) {
-    currentDrawdownPct = Math.round((Math.abs(dailyPnl) / startingBalance.equity) * 10000) / 100;
-    const maxDrawdownPct = 5; // 5% default
-    if (currentDrawdownPct >= maxDrawdownPct) {
+
+  if (startingEquity != null && startingEquity > 0 && dailyPnl < 0) {
+    currentDrawdownPct = Math.round((Math.abs(dailyPnl) / startingEquity) * 10000) / 100;
+    if (currentDrawdownPct >= config.maxDrawdownPct) {
       drawdownBlocked = true;
     }
   }
 
-  // Check for unresolved reconciliation alerts (DB_ONLY = dangerous)
-  const unresolvedAlerts = await db.select({
-    count: sql<number>`COUNT(*)`,
-  })
-    .from(schema.reconciliationAlerts)
-    .where(and(
-      eq(schema.reconciliationAlerts.resolved, false),
-      eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
-    ));
-  const alertCount = unresolvedAlerts[0]?.count ?? 0;
+  // 3. Notional exposure (leverage cap)
+  const totalNotional = allOpen.reduce((sum, t) => {
+    const multiplier = t.strategy !== 'STOCK' ? 100 : 1;
+    return sum + Math.abs(safeParseFloat(t.entryPrice) * (t.quantity ?? 1) * multiplier);
+  }, 0);
+  const equity = await deps.getCurrentEquity();
+  const maxNotional = equity * config.maxNotionalMultiplier;
+  const notionalBlocked = totalNotional > maxNotional;
 
-  // Total open positions across all symbols
-  const totalOpen = await db.select({ count: sql<number>`COUNT(*)` })
-    .from(schema.trades)
-    .where(and(
-      eq(schema.trades.trader, input.trader),
-      eq(schema.trades.status, 'OPEN'),
-      eq(schema.trades.isBacktest, false),
-    ));
-  const totalOpenCount = totalOpen[0]?.count ?? 0;
-  const MAX_TOTAL_POSITIONS = 20;
-  const totalPositionBlocked = totalOpenCount >= MAX_TOTAL_POSITIONS;
+  // 4. Position limit checks
+  const symbolBlocked = openPositionsOnSymbol >= config.maxOnSymbol;
+  const totalBlocked = totalOpenPositions >= config.maxTotalPositions;
 
-  const allowed = (
-    (openPositions[0]?.count ?? 0) < 5 &&
-    !totalPositionBlocked &&
-    !drawdownBlocked &&
-    alertCount === 0
-  );
+  // 5. Reconciliation alerts (live only)
+  const alertCount = deps.getReconciliationAlertCount
+    ? await deps.getReconciliationAlertCount()
+    : 0;
 
-  const reason = totalPositionBlocked
-    ? `Total open positions (${totalOpenCount}) exceeds max (${MAX_TOTAL_POSITIONS})`
-    : drawdownBlocked
-      ? `Drawdown limit exceeded (${currentDrawdownPct}%)`
-      : alertCount > 0
-        ? `${alertCount} unresolved DB_ONLY reconciliation alert(s)`
-        : undefined;
+  // 6. Result
+  const allowed = !symbolBlocked && !totalBlocked && !drawdownBlocked
+    && !notionalBlocked && alertCount === 0;
+
+  let reason: string | undefined;
+  if (drawdownBlocked) {
+    reason = `Daily drawdown ${currentDrawdownPct}% >= ${config.maxDrawdownPct}%`;
+  } else if (notionalBlocked) {
+    // Include top 3 positions for debugging
+    const positions = allOpen
+      .map(t => ({
+        sym: t.symbol, strat: t.strategy, dir: t.direction,
+        qty: t.quantity ?? 1, entry: safeParseFloat(t.entryPrice),
+        notional: Math.abs(safeParseFloat(t.entryPrice) * (t.quantity ?? 1) * (t.strategy !== 'STOCK' ? 100 : 1)),
+      }))
+      .sort((a, b) => b.notional - a.notional)
+      .slice(0, 3);
+    const posDetail = positions.map(p =>
+      `${p.dir} ${p.strat} ${p.sym} qty=${p.qty} @$${p.entry} ($${p.notional.toFixed(0)})`,
+    ).join('; ');
+    reason = `notional exposure $${totalNotional.toFixed(0)} > ${config.maxNotionalMultiplier}x equity $${maxNotional.toFixed(0)} [top: ${posDetail}]`;
+  } else if (symbolBlocked) {
+    reason = `${openPositionsOnSymbol} positions on ${input.symbol} (max ${config.maxOnSymbol})`;
+  } else if (totalBlocked) {
+    reason = `${totalOpenPositions} total positions (max ${config.maxTotalPositions})`;
+  } else if (alertCount > 0) {
+    reason = `${alertCount} unresolved DB_ONLY reconciliation alert(s)`;
+  }
 
   return {
     allowed,
     reason,
-    traderDailyPnl: dailyPnl,
-    openPositionsOnSymbol: openPositions[0]?.count ?? 0,
-    startingEquity: startingBalance?.equity,
+    dailyPnl,
+    openPositionsOnSymbol,
+    totalOpenPositions,
+    maxTotalPositions: config.maxTotalPositions,
+    startingEquity: startingEquity ?? undefined,
     currentDrawdownPct,
-    buyingPower: startingBalance?.buyingPower,
-    reconciliationAlerts: alertCount,
-    totalOpenPositions: totalOpenCount,
-    maxTotalPositions: MAX_TOTAL_POSITIONS,
+    reconciliationAlerts: alertCount > 0 ? alertCount : undefined,
+    totalNotional,
+    maxNotional,
   };
 }

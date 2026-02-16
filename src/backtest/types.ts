@@ -1,5 +1,4 @@
 import type { DetectedStrategy } from '../db/schema.js';
-import type { PositionSize } from '../position-sizing/index.js';
 
 export type FillModel = 'orats' | 'midpoint' | 'natural';
 
@@ -137,23 +136,4 @@ export type LiveMetrics = {
   updatedAt: string;
 };
 
-export interface SizingService {
-  calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }): Promise<PositionSize>;
-}
-
-export type RiskCheckResult = {
-  allowed: boolean;
-  reason?: string;
-  /** Stats populated by the backtest risk service for enriched logging */
-  openOnSymbol?: number;
-  maxOnSymbol?: number;
-  totalOpen?: number;
-  maxTotal?: number;
-  totalNotional?: number;
-  maxNotional?: number;
-};
-
-export interface RiskService {
-  check(input: { symbol: string; strategy: string; trader: string }): Promise<RiskCheckResult>;
-}
 

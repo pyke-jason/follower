@@ -12,6 +12,10 @@ import { HistoricalDataStore } from '../agent/historical-data-store.js';
 import { loadQuoteTape } from '../backtest/databento-tape.js';
 import { reconstructPositions } from '../lib/position-reconstruction.js';
 import type { LabelRow } from '../lib/position-reconstruction.js';
+import { withRetry, oaiClassify, LLM_DEFAULTS } from '../lib/resilient.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('LabelRunner');
 
 function safeJsonArray(raw: string | null): unknown[] {
   try { return JSON.parse(raw || '[]'); }
@@ -50,12 +54,10 @@ function hasFlag(name: string): boolean {
 const COUNT = parseInt(flag('count', '20'), 10);
 const LABEL_SET = flag('label-set', 'baseline');
 const PROVIDER = flag('provider', DEFAULT_LABEL_MODEL.provider) as ModelProvider;
-const MODEL = flag('model', PROVIDER === 'anthropic' ? DEFAULT_LABEL_MODEL.model : 'grok-3');
+const MODEL = flag('model', PROVIDER === 'anthropic' ? DEFAULT_LABEL_MODEL.model : 'grok-4-1-fast-non-reasoning');
 const CONCURRENCY = parseInt(flag('concurrency', '3'), 10);
 const AUTO_REVIEWED = hasFlag('reviewed');
 const LOAD_QUOTES = hasFlag('quotes');
-const MAX_RETRIES = 3;
-const RETRY_BASE_MS = 15_000;
 
 // ─── DB query helpers ────────────────────────────────
 
@@ -153,9 +155,8 @@ async function getTraderPositionHistory(
 
 async function main() {
   const provider = await createProvider({ provider: PROVIDER, model: MODEL });
-  console.log(`Label Runner — ${provider.identity.provider}/${provider.identity.model}`);
-  console.log(`  label-set: ${LABEL_SET}, count: ${COUNT}, concurrency: ${CONCURRENCY}`);
-  console.log(`  auto-reviewed: ${AUTO_REVIEWED}, load-quotes: ${LOAD_QUOTES}`);
+  log.info(`${provider.identity.provider}/${provider.identity.model} — label-set: ${LABEL_SET}, count: ${COUNT}, concurrency: ${CONCURRENCY}`);
+  log.info(`auto-reviewed: ${AUTO_REVIEWED}, load-quotes: ${LOAD_QUOTES}`);
 
   // 1. Fetch unlabeled badged messages
   const unlabeled = await db.all<{
@@ -177,11 +178,11 @@ async function main() {
   `);
 
   if (unlabeled.length === 0) {
-    console.log('No unlabeled badged messages found.');
+    log.info('No unlabeled badged messages found.');
     return;
   }
 
-  console.log(`Found ${unlabeled.length} unlabeled messages.`);
+  log.info(`Found ${unlabeled.length} unlabeled messages.`);
 
   // 2. Optionally pre-load historical market data
   let historicalData: HistoricalDataStore | null = null;
@@ -189,7 +190,7 @@ async function main() {
   if (LOAD_QUOTES) {
     const apiKey = process.env.DATABENTO_API_KEY;
     if (!apiKey) {
-      console.warn('DATABENTO_API_KEY not set — skipping quote loading');
+      log.warn('DATABENTO_API_KEY not set — skipping quote loading');
     } else {
       // Extract unique symbols and dates
       const symbolDates = new Map<string, Date[]>();
@@ -211,7 +212,7 @@ async function main() {
         // Add a day buffer
         maxDate.setDate(maxDate.getDate() + 1);
 
-        console.log(`Loading quotes for ${symbolDates.size} symbols...`);
+        log.info(`Loading quotes for ${symbolDates.size} symbols...`);
         try {
           const ticks = await loadQuoteTape({
             apiKey,
@@ -222,9 +223,9 @@ async function main() {
             symbolDates,
           });
           historicalData = new HistoricalDataStore(ticks);
-          console.log(`Loaded ${ticks.length} ticks for ${historicalData.symbols.length} symbols`);
+          log.info(`Loaded ${ticks.length} ticks for ${historicalData.symbols.length} symbols`);
         } catch (err) {
-          console.warn('Failed to load quotes:', err instanceof Error ? err.message : err);
+          log.warn('Failed to load quotes:', err instanceof Error ? err.message : err);
         }
       }
     }
@@ -259,81 +260,64 @@ async function main() {
           historicalData,
         };
 
-        // Retry loop for rate limits
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-          try {
-            const result = await runLabelAgent(input, deps, provider);
+        try {
+          const result = await withRetry(
+            async () => runLabelAgent(input, deps, provider),
+            { ...LLM_DEFAULTS, classify: oaiClassify },
+            `label:${msg.id.slice(0, 8)}`,
+          );
 
-            if (!result.label) {
-              console.warn(`${tag} Agent did not submit a label for "${msg.clean_text.slice(0, 50)}..."`);
-              errors++;
-              return;
-            }
-
-            const label = result.label;
-            const toolsUsed = result.steps
-              .filter((s) => s.tool)
-              .map((s) => s.tool)
-              .join(', ');
-
-            // Insert label
-            await db.insert(schema.messageLabels).values({
-              messageId: msg.id,
-              labelSet: LABEL_SET,
-              isTrade: label.isTrade,
-              action: label.action ?? null,
-              direction: label.direction ?? null,
-              strategy: label.strategy ?? null,
-              symbol: label.symbol ?? null,
-              price: label.price ?? null,
-              strikes: label.strikes ?? null,
-              quantity: label.quantity ?? null,
-              expiry: label.expiry ?? null,
-              exitPercent: label.exitPercent ?? null,
-              source: 'agent',
-              reviewed: AUTO_REVIEWED || label.confidence === 'high',
-              notes: label.notes ?? null,
-              modelProvider: provider.identity.provider,
-              modelName: provider.identity.model,
-            });
-
-            labeled++;
-            console.log(
-              `${tag} ${label.isTrade ? 'TRADE' : 'SKIP '} ` +
-              `${label.action ?? '-'}/${label.direction ?? '-'}/${label.strategy ?? '-'} ` +
-              `${label.symbol ?? '-'} [${label.confidence ?? '?'}] ` +
-              `tools: ${toolsUsed || 'none'}`
-            );
-            return;
-          } catch (err: any) {
-            const status: number | undefined = err?.status;
-
-            if (status === 429 && attempt < MAX_RETRIES) {
-              const retryAfter = err?.headers?.['retry-after'];
-              const waitMs = retryAfter
-                ? parseFloat(retryAfter) * 1000
-                : RETRY_BASE_MS * 2 ** attempt;
-              console.warn(`${tag} Rate limited, retrying in ${(waitMs / 1000).toFixed(0)}s...`);
-              await new Promise((r) => setTimeout(r, waitMs));
-              continue;
-            }
-
-            console.error(`${tag} Error:`, err instanceof Error ? err.message : err);
+          if (!result.label) {
+            log.warn(`${tag} Agent did not submit a label for "${msg.clean_text.slice(0, 50)}..."`);
             errors++;
             return;
           }
-        }
 
-        console.error(`${tag} Exhausted retries.`);
-        errors++;
+          const label = result.label;
+          const toolsUsed = result.steps
+            .filter((s) => s.tool)
+            .map((s) => s.tool)
+            .join(', ');
+
+          await db.insert(schema.messageLabels).values({
+            messageId: msg.id,
+            labelSet: LABEL_SET,
+            isTrade: label.isTrade,
+            action: label.action ?? null,
+            direction: label.direction ?? null,
+            strategy: label.strategy ?? null,
+            symbol: label.symbol ?? null,
+            price: label.price ?? null,
+            strikes: label.strikes ?? null,
+            quantity: label.quantity ?? null,
+            expiry: label.expiry ?? null,
+            exitPercent: label.exitPercent ?? null,
+            source: 'agent',
+            reviewed: AUTO_REVIEWED || label.confidence === 'high',
+            notes: label.notes ?? null,
+            modelProvider: provider.identity.provider,
+            modelName: provider.identity.model,
+          });
+
+          labeled++;
+          log.info(
+            `${tag} ${label.isTrade ? 'TRADE' : 'SKIP '} ` +
+            `${label.action ?? '-'}/${label.direction ?? '-'}/${label.strategy ?? '-'} ` +
+            `${label.symbol ?? '-'} [${label.confidence ?? '?'}] ` +
+            `tools: ${toolsUsed || 'none'}`
+          );
+        } catch (err) {
+          log.error(`${tag} Error:`, err instanceof Error ? err.message : err);
+          errors++;
+        }
       })
     )
   );
 
-  console.log(`\nDone! Labeled ${labeled}/${unlabeled.length} messages (${errors} errors) with label set "${LABEL_SET}".`);
+  log.info(`Done! Labeled ${labeled}/${unlabeled.length} messages (${errors} errors) with label set "${LABEL_SET}".`);
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  log.error('Fatal error:', err);
   process.exit(1);
 });

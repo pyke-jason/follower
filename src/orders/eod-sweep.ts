@@ -1,6 +1,10 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { sendSystemAlert } from '../lib/alert.js';
+import { isOpen, notBacktest } from '../trades/filters.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('EOD');
 
 // ─── EOD Position Sweep ──────────────────────────────
 // Alerts on open positions approaching market close.
@@ -53,10 +57,7 @@ async function sweepOpenPositions(): Promise<void> {
 
   const openTrades = await db.select()
     .from(schema.trades)
-    .where(and(
-      eq(schema.trades.status, 'OPEN'),
-      eq(schema.trades.isBacktest, false),
-    ));
+    .where(and(isOpen, notBacktest));
 
   if (openTrades.length === 0) return;
 
@@ -102,7 +103,7 @@ async function sweepOpenPositions(): Promise<void> {
     ],
   });
 
-  console.log(`[EOD] Sweep complete: ${todayTrades.length} today, ${allOpen.length} total open`);
+  log.info(`Sweep complete: ${todayTrades.length} today, ${allOpen.length} total open`);
 }
 
 export function startEodSweep(sweepMinuteET: number = DEFAULT_SWEEP_MINUTE): void {
@@ -113,7 +114,7 @@ export function startEodSweep(sweepMinuteET: number = DEFAULT_SWEEP_MINUTE): voi
     // Fire within a 5-minute window starting at the configured time
     if (minute >= sweepMinuteET && minute < sweepMinuteET + 5) {
       sweepOpenPositions().catch((err) => {
-        console.error('[EOD] Sweep failed:', err);
+        log.error('Sweep failed:', err);
         sendSystemAlert({
           title: 'EOD sweep failed',
           message: `Scheduled EOD sweep threw: ${err instanceof Error ? err.message : String(err)}`,
@@ -123,7 +124,7 @@ export function startEodSweep(sweepMinuteET: number = DEFAULT_SWEEP_MINUTE): voi
     }
   }, 60_000);
 
-  console.log(`[EOD] Sweep scheduled at ET minute ${sweepMinuteET} (${Math.floor(sweepMinuteET / 60)}:${String(sweepMinuteET % 60).padStart(2, '0')})`);
+  log.info(`Sweep scheduled at ET minute ${sweepMinuteET} (${Math.floor(sweepMinuteET / 60)}:${String(sweepMinuteET % 60).padStart(2, '0')})`);
 }
 
 export function stopEodSweep(): void {

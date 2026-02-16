@@ -97,9 +97,24 @@ function getDayCachePath(params: {
   schema: string;
   symbol: string;
   day: string; // YYYY-MM-DD
+  stype_in?: string;
 }): string {
-  const { dataset, schema, symbol, day } = params;
-  const key = [dataset, schema, symbol, day].join('|');
+  const { dataset, schema, symbol, day, stype_in } = params;
+  const parts = [dataset, schema, symbol, day];
+  if (stype_in) parts.push(stype_in);
+  const key = parts.join('|');
+  const hash = createHash('sha256').update(key).digest('hex');
+  return join(CACHE_DIR, `${hash}.json`);
+}
+
+/** Cache path for parent symbology fetches (one file per parent symbol per day). */
+function getParentCachePath(params: {
+  dataset: string;
+  schema: string;
+  parentSymbol: string;
+  day: string;
+}): string {
+  const key = [params.dataset, params.schema, params.parentSymbol, params.day, 'parent'].join('|');
   const hash = createHash('sha256').update(key).digest('hex');
   return join(CACHE_DIR, `${hash}.json`);
 }
@@ -167,7 +182,13 @@ async function fetchWithRetry(
     try {
       const res = await fetch(url, init);
 
-      if (res.ok) return { res, retries: attempt };
+      if (res.status === 200) return { res, retries: attempt };
+
+      // Non-200 2xx (e.g. 206) — Databento uses these for billing/quota errors
+      if (res.status >= 200 && res.status < 300 && res.status !== 200) {
+        const text = await res.text();
+        throw new Error(`Databento ${res.status} (unexpected): ${text.slice(0, 500) || '(empty body)'}`);
+      }
 
       // 4xx (non-429) — not transient, don't retry
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
@@ -271,7 +292,13 @@ export async function loadQuoteTapeForDay(params: {
   symbols: string[];
   day: string;           // 'YYYY-MM-DD'
   refreshCache?: boolean;
+  stypeIn?: 'raw_symbol' | 'parent';
 }): Promise<QuoteTick[]> {
+  // Parent symbology: completely separate fetch/cache path
+  if (params.stypeIn === 'parent') {
+    return loadParentSymbology(params);
+  }
+
   const resolvedSchema = params.schema ?? defaultSchemaForDataset(params.dataset);
   const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
 
@@ -295,7 +322,6 @@ export async function loadQuoteTapeForDay(params: {
   }
 
   if (uncachedSymbols.length === 0) {
-    log.debug(`fetch day=${params.day} symbols=${params.symbols.join(',')} ticks=${allTicks.length} cached=true`);
     allTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     return allTicks;
   }
@@ -441,6 +467,182 @@ export async function loadQuoteTapeForDay(params: {
   }
 
   allTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  return allTicks;
+}
+
+/**
+ * Fetch all option ticks for a parent symbol (e.g. "AAPL.OPT") using Databento's
+ * parent symbology (`stype_in=parent`). Returns all contracts in a single API call.
+ * Cached atomically as one file per parent symbol per day.
+ */
+async function loadParentSymbology(params: {
+  apiKey: string;
+  dataset: string;
+  schema?: string;
+  symbols: string[];
+  day: string;
+  refreshCache?: boolean;
+}): Promise<QuoteTick[]> {
+  const resolvedSchema = params.schema ?? 'cbbo-1m';
+  const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
+  const parentSymbol = params.symbols[0]; // e.g. "AAPL.OPT"
+
+  const cachePath = getParentCachePath({
+    dataset: params.dataset,
+    schema: resolvedSchema,
+    parentSymbol,
+    day: params.day,
+  });
+
+  if (params.refreshCache) {
+    await unlink(cachePath).catch(() => {});
+  }
+
+  const cached = await readCache(cachePath);
+  if (cached) {
+    log.debug(`parent cache hit: ${parentSymbol} ${params.day} (${cached.length} ticks)`);
+    return cached;
+  }
+
+  // Cost check (advisory — log but don't block)
+  try {
+    const { start, end } = dayRangeUTC(params.day);
+    const costParams = new URLSearchParams({
+      dataset: params.dataset,
+      schema: resolvedSchema,
+      stype_in: 'parent',
+      symbols: parentSymbol,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    });
+
+    const { res: costRes } = await fetchWithRetry(
+      'https://hist.databento.com/v0/metadata.get_cost',
+      {
+        method: 'POST',
+        headers: { Authorization: authHeader, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: costParams.toString(),
+      },
+      { day: params.day, symbols: [parentSymbol] },
+    );
+
+    const costData = z.number().finite().nonnegative().parse(await costRes.json());
+    const costUsd = costData / 100;
+    log.info(`Parent fetch ${parentSymbol} ${params.day}: estimated cost $${costUsd.toFixed(2)}`);
+  } catch (err) {
+    log.warn(`Could not estimate cost for ${parentSymbol}: ${err instanceof Error ? err.message : err}`);
+  }
+
+  // Fetch with stype_in=parent
+  const { start, end } = dayRangeUTC(params.day);
+  const fetchParams = new URLSearchParams({
+    dataset: params.dataset,
+    schema: resolvedSchema,
+    encoding: 'json',
+    pretty_px: 'true',
+    pretty_ts: 'true',
+    map_symbols: 'true',
+    stype_in: 'parent',
+    symbols: parentSymbol,
+    start: start.toISOString(),
+    end: end.toISOString(),
+  });
+
+  const fetchStart = Date.now();
+  const { res, retries } = await fetchWithRetry(
+    'https://hist.databento.com/v0/timeseries.get_range',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: fetchParams.toString(),
+    },
+    { day: params.day, symbols: [parentSymbol] },
+  );
+
+  const httpStatus = res.status;
+  const requestId = res.headers.get('x-request-id') ?? undefined;
+
+  if (!res.body) {
+    throw new Error(`Response body is null for parent fetch ${parentSymbol}`);
+  }
+
+  const allTicks: QuoteTick[] = [];
+  let bytesRead = 0;
+  let records = 0;
+  let jsonErr = 0;
+  let noQuote = 0;
+  let outsideMktHrs = 0;
+
+  const reader = Readable.from(res.body as any);
+  const rl = createInterface({ input: reader, terminal: false });
+
+  for await (const line of rl) {
+    bytesRead += Buffer.byteLength(line) + 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(trimmed);
+    } catch {
+      jsonErr++;
+      continue;
+    }
+
+    records++;
+    const recordResult = DatabentoRecord.safeParse(raw);
+    if (!recordResult.success) continue; // skip malformed records in parent fetch
+
+    const tick = parseTick(recordResult.data);
+    if (!tick) { noQuote++; continue; }
+    if (!isMarketHours(tick.timestamp)) { outsideMktHrs++; continue; }
+
+    allTicks.push(tick);
+  }
+
+  const durMs = Date.now() - fetchStart;
+
+  // Log structured fetch summary
+  const parts: string[] = [
+    `parent fetch ${parentSymbol} day=${params.day}`,
+    `status=${httpStatus}`,
+    `bytes=${bytesRead}`,
+    `records=${records}`,
+  ];
+  if (jsonErr) parts.push(`jsonErr=${jsonErr}`);
+  if (noQuote) parts.push(`noQuote=${noQuote}`);
+  if (outsideMktHrs) parts.push(`outsideMktHrs=${outsideMktHrs}`);
+  parts.push(`ticks=${allTicks.length}`);
+  if (retries) parts.push(`retries=${retries}`);
+  if (requestId) parts.push(`req=${requestId}`);
+  parts.push(`dur=${durMs}ms`);
+  log.info(parts.join(' '));
+
+  if (records > 500_000) {
+    log.warn(`Parent fetch ${parentSymbol} returned ${records} records — large chain (SPY?). Consider cbbo-1m schema.`);
+  }
+
+  // Accumulate API stats
+  _apiStats.fetches++;
+  _apiStats.bytesRead += bytesRead;
+  _apiStats.records += records;
+
+  // Cache all ticks atomically (skip on weekday with 0 ticks)
+  allTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+  const dayDate = new Date(params.day + 'T12:00:00Z');
+  const dayOfWeek = dayDate.getUTCDay();
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+
+  if (allTicks.length === 0 && isWeekday) {
+    log.warn(`Skipping parent cache write for ${parentSymbol} on ${params.day} (weekday with 0 ticks)`);
+  } else {
+    await writeCache(cachePath, allTicks);
+  }
+
   return allTicks;
 }
 

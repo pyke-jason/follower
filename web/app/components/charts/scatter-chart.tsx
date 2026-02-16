@@ -1,10 +1,11 @@
 'use client';
 
 import {
-  LineChart as RechartsLineChart,
-  Line,
+  ScatterChart as RechartsScatterChart,
+  Scatter,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip,
   Legend,
@@ -12,10 +13,11 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-type LineSeries = {
+type ScatterSeries = {
   key: string;
   label: string;
   color: string;
+  data: Record<string, unknown>[];
 };
 
 type ReferenceLineConfig = {
@@ -25,33 +27,35 @@ type ReferenceLineConfig = {
   strokeDasharray?: string;
 };
 
-type MultiLineChartProps = {
-  data: Record<string, unknown>[];
+type ScatterPlotChartProps = {
+  series: ScatterSeries[];
   xKey: string;
-  series: LineSeries[];
+  yKey: string;
+  zKey?: string;
   height?: number;
   formatX?: (v: string) => string;
   formatY?: (v: number) => string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tooltipFormatter?: (...args: any[]) => [string, string];
-  domain?: [number | string, number | string];
+  tooltipContent?: (props: any) => React.ReactNode;
   referenceLines?: ReferenceLineConfig[];
+  zRange?: [number, number];
 };
 
-export function MultiLineChart({
-  data,
-  xKey,
+export function ScatterPlotChart({
   series,
+  xKey,
+  yKey,
+  zKey,
   height = 300,
   formatX,
   formatY,
-  tooltipFormatter,
-  domain,
+  tooltipContent,
   referenceLines,
-}: MultiLineChartProps) {
+  zRange = [30, 200],
+}: ScatterPlotChartProps) {
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RechartsLineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+      <RechartsScatterChart margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
         <XAxis
           dataKey={xKey}
@@ -59,27 +63,18 @@ export function MultiLineChart({
           tick={{ fill: 'var(--color-muted-foreground)', fontSize: 11 }}
           axisLine={{ stroke: 'var(--color-border)' }}
           tickLine={false}
+          type="category"
+          allowDuplicatedCategory={false}
         />
         <YAxis
+          dataKey={yKey}
           tickFormatter={formatY}
           tick={{ fill: 'var(--color-muted-foreground)', fontSize: 11 }}
           axisLine={false}
           tickLine={false}
-          domain={domain}
+          type="number"
         />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'var(--color-card)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 8,
-            fontSize: 12,
-          }}
-          labelStyle={{ color: 'var(--color-foreground)' }}
-          formatter={tooltipFormatter}
-        />
-        <Legend
-          wrapperStyle={{ fontSize: 12, color: 'var(--color-muted-foreground)' }}
-        />
+        {zKey && <ZAxis dataKey={zKey} range={zRange} />}
         {referenceLines?.map((rl, i) => (
           <ReferenceLine
             key={`ref-${i}`}
@@ -95,19 +90,32 @@ export function MultiLineChart({
             } : undefined}
           />
         ))}
+        {tooltipContent ? (
+          <Tooltip content={tooltipContent} />
+        ) : (
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'var(--color-card)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 8,
+              fontSize: 12,
+            }}
+            labelStyle={{ color: 'var(--color-foreground)' }}
+          />
+        )}
+        <Legend
+          wrapperStyle={{ fontSize: 12, color: 'var(--color-muted-foreground)' }}
+        />
         {series.map((s) => (
-          <Line
+          <Scatter
             key={s.key}
-            type="monotone"
-            dataKey={s.key}
             name={s.label}
-            stroke={s.color}
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 4 }}
+            data={s.data}
+            fill={s.color}
+            fillOpacity={0.7}
           />
         ))}
-      </RechartsLineChart>
+      </RechartsScatterChart>
     </ResponsiveContainer>
   );
 }

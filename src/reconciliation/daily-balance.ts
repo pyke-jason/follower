@@ -2,6 +2,9 @@ import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
 import { safeParseFloat } from '../lib/numbers.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('Balance');
 
 /**
  * Capture today's starting balance from the broker.
@@ -17,7 +20,7 @@ export async function captureStartingBalance(broker: BrokerService): Promise<voi
     .limit(1);
 
   if (existing.length > 0) {
-    console.log(`Daily balance already captured for ${today}`);
+    log.debug(`Already captured for ${today}`);
     return;
   }
 
@@ -33,7 +36,7 @@ export async function captureStartingBalance(broker: BrokerService): Promise<voi
     realizedPnl: String(balance.realizedPnl),
   });
 
-  console.log(`Daily balance captured for ${today}: equity=${balance.equity}, buyingPower=${balance.buyingPower}`);
+  log.info(`Captured for ${today}: equity=${balance.equity}, buyingPower=${balance.buyingPower}`);
 }
 
 /**

@@ -14,8 +14,9 @@ import { buildHref } from '@/lib/run-scope';
 import { skipTask } from '../actions';
 import Link from 'next/link';
 import { AutoRefresh } from '../../components/auto-refresh';
-import { ArrowLeft, ArrowRight, MessageSquare } from 'lucide-react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ChatBubble } from '../../messages/chat-bubble';
 import type { TaskContext, TaskResult, DetectedStrategy, TradeLeg } from '../../../../src/db/schema';
 
 export const dynamic = 'force-dynamic';
@@ -287,103 +288,28 @@ export default async function TaskDetailPage({
 
         {/* ── Right Column (sticky) ────────────────────── */}
         <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
-          {/* ── Source Message ─────────────────────────────── */}
-          {sourceMessage && (
-            <Card className="py-0 gap-0 overflow-hidden">
-              <CardHeader className="border-b py-3 px-4">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-                  Source Message
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Link
-                    href={`/traders/${encodeURIComponent(sourceMessage.author)}`}
-                    className="text-xs font-semibold text-foreground hover:underline"
-                  >
-                    {sourceMessage.author}
-                  </Link>
-                  <span className="text-[10px] text-muted-foreground/60">{formatDate(sourceMessage.timestamp)}</span>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">{sourceMessage.cleanText}</p>
-                {((sourceMessage.badges as string[]) || []).length > 0 && (
-                  <div className="flex gap-1 mt-3 flex-wrap">
-                    {((sourceMessage.badges as string[]) || []).map((b, i) => (
-                      <Badge key={i} label={b} />
-                    ))}
-                  </div>
-                )}
-                {(sourceMessage.actionHint || sourceMessage.directionHint) && (
-                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/50">
-                    {sourceMessage.actionHint && <Badge label={sourceMessage.actionHint} />}
-                    {sourceMessage.directionHint && <Badge label={sourceMessage.directionHint} />}
-                  </div>
-                )}
-                {((sourceMessage.detectedStrategies as DetectedStrategy[]) || []).length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-border/50">
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Detected Strategies</p>
-                    <div className="space-y-1">
-                      {((sourceMessage.detectedStrategies as DetectedStrategy[]) || []).map((ds, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <Badge label={ds.strategy} />
-                          <span className="text-muted-foreground tabular-nums">{(ds.confidence * 100).toFixed(0)}%</span>
-                          {ds.strikes?.length ? (
-                            <span className="text-muted-foreground">strikes: {ds.strikes.join('/')}</span>
-                          ) : null}
-                          {ds.expiry && <span className="text-muted-foreground">{ds.expiry}</span>}
-                          {ds.price != null && <span className="text-muted-foreground tabular-nums">${ds.price}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* ── Nearby Messages Timeline ──────────────────── */}
-          {nearbyMessages.length > 1 && (
+          {/* ── Chat Context ─────────────────────────────── */}
+          {(nearbyMessages.length > 0 || sourceMessage) && (
             <Card className="py-0 gap-0 overflow-hidden">
               <CardHeader className="border-b py-3 px-4">
                 <CardTitle className="text-sm font-medium">
-                  Nearby Messages ({nearbyMessages.length})
+                  Chat Context
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="divide-y divide-border/50">
-                  {nearbyMessages.map((msg) => {
-                    const isSource = msg.id === task.messageId;
-                    return (
-                      <div
-                        key={msg.id}
-                        className={cn(
-                          'px-4 py-2.5 text-sm',
-                          isSource
-                            ? 'bg-info/10 border-l-2 border-l-info'
-                            : 'hover:bg-accent/30',
-                        )}
-                      >
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                            {formatTime(msg.timestamp)}
-                          </span>
-                          {isSource && (
-                            <span className="text-[10px] font-medium text-info">SOURCE</span>
-                          )}
-                          {msg.actionHint && <Badge label={msg.actionHint} />}
-                          {msg.directionHint && <Badge label={msg.directionHint} />}
-                        </div>
-                        <p className={cn(
-                          'text-xs leading-relaxed',
-                          isSource ? 'text-foreground' : 'text-muted-foreground',
-                        )}>
-                          {msg.cleanText}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
+                {(nearbyMessages.length > 0 ? nearbyMessages : sourceMessage ? [sourceMessage] : []).map((msg) => {
+                  const isSource = msg.id === task.messageId;
+                  return (
+                    <div
+                      key={msg.id}
+                      className={cn(
+                        isSource && 'bg-info/5 ring-1 ring-inset ring-info/20',
+                      )}
+                    >
+                      <ChatBubble message={msg} />
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
           )}

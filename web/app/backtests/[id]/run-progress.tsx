@@ -14,6 +14,7 @@ interface RunProgressProps {
   agentModel: string;
   llmTokens: { input: number; output: number };
   liveMetrics: LiveMetrics | null;
+  status: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -28,17 +29,21 @@ export function RunProgress({
   agentModel,
   llmTokens,
   liveMetrics,
+  status,
 }: RunProgressProps) {
-  // Elapsed timer is the only piece that needs client-side state
+  const isActive = status === 'RUNNING' || status === 'PENDING';
+
+  // Elapsed timer — only ticks for active runs
   const [mountTime] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
+    if (!isActive) return;
     const timer = setInterval(() => {
       setElapsed(Math.floor((Date.now() - mountTime) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [mountTime]);
+  }, [mountTime, isActive]);
 
   const pct = totalMessages > 0 ? Math.round((processedMessages / totalMessages) * 100) : 0;
 
@@ -77,7 +82,7 @@ export function RunProgress({
         {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
           <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
         )}
-        <InfoChip label={elapsedStr} icon={Clock} />
+        {isActive && <InfoChip label={elapsedStr} icon={Clock} />}
       </div>
     </div>
   );

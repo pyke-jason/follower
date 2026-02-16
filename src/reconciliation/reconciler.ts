@@ -4,6 +4,10 @@ import type { BrokerService } from '../broker/interface.js';
 import type { BrokerPosition } from '../broker/types.js';
 import type { ReconciliationAlertType } from '../db/schema.js';
 import { sendDiscordAlert } from './notify.js';
+import { isOpen, notBacktest } from '../trades/filters.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('Recon');
 
 export type ReconciliationAlertInput = {
   type: ReconciliationAlertType;
@@ -62,7 +66,7 @@ async function autoResolveAlerts(brokerPositions: BrokerPosition[]): Promise<voi
       await db.update(schema.reconciliationAlerts)
         .set({ resolved: true, resolvedAt: now, resolvedReason: reason })
         .where(eq(schema.reconciliationAlerts.id, alert.id));
-      console.log(`[RECON] Auto-resolved ${alert.type} alert for ${alert.symbol}: ${reason}`);
+      log.info(`Auto-resolved ${alert.type} alert for ${alert.symbol}: ${reason}`);
     }
   }
 }
@@ -79,10 +83,7 @@ export async function runReconciliation(broker: BrokerService): Promise<Reconcil
 
   const dbTrades = await db.select()
     .from(schema.trades)
-    .where(and(
-      eq(schema.trades.status, 'OPEN'),
-      eq(schema.trades.isBacktest, false),
-    ));
+    .where(and(isOpen, notBacktest));
 
   const alerts: ReconciliationAlertInput[] = [];
 
@@ -163,13 +164,13 @@ export async function runReconciliation(broker: BrokerService): Promise<Reconcil
     );
 
     for (const alert of alerts) {
-      console.warn(`[RECON] ${alert.type}: ${alert.symbol}`, alert);
+      log.warn(`${alert.type}: ${alert.symbol}`, alert);
     }
 
     // Send Discord notification (non-blocking, non-fatal)
-    sendDiscordAlert(alerts).catch((err) => console.warn('Discord alert failed:', err));
+    sendDiscordAlert(alerts).catch((err) => log.warn('Discord alert failed:', err));
   } else {
-    console.log('[RECON] No discrepancies found');
+    log.info('No discrepancies found');
   }
 
   return alerts;

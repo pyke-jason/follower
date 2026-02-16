@@ -1,7 +1,11 @@
 import { db, schema } from './db';
-import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
+
+/** Matches isOpen from src/trades/filters.ts — includes PARTIAL status (trimmed positions). */
+const isOpenTrade = inArray(schema.trades.status, ['OPEN', 'PARTIAL']);
+const isClosedTrade = eq(schema.trades.status, 'CLOSED');
 
 /** Scoping helper: when runId is set, show that backtest's data. Otherwise, live only. */
 function tradeScope(runId?: string): SQL {
@@ -20,7 +24,7 @@ export async function getStats(runId?: string) {
   const [openTradesResult] = await db
     .select({ count: count() })
     .from(schema.trades)
-    .where(and(eq(schema.trades.status, 'OPEN'), tradeScope(runId)));
+    .where(and(isOpenTrade, tradeScope(runId)));
 
   const [todayPnlResult] = await db
     .select({
@@ -28,7 +32,7 @@ export async function getStats(runId?: string) {
     })
     .from(schema.trades)
     .where(runId
-      ? and(eq(schema.trades.status, 'CLOSED'), tradeScope(runId))
+      ? and(isClosedTrade, tradeScope(runId))
       : and(isNull(schema.trades.backtestRunId), sql`closed_at >= date('now')`)
     );
 
@@ -48,7 +52,7 @@ export async function getOpenTrades(limit = 50, runId?: string) {
   return db
     .select()
     .from(schema.trades)
-    .where(and(eq(schema.trades.status, 'OPEN'), tradeScope(runId)))
+    .where(and(isOpenTrade, tradeScope(runId)))
     .orderBy(desc(schema.trades.openedAt))
     .limit(limit);
 }
@@ -61,7 +65,7 @@ export async function getClosedTrades(opts: {
   offset?: number;
   runId?: string;
 } = {}) {
-  const conditions = [eq(schema.trades.status, 'CLOSED'), tradeScope(opts.runId)];
+  const conditions = [isClosedTrade, tradeScope(opts.runId)];
   if (opts.trader) conditions.push(eq(schema.trades.trader, opts.trader));
   if (opts.symbol) conditions.push(eq(schema.trades.symbol, opts.symbol));
   if (opts.strategy) conditions.push(eq(schema.trades.strategy, opts.strategy));
@@ -371,7 +375,7 @@ export async function getRunDecisions(backtestRunId: string) {
 export async function getTradesByBacktestRun(backtestRunId: string, opts?: { includeOpen?: boolean }) {
   const conditions = [eq(schema.trades.backtestRunId, backtestRunId)];
   if (!opts?.includeOpen) {
-    conditions.push(eq(schema.trades.status, 'CLOSED'));
+    conditions.push(isClosedTrade);
   }
   return db
     .select()
@@ -411,7 +415,7 @@ export async function getTraderPnlSummary(runId?: string) {
       wins: sql<number>`SUM(CASE WHEN CAST(${schema.trades.pnl} AS REAL) > 0 THEN 1 ELSE 0 END)`,
     })
     .from(schema.trades)
-    .where(and(eq(schema.trades.status, 'CLOSED'), tradeScope(runId)))
+    .where(and(isClosedTrade, tradeScope(runId)))
     .groupBy(schema.trades.trader)
     .orderBy(sql`SUM(CAST(${schema.trades.pnl} AS REAL)) DESC`);
 }
@@ -448,7 +452,7 @@ export async function getTradeHistorySummary(opts: {
   strategy?: string;
   runId?: string;
 } = {}) {
-  const conditions = [eq(schema.trades.status, 'CLOSED'), tradeScope(opts.runId)];
+  const conditions = [isClosedTrade, tradeScope(opts.runId)];
   if (opts.trader) conditions.push(eq(schema.trades.trader, opts.trader));
   if (opts.symbol) conditions.push(eq(schema.trades.symbol, opts.symbol));
   if (opts.strategy) conditions.push(eq(schema.trades.strategy, opts.strategy));
@@ -521,13 +525,13 @@ export async function getRiskSnapshot() {
       count: count(),
     })
     .from(schema.trades)
-    .where(and(eq(schema.trades.status, 'OPEN'), isNull(schema.trades.backtestRunId)))
+    .where(and(isOpenTrade, isNull(schema.trades.backtestRunId)))
     .groupBy(schema.trades.symbol);
 
   const [totalOpen] = await db
     .select({ count: count() })
     .from(schema.trades)
-    .where(and(eq(schema.trades.status, 'OPEN'), isNull(schema.trades.backtestRunId)));
+    .where(and(isOpenTrade, isNull(schema.trades.backtestRunId)));
 
   const [unresolvedAlerts] = await db
     .select({ count: count() })
@@ -731,7 +735,7 @@ export async function getDistinctExperimentTags() {
 
 export async function getTraderEquityCurve(trader: string, runId?: string) {
   const conditions = [
-    eq(schema.trades.status, 'CLOSED'),
+    isClosedTrade,
     eq(schema.trades.trader, trader),
     tradeScope(runId),
   ];
@@ -758,7 +762,7 @@ export async function getTraderEquityCurve(trader: string, runId?: string) {
 
 export async function getTraderStrategyBreakdown(trader: string, runId?: string) {
   const conditions = [
-    eq(schema.trades.status, 'CLOSED'),
+    isClosedTrade,
     eq(schema.trades.trader, trader),
     tradeScope(runId),
   ];

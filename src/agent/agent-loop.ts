@@ -1,5 +1,6 @@
 import type { ToolDef } from './tool-factory.js';
 import type { LLMProvider, ModelIdentity, LLMUsage } from './providers.js';
+import type { OptionsChain } from '../broker/types.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('Agent');
@@ -39,22 +40,16 @@ function summarizeToolOutput(toolName: string, output: unknown): string {
   try {
     const json = JSON.stringify(output);
     if (json.length <= 120) return json;
-    // Pull out salient fields for common tools
     const obj = output as Record<string, unknown>;
-    if (toolName === 'get_open_positions' && Array.isArray(obj)) {
-      return `${obj.length} position(s)`;
+    if (toolName === 'get_open_positions' && Array.isArray(output)) {
+      return `${output.length} position(s)`;
     }
     if (toolName === 'get_quote' && obj.bid != null) {
       return `bid=${obj.bid} ask=${obj.ask}`;
     }
-    if (toolName === 'calculate_position_size' && obj.quantity != null) {
-      return `qty=${obj.quantity}`;
-    }
-    if (toolName === 'check_risk_limits') {
-      return obj.allowed ? 'allowed' : `blocked: ${obj.reason ?? 'unknown'}`;
-    }
-    if ((toolName === 'place_stock_order' || toolName === 'place_option_order') && obj.status != null) {
-      return obj.status === 'FILLED' ? `FILLED @ $${obj.filledPrice}` : `${obj.status}`;
+    if (toolName === 'get_options_chain') {
+      const chain = output as OptionsChain;
+      return `${chain.strikes.length} strike(s) for ${chain.expiry}`;
     }
     return json.slice(0, 100) + '…';
   } catch {
@@ -71,7 +66,11 @@ export async function runAgentLoop(
   userPrompt: string,
   provider: LLMProvider,
 ): Promise<AgentRunResult> {
-  const { systemPrompt, tools, parseResult, onToolCall, maxTurns = 10, maxTokens = 2048 } = config;
+  const {
+    systemPrompt, tools, parseResult, onToolCall,
+    maxTurns = parseInt(process.env.AGENT_MAX_TURNS ?? '10', 10),
+    maxTokens = parseInt(process.env.AGENT_MAX_TOKENS ?? '2048', 10),
+  } = config;
 
   const steps: AgentStep[] = [];
   let result: unknown | null = null;
@@ -109,8 +108,10 @@ export async function runAgentLoop(
       steps.push({ reasoning: text, durationMs });
     }
 
-    // If no tool use, we're done
-    if (response.toolCalls.length === 0 || response.stopReason === 'end_turn') {
+    // If no tool calls, we're done. Don't check stopReason here — if the model
+    // returns tool calls with end_turn (text + tool_use in one response), we must
+    // still execute those tool calls before breaking.
+    if (response.toolCalls.length === 0) {
       break;
     }
 

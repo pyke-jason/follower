@@ -4,6 +4,9 @@ import type { BrokerService } from '../broker/interface.js';
 import type { TradeMetadata } from '../db/schema.js';
 import { enrichTradeWithFill } from '../tasks/recorder.js';
 import { sendSystemAlert } from '../lib/alert.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('FillSweep');
 
 /**
  * Periodically sweep for trades that have a broker order ID but haven't
@@ -34,7 +37,7 @@ export class FillSweep {
 
   private _runSweep(): void {
     this.currentRun = this.sweep().catch((err) => {
-      console.warn('Fill sweep error:', err);
+      log.warn('Sweep error:', err);
       return 0;
     });
   }
@@ -79,12 +82,12 @@ export class FillSweep {
           enriched++;
         }
       } catch (err) {
-        console.warn(`Fill sweep: error checking order ${metadata.brokerOrderId}:`, err);
+        log.warn(`Error checking order ${metadata.brokerOrderId}:`, err);
       }
     }
 
     if (enriched > 0) {
-      console.log(`Fill sweep: enriched ${enriched} trade(s)`);
+      log.info(`Enriched ${enriched} trade(s)`);
     }
     return enriched;
   }

@@ -23,8 +23,8 @@ const MODELS_BY_PROVIDER: Record<string, string[]> = {
     'claude-opus-4-6',
   ],
   xai: [
-    'grok-3',
-    'grok-3-mini',
+    'grok-4-1-fast-reasoning',
+    'grok-4-1-fast-non-reasoning',
   ],
 };
 

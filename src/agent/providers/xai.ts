@@ -8,6 +8,10 @@ import type {
   ToolResult,
 } from '../providers.js';
 import type { ToolDef } from '../tool-factory.js';
+import { withRetry, LLM_DEFAULTS, oaiClassify } from '../../lib/resilient.js';
+import { createLogger } from '../../lib/logger.js';
+
+const log = createLogger('XAI');
 
 type OAIMessage = OpenAI.ChatCompletionMessageParam;
 type OAITool = OpenAI.ChatCompletionTool;
@@ -18,33 +22,58 @@ export class XAIProvider implements LLMProvider {
 
   constructor(identity: ModelIdentity) {
     this.identity = identity;
+
+    if (!process.env.XAI_API_KEY) {
+      throw new Error('XAI_API_KEY is not set');
+    }
+
     this.client = new OpenAI({
       apiKey: process.env.XAI_API_KEY,
       baseURL: 'https://api.x.ai/v1',
+      timeout: 60_000,
+      maxRetries: 0,
     });
   }
 
   async chat(params: ChatParams): Promise<LLMTurnResult> {
     const messages = this.buildMessages(params.system, params.messages as OAIMessage[]);
-    const response = await this.client.chat.completions.create({
-      model: this.identity.model,
-      max_tokens: params.maxTokens,
-      messages,
-    });
-    return this.parseResponse(response);
+    return withRetry(
+      async (signal) => {
+        const response = await this.client.chat.completions.create(
+          {
+            model: this.identity.model,
+            max_tokens: params.maxTokens,
+            messages,
+          },
+          { signal },
+        );
+        return this.parseResponse(response);
+      },
+      { ...LLM_DEFAULTS, classify: oaiClassify },
+      `xai:chat(${this.identity.model})`,
+    );
   }
 
   async chatWithTools(params: ChatWithToolsParams): Promise<LLMTurnResult> {
     const messages = this.buildMessages(params.system, params.messages as OAIMessage[]);
     const tools = this.convertTools(params.tools);
 
-    const response = await this.client.chat.completions.create({
-      model: this.identity.model,
-      max_tokens: params.maxTokens,
-      messages,
-      tools,
-    });
-    return this.parseResponse(response);
+    return withRetry(
+      async (signal) => {
+        const response = await this.client.chat.completions.create(
+          {
+            model: this.identity.model,
+            max_tokens: params.maxTokens,
+            messages,
+            tools,
+          },
+          { signal },
+        );
+        return this.parseResponse(response);
+      },
+      { ...LLM_DEFAULTS, classify: oaiClassify },
+      `xai:chatWithTools(${this.identity.model})`,
+    );
   }
 
   makeUserMessage(text: string): OAIMessage {
@@ -52,7 +81,6 @@ export class XAIProvider implements LLMProvider {
   }
 
   formatToolResults(results: ToolResult[]): OAIMessage[] {
-    // OpenAI format: each tool result is a separate message with role: 'tool'
     return results.map((r) => ({
       role: 'tool' as const,
       tool_call_id: r.toolCallId,
@@ -100,8 +128,10 @@ export class XAIProvider implements LLMProvider {
         try {
           input = JSON.parse(tc.function.arguments) as Record<string, unknown>;
         } catch (err) {
-          console.error(`[XAI] Failed to parse tool call arguments for ${tc.function.name}:`, err);
-          continue;
+          log.warn(
+            `Failed to parse tool call arguments for ${tc.function.name}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          input = { __raw: tc.function.arguments };
         }
         toolCalls.push({
           id: tc.id,
@@ -115,7 +145,6 @@ export class XAIProvider implements LLMProvider {
     if (choice.finish_reason === 'tool_calls') stopReason = 'tool_use';
     else if (choice.finish_reason === 'length') stopReason = 'max_tokens';
 
-    // rawAssistantMessage: the full assistant message for conversation history
     return {
       textBlocks,
       toolCalls,
@@ -124,6 +153,8 @@ export class XAIProvider implements LLMProvider {
       usage: response.usage ? {
         inputTokens: response.usage.prompt_tokens,
         outputTokens: response.usage.completion_tokens,
+        cacheReadInputTokens:
+          response.usage.prompt_tokens_details?.cached_tokens ?? 0,
       } : undefined,
     };
   }

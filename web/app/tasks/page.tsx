@@ -7,6 +7,8 @@ import { formatDate } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import Link from 'next/link';
 import { AutoRefresh } from '../components/auto-refresh';
+import type { TaskContext, TaskResult } from '../../../src/db/schema';
+import { cn } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,33 +67,54 @@ export default async function TasksPage({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Type</TableHead>
+                <TableHead>Symbol</TableHead>
+                <TableHead>Trader</TableHead>
+                <TableHead>Decision</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Assignee</TableHead>
+                <TableHead>Message</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead>Completed</TableHead>
                 <TableHead>Error</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tasks.map((t) => (
-                <TableRow key={t.id} className="hover:bg-accent/40 transition-colors">
-                  <TableCell>
-                    <Link href={buildHref(`/tasks/${t.id}`, runId)} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
-                      {t.taskType}
-                    </Link>
-                  </TableCell>
-                  <TableCell><Badge label={t.status} /></TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{t.assignee}</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{formatDate(t.createdAt)}</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{formatDate(t.completedAt)}</TableCell>
-                  <TableCell className="text-xs max-w-xs truncate">
-                    {t.error && (
-                      <span className="text-loss/80">{t.error}</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {tasks.map((t) => {
+                const ctx = (t.context as TaskContext) || {};
+                const res = (t.result as TaskResult | null) || null;
+                const symbol = ctx.symbols?.[0];
+                const decision = res?.decision;
+                return (
+                  <TableRow key={t.id} className="hover:bg-accent/40 transition-colors">
+                    <TableCell>
+                      <Link href={buildHref(`/tasks/${t.id}`, runId)} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
+                        {symbol ?? t.taskType}
+                      </Link>
+                      {ctx.symbols && ctx.symbols.length > 1 && (
+                        <span className="text-muted-foreground text-xs ml-1">+{ctx.symbols.length - 1}</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{ctx.author ?? '-'}</TableCell>
+                    <TableCell>
+                      {decision && (
+                        <Badge label={decision} />
+                      )}
+                    </TableCell>
+                    <TableCell><Badge label={t.status} /></TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-[300px] truncate" title={ctx.cleanText ?? ''}>
+                      {ctx.cleanText
+                        ? ctx.cleanText.length > 80
+                          ? ctx.cleanText.slice(0, 80) + '...'
+                          : ctx.cleanText
+                        : '-'}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs whitespace-nowrap">{formatDate(t.createdAt)}</TableCell>
+                    <TableCell className="text-xs max-w-xs truncate">
+                      {t.error && (
+                        <span className="text-loss/80">{t.error}</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
           {tasks.length === 0 && (

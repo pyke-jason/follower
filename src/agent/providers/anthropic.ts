@@ -80,9 +80,14 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
-    let stopReason: LLMTurnResult['stopReason'] = 'end_turn';
-    if (response.stop_reason === 'tool_use') stopReason = 'tool_use';
-    else if (response.stop_reason === 'max_tokens') stopReason = 'max_tokens';
+    let stopReason: LLMTurnResult['stopReason'];
+    switch (response.stop_reason) {
+      case 'tool_use': stopReason = 'tool_use'; break;
+      case 'max_tokens': stopReason = 'max_tokens'; break;
+      case 'end_turn':
+      case 'stop_sequence':
+      default: stopReason = 'end_turn'; break;
+    }
 
     return {
       textBlocks,

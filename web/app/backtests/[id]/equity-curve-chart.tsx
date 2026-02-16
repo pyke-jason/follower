@@ -4,10 +4,12 @@ import {
   ComposedChart,
   Area,
   Bar,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
   Cell,
 } from 'recharts';
@@ -18,9 +20,11 @@ type EquityPoint = {
   pnl: number;
   cumPnl: number;
   trades: number;
+  equity?: number;
 };
 
 export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
+  const hasEquity = data.some((d) => d.equity != null);
   const lastCumPnl = data[data.length - 1]?.cumPnl ?? 0;
   const curveColor = lastCumPnl >= 0 ? 'var(--color-profit)' : 'var(--color-loss)';
 
@@ -65,8 +69,18 @@ export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
           labelStyle={{ color: 'var(--color-foreground)' }}
           formatter={(value: string | number | (string | number)[], name?: string) => [
             formatCurrency(value as number),
-            name === 'cumPnl' ? 'Cumulative' : name === 'pnl' ? 'Daily P&L' : name ?? '',
+            name === 'cumPnl' ? 'Cumulative'
+              : name === 'pnl' ? 'Daily P&L'
+              : name === 'equity' ? 'Equity'
+              : name ?? '',
           ]}
+        />
+        <ReferenceLine
+          yAxisId="cum"
+          y={0}
+          stroke="var(--color-muted-foreground)"
+          strokeDasharray="3 3"
+          strokeOpacity={0.5}
         />
         <Bar yAxisId="daily" dataKey="pnl" barSize={12} radius={[2, 2, 0, 0]} opacity={0.6}>
           {data.map((entry, i) => (
@@ -84,6 +98,18 @@ export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
           strokeWidth={2}
           fill="url(#equityGrad)"
         />
+        {hasEquity && (
+          <Line
+            yAxisId="cum"
+            type="monotone"
+            dataKey="equity"
+            stroke="var(--color-chart-3)"
+            strokeWidth={1.5}
+            strokeDasharray="4 2"
+            dot={false}
+            connectNulls
+          />
+        )}
       </ComposedChart>
     </ResponsiveContainer>
   );
