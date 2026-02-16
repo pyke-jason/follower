@@ -71,7 +71,7 @@ export function AppSidebar() {
                 <div
                   className={`flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-bold ${
                     runId
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-info text-white'
                       : 'bg-sidebar-primary text-sidebar-primary-foreground'
                   }`}
                 >

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge } from '../components/badge';
 import { Sparkline } from '../components/sparkline';
@@ -9,10 +9,10 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate } from '@/lib/format';
 import Link from 'next/link';
-import { Star, GitCompareArrows } from 'lucide-react';
+import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../src/db/schema';
 import { pctDisplay } from '../../../src/lib/numbers';
-import { togglePin } from './actions';
+import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
 function formatDuration(ms: number | null): string {
   if (ms == null) return '--';
@@ -45,23 +45,54 @@ export function BacktestList({
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [deleting, startDelete] = useTransition();
 
   const filteredRuns = tagFilter
     ? runs.filter((r) => r.experimentTag === tagFilter)
     : runs;
 
+  const allFilteredIds = filteredRuns.map((r) => r.id);
+  const allSelected = filteredRuns.length > 0 && allFilteredIds.every((id) => selected.has(id));
+  const someSelected = allFilteredIds.some((id) => selected.has(id));
+
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
-      else if (next.size < 3) next.add(id);
+      else next.add(id);
       return next;
     });
   }
 
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of allFilteredIds) next.delete(id);
+        return next;
+      });
+    } else {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of allFilteredIds) next.add(id);
+        return next;
+      });
+    }
+  }
+
   function handleCompare() {
-    const ids = Array.from(selected).join(',');
+    const ids = Array.from(selected).slice(0, 3).join(',');
     router.push(`/backtests/compare?ids=${ids}`);
+  }
+
+  function handleBulkDelete() {
+    const count = selected.size;
+    if (!confirm(`Delete ${count} backtest run${count === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    const ids = Array.from(selected);
+    startDelete(async () => {
+      await bulkDeleteBacktestRuns(ids);
+      setSelected(new Set());
+    });
   }
 
   return (
@@ -91,12 +122,27 @@ export function BacktestList({
           </div>
         )}
         <div className="flex-1" />
-        {selected.size >= 2 && (
-          <Button size="sm" onClick={handleCompare} className="gap-1.5">
+        {selected.size > 0 && (
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={handleBulkDelete}
+            disabled={deleting}
+            className="gap-1.5"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete ({selected.size})
+          </Button>
+        )}
+        {selected.size >= 2 && selected.size <= 3 && (
+          <Button size="sm" variant="outline" onClick={handleCompare} className="gap-1.5">
             <GitCompareArrows className="h-3.5 w-3.5" />
             Compare ({selected.size})
           </Button>
         )}
+        <Button size="sm" asChild>
+          <Link href="/backtests/new">New Backtest</Link>
+        </Button>
       </div>
 
       <Card className="py-0 gap-0 overflow-hidden animate-in-up">
@@ -104,7 +150,15 @@ export function BacktestList({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-8"></TableHead>
+                <TableHead className="w-8">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                    onChange={toggleSelectAll}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  />
+                </TableHead>
                 <TableHead className="w-8"></TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Traders</TableHead>
@@ -126,9 +180,9 @@ export function BacktestList({
                 const startDate = config.startDate.split('T')[0];
                 const endDate = config.endDate.split('T')[0];
                 const pnlColor = summary && summary.totalPnl > 0
-                  ? 'text-emerald-400'
+                  ? 'text-profit'
                   : summary && summary.totalPnl < 0
-                    ? 'text-red-400'
+                    ? 'text-loss'
                     : '';
                 const isSelected = selected.has(run.id);
 
@@ -140,14 +194,13 @@ export function BacktestList({
                         checked={isSelected}
                         onChange={() => toggleSelect(run.id)}
                         className="h-3.5 w-3.5 rounded border-border accent-primary"
-                        disabled={!isSelected && selected.size >= 3}
                       />
                     </TableCell>
                     <TableCell className="px-0">
                       <form action={togglePin}>
                         <input type="hidden" name="runId" value={run.id} />
-                        <button type="submit" className="p-0.5 hover:text-amber-400 transition-colors">
-                          <Star className={`h-3.5 w-3.5 ${run.pinned ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/40'}`} />
+                        <button type="submit" className="p-0.5 hover:text-warning transition-colors">
+                          <Star className={`h-3.5 w-3.5 ${run.pinned ? 'fill-warning text-warning' : 'text-muted-foreground/40'}`} />
                         </button>
                       </form>
                     </TableCell>

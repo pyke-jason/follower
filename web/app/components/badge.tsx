@@ -1,58 +1,98 @@
 import { Badge as ShadcnBadge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
+/* ═══════════════════════════════════════════════
+   Dusk Basin badge palette — warm earth tones
+   ═══════════════════════════════════════════════ */
+
+// Sage / olive green — for positive / long / open / success states
+const SAGE = 'bg-[oklch(0.94_0.04_150)] text-[oklch(0.38_0.08_148)] dark:bg-[oklch(0.25_0.04_150)] dark:text-[oklch(0.75_0.12_150)]';
+
+// Terracotta / clay — for negative / short / close / error states
+const CLAY = 'bg-[oklch(0.94_0.04_35)] text-[oklch(0.42_0.10_30)] dark:bg-[oklch(0.25_0.04_30)] dark:text-[oklch(0.72_0.14_28)]';
+
+// Dusty blue — for in-progress / info states
+const DUSTY_BLUE = 'bg-[oklch(0.94_0.03_250)] text-[oklch(0.42_0.08_248)] dark:bg-[oklch(0.25_0.03_250)] dark:text-[oklch(0.70_0.12_250)]';
+
+// Deep amber — for warning / pending states
+const AMBER = 'bg-[oklch(0.94_0.05_80)] text-[oklch(0.42_0.10_75)] dark:bg-[oklch(0.25_0.04_75)] dark:text-[oklch(0.78_0.12_80)]';
+
+// Dusty mauve — for purple / violet states
+const MAUVE = 'bg-[oklch(0.94_0.04_330)] text-[oklch(0.42_0.08_328)] dark:bg-[oklch(0.25_0.04_330)] dark:text-[oklch(0.70_0.12_330)]';
+
+// Warm teal — for add / teal states
+const WARM_TEAL = 'bg-[oklch(0.94_0.04_180)] text-[oklch(0.40_0.08_178)] dark:bg-[oklch(0.25_0.04_178)] dark:text-[oklch(0.72_0.10_180)]';
+
+// Dusty rose — for pink / spread states
+const ROSE = 'bg-[oklch(0.94_0.04_10)] text-[oklch(0.42_0.08_8)] dark:bg-[oklch(0.25_0.04_10)] dark:text-[oklch(0.72_0.12_10)]';
+
+// Warm sand neutral — for closed / stock / skip states
+const SAND = 'bg-[oklch(0.94_0.015_75)] text-[oklch(0.45_0.02_65)] dark:bg-[oklch(0.25_0.015_65)] dark:text-[oklch(0.65_0.02_70)]';
+
+// Faded sand — for dimmed / not-trade states
+const FADED = 'bg-[oklch(0.94_0.01_75)] text-[oklch(0.55_0.015_65)] dark:bg-[oklch(0.25_0.01_65)] dark:text-[oklch(0.55_0.015_70)]';
+
 const COLORS: Record<string, string> = {
-  Long: 'bg-emerald-900/50 text-emerald-300',
-  Short: 'bg-red-900/50 text-red-300',
-  Exit: 'bg-blue-900/50 text-blue-300',
-  OPEN: 'bg-emerald-900/50 text-emerald-300',
-  CLOSED: 'bg-zinc-800 text-zinc-300',
-  PENDING: 'bg-yellow-900/50 text-yellow-300',
-  IN_PROGRESS: 'bg-blue-900/50 text-blue-300',
-  COMPLETED: 'bg-emerald-900/50 text-emerald-300',
-  FAILED: 'bg-red-900/50 text-red-300',
-  RUNNING: 'bg-blue-900/50 text-blue-300',
-  SKIPPED: 'bg-zinc-800 text-zinc-400',
-  CANCELLED: 'bg-zinc-800 text-zinc-400',
-  LONG: 'bg-emerald-900/50 text-emerald-300',
-  SHORT: 'bg-red-900/50 text-red-300',
-  // Reconciliation alert types
-  DB_ONLY: 'bg-red-900/50 text-red-300',
-  BROKER_ONLY: 'bg-amber-900/50 text-amber-300',
-  QUANTITY_MISMATCH: 'bg-orange-900/50 text-orange-300',
-  // Resolved states
-  RESOLVED: 'bg-emerald-900/50 text-emerald-300',
-  UNRESOLVED: 'bg-red-900/50 text-red-300',
-  // Trading state
-  HALTED: 'bg-red-900/50 text-red-300 animate-pulse',
-  // Strategy types
-  STOCK: 'bg-zinc-800 text-zinc-300',
-  CALL: 'bg-violet-900/50 text-violet-300',
-  PUT: 'bg-orange-900/50 text-orange-300',
-  CDS: 'bg-cyan-900/50 text-cyan-300',
-  PDS: 'bg-pink-900/50 text-pink-300',
-  // Action types
-  CLOSE: 'bg-blue-900/50 text-blue-300',
-  ADD: 'bg-teal-900/50 text-teal-300',
-  TRIM: 'bg-amber-900/50 text-amber-300',
-  ADJUST: 'bg-purple-900/50 text-purple-300',
-  'NOT TRADE': 'bg-zinc-800 text-zinc-500',
-  // Decision outcomes
-  EXECUTE: 'bg-emerald-900/50 text-emerald-300',
-  SKIP: 'bg-zinc-800 text-zinc-400',
-  MANUAL_REVIEW: 'bg-yellow-900/50 text-yellow-300',
-  PARTIAL: 'bg-amber-900/50 text-amber-300',
-  // Execution step names (deterministic pipeline)
-  classify: 'bg-blue-900/50 text-blue-300',
-  size_position: 'bg-purple-900/50 text-purple-300',
-  check_risk: 'bg-yellow-900/50 text-yellow-300',
-  get_quote: 'bg-cyan-900/50 text-cyan-300',
-  place_order: 'bg-emerald-900/50 text-emerald-300',
-  close_position: 'bg-red-900/50 text-red-300',
-  detect_strategy: 'bg-violet-900/50 text-violet-300',
+  // Direction
+  Long: SAGE,
+  Short: CLAY,
+  Exit: DUSTY_BLUE,
+  LONG: SAGE,
+  SHORT: CLAY,
+
+  // Trade status
+  OPEN: SAGE,
+  CLOSED: SAND,
+
+  // Task status
+  PENDING: AMBER,
+  IN_PROGRESS: DUSTY_BLUE,
+  COMPLETED: SAGE,
+  FAILED: CLAY,
+  RUNNING: DUSTY_BLUE,
+  SKIPPED: FADED,
+  CANCELLED: FADED,
+
+  // Reconciliation
+  DB_ONLY: CLAY,
+  BROKER_ONLY: AMBER,
+  QUANTITY_MISMATCH: AMBER,
+  RESOLVED: SAGE,
+  UNRESOLVED: CLAY,
+  HALTED: CLAY + ' animate-pulse',
+
+  // Strategy type
+  STOCK: SAND,
+  CALL: MAUVE,
+  PUT: ROSE,
+  CDS: WARM_TEAL,
+  PDS: ROSE,
+
+  // Action hints
+  CLOSE: DUSTY_BLUE,
+  ADD: WARM_TEAL,
+  TRIM: AMBER,
+  ADJUST: MAUVE,
+  'NOT TRADE': FADED,
+
+  // Agent decisions
+  EXECUTE: SAGE,
+  SKIP: FADED,
+  MANUAL_REVIEW: AMBER,
+  PARTIAL: AMBER,
+
+  // Pipeline steps
+  classify: DUSTY_BLUE,
+  size_position: MAUVE,
+  check_risk: AMBER,
+  get_quote: WARM_TEAL,
+  place_stock_order: SAGE,
+  place_option_order: SAGE,
+  close_position: CLAY,
+  detect_strategy: MAUVE,
 };
 
-const DEFAULT = 'bg-zinc-800 text-zinc-300';
+const DEFAULT = SAND;
 
 export function Badge({ label }: { label: string }) {
   return (

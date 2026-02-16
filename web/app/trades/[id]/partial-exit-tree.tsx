@@ -75,7 +75,7 @@ export function PartialExitTree({
                     <span className="text-xs text-muted-foreground tabular-nums">
                       @ {formatCurrency(child.exitPrice)}
                     </span>
-                    <span className={`text-xs font-medium tabular-nums ${pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-foreground'}`}>
+                    <span className={`text-xs font-medium tabular-nums ${pnl > 0 ? 'text-profit' : pnl < 0 ? 'text-loss' : 'text-foreground'}`}>
                       {formatCurrency(pnl)}
                     </span>
                     <span className="text-[10px] text-muted-foreground/60 ml-auto">

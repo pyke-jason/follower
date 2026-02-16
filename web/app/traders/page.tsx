@@ -28,8 +28,6 @@ export default async function TradersPage() {
                 <TableHead>Name</TableHead>
                 <TableHead>Enabled</TableHead>
                 <TableHead>Strategies</TableHead>
-                <TableHead>Max Alloc</TableHead>
-                <TableHead>Max Daily</TableHead>
                 <TableHead>Notes</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -64,22 +62,6 @@ export default async function TradersPage() {
                 name="strategies"
                 defaultValue="CDS,PDS,CALL,PUT,STOCK"
                 className="h-8 text-sm"
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1">Max Alloc</Label>
-              <Input
-                name="maxAllocation"
-                defaultValue="5000"
-                className="h-8 text-sm w-24"
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1">Max Daily</Label>
-              <Input
-                name="maxDailyAlloc"
-                defaultValue="10000"
-                className="h-8 text-sm w-24"
               />
             </div>
             <div>

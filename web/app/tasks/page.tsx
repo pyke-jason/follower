@@ -87,7 +87,7 @@ export default async function TasksPage({
                   <TableCell className="text-muted-foreground text-xs">{formatDate(t.completedAt)}</TableCell>
                   <TableCell className="text-xs max-w-xs truncate">
                     {t.error && (
-                      <span className="text-red-400/80">{t.error}</span>
+                      <span className="text-loss/80">{t.error}</span>
                     )}
                   </TableCell>
                 </TableRow>

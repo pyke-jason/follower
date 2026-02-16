@@ -109,7 +109,7 @@ export function ChatFeed({
       {showScrollBtn && (
         <button
           onClick={scrollToBottom}
-          className="absolute bottom-4 right-4 p-2 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 shadow-lg transition-colors"
+          className="absolute bottom-4 right-4 p-2 rounded-full bg-card border border-border text-muted-foreground hover:bg-accent shadow-warm-md transition-colors"
           aria-label="Scroll to bottom"
         >
           <ArrowDown className="w-4 h-4" />

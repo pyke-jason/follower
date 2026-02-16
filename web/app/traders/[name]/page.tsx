@@ -70,9 +70,6 @@ export default async function TraderDetailPage({
             {(trader.strategies as string[])?.map((s) => (
               <InfoChip key={s} label={s} />
             ))}
-            {trader.maxAllocation && (
-              <InfoChip label={`${formatCurrency(trader.maxAllocation)} max`} />
-            )}
           </div>
         )}
       </div>

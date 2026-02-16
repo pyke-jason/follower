@@ -18,7 +18,7 @@ export function TraderEditRow({ trader }: { trader: TrackedTrader }) {
     return (
       <TableRow className="bg-muted/30">
         <TableCell className="px-4 font-medium text-foreground">{trader.name}</TableCell>
-        <TableCell className="px-4" colSpan={5}>
+        <TableCell className="px-4" colSpan={3}>
           <form
             action={async (fd) => {
               fd.set('name', trader.name);
@@ -34,22 +34,6 @@ export function TraderEditRow({ trader }: { trader: TrackedTrader }) {
                 name="strategies"
                 defaultValue={strategies.join(',')}
                 className="h-7 text-xs w-40"
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1">Max Alloc</Label>
-              <Input
-                name="maxAllocation"
-                defaultValue={trader.maxAllocation ?? ''}
-                className="h-7 text-xs w-20"
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1">Max Daily</Label>
-              <Input
-                name="maxDailyAlloc"
-                defaultValue={trader.maxDailyAlloc ?? ''}
-                className="h-7 text-xs w-20"
               />
             </div>
             <div>
@@ -88,8 +72,6 @@ export function TraderEditRow({ trader }: { trader: TrackedTrader }) {
         </form>
       </TableCell>
       <TableCell className="px-4 text-xs text-muted-foreground">{strategies.join(', ')}</TableCell>
-      <TableCell className="px-4 text-muted-foreground">{trader.maxAllocation ?? '--'}</TableCell>
-      <TableCell className="px-4 text-muted-foreground">{trader.maxDailyAlloc ?? '--'}</TableCell>
       <TableCell className="px-4 text-muted-foreground text-xs">{trader.notes ?? '--'}</TableCell>
       <TableCell className="px-4">
         <div className="flex gap-2">
@@ -102,7 +84,7 @@ export function TraderEditRow({ trader }: { trader: TrackedTrader }) {
               type="submit"
               variant="ghost"
               size="xs"
-              className="text-red-400 hover:text-red-300"
+              className="text-destructive hover:text-destructive/80"
               onClick={(e) => {
                 if (!confirm(`Delete trader "${trader.name}"?`)) {
                   e.preventDefault();

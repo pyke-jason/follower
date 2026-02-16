@@ -47,7 +47,7 @@ export function FillQuality({ trade }: { trade: Trade }) {
           {slippage !== null && (
             <div>
               <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Slippage</p>
-              <p className={`font-medium tabular-nums ${slippage > 0 ? 'text-red-400' : slippage < 0 ? 'text-emerald-400' : 'text-foreground'}`}>
+              <p className={`font-medium tabular-nums ${slippage > 0 ? 'text-loss' : slippage < 0 ? 'text-profit' : 'text-foreground'}`}>
                 {formatCurrency(slippage)}
                 {slippagePct !== null && (
                   <span className="text-xs text-muted-foreground ml-1">({slippagePct.toFixed(2)}%)</span>

@@ -1,12 +1,12 @@
 import { TrendingUp, TrendingDown, LogOut } from 'lucide-react';
 
 const VARIANTS = {
-  Long: { bg: 'bg-emerald-900/60 text-emerald-300', icon: TrendingUp },
-  Short: { bg: 'bg-red-900/60 text-red-300', icon: TrendingDown },
-  Exit: { bg: 'bg-blue-900/60 text-blue-300', icon: LogOut },
+  Long: { bg: 'bg-[oklch(0.94_0.04_150)] text-[oklch(0.38_0.08_148)] dark:bg-[oklch(0.25_0.04_150)] dark:text-[oklch(0.75_0.12_150)]', icon: TrendingUp },
+  Short: { bg: 'bg-[oklch(0.94_0.04_35)] text-[oklch(0.42_0.10_30)] dark:bg-[oklch(0.25_0.04_30)] dark:text-[oklch(0.72_0.14_28)]', icon: TrendingDown },
+  Exit: { bg: 'bg-[oklch(0.94_0.03_250)] text-[oklch(0.42_0.08_248)] dark:bg-[oklch(0.25_0.03_250)] dark:text-[oklch(0.70_0.12_250)]', icon: LogOut },
 } as const;
 
-const DEFAULT = { bg: 'bg-zinc-800 text-zinc-300', icon: null };
+const DEFAULT = { bg: 'bg-[oklch(0.94_0.015_75)] text-[oklch(0.45_0.02_65)] dark:bg-[oklch(0.25_0.015_65)] dark:text-[oklch(0.65_0.02_70)]', icon: null };
 
 export function TradeBadge({ label }: { label: string }) {
   const variant = VARIANTS[label as keyof typeof VARIANTS] ?? DEFAULT;

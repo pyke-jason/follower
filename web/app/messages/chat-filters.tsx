@@ -101,11 +101,11 @@ export function ChatFilters({
       {/* Author filter popover */}
       <Popover>
         <PopoverTrigger asChild>
-          <button className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition-colors">
+          <button className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:bg-accent transition-colors">
             <Users className="w-3.5 h-3.5" />
             <span>Authors</span>
             {selectedAuthors.length > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-200 text-[10px] leading-none font-medium">
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-secondary text-secondary-foreground text-[10px] leading-none font-medium">
                 {selectedAuthors.length}
               </span>
             )}
@@ -127,10 +127,10 @@ export function ChatFilters({
                 <button
                   key={author}
                   onClick={() => toggleAuthor(author)}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-800 transition-colors"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-accent transition-colors"
                 >
                   <div className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0 ${
-                    isSelected ? 'bg-primary border-primary' : 'border-zinc-600'
+                    isSelected ? 'bg-primary border-primary' : 'border-border'
                   }`}>
                     {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
                   </div>
@@ -170,7 +170,7 @@ export function ChatFilters({
               className="inline-flex items-center gap-1 text-[11px] pl-2 pr-1 py-0.5 rounded-full border border-transparent transition-colors"
               style={{
                 backgroundColor: getAuthorBgColor(author),
-                color: getAuthorTextColor(author),
+                color: 'oklch(0.97 0.008 80)',
               }}
             >
               {author}
@@ -178,7 +178,7 @@ export function ChatFilters({
             </button>
           ))}
           {selectedAuthors.length > 3 && (
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-400">
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">
               +{selectedAuthors.length - 3}
             </span>
           )}

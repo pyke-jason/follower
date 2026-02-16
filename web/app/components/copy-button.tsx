@@ -31,7 +31,7 @@ export function CopyButton({
       onClick={(e) => { e.stopPropagation(); copy(); }}
       title="Copy to clipboard"
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? <Check className="h-3.5 w-3.5 text-profit" /> : <Copy className="h-3.5 w-3.5" />}
     </Button>
   );
 }

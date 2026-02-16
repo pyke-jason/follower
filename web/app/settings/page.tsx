@@ -52,7 +52,7 @@ export default async function SettingsPage() {
             <div className="text-sm">
               <span className="font-mono text-xs text-muted-foreground">
                 DISCORD_WEBHOOK_URL:{' '}
-                <span className={discordConfigured ? 'text-green-500' : 'text-red-500'}>
+                <span className={discordConfigured ? 'text-profit' : 'text-destructive'}>
                   {discordConfigured ? 'set' : 'not set'}
                 </span>
               </span>
@@ -73,13 +73,13 @@ export default async function SettingsPage() {
             <div className="text-sm flex gap-4">
               <span className="font-mono text-xs text-muted-foreground">
                 PUSHOVER_APP_TOKEN:{' '}
-                <span className={pushoverConfigured ? 'text-green-500' : 'text-red-500'}>
+                <span className={pushoverConfigured ? 'text-profit' : 'text-destructive'}>
                   {pushoverConfigured ? 'set' : 'not set'}
                 </span>
               </span>
               <span className="font-mono text-xs text-muted-foreground">
                 PUSHOVER_USER_KEY:{' '}
-                <span className={pushoverConfigured ? 'text-green-500' : 'text-red-500'}>
+                <span className={pushoverConfigured ? 'text-profit' : 'text-destructive'}>
                   {pushoverConfigured ? 'set' : 'not set'}
                 </span>
               </span>

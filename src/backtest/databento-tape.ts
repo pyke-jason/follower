@@ -26,6 +26,18 @@ export function getFetchMeta(symbol: string, day: string): FetchMeta | undefined
   return fetchMetaMap.get(`${symbol}:${day}`);
 }
 
+/**
+ * Module-level API stats tracking. Accumulates bytes/records across all
+ * uncached Databento API fetches within this process.
+ *
+ * NOTE: Safe because each backtest runs as a separate process (see pid column
+ * on backtest_runs). If concurrent runs ever share a process, these would
+ * need to move to per-instance tracking.
+ */
+let _apiStats = { fetches: 0, bytesRead: 0, records: 0 };
+export function getApiStats() { return { ..._apiStats }; }
+export function resetApiStats() { _apiStats = { fetches: 0, bytesRead: 0, records: 0 }; }
+
 /** Zod schema for Databento records — validates shape and value ranges.
  *  Uses z.coerce.number() because pretty_px:'true' returns prices as strings (e.g. "51.30"). */
 const px = zCoercePrice.optional();
@@ -394,6 +406,11 @@ export async function loadQuoteTapeForDay(params: {
   if (requestId) parts.push(`req=${requestId}`);
   parts.push(`dur=${durMs}ms`);
   log.info(parts.join(' '));
+
+  // Accumulate API stats for runtime metrics
+  _apiStats.fetches++;
+  _apiStats.bytesRead += bytesRead;
+  _apiStats.records += records;
 
   // Populate fetch metadata per symbol for downstream error enrichment
   for (const sym of uncachedSymbols) {

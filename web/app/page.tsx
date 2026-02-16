@@ -36,13 +36,13 @@ function relativeTime(iso: string | null): string {
 }
 
 function signalBorderColor(actionHint: string | null, directionHint: string | null): string {
-  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-red-500/70';
-  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-emerald-500/70';
-  return 'border-l-zinc-600/40';
+  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-loss/70';
+  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-profit/70';
+  return 'border-l-border';
 }
 
 function positionBorderColor(direction: string): string {
-  return direction === 'LONG' ? 'border-l-emerald-500' : 'border-l-red-500';
+  return direction === 'LONG' ? 'border-l-profit' : 'border-l-loss';
 }
 
 export default async function OverviewPage({
@@ -134,13 +134,13 @@ export default async function OverviewPage({
       {pendingReviews.length > 0 && (
         <Link
           href={buildHref('/tasks?status=PENDING', runId)}
-          className="animate-in-up flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 hover:bg-amber-500/10 transition-colors"
+          className="animate-in-up flex items-center gap-3 rounded-lg border border-warning/20 bg-warning/5 px-4 py-2.5 hover:bg-warning/10 transition-colors"
         >
-          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-          <span className="text-sm font-medium text-amber-300">
+          <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
+          <span className="text-sm font-medium text-warning/80">
             {pendingReviews.length} task{pendingReviews.length !== 1 ? 's' : ''} pending review
           </span>
-          <ArrowRight className="h-3.5 w-3.5 text-amber-400/50 ml-auto" />
+          <ArrowRight className="h-3.5 w-3.5 text-warning/50 ml-auto" />
         </Link>
       )}
 
@@ -277,7 +277,7 @@ export default async function OverviewPage({
                               {formatCurrency(t.pnl)}
                             </span>
                           ) : (
-                            <span className="flex items-center gap-1 text-[10px] text-blue-400 font-medium">
+                            <span className="flex items-center gap-1 text-[10px] text-info font-medium">
                               <Clock className="h-3 w-3" />
                               Open
                             </span>

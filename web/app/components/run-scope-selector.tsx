@@ -75,9 +75,9 @@ export function RunScopeSelector() {
         >
           {runId ? (
             <>
-              <FlaskConical className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <FlaskConical className="h-3.5 w-3.5 text-info shrink-0" />
               <div className="flex flex-col items-start leading-tight max-w-[200px]">
-                <span className="text-blue-300 truncate w-full">
+                <span className="text-info truncate w-full">
                   {runBrief
                     ? runBrief.traders.join(', ') || runBrief.name || `Run ${runId.slice(0, 8)}...`
                     : `Run ${runId.slice(0, 8)}...`}
@@ -91,7 +91,7 @@ export function RunScopeSelector() {
             </>
           ) : (
             <>
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="inline-block h-2 w-2 rounded-full bg-profit" />
               <span>Live</span>
             </>
           )}
@@ -107,7 +107,7 @@ export function RunScopeSelector() {
             </CommandEmpty>
             <CommandGroup>
               <CommandItem value="__live" onSelect={() => handleSelect(null)}>
-                <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 mr-2" />
+                <span className="inline-block h-2 w-2 rounded-full bg-profit mr-2" />
                 <span className="flex-1">Live</span>
                 <Check
                   className={cn('h-3 w-3', !runId ? 'opacity-100' : 'opacity-0')}
@@ -127,7 +127,7 @@ export function RunScopeSelector() {
                         value={`${r.id} ${label}`}
                         onSelect={() => handleSelect(r.id)}
                       >
-                        <FlaskConical className="h-3.5 w-3.5 text-blue-400 mr-2 shrink-0" />
+                        <FlaskConical className="h-3.5 w-3.5 text-info mr-2 shrink-0" />
                         <div className="flex-1 min-w-0">
                           <div className="text-sm truncate">{label}</div>
                           <div className="text-xs text-muted-foreground flex gap-2">
@@ -139,8 +139,8 @@ export function RunScopeSelector() {
                               <span
                                 className={
                                   r.totalPnl >= 0
-                                    ? 'text-emerald-400'
-                                    : 'text-red-400'
+                                    ? 'text-profit'
+                                    : 'text-loss'
                                 }
                               >
                                 {formatPnl(r.totalPnl)}

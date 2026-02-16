@@ -14,9 +14,9 @@ function getAccentBorder(message: Message): string {
   const isSignal = action || badges.length > 0 || symbols.length > 0;
   if (!isSignal) return 'border-l-transparent';
 
-  if (action === 'CLOSE' || direction === 'SHORT') return 'border-l-red-500';
-  if (action === 'OPEN' || direction === 'LONG') return 'border-l-emerald-500';
-  return 'border-l-zinc-500';
+  if (action === 'CLOSE' || direction === 'SHORT') return 'border-l-loss';
+  if (action === 'OPEN' || direction === 'LONG') return 'border-l-profit';
+  return 'border-l-border';
 }
 
 export function ChatBubble({ message }: { message: Message }) {
@@ -66,7 +66,7 @@ export function ChatBubble({ message }: { message: Message }) {
                 </span>
               )}
               {message.isPaperTrade && (
-                <span className="text-[10px] px-1 py-0.5 rounded bg-yellow-900/50 text-yellow-300 font-medium">
+                <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
                   PAPER
                 </span>
               )}

@@ -5,6 +5,7 @@ import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { RunScopeSelector } from './run-scope-selector';
 import { SignalSheet } from './signal-sheet';
+import { ThemeToggle } from './theme-toggle';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useRunScope } from './run-scope-provider';
 
@@ -13,7 +14,7 @@ export function TopBar() {
 
   const pnl = status?.todayPnl ?? 0;
   const pnlSign = pnl >= 0 ? '+' : '';
-  const pnlColor = pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-muted-foreground';
+  const pnlColor = pnl > 0 ? 'text-profit' : pnl < 0 ? 'text-loss' : 'text-muted-foreground';
   const PnlIcon = pnl >= 0 ? TrendingUp : TrendingDown;
 
   const showLiveAlert = !runId && (status?.tradingBlocked || (status?.unresolvedAlertCount ?? 0) > 0);
@@ -43,8 +44,8 @@ export function TopBar() {
         {/* Live alert indicator */}
         {showLiveAlert && (
           <span className="relative flex h-2.5 w-2.5 mr-1">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-loss opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-loss" />
           </span>
         )}
 
@@ -74,7 +75,7 @@ export function TopBar() {
             {status.pendingTasks > 0 && (
               <>
                 <Separator orientation="vertical" className="!h-3.5" />
-                <span className="text-xs text-amber-400/80 tabular-nums">
+                <span className="text-xs text-warning tabular-nums">
                   {status.pendingTasks} pending
                 </span>
               </>
@@ -84,19 +85,20 @@ export function TopBar() {
 
         <div className="flex-1" />
 
-        {/* Signal sheet trigger + Run scope */}
+        {/* Signal sheet trigger + Run scope + Theme */}
         <div className="flex items-center gap-1.5">
           <SignalSheet />
           <RunScopeSelector />
+          <ThemeToggle />
         </div>
       </header>
 
       {/* Backtest context bar */}
       {runId && brief && (
-        <div className="flex h-8 shrink-0 items-center gap-3 border-b border-blue-500/20 bg-blue-950/40 px-4 text-xs">
+        <div className="flex h-8 shrink-0 items-center gap-3 border-b border-info/20 bg-info/5 px-4 text-xs">
           <Link
             href={`/backtests/${brief.id}`}
-            className="text-blue-400 hover:text-blue-300 whitespace-nowrap"
+            className="text-info hover:text-info/80 whitespace-nowrap"
           >
             &larr; Back to Run Details
           </Link>
@@ -115,9 +117,9 @@ export function TopBar() {
           <span
             className={`font-semibold tabular-nums whitespace-nowrap ${
               brief.totalPnl > 0
-                ? 'text-emerald-400'
+                ? 'text-profit'
                 : brief.totalPnl < 0
-                  ? 'text-red-400'
+                  ? 'text-loss'
                   : 'text-muted-foreground'
             }`}
           >

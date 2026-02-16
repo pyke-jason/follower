@@ -105,7 +105,7 @@ const options: HTMLReactParserOptions = {
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-sky-400 hover:underline"
+          className="text-info hover:underline"
         >
           {domToReact(domNode.children as DOMNode[], options)}
         </a>

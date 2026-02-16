@@ -46,9 +46,9 @@ function relativeTime(iso: string): string {
 }
 
 function borderColor(actionHint: string | null, directionHint: string | null): string {
-  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-red-500/60';
-  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-emerald-500/60';
-  return 'border-l-zinc-600/30';
+  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-loss/60';
+  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-profit/60';
+  return 'border-l-border';
 }
 
 function formatCurrency(value: string | number | null): string {
@@ -67,7 +67,7 @@ function pnlColorClass(value: string | null): string {
   if (!value) return 'text-muted-foreground';
   const num = parseFloat(value);
   if (isNaN(num) || num === 0) return 'text-muted-foreground';
-  return num > 0 ? 'text-emerald-400' : 'text-red-400';
+  return num > 0 ? 'text-profit' : 'text-loss';
 }
 
 export function SignalSheet() {
@@ -139,7 +139,7 @@ export function SignalSheet() {
                           {formatCurrency(t.pnl)}
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1 text-[10px] text-blue-400 font-medium">
+                        <span className="flex items-center gap-1 text-[10px] text-info font-medium">
                           <Clock className="h-3 w-3" />
                           Open
                         </span>

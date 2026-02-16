@@ -21,8 +21,9 @@ import { TradeRow } from '../../components/trade-row';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
+import type { LiveMetrics } from '../../../../src/backtest/types';
 
-import { PROFIT_FACTOR_INF, pctDisplay } from '../../../../src/lib/numbers';
+import { PROFIT_FACTOR_INF, pctDisplay, roundCents } from '../../../../src/lib/numbers';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,18 +37,29 @@ export default async function BacktestDetailPage({
   if (!run) notFound();
 
   const config = run.config as BacktestRunConfig;
-  const summary = run.summary as BacktestRunSummary | null;
-  const byTrader = run.byTrader as Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> | null;
-  const byStrategy = run.byStrategy as Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> | null;
-  const equityCurve = run.equityCurve as { date: string; pnl: number; cumPnl: number; trades: number }[] | null;
-
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
 
   const showData = run.status === 'COMPLETED' || run.status === 'RUNNING' || run.status === 'CANCELLED';
-  const [decisions, closedTrades] = await Promise.all([
+  const [decisions, allTrades] = await Promise.all([
     showData ? getRunDecisions(id) : Promise.resolve([]),
-    showData ? getTradesByBacktestRun(id, { includeOpen: run.status !== 'COMPLETED' }) : Promise.resolve([]),
+    showData ? getTradesByBacktestRun(id, { includeOpen: true }) : Promise.resolve([]),
   ]);
+
+  const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
+
+  // Compute everything from the trades table — works identically for
+  // in-progress and completed runs, no precomputed JSON columns needed.
+  const { summary, byTrader, byStrategy, equityCurve } = computeFromTrades(closedTrades, allTrades.length, run.summary as BacktestRunSummary | null);
+
+  // Compute LLM token sums from already-loaded decisions — zero extra DB queries
+  const llmTokens = decisions.reduce(
+    (acc, d) => ({
+      input: acc.input + (d.decision.inputTokens ?? 0),
+      output: acc.output + (d.decision.outputTokens ?? 0),
+    }),
+    { input: 0, output: 0 },
+  );
+  const liveMetrics = run.liveMetrics as LiveMetrics | null;
 
 
   // --- Performance Tab content ---
@@ -156,10 +168,11 @@ export default async function BacktestDetailPage({
 
 
   return (
-    <div className="space-y-4 animate-in-up pb-6">
+    <div className="flex flex-col min-h-full">
+    <div className="space-y-4 animate-in-up pb-6 flex-1">
       {isRunning && <AutoRefresh intervalMs={3000} />}
 
-        {/* Header with action toolbar */}
+      {/* Header with action toolbar */}
         <div className="flex items-center gap-3">
           <Link href="/backtests" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft className="h-4 w-4" />
@@ -204,7 +217,7 @@ export default async function BacktestDetailPage({
             <Separator orientation="vertical" className="!h-4 mx-1" />
             <form action={deleteBacktestRun}>
               <input type="hidden" name="runId" value={run.id} />
-              <Button type="submit" variant="ghost" size="xs" className="text-red-400 hover:text-red-300 hover:bg-red-950">
+              <Button type="submit" variant="ghost" size="xs" className="text-loss hover:text-loss/80 hover:bg-loss/5">
                 <Trash2 className="size-3" /> Delete
               </Button>
             </form>
@@ -225,7 +238,7 @@ export default async function BacktestDetailPage({
               <div className="flex items-center gap-3 ml-auto tabular-nums">
                 <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades</span>
                 <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
-                <span className={summary.totalPnl >= 0 ? 'text-emerald-400 font-semibold' : 'text-red-400 font-semibold'}>{formatCurrency(summary.totalPnl)}</span>
+                <span className={summary.totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>{formatCurrency(summary.totalPnl)}</span>
                 <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>
                 <span className="text-muted-foreground">PF <span className="text-foreground font-semibold">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</span></span>
               </div>
@@ -235,17 +248,23 @@ export default async function BacktestDetailPage({
 
         {/* Progress — only while running */}
         {isRunning && (
-          <RunProgress runId={id} totalMessages={summary?.totalMessages} />
+          <RunProgress
+            processedMessages={decisions.length}
+            totalMessages={summary?.totalMessages ?? 0}
+            agentModel={config.agentModel ?? 'default'}
+            llmTokens={llmTokens}
+            liveMetrics={liveMetrics}
+          />
         )}
 
         {/* Error — only when there is one (hide for cancelled runs) */}
         {run.error && run.status !== 'CANCELLED' && (
-          <Card className="py-4 gap-2 border-red-800 bg-red-950">
+          <Card className="py-4 gap-2 border-loss/30 bg-loss/5">
             <CardHeader className="py-0">
-              <CardTitle className="text-sm text-red-400">Error</CardTitle>
+              <CardTitle className="text-sm text-loss">Error</CardTitle>
             </CardHeader>
             <CardContent>
-              <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono">
+              <pre className="text-xs text-loss/80 whitespace-pre-wrap font-mono">
                 {run.error}
               </pre>
             </CardContent>
@@ -259,13 +278,107 @@ export default async function BacktestDetailPage({
         trades={tradesContent}
         hasDecisions={decisions.length > 0}
       />
+    </div>
 
-      {/* Anchored log panel */}
-      <LogViewer
-        runId={id}
-        isRunning={isRunning}
-        defaultCollapsed
-      />
+    {/* Anchored log panel — outside content wrapper so sticky sits flush */}
+    <LogViewer
+      runId={id}
+      isRunning={isRunning}
+      defaultCollapsed
+    />
     </div>
   );
+}
+
+// ── Compute report data from the trades table ──────────────────────
+
+type TradeRow = { pnl: string | null; status: string; trader: string; strategy: string; closedAt: string | null };
+
+function computeFromTrades(
+  closed: TradeRow[],
+  totalTradeCount: number,
+  precomputedSummary: BacktestRunSummary | null,
+) {
+  const pnl = (t: TradeRow) => { const n = parseFloat(t.pnl ?? ''); return Number.isFinite(n) ? n : 0; };
+
+  const wins = closed.filter((t) => pnl(t) > 0);
+  const losses = closed.filter((t) => pnl(t) <= 0);
+  const totalPnl = closed.reduce((s, t) => s + pnl(t), 0);
+
+  const grossWins = wins.reduce((s, t) => s + pnl(t), 0);
+  const grossLosses = Math.abs(losses.reduce((s, t) => s + pnl(t), 0));
+  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
+
+  // Max drawdown from closed trades in chronological order
+  const sorted = [...closed].sort((a, b) => (a.closedAt ?? '').localeCompare(b.closedAt ?? ''));
+  let peak = 0, maxDrawdown = 0, running = 0;
+  for (const t of sorted) {
+    running += pnl(t);
+    if (running > peak) peak = running;
+    const dd = peak - running;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+
+  // Summary: trade-derived fields always from DB, non-trade fields from precomputed when available
+  const summary: BacktestRunSummary = {
+    totalMessages: precomputedSummary?.totalMessages ?? 0,
+    tradedMessages: precomputedSummary?.tradedMessages ?? 0,
+    totalTrades: totalTradeCount,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: closed.length > 0 ? wins.length / closed.length : 0,
+    totalPnl: roundCents(totalPnl),
+    avgWin: roundCents(wins.length > 0 ? grossWins / wins.length : 0),
+    avgLoss: roundCents(losses.length > 0 ? grossLosses / losses.length * -1 : 0),
+    maxDrawdown: roundCents(maxDrawdown),
+    profitFactor: roundCents(profitFactor),
+    agentCallsUsed: precomputedSummary?.agentCallsUsed ?? 0,
+    agentTrades: precomputedSummary?.agentTrades ?? 0,
+    skipped: precomputedSummary?.skipped ?? 0,
+    openAtEnd: totalTradeCount - closed.length,
+  };
+
+  // By trader
+  const byTrader: Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> = {};
+  for (const t of closed) {
+    const s = byTrader[t.trader] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
+    s.trades++;
+    if (pnl(t) > 0) s.wins++; else s.losses++;
+    s.totalPnl += pnl(t);
+    s.winRate = s.wins / s.trades;
+  }
+
+  // By strategy
+  const byStrategy: Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> = {};
+  for (const t of closed) {
+    const s = byStrategy[t.strategy] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
+    s.trades++;
+    if (pnl(t) > 0) s.wins++; else s.losses++;
+    s.totalPnl += pnl(t);
+    s.winRate = s.wins / s.trades;
+    s.avgPnl = s.totalPnl / s.trades;
+  }
+
+  // Equity curve (daily)
+  const dailyMap = new Map<string, { pnl: number; trades: number }>();
+  for (const t of sorted) {
+    const date = t.closedAt?.split('T')[0] ?? 'unknown';
+    const d = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
+    d.pnl += pnl(t);
+    d.trades++;
+    dailyMap.set(date, d);
+  }
+  const equityCurve: { date: string; pnl: number; cumPnl: number; trades: number }[] = [];
+  let cumPnl = 0;
+  for (const [date, d] of [...dailyMap.entries()].sort()) {
+    cumPnl += d.pnl;
+    equityCurve.push({ date, pnl: roundCents(d.pnl), cumPnl: roundCents(cumPnl), trades: d.trades });
+  }
+
+  return {
+    summary: closed.length > 0 || totalTradeCount > 0 ? summary : null,
+    byTrader: Object.keys(byTrader).length > 0 ? byTrader : null,
+    byStrategy: Object.keys(byStrategy).length > 0 ? byStrategy : null,
+    equityCurve: equityCurve.length > 0 ? equityCurve : null,
+  };
 }

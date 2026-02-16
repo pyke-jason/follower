@@ -1,6 +1,6 @@
 /**
- * Deterministic author colors using HSL with hashed hue.
- * Fixed saturation/lightness tuned for dark theme readability.
+ * Deterministic author colors using oklch with hashed hue.
+ * Adapts lightness for both light and dark themes.
  */
 
 function hashString(str: string): number {
@@ -15,13 +15,18 @@ function hashString(str: string): number {
 /** Background color for avatar circle */
 export function getAuthorBgColor(name: string): string {
   const hue = hashString(name) % 360;
-  return `hsl(${hue}, 65%, 45%)`;
+  return `oklch(0.50 0.14 ${hue})`;
 }
 
-/** Text color for author name (brighter for readability on dark bg) */
+/**
+ * Text color for author name.
+ * Returns a CSS color that uses light-dark() to adapt:
+ * - Light mode: darker (0.42 lightness) for contrast on sand bg
+ * - Dark mode: brighter (0.78 lightness) for contrast on charcoal bg
+ */
 export function getAuthorTextColor(name: string): string {
   const hue = hashString(name) % 360;
-  return `hsl(${hue}, 80%, 85%)`;
+  return `light-dark(oklch(0.42 0.12 ${hue}), oklch(0.78 0.12 ${hue}))`;
 }
 
 /** Get 1-2 character initials from author name */

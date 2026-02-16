@@ -4,98 +4,78 @@ import { useState, useEffect } from 'react';
 import { Progress } from '@/components/ui/progress';
 import { InfoChip } from '../../components/info-chip';
 import { formatCurrency } from '@/lib/format';
-import { Clock, Cpu, DollarSign, TrendingUp } from 'lucide-react';
+import { estimateLlmCost } from '../../../../src/lib/llm-cost';
+import type { LiveMetrics } from '../../../../src/backtest/types';
+import { Clock, DollarSign, TrendingDown, Database, Layers } from 'lucide-react';
 
 interface RunProgressProps {
-  runId: string;
-  totalMessages?: number;
+  processedMessages: number;
+  totalMessages: number;
+  agentModel: string;
+  llmTokens: { input: number; output: number };
+  liveMetrics: LiveMetrics | null;
 }
 
-export function RunProgress({ runId, totalMessages }: RunProgressProps) {
-  const [progress, setProgress] = useState({
-    processed: 0,
-    total: totalMessages ?? 0,
-    trades: 0,
-    agentCalls: 0,
-    elapsed: 0,
-  });
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function RunProgress({
+  processedMessages,
+  totalMessages,
+  agentModel,
+  llmTokens,
+  liveMetrics,
+}: RunProgressProps) {
+  // Elapsed timer is the only piece that needs client-side state
+  const [mountTime] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    let startTime = Date.now();
-
-    const fetchProgress = async () => {
-      try {
-        const res = await fetch(`/api/backtests/${runId}/logs?tail=50`);
-        if (!res.ok) return;
-        const text = await res.text();
-        const lines = text.split('\n');
-
-        let processed = progress.processed;
-        let total = progress.total;
-        let trades = 0;
-        let agentCalls = 0;
-
-        for (const line of lines) {
-          // Match patterns like [234/1847] or Processing message 234/1847
-          const progressMatch = line.match(/\[(\d+)\/(\d+)\]/);
-          if (progressMatch) {
-            processed = parseInt(progressMatch[1]);
-            total = parseInt(progressMatch[2]);
-          }
-          // Count trade mentions
-          const tradeMatch = line.match(/trades?:\s*(\d+)/i);
-          if (tradeMatch) trades = parseInt(tradeMatch[1]);
-          // Count agent calls
-          const agentMatch = line.match(/agent.*calls?:\s*(\d+)/i);
-          if (agentMatch) agentCalls = parseInt(agentMatch[1]);
-        }
-
-        setProgress({
-          processed,
-          total: total || totalMessages || 0,
-          trades,
-          agentCalls,
-          elapsed: Math.floor((Date.now() - startTime) / 1000),
-        });
-      } catch {}
-    };
-
-    fetchProgress();
-    const interval = setInterval(fetchProgress, 3000);
     const timer = setInterval(() => {
-      setProgress((p) => ({ ...p, elapsed: Math.floor((Date.now() - startTime) / 1000) }));
+      setElapsed(Math.floor((Date.now() - mountTime) / 1000));
     }, 1000);
+    return () => clearInterval(timer);
+  }, [mountTime]);
 
-    return () => {
-      clearInterval(interval);
-      clearInterval(timer);
-    };
-  }, [runId, totalMessages]);
+  const pct = totalMessages > 0 ? Math.round((processedMessages / totalMessages) * 100) : 0;
 
-  const pct = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0;
-  const estCost = progress.agentCalls * 0.012;
-  const elapsedStr = progress.elapsed >= 60
-    ? `${Math.floor(progress.elapsed / 60)}m ${progress.elapsed % 60}s`
-    : `${progress.elapsed}s`;
+  const llmCost = estimateLlmCost(agentModel, {
+    inputTokens: llmTokens.input,
+    outputTokens: llmTokens.output,
+  });
+
+  const elapsedStr = elapsed >= 60
+    ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+    : `${elapsed}s`;
 
   return (
     <div className="rounded-lg border bg-card px-4 py-3 space-y-2">
       <div className="flex items-center justify-between text-xs">
         <span className="font-medium text-foreground">Progress</span>
         <span className="text-muted-foreground tabular-nums">
-          {progress.processed.toLocaleString()}/{progress.total.toLocaleString()} messages
+          {processedMessages.toLocaleString()}/{totalMessages.toLocaleString()} messages
         </span>
       </div>
       <Progress value={pct} className="h-2" />
       <div className="flex items-center gap-2 flex-wrap">
-        {progress.trades > 0 && (
-          <InfoChip label={`${progress.trades} trades`} icon={TrendingUp} />
+        {liveMetrics?.unrealizedPnl != null && (
+          <InfoChip
+            label={`${formatCurrency(liveMetrics.unrealizedPnl)} unreal.`}
+            icon={TrendingDown}
+            className={liveMetrics.unrealizedPnl >= 0 ? 'text-profit' : 'text-loss'}
+          />
         )}
-        {progress.agentCalls > 0 && (
-          <InfoChip label={`${progress.agentCalls} agent calls`} icon={Cpu} />
+        {liveMetrics != null && liveMetrics.openPositionCount > 0 && (
+          <InfoChip label={`${liveMetrics.openPositionCount} open`} icon={Layers} />
         )}
-        {estCost > 0 && (
-          <InfoChip label={`~${formatCurrency(estCost)} est. cost`} icon={DollarSign} />
+        {llmCost > 0 && (
+          <InfoChip label={`~${formatCurrency(llmCost)} LLM`} icon={DollarSign} />
+        )}
+        {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
+          <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
         )}
         <InfoChip label={elapsedStr} icon={Clock} />
       </div>

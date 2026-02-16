@@ -54,7 +54,7 @@ export default async function OpenTradesPage({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-in-up">
           {trades.map((t, i) => {
             const isLong = t.direction === 'LONG';
-            const borderColor = isLong ? 'border-l-emerald-500' : 'border-l-red-500';
+            const borderColor = isLong ? 'border-l-profit' : 'border-l-loss';
 
             return (
               <div

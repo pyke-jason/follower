@@ -157,7 +157,7 @@ export default async function EvalPage({
                             </TableCell>
                             <TableCell className="text-xs text-right tabular-nums">{run.totalLabels}</TableCell>
                             <TableCell className="text-xs text-right tabular-nums">
-                              <span className={run.totalMislabelings && run.totalMislabelings > 0 ? 'text-red-500 font-medium' : 'text-green-500'}>
+                              <span className={run.totalMislabelings && run.totalMislabelings > 0 ? 'text-loss font-medium' : 'text-profit'}>
                                 {run.totalMislabelings ?? 0}
                               </span>
                             </TableCell>
@@ -167,7 +167,7 @@ export default async function EvalPage({
                             <TableCell className="text-xs text-right tabular-nums">{pct(run.strategyAccuracy)}</TableCell>
                             <TableCell className="text-xs text-right tabular-nums">{pct(run.priceAccuracy)}</TableCell>
                             <TableCell className="text-xs text-right tabular-nums">
-                              <span className={run.exitPriceAccuracy != null && run.exitPriceAccuracy < 0.8 ? 'text-red-500 font-medium' : ''}>
+                              <span className={run.exitPriceAccuracy != null && run.exitPriceAccuracy < 0.8 ? 'text-loss font-medium' : ''}>
                                 {pct(run.exitPriceAccuracy)}
                               </span>
                             </TableCell>
@@ -250,7 +250,7 @@ export default async function EvalPage({
                 return (
                   <TableRow
                     key={label.id}
-                    className={`align-top ${!label.reviewed ? 'bg-amber-500/5' : ''}`}
+                    className={`align-top ${!label.reviewed ? 'bg-warning/5' : ''}`}
                   >
                     {/* Message column */}
                     <TableCell className="text-xs max-w-[400px]">
@@ -276,7 +276,7 @@ export default async function EvalPage({
                           <span className="text-muted-foreground">${label.price}</span>
                         )}
                         {mismatch && (
-                          <TriangleAlert className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                          <TriangleAlert className="h-3.5 w-3.5 text-warning shrink-0" />
                         )}
                       </div>
                       {/* Secondary line: strikes, expiry, quantity */}

@@ -3,27 +3,6 @@ import type { PositionSize } from '../position-sizing/index.js';
 
 export type FillModel = 'orats' | 'midpoint' | 'natural';
 
-export type SimPosition = {
-  id: string;
-  symbol: string;
-  direction: 'LONG' | 'SHORT';
-  strategy: string;
-  trader: string;
-  entryPrice: number;
-  quantity: number;
-  legs: SimLeg[];
-  openedAt: Date;
-  closedAt?: Date;
-  exitPrice?: number;
-  pnl?: number;
-  sourceMessageId?: string;
-  closeMessageId?: string;
-  /** For partial close slices: links back to the original position */
-  parentPositionId?: string;
-  /** True if this position represents a partial close slice (not a standalone position) */
-  isPartialClose?: boolean;
-};
-
 export type SimLeg = {
   symbol: string;
   strike: number;
@@ -67,7 +46,6 @@ export type BacktestConfig = {
   databentoDataset?: string;  // default 'DBEQ.BASIC' (uses mbp-1 schema; OPRA.PILLAR uses cbbo-1s)
   agentProvider?: string;     // 'anthropic' | 'xai' — default 'anthropic'
   agentModel?: string;        // e.g. 'claude-sonnet-4-5-20250929'
-  useAgent?: boolean;
   maxAgentCalls?: number;
   refreshQuoteCache?: boolean; // delete and re-download Databento cache entries
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
@@ -101,9 +79,8 @@ export type BacktestReport = {
     maxDrawdown: number;
     profitFactor: number;
     agentCallsUsed: number;
-    deterministicTrades: number;
     agentTrades: number;
-    skippedLowConfidence: number;
+    skipped: number;
     openAtEnd: number;
   };
   byTrader: Record<string, TraderStats>;
@@ -138,6 +115,28 @@ export type EquityPoint = {
   equity?: number;          // cumPnl + unrealizedPnl (the "true" equity value)
 };
 
+/**
+ * Snapshot of accumulated runtime metrics, written to backtest_runs.live_metrics
+ * after every message during execution. The web UI polls this for real-time display.
+ *
+ * Only contains data that CANNOT be derived from other tables:
+ * - unrealizedPnl: requires the runner's price provider (web server can't compute)
+ * - databento stats: process-level counters, not per-decision
+ * - openPositionCount: included for atomic consistency with unrealizedPnl
+ *
+ * NOT stored here (derived in the web layer from already-loaded data):
+ * - processedMessages, agentCalls, trades, skipped → from run_decisions
+ * - LLM tokens → per-decision on run_decisions
+ * - LLM cost → computed from tokens + model
+ */
+export type LiveMetrics = {
+  unrealizedPnl: number | null;
+  openPositionCount: number;
+  databentoApiFetches: number;
+  databentoApiBytesRead: number;
+  updatedAt: string;
+};
+
 export interface SizingService {
   calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }): Promise<PositionSize>;
 }
@@ -158,18 +157,3 @@ export interface RiskService {
   check(input: { symbol: string; strategy: string; trader: string }): Promise<RiskCheckResult>;
 }
 
-export type ExecutionStep = {
-  name: string;
-  input?: unknown;
-  output?: unknown;
-  reasoning: string;
-  durationMs?: number;
-};
-
-export type ExecutionResult = {
-  action: 'OPEN' | 'CLOSE' | 'SKIP';
-  position?: SimPosition;
-  reason: string;
-  usedAgent: boolean;
-  steps?: ExecutionStep[];
-};

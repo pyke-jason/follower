@@ -9,7 +9,7 @@ import { safeParseFloat } from '../../../src/lib/numbers';
 export function TradeRow({ trade, runId }: { trade: Trade; runId?: string }) {
   const pnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const pnlBorder = pnl != null && pnl !== 0
-    ? pnl > 0 ? 'border-l-2 border-l-emerald-500/70' : 'border-l-2 border-l-red-500/70'
+    ? pnl > 0 ? 'border-l-2 border-l-profit/70' : 'border-l-2 border-l-loss/70'
     : '';
 
   return (

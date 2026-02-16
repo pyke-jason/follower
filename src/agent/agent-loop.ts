@@ -53,7 +53,7 @@ function summarizeToolOutput(toolName: string, output: unknown): string {
     if (toolName === 'check_risk_limits') {
       return obj.allowed ? 'allowed' : `blocked: ${obj.reason ?? 'unknown'}`;
     }
-    if (toolName === 'place_order' && obj.status != null) {
+    if ((toolName === 'place_stock_order' || toolName === 'place_option_order') && obj.status != null) {
       return obj.status === 'FILLED' ? `FILLED @ $${obj.filledPrice}` : `${obj.status}`;
     }
     return json.slice(0, 100) + '…';

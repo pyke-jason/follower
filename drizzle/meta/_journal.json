@@ -78,6 +78,20 @@
       "when": 1771188611190,
       "tag": "0010_good_sentry",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1771217399246,
+      "tag": "0011_bizarre_ezekiel",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1771219015736,
+      "tag": "0012_first_sabretooth",
+      "breakpoints": true
     }
   ]
 }

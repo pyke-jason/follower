@@ -70,7 +70,7 @@ export function LogViewer({
   const onResizeMove = useCallback((e: React.PointerEvent) => {
     if (!dragRef.current) return;
     const delta = dragRef.current.startY - e.clientY;
-    setHeight(Math.min(Math.max(dragRef.current.startH + delta, 120), 600));
+    setHeight(Math.max(dragRef.current.startH + delta, 120));
   }, []);
 
   const onResizeEnd = useCallback(() => {
@@ -81,9 +81,16 @@ export function LogViewer({
 
   return (
     <div className="sticky bottom-0 -mx-6 z-40 flex flex-col border-t border-border bg-card">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button')) return;
+          setOpen((o) => !o);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((o) => !o); }
+        }}
         className="flex items-center gap-2 px-4 py-1.5 text-xs hover:bg-muted/40 transition-colors cursor-pointer select-none"
       >
         <Terminal className="size-3 text-muted-foreground" />
@@ -92,13 +99,13 @@ export function LogViewer({
           <span className="text-muted-foreground/60 tabular-nums">{lineCount.toLocaleString()} lines</span>
         )}
         {isRunning && (
-          <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="size-1.5 rounded-full bg-profit animate-pulse" />
         )}
         <div className="ml-auto flex items-center gap-1">
           <CopyButton getText={getLogs} />
           {open ? <ChevronDown className="size-3 text-muted-foreground" /> : <ChevronUp className="size-3 text-muted-foreground" />}
         </div>
-      </button>
+      </div>
       {open && (
         <>
           <div

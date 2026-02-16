@@ -47,7 +47,7 @@ export class ATRPositionSizer implements PositionSizingStrategy {
   ) {}
 
   async calculateSize(params: SizingParams): Promise<PositionSize> {
-    const { symbol, entryPrice, equity, maxAllocation, spreadMaxRisk, maxQuantity } = params;
+    const { symbol, entryPrice, equity, spreadMaxRisk, maxQuantity } = params;
     const { riskPercent, atrMultiplier, atrPeriod } = this.config;
 
     // Fetch enough bars to compute ATR (need period + 1 for true range calc)
@@ -72,14 +72,7 @@ export class ATRPositionSizer implements PositionSizingStrategy {
     // shares = floor(riskPerTrade / effectiveRisk)
     const sharesFromRisk = Math.floor(riskPerTrade / effectiveRisk);
 
-    // Allocation cap: use spreadMaxRisk for spreads, entryPrice for stocks/single-leg
-    const costPerUnit = spreadMaxRisk ?? entryPrice;
-    const sharesFromAllocation = costPerUnit > 0
-      ? Math.floor(maxAllocation / costPerUnit)
-      : 0;
-
-    const rawQuantity = Math.min(sharesFromRisk, sharesFromAllocation);
-    const quantity = maxQuantity ? Math.min(rawQuantity, maxQuantity) : rawQuantity;
+    const quantity = maxQuantity ? Math.min(sharesFromRisk, maxQuantity) : sharesFromRisk;
 
     const reasoning = [
       atrFallback
@@ -88,7 +81,6 @@ export class ATRPositionSizer implements PositionSizingStrategy {
       `Risk/trade = $${riskPerTrade.toFixed(0)} (${(riskPercent * 100).toFixed(1)}% of $${equity.toFixed(0)})`,
       `Per-unit risk = $${effectiveRisk.toFixed(2)} (ATR × ${atrMultiplier})`,
       `From risk: ${sharesFromRisk} units`,
-      `From allocation cap ($${maxAllocation}): ${sharesFromAllocation} units`,
       maxQuantity ? `Max quantity cap: ${maxQuantity}` : null,
       `Final: ${quantity} units`,
     ].filter(Boolean).join('; ');

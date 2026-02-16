@@ -32,10 +32,12 @@ const TOGGLE_ENV: Record<ToggleId, string> = {
 };
 
 export async function getToggleStates(): Promise<Record<ToggleId, boolean>> {
+  const provider = getProvider();
+  const secrets = await provider.load();
   return {
-    discord: process.env.ALERTS_DISCORD_ENABLED !== '0',
-    pushover: process.env.ALERTS_PUSHOVER_ENABLED !== '0',
-    ingestion: process.env.LIVE_INGESTION_ENABLED !== '0',
+    discord: secrets.ALERTS_DISCORD_ENABLED !== '0',
+    pushover: secrets.ALERTS_PUSHOVER_ENABLED !== '0',
+    ingestion: secrets.LIVE_INGESTION_ENABLED !== '0',
   };
 }
 
@@ -79,7 +81,9 @@ export async function deleteSecret(_prev: Result | null, formData: FormData): Pr
 }
 
 export async function testDiscord(): Promise<Result> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  const provider = getProvider();
+  const secrets = await provider.load();
+  const webhookUrl = secrets.DISCORD_WEBHOOK_URL;
   if (!webhookUrl) return { ok: false, error: 'DISCORD_WEBHOOK_URL is not set' };
 
   try {
@@ -109,8 +113,10 @@ export async function testDiscord(): Promise<Result> {
 }
 
 export async function testPushover(): Promise<Result> {
-  const token = process.env.PUSHOVER_APP_TOKEN;
-  const user = process.env.PUSHOVER_USER_KEY;
+  const provider = getProvider();
+  const secrets = await provider.load();
+  const token = secrets.PUSHOVER_APP_TOKEN;
+  const user = secrets.PUSHOVER_USER_KEY;
   if (!token || !user) return { ok: false, error: 'PUSHOVER_APP_TOKEN or PUSHOVER_USER_KEY is not set' };
 
   try {

@@ -17,8 +17,6 @@ export async function addTrader(formData: FormData) {
     name: name.trim(),
     enabled: true,
     strategies,
-    maxAllocation: (formData.get('maxAllocation') as string) || '5000',
-    maxDailyAlloc: (formData.get('maxDailyAlloc') as string) || '10000',
     notes: (formData.get('notes') as string) || null,
   });
 
@@ -39,8 +37,6 @@ export async function updateTrader(formData: FormData) {
     .update(schema.trackedTraders)
     .set({
       strategies,
-      maxAllocation: (formData.get('maxAllocation') as string) || null,
-      maxDailyAlloc: (formData.get('maxDailyAlloc') as string) || null,
       notes: (formData.get('notes') as string) || null,
     })
     .where(eq(schema.trackedTraders.name, name));

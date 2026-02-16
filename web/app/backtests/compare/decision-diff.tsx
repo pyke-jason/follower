@@ -32,7 +32,7 @@ export function DecisionDiff({
     <div>
       <div className="px-4 py-2 border-b border-border/50 flex items-center gap-4 text-xs">
         <span className="text-muted-foreground">{diffs.length} divergent decisions</span>
-        <span className={cn('font-medium tabular-nums', totalDelta > 0 ? 'text-emerald-400' : totalDelta < 0 ? 'text-red-400' : 'text-foreground')}>
+        <span className={cn('font-medium tabular-nums', totalDelta > 0 ? 'text-profit' : totalDelta < 0 ? 'text-loss' : 'text-foreground')}>
           Net delta: {totalDelta >= 0 ? '+' : ''}{formatCurrency(totalDelta)}
         </span>
       </div>
@@ -59,22 +59,22 @@ export function DecisionDiff({
                 </div>
               </TableCell>
               <TableCell className="text-center">
-                <Badge className={d.decisionA === 'EXECUTE' ? 'bg-emerald-900/50 text-emerald-300' : 'bg-zinc-800 text-zinc-400'}>
+                <Badge className={d.decisionA === 'EXECUTE' ? 'bg-[oklch(0.94_0.04_150)] text-[oklch(0.38_0.08_148)] dark:bg-[oklch(0.25_0.04_150)] dark:text-[oklch(0.75_0.12_150)]' : 'bg-[oklch(0.94_0.01_75)] text-[oklch(0.55_0.015_65)] dark:bg-[oklch(0.25_0.01_65)] dark:text-[oklch(0.55_0.015_70)]'}>
                   {d.decisionA ?? '--'}
                 </Badge>
               </TableCell>
               <TableCell className="text-center">
-                <Badge className={d.decisionB === 'EXECUTE' ? 'bg-emerald-900/50 text-emerald-300' : 'bg-zinc-800 text-zinc-400'}>
+                <Badge className={d.decisionB === 'EXECUTE' ? 'bg-[oklch(0.94_0.04_150)] text-[oklch(0.38_0.08_148)] dark:bg-[oklch(0.25_0.04_150)] dark:text-[oklch(0.75_0.12_150)]' : 'bg-[oklch(0.94_0.01_75)] text-[oklch(0.55_0.015_65)] dark:bg-[oklch(0.25_0.01_65)] dark:text-[oklch(0.55_0.015_70)]'}>
                   {d.decisionB ?? '--'}
                 </Badge>
               </TableCell>
-              <TableCell className={cn('text-right tabular-nums text-xs', d.pnlA > 0 ? 'text-emerald-400' : d.pnlA < 0 ? 'text-red-400' : '')}>
+              <TableCell className={cn('text-right tabular-nums text-xs', d.pnlA > 0 ? 'text-profit' : d.pnlA < 0 ? 'text-loss' : '')}>
                 {formatCurrency(d.pnlA)}
               </TableCell>
-              <TableCell className={cn('text-right tabular-nums text-xs', d.pnlB > 0 ? 'text-emerald-400' : d.pnlB < 0 ? 'text-red-400' : '')}>
+              <TableCell className={cn('text-right tabular-nums text-xs', d.pnlB > 0 ? 'text-profit' : d.pnlB < 0 ? 'text-loss' : '')}>
                 {formatCurrency(d.pnlB)}
               </TableCell>
-              <TableCell className={cn('text-right tabular-nums text-xs font-medium', d.delta > 0 ? 'text-emerald-400' : d.delta < 0 ? 'text-red-400' : '')}>
+              <TableCell className={cn('text-right tabular-nums text-xs font-medium', d.delta > 0 ? 'text-profit' : d.delta < 0 ? 'text-loss' : '')}>
                 {d.delta >= 0 ? '+' : ''}{formatCurrency(d.delta)}
               </TableCell>
             </TableRow>

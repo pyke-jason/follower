@@ -85,7 +85,7 @@ export function LabelActions({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 text-xs px-2 text-green-600"
+              className="h-6 text-xs px-2 text-profit"
               type="submit"
             >
               Ok
@@ -122,7 +122,7 @@ function ComparisonRow({
     <div className="grid grid-cols-[100px_1fr_1fr] gap-2 text-xs py-1">
       <span className="text-muted-foreground">{field}</span>
       <span className="font-mono">{pv}</span>
-      <span className={`font-mono ${mismatch ? 'text-amber-400 font-medium' : ''}`}>
+      <span className={`font-mono ${mismatch ? 'text-warning font-medium' : ''}`}>
         {lv}
       </span>
     </div>
@@ -379,7 +379,7 @@ function LabelEditSheet({
               onOpenChange(false);
             }}>
               <input type="hidden" name="id" value={label.id} />
-              <Button variant="ghost" size="sm" className="text-red-600" type="submit">
+              <Button variant="ghost" size="sm" className="text-destructive" type="submit">
                 Delete
               </Button>
             </form>

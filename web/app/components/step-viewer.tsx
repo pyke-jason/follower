@@ -23,7 +23,7 @@ export function StepViewer({ steps }: { steps: TaskStep[] }) {
                 #{step.stepNumber}
               </span>
               {step.toolName ? (
-                <span className="text-sm font-medium text-blue-400">
+                <span className="text-sm font-medium text-info">
                   {step.toolName}
                 </span>
               ) : (

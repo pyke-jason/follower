@@ -20,7 +20,7 @@ function bestOf(values: (number | null)[], higherIsBetter: boolean): number | nu
 
 function cellClass(value: number | null, best: number | null): string {
   if (value == null || best == null) return '';
-  return value === best ? 'text-emerald-400 font-semibold' : '';
+  return value === best ? 'text-profit font-semibold' : '';
 }
 
 export function ComparisonTable({ runs }: { runs: RunData[] }) {

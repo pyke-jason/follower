@@ -1,7 +1,7 @@
 'use server';
 
 import { db, schema } from '@/lib/db';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getTradesByBacktestRun, getRunDecisions } from '@/lib/queries';
@@ -189,6 +189,47 @@ export async function togglePin(formData: FormData) {
   await db.update(schema.backtestRuns)
     .set({ pinned: !run.pinned })
     .where(eq(schema.backtestRuns.id, runId));
+
+  revalidatePath('/backtests');
+}
+
+export async function bulkDeleteBacktestRuns(runIds: string[]) {
+  if (runIds.length === 0) return;
+
+  const LOCAL_API_URL_INNER = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
+
+  // Kill any running processes
+  const runs = await db
+    .select({ id: schema.backtestRuns.id, status: schema.backtestRuns.status, pid: schema.backtestRuns.pid })
+    .from(schema.backtestRuns)
+    .where(inArray(schema.backtestRuns.id, runIds));
+
+  for (const run of runs) {
+    if ((run.status === 'RUNNING' || run.status === 'PENDING') && run.pid) {
+      await fetch(`${LOCAL_API_URL_INNER}/backtests/${run.id}/cancel?pid=${run.pid}`, {
+        method: 'POST',
+      }).catch(() => {});
+    }
+  }
+
+  // Delete associated tasks/steps
+  const tasks = await db
+    .select({ id: schema.tasks.id })
+    .from(schema.tasks)
+    .where(inArray(schema.tasks.backtestRunId, runIds));
+
+  if (tasks.length > 0) {
+    await db.delete(schema.taskSteps).where(inArray(schema.taskSteps.taskId, tasks.map((t) => t.id)));
+  }
+
+  await db.delete(schema.trades).where(inArray(schema.trades.backtestRunId, runIds));
+  await db.delete(schema.tasks).where(inArray(schema.tasks.backtestRunId, runIds));
+  await db.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, runIds));
+
+  // Clean up log files
+  for (const id of runIds) {
+    await fetch(`${LOCAL_API_URL_INNER}/logs/${id}`, { method: 'DELETE' }).catch(() => {});
+  }
 
   revalidatePath('/backtests');
 }

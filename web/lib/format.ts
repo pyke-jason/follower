@@ -58,6 +58,6 @@ export function formatDuration(startIso: string, endIso: string): string {
 export function pnlColor(value: number | string | null | undefined): string {
   if (value == null) return 'text-zinc-400';
   const num = typeof value === 'string' ? parseFloat(value) : value;
-  if (isNaN(num) || num === 0) return 'text-zinc-400';
-  return num > 0 ? 'text-emerald-400' : 'text-red-400';
+  if (isNaN(num) || num === 0) return 'text-muted-foreground';
+  return num > 0 ? 'text-profit' : 'text-loss';
 }

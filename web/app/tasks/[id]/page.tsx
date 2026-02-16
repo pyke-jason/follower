@@ -51,7 +51,7 @@ export default async function TaskDetailPage({
     : [];
 
   const legs = (trade?.legs as TradeLeg[]) || [];
-  const isDeterministic = task.assignee === 'deterministic' || !task.modelName;
+  const hasAgentSteps = steps.length > 0;
 
   return (
     <div className="space-y-6 animate-in-up">
@@ -121,7 +121,7 @@ export default async function TaskDetailPage({
               <CardContent className="py-4">
                 <div className="flex items-center gap-3 mb-3">
                   <Badge label={result.decision} />
-                  <InfoChip label={isDeterministic ? 'deterministic' : 'agent'} />
+                  <InfoChip label="agent" />
                   {task.startedAt && task.completedAt && (
                     <span className="text-xs text-muted-foreground tabular-nums ml-auto">
                       {formatDuration(task.startedAt, task.completedAt)}
@@ -242,12 +242,12 @@ export default async function TaskDetailPage({
 
           {/* ── Error ─────────────────────────────────────── */}
           {task.error && (
-            <Card className="py-4 gap-2 border-red-800 bg-red-950">
+            <Card className="py-4 gap-2 border-loss/30 bg-loss/5">
               <CardHeader className="py-0">
-                <CardTitle className="text-sm text-red-400">Error</CardTitle>
+                <CardTitle className="text-sm text-loss">Error</CardTitle>
               </CardHeader>
               <CardContent>
-                <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono">
+                <pre className="text-xs text-loss/80 whitespace-pre-wrap font-mono">
                   {task.error}
                 </pre>
               </CardContent>
@@ -275,11 +275,9 @@ export default async function TaskDetailPage({
               <Card className="py-4 gap-0">
                 <CardContent>
                   <p className="text-sm text-muted-foreground">
-                    {result?.decision === 'EXECUTE' && isDeterministic
-                      ? 'This task was executed deterministically due to high confidence classification. No agent steps were needed.'
-                      : result?.decision === 'SKIP'
-                        ? 'This task was skipped. No processing steps were recorded.'
-                        : 'No audit trail steps recorded for this task.'}
+                    {result?.decision === 'SKIP'
+                      ? 'This task was skipped. No processing steps were recorded.'
+                      : 'No audit trail steps recorded for this task.'}
                   </p>
                 </CardContent>
               </Card>
@@ -362,7 +360,7 @@ export default async function TaskDetailPage({
                         className={cn(
                           'px-4 py-2.5 text-sm',
                           isSource
-                            ? 'bg-blue-950/30 border-l-2 border-l-blue-500'
+                            ? 'bg-info/10 border-l-2 border-l-info'
                             : 'hover:bg-accent/30',
                         )}
                       >
@@ -371,7 +369,7 @@ export default async function TaskDetailPage({
                             {formatTime(msg.timestamp)}
                           </span>
                           {isSource && (
-                            <span className="text-[10px] font-medium text-blue-400">SOURCE</span>
+                            <span className="text-[10px] font-medium text-info">SOURCE</span>
                           )}
                           {msg.actionHint && <Badge label={msg.actionHint} />}
                           {msg.directionHint && <Badge label={msg.directionHint} />}
@@ -404,10 +402,10 @@ export default async function TaskDetailPage({
                       <p className={cn(
                         'font-medium tabular-nums',
                         (context.confidence as number) >= 0.8
-                          ? 'text-emerald-400'
+                          ? 'text-profit'
                           : (context.confidence as number) >= 0.5
-                            ? 'text-yellow-400'
-                            : 'text-red-400'
+                            ? 'text-warning'
+                            : 'text-loss'
                       )}>
                         {((context.confidence as number) * 100).toFixed(0)}%
                       </p>

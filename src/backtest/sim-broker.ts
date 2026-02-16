@@ -3,10 +3,12 @@ import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus, Broker
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
-import { PositionTracker } from './position-tracker.js';
+import { db, schema } from '../db/client.js';
+import { and, sql } from 'drizzle-orm';
+import { isOpen, isClosed, forRun } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
-import { roundCents } from '../lib/numbers.js';
+import { roundCents, safeParseFloat } from '../lib/numbers.js';
 
 const log = createLogger('SimBroker');
 
@@ -80,7 +82,7 @@ export class SimBroker implements BrokerService {
   constructor(
     private marketData: BacktestPriceProvider,
     private clock: SimClock,
-    private tracker: PositionTracker,
+    private backtestRunId: string,
     private fillModel: FillModel = 'orats',
     private startingEquity: number = 100_000,
   ) {}
@@ -185,47 +187,72 @@ export class SimBroker implements BrokerService {
   }
 
   async getPositions(): Promise<BrokerPosition[]> {
+    const openTrades = await db
+      .select()
+      .from(schema.trades)
+      .where(and(isOpen, forRun(this.backtestRunId)));
+
     const positions: BrokerPosition[] = [];
-    for (const pos of this.tracker.getOpen()) {
-      let currentPrice = pos.entryPrice;
+    for (const row of openTrades) {
+      const entryPrice = safeParseFloat(row.entryPrice);
+      const quantity = row.quantity ?? 1;
+      const direction = row.direction as 'LONG' | 'SHORT';
+      const strategy = row.strategy;
+
+      let currentPrice = entryPrice;
       try {
-        const quote = await this.marketData.getQuote(pos.symbol, this.clock.now());
+        const quote = await this.marketData.getQuote(row.symbol, this.clock.now());
         currentPrice = (quote.bid + quote.ask) / 2;
       } catch {
         // No market data — fall back to entry price (unrealized = 0)
       }
 
-      const diff = currentPrice - pos.entryPrice;
-      const multiplier = pos.direction === 'LONG' ? 1 : -1;
-      const contractMultiplier = pos.strategy === 'STOCK' ? 1 : 100;
-      const unrealizedPnl = roundCents(diff * multiplier * pos.quantity * contractMultiplier);
-      const marketValue = roundCents(currentPrice * pos.quantity * contractMultiplier);
+      const diff = currentPrice - entryPrice;
+      const multiplier = direction === 'LONG' ? 1 : -1;
+      const contractMultiplier = strategy === 'STOCK' ? 1 : 100;
+      const unrealizedPnl = roundCents(diff * multiplier * quantity * contractMultiplier);
+      const marketValue = roundCents(currentPrice * quantity * contractMultiplier);
 
       positions.push({
-        symbol: pos.symbol,
-        quantity: pos.quantity,
-        averageCost: pos.entryPrice,
+        symbol: row.symbol,
+        quantity,
+        averageCost: entryPrice,
         marketValue,
         unrealizedPnl,
-        assetType: pos.strategy === 'STOCK' ? 'EQ' : 'OP',
+        assetType: strategy === 'STOCK' ? 'EQ' : 'OP',
       });
     }
     return positions;
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
-    const realizedPnl = this.tracker.getTotalPnl();
+    // Realized PnL: sum of pnl from all closed trades in this run
+    const [realizedRow] = await db
+      .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
+      .from(schema.trades)
+      .where(and(isClosed, forRun(this.backtestRunId)));
+    const realizedPnl = roundCents(realizedRow?.total ?? 0);
 
-    // Compute unrealized PnL from current market prices
+    // Unrealized PnL: compute from open positions + current market prices
+    const openTrades = await db
+      .select()
+      .from(schema.trades)
+      .where(and(isOpen, forRun(this.backtestRunId)));
+
     let unrealizedPnl = 0;
-    for (const pos of this.tracker.getOpen()) {
+    for (const row of openTrades) {
       try {
-        const quote = await this.marketData.getQuote(pos.symbol, this.clock.now());
+        const entryPrice = safeParseFloat(row.entryPrice);
+        const quantity = row.quantity ?? 1;
+        const direction = row.direction as 'LONG' | 'SHORT';
+        const strategy = row.strategy;
+
+        const quote = await this.marketData.getQuote(row.symbol, this.clock.now());
         const currentPrice = (quote.bid + quote.ask) / 2;
-        const diff = currentPrice - pos.entryPrice;
-        const multiplier = pos.direction === 'LONG' ? 1 : -1;
-        const contractMultiplier = pos.strategy === 'STOCK' ? 1 : 100;
-        unrealizedPnl += diff * multiplier * pos.quantity * contractMultiplier;
+        const diff = currentPrice - entryPrice;
+        const multiplier = direction === 'LONG' ? 1 : -1;
+        const contractMultiplier = strategy === 'STOCK' ? 1 : 100;
+        unrealizedPnl += diff * multiplier * quantity * contractMultiplier;
       } catch {
         // No market data for this position — skip (conservative: unrealized = 0)
       }

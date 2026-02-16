@@ -72,7 +72,7 @@ export const tasks = sqliteTable('tasks', {
   startedAt:   text('started_at'),
   completedAt: text('completed_at'),
   error:         text('error'),
-  modelProvider: text('model_provider'),  // 'anthropic' | 'xai' | null (null for deterministic)
+  modelProvider: text('model_provider'),  // 'anthropic' | 'xai'
   modelName:     text('model_name'),      // full model ID or null
   backtestRunId: text('backtest_run_id').references(() => backtestRuns.id),
 }, (table) => [
@@ -158,6 +158,7 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   parentRunId:     text('parent_run_id').references((): any => backtestRuns.id),
   pinned:          integer('pinned', { mode: 'boolean' }).default(false),
   extendedMetrics: text('extended_metrics', { mode: 'json' }).$type<import('../backtest/types.js').ExtendedMetrics | null>(),
+  liveMetrics:     text('live_metrics', { mode: 'json' }).$type<import('../backtest/types.js').LiveMetrics | null>(),
 }, (table) => [
   index('idx_backtest_runs_status').on(table.status),
   index('idx_backtest_runs_experiment_tag').on(table.experimentTag),
@@ -169,12 +170,14 @@ export const runDecisions = sqliteTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id).notNull(),
   messageId:      text('message_id').references(() => messages.id).notNull(),
-  path:           text('path').notNull(),          // 'deterministic' | 'agent' | 'skipped'
+  path:           text('path').notNull(),          // 'agent' | 'skipped'
   decision:       text('decision').notNull(),      // 'EXECUTE' | 'SKIP'
   reasoning:      text('reasoning'),
   tradeId:        text('trade_id'),                // FK to resulting trade (null if SKIP)
   pnl:            text('pnl'),                     // outcome P&L, back-filled after close
   durationMs:     integer('duration_ms'),
+  inputTokens:    integer('input_tokens'),          // LLM input tokens (null for deterministic skips)
+  outputTokens:   integer('output_tokens'),         // LLM output tokens (null for deterministic skips)
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   index('idx_run_decisions_run').on(table.backtestRunId),
@@ -188,8 +191,6 @@ export const trackedTraders = sqliteTable('tracked_traders', {
   name:            text('name').primaryKey(),
   enabled:         integer('enabled', { mode: 'boolean' }).default(true),
   strategies:      text('strategies', { mode: 'json' }).$type<string[]>().default([]),
-  maxAllocation:   text('max_allocation'),
-  maxDailyAlloc:   text('max_daily_allocation'),
   notes:           text('notes'),
   positionSizingConfig: text('position_sizing_config', { mode: 'json' })
     .$type<PositionSizingConfig>(),
@@ -312,9 +313,8 @@ export type BacktestRunSummary = {
   maxDrawdown: number;
   profitFactor: number;
   agentCallsUsed: number;
-  deterministicTrades: number;
   agentTrades: number;
-  skippedLowConfidence: number;
+  skipped: number;
   openAtEnd: number;
 };
 

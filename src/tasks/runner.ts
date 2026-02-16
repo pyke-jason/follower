@@ -1,15 +1,17 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql, asc } from 'drizzle-orm';
 import { runAgent } from '../agent/trade-agent.js';
+import { prefetchForAgent } from '../agent/prefetch.js';
+import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
 import { completeTask, failTask, recordStep } from './recorder.js';
-import type { Task, TaskContext, TaskResult } from '../db/schema.js';
+import type { Task, TaskContext } from '../db/schema.js';
 import { createTools } from '../agent/tool-factory.js';
 import { liveService } from '../broker/tradestation.js';
 import { getTrader } from '../config/traders.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
-import { safeParseFloat } from '../lib/numbers.js';
+import { recordTrade } from '../trades/record-trade.js';
 
 const POLL_INTERVAL = 3000; // 3 seconds
 let running = false;
@@ -91,10 +93,42 @@ async function processTask(task: Task): Promise<void> {
   try {
     const context = (task.context || {}) as TaskContext;
 
+    // Prefetch quotes, positions, and trader profile before the agent call.
+    // If prefetch fails entirely, we fall back to the original flow (agent fetches its own data).
+    let prefetched;
+    try {
+      prefetched = await prefetchForAgent(context, {
+        broker: liveService,
+        getOpenPositions: async (filters) => {
+          const conditions = [eq(schema.trades.status, 'OPEN'), eq(schema.trades.isBacktest, false)];
+          if (filters.symbol) conditions.push(eq(schema.trades.symbol, filters.symbol));
+          if (filters.trader) conditions.push(eq(schema.trades.trader, filters.trader));
+          return await db.select().from(schema.trades).where(and(...conditions));
+        },
+        getTraderConfig: getTrader,
+      });
+    } catch (err) {
+      console.warn(`[Runner] Prefetch failed for task ${task.id}: ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Deterministic pre-checks — skip without agent call if safe
+    const skip = shouldSkipDeterministic(context, prefetched, {
+      maxOnSymbol: 5,
+      maxTotalPositions: 20,
+    });
+    if (skip) {
+      await completeTask(task.id, { decision: 'SKIP', reasoning: `[deterministic] ${skip.reason}` });
+      console.log(`[Runner] Task ${task.id} skipped (deterministic): ${skip.reason}`);
+      return;
+    }
+
+    // Track trade recorded via onFill callback
+    let recordedTradeId: string | undefined;
+
     const liveTools = createTools({
       broker: liveService,
       getOpenPositions: async (filters) => {
-        const conditions = [eq(schema.trades.status, 'OPEN')];
+        const conditions = [eq(schema.trades.status, 'OPEN'), eq(schema.trades.isBacktest, false)];
         if (filters.symbol) conditions.push(eq(schema.trades.symbol, filters.symbol));
         if (filters.trader) conditions.push(eq(schema.trades.trader, filters.trader));
         return await db.select().from(schema.trades).where(and(...conditions));
@@ -102,7 +136,6 @@ async function processTask(task: Task): Promise<void> {
       checkRiskLimits,
       calculatePositionSize: async (input) => {
         const traderConfig = await getTrader(input.trader);
-        const maxAllocation = safeParseFloat(traderConfig?.maxAllocation, 5000);
         const balance = await liveService.getAccountBalance();
 
         const sizer = buildPositionSizer(
@@ -114,13 +147,45 @@ async function processTask(task: Task): Promise<void> {
           symbol: input.symbol,
           entryPrice: input.entryPrice,
           equity: balance.equity,
-          maxAllocation,
           spreadMaxRisk: input.spreadMaxRisk,
         });
       },
+      onFill: async (fill) => {
+        const trader = context.author ?? 'unknown';
+        const actionHint = context.actionHint;
+        const action: 'OPEN' | 'CLOSE' = actionHint === 'CLOSE' ? 'CLOSE' : 'OPEN';
+
+        // Duplicate guard — skip if trade already recorded for this task
+        const existingForTask = await db.select()
+          .from(schema.trades)
+          .where(eq(schema.trades.taskId, task.id))
+          .limit(1);
+        if (existingForTask.length > 0) {
+          console.log(`[Runner] Trade already recorded for task ${task.id}, skipping`);
+          return null;
+        }
+
+        const result = await recordTrade({
+          action,
+          symbol: fill.symbol,
+          trader,
+          direction: fill.direction,
+          strategy: fill.strategy,
+          entryPrice: action === 'CLOSE' ? undefined : fill.filledPrice,
+          exitPrice: action === 'CLOSE' ? fill.filledPrice : undefined,
+          quantity: fill.quantity,
+          legs: fill.legs,
+          sourceMessageId: task.messageId ?? undefined,
+          closeMessageId: action === 'CLOSE' ? (task.messageId ?? undefined) : undefined,
+          taskId: task.id,
+          isBacktest: false,
+        });
+        if (result) recordedTradeId = result.tradeId;
+        return result ? { tradeId: result.tradeId } : null;
+      },
     });
 
-    const { steps, result, model } = await runAgent(context, liveTools);
+    const { steps, result, model } = await runAgent(context, liveTools, undefined, prefetched);
 
     // Write model info to task
     await db.update(schema.tasks)
@@ -141,12 +206,7 @@ async function processTask(task: Task): Promise<void> {
 
     if (result) {
       await completeTask(task.id, result);
-      console.log(`[Runner] Task ${task.id} completed: ${result.decision}`);
-
-      // If the agent executed a trade, record it
-      if (result.decision === 'EXECUTE' && result.trade) {
-        await recordTrade(task, context, result, `${model.provider}:${model.model}`);
-      }
+      console.log(`[Runner] Task ${task.id} completed: ${result.decision}${recordedTradeId ? ` (trade ${recordedTradeId.slice(0, 8)})` : ''}`);
     } else {
       await failTask(task.id, 'Agent returned no result');
       console.log(`[Runner] Task ${task.id} failed: no result from agent`);
@@ -158,124 +218,3 @@ async function processTask(task: Task): Promise<void> {
   }
 }
 
-async function recordTrade(task: Task, context: TaskContext, result: TaskResult, agentModel?: string): Promise<void> {
-  const trade = result.trade;
-  if (!trade) return;
-
-  // 1B: Duplicate guard — skip if trade already recorded for this task
-  const existingForTask = await db.select()
-    .from(schema.trades)
-    .where(eq(schema.trades.taskId, task.id))
-    .limit(1);
-  if (existingForTask.length > 0) {
-    console.log(`[Runner] Trade already recorded for task ${task.id}, skipping`);
-    return;
-  }
-
-  const metadata = { ...((trade.metadata as any) ?? {}), agentModel };
-  const symbol = (trade.symbol as string) ?? context.symbols?.[0] ?? 'UNKNOWN';
-  const trader = context.author ?? 'unknown';
-
-  // Check for existing open position (for ADD and TRIM handling)
-  const existingPositions = await db.select()
-    .from(schema.trades)
-    .where(and(
-      eq(schema.trades.symbol, symbol),
-      eq(schema.trades.trader, trader),
-      eq(schema.trades.status, 'OPEN'),
-    ))
-    .limit(1);
-
-  const existing = existingPositions[0];
-  const actionHint = context.actionHint;
-  let closeQuantity = (trade as any).closeQuantity as number | undefined;
-
-  // TRIM: partial close — create child trade, set parent to PARTIAL
-  if (actionHint === 'CLOSE' && closeQuantity && existing) {
-    // 1F: closeQuantity validation — clamp to existing quantity
-    const existingQty = existing.quantity ?? 1;
-    if (closeQuantity > existingQty) {
-      console.warn(`[Runner] closeQuantity ${closeQuantity} > existing ${existingQty}, clamping`);
-      sendSystemAlert({
-        title: 'Close quantity clamped',
-        message: `Tried to close ${closeQuantity} of ${existingQty} ${symbol}. Clamped to ${existingQty}.`,
-        severity: 'warning',
-      });
-      closeQuantity = existingQty;
-    }
-
-    const childId = crypto.randomUUID();
-    await db.insert(schema.trades).values({
-      id: childId,
-      taskId: task.id,
-      sourceMessageId: task.messageId ?? undefined,
-      trader,
-      symbol,
-      direction: existing.direction,
-      strategy: existing.strategy,
-      legs: existing.legs,
-      status: 'CLOSED',
-      entryPrice: existing.entryPrice,
-      exitPrice: trade.exitPrice != null ? String(trade.exitPrice) : null,
-      exitPercent: existing.quantity ? closeQuantity / existing.quantity : null,
-      quantity: closeQuantity,
-      openedAt: existing.openedAt,
-      closedAt: new Date().toISOString(),
-      closeMessageId: task.messageId ?? undefined,
-      parentTradeId: existing.id,
-      isBacktest: false,
-      metadata,
-    });
-
-    // Update parent: reduce quantity, set status to PARTIAL
-    const remainingQty = (existing.quantity ?? 1) - closeQuantity;
-    await db.update(schema.trades)
-      .set({
-        quantity: Math.max(0, remainingQty),
-        status: remainingQty <= 0 ? 'CLOSED' : 'PARTIAL',
-      })
-      .where(eq(schema.trades.id, existing.id));
-
-    console.log(`[Runner] Recorded partial close for ${trader}: ${symbol} (${closeQuantity} of ${existing.quantity})`);
-    return;
-  }
-
-  // ADD: update existing position's quantity and avg entry price
-  if (actionHint === 'OPEN' && existing) {
-    const existingQty = existing.quantity ?? 1;
-    const addQty = trade.quantity ?? 1;
-    const existingPrice = safeParseFloat(existing.entryPrice);
-    const addPrice = trade.entryPrice != null ? Number(trade.entryPrice) : 0;
-
-    const totalQty = existingQty + addQty;
-    const avgPrice = (existingPrice * existingQty + addPrice * addQty) / totalQty;
-
-    await db.update(schema.trades)
-      .set({
-        quantity: totalQty,
-        avgEntryPrice: String(avgPrice),
-      })
-      .where(eq(schema.trades.id, existing.id));
-
-    console.log(`[Runner] Added to position for ${trader}: ${symbol} (+${addQty}, avg=${avgPrice.toFixed(2)})`);
-    return;
-  }
-
-  // Default: new position
-  await db.insert(schema.trades).values({
-    taskId: task.id,
-    sourceMessageId: task.messageId ?? undefined,
-    trader,
-    symbol,
-    direction: (trade.direction as string) ?? context.directionHint ?? 'LONG',
-    strategy: (trade.strategy as string) ?? 'STOCK',
-    legs: (trade.legs as any) ?? [],
-    status: 'OPEN',
-    entryPrice: trade.entryPrice != null ? String(trade.entryPrice) : null,
-    quantity: trade.quantity ?? 1,
-    openedAt: new Date().toISOString(),
-    metadata,
-  });
-
-  console.log(`[Runner] Recorded trade for ${trader}: ${symbol} ${trade.strategy}`);
-}

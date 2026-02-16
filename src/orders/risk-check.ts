@@ -16,10 +16,6 @@ export type RiskCheckInput = {
  * open positions, drawdown, and reconciliation alerts.
  */
 export async function checkRiskLimits(input: RiskCheckInput): Promise<RiskCheckResult> {
-  const traderConfig = await db.select()
-    .from(schema.trackedTraders)
-    .where(eq(schema.trackedTraders.name, input.trader));
-
   const todayPnl = await db.select({
     total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
   })
@@ -38,12 +34,6 @@ export async function checkRiskLimits(input: RiskCheckInput): Promise<RiskCheckR
       eq(schema.trades.status, 'OPEN'),
     ));
 
-  const maxAlloc = traderConfig[0]?.maxAllocation
-    ? safeParseFloat(traderConfig[0].maxAllocation)
-    : null;
-  const maxDailyAlloc = traderConfig[0]?.maxDailyAlloc
-    ? safeParseFloat(traderConfig[0].maxDailyAlloc)
-    : null;
   const dailyPnl = safeParseFloat(todayPnl[0]?.total);
 
   const startingBalance = await getTodayStartingBalance();
@@ -81,7 +71,6 @@ export async function checkRiskLimits(input: RiskCheckInput): Promise<RiskCheckR
   const totalPositionBlocked = totalOpenCount >= MAX_TOTAL_POSITIONS;
 
   const allowed = (
-    (!maxDailyAlloc || Math.abs(dailyPnl) < maxDailyAlloc) &&
     (openPositions[0]?.count ?? 0) < 5 &&
     !totalPositionBlocked &&
     !drawdownBlocked &&
@@ -101,8 +90,6 @@ export async function checkRiskLimits(input: RiskCheckInput): Promise<RiskCheckR
     reason,
     traderDailyPnl: dailyPnl,
     openPositionsOnSymbol: openPositions[0]?.count ?? 0,
-    traderMaxAllocation: maxAlloc,
-    traderMaxDailyAllocation: maxDailyAlloc,
     startingEquity: startingBalance?.equity,
     currentDrawdownPct,
     buyingPower: startingBalance?.buyingPower,

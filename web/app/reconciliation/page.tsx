@@ -73,7 +73,7 @@ export default async function ReconciliationPage({
                 <TableRow
                   key={alert.id}
                   className={`hover:bg-accent/40 transition-colors ${
-                    alert.type === 'DB_ONLY' && !alert.resolved ? 'border-l-2 border-l-red-500' : ''
+                    alert.type === 'DB_ONLY' && !alert.resolved ? 'border-l-2 border-l-loss' : ''
                   }`}
                 >
                   <TableCell>
@@ -88,7 +88,7 @@ export default async function ReconciliationPage({
                   </TableCell>
                   <TableCell>
                     {alert.tradeId ? (
-                      <Link href={`/trades/${alert.tradeId}`} className="text-xs text-blue-400 hover:underline">
+                      <Link href={`/trades/${alert.tradeId}`} className="text-xs text-info hover:underline">
                         {alert.tradeId.slice(0, 8)}...
                       </Link>
                     ) : (
@@ -100,7 +100,7 @@ export default async function ReconciliationPage({
                   </TableCell>
                   <TableCell>
                     {alert.resolved ? (
-                      <span className="flex items-center gap-1 text-xs text-emerald-400">
+                      <span className="flex items-center gap-1 text-xs text-profit">
                         <CheckCircle2 className="h-3 w-3" />
                         Resolved
                       </span>

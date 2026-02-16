@@ -10,7 +10,6 @@ export type OrderManagerConfig = {
   clock: () => Date;
   onFill?: (order: WorkingOrder) => void;
   onCancel?: (order: WorkingOrder) => void;
-  maxAllocation?: number;
 };
 
 export class OrderManager {
@@ -18,7 +17,6 @@ export class OrderManager {
   private clock: () => Date;
   private onFill?: (order: WorkingOrder) => void;
   private onCancel?: (order: WorkingOrder) => void;
-  private maxAllocation?: number;
   private workingOrders = new Map<string, WorkingOrder>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -27,27 +25,12 @@ export class OrderManager {
     this.clock = config.clock;
     this.onFill = config.onFill;
     this.onCancel = config.onCancel;
-    this.maxAllocation = config.maxAllocation;
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
     const legCount = params.legs.length || 1;
     const ruleCount = params.adjustmentRules?.length ?? 0;
     log.debug(`submit: ${params.orderType} ${params.symbol} legs=${legCount} limit=$${params.limitPrice ?? 'MKT'} cancelAfter=${params.cancelAfterSec ?? 'none'}s rules=${ruleCount}`);
-
-    // Defense-in-depth: enforce max allocation before sending to broker
-    if (this.maxAllocation) {
-      const perLegQuantity = params.legs.reduce((sum, leg) => Math.max(sum, leg.quantity), 0);
-      const entryPrice = params.limitPrice ?? 0;
-      const isOption = params.legs.some((l) => l.type === 'CALL' || l.type === 'PUT');
-      const multiplier = isOption ? 100 : 1;
-      const estimatedCost = entryPrice * perLegQuantity * multiplier;
-      if (estimatedCost > this.maxAllocation) {
-        throw new Error(
-          `Order cost $${estimatedCost.toFixed(2)} exceeds max allocation $${this.maxAllocation}`,
-        );
-      }
-    }
 
     const hasRules = params.adjustmentRules?.length || params.cancelAfterSec;
     const isLimit = params.orderType === 'LIMIT';

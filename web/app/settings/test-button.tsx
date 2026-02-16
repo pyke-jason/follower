@@ -19,7 +19,7 @@ export function TestButton({ action }: { action: () => Promise<Result> }) {
         </Button>
       </form>
       {result && (
-        <span className={`text-sm ${result.ok ? 'text-green-500' : 'text-red-500'}`}>
+        <span className={`text-sm ${result.ok ? 'text-profit' : 'text-destructive'}`}>
           {result.ok ? 'Sent successfully' : result.error}
         </span>
       )}

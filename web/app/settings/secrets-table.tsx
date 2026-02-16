@@ -21,7 +21,7 @@ function SecretRow({ entry }: { entry: SecretEntry }) {
       <td className="py-2 pr-4 font-mono text-xs">{entry.key}</td>
       <td className="py-2 pr-4">
         {entry.isSet ? (
-          <span className="text-xs text-green-500">set</span>
+          <span className="text-xs text-profit">set</span>
         ) : (
           <span className="text-xs text-muted-foreground">not set</span>
         )}
@@ -44,7 +44,7 @@ function SecretRow({ entry }: { entry: SecretEntry }) {
               Cancel
             </Button>
             {setResult && !setResult.ok && (
-              <span className="text-xs text-red-500">{setResult.error}</span>
+              <span className="text-xs text-destructive">{setResult.error}</span>
             )}
           </form>
         ) : (
@@ -55,13 +55,13 @@ function SecretRow({ entry }: { entry: SecretEntry }) {
             {entry.isSet && (
               <form action={delDispatch}>
                 <input type="hidden" name="key" value={entry.key} />
-                <Button type="submit" size="xs" variant="ghost" className="text-red-500 hover:text-red-400" disabled={delPending}>
+                <Button type="submit" size="xs" variant="ghost" className="text-destructive hover:text-destructive/80" disabled={delPending}>
                   {delPending ? 'Removing...' : 'Remove'}
                 </Button>
               </form>
             )}
             {delResult && !delResult.ok && (
-              <span className="text-xs text-red-500">{delResult.error}</span>
+              <span className="text-xs text-destructive">{delResult.error}</span>
             )}
           </div>
         )}

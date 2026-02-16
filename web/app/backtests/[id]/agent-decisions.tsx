@@ -100,9 +100,9 @@ export function AgentDecisions({ rows, backtestRunId }: { rows: DecisionRow[]; b
     <div className="space-y-4">
       {/* Summary */}
       <div className="flex items-center gap-4 text-sm">
-        <span className="text-emerald-400 font-medium">{executedCount} executed</span>
+        <span className="text-profit font-medium">{executedCount} executed</span>
         <span className="text-muted-foreground">|</span>
-        <span className="text-zinc-400 font-medium">{skippedCount} skipped</span>
+        <span className="text-muted-foreground font-medium">{skippedCount} skipped</span>
         <span className="text-muted-foreground">|</span>
         <span className="text-muted-foreground">{rows.length} total decisions</span>
       </div>
@@ -112,7 +112,7 @@ export function AgentDecisions({ rows, backtestRunId }: { rows: DecisionRow[]; b
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">Skip reasons:</span>
           {skipReasonCounts.map(([reason, count]) => (
-            <Badge key={reason} variant="outline" className="text-xs font-normal text-zinc-400 border-zinc-700">
+            <Badge key={reason} variant="outline" className="text-xs font-normal text-muted-foreground border-border">
               {reason} ({count})
             </Badge>
           ))}
@@ -176,8 +176,8 @@ export function AgentDecisions({ rows, backtestRunId }: { rows: DecisionRow[]; b
               <div className="flex items-center gap-3 text-sm">
                 <Badge className={
                   row.decision.decision === 'EXECUTE'
-                    ? 'bg-emerald-900/50 text-emerald-300'
-                    : 'bg-zinc-800 text-zinc-400'
+                    ? 'bg-[oklch(0.94_0.04_150)] text-[oklch(0.38_0.08_148)] dark:bg-[oklch(0.25_0.04_150)] dark:text-[oklch(0.75_0.12_150)]'
+                    : 'bg-muted text-muted-foreground'
                 }>
                   {row.decision.decision}
                 </Badge>
@@ -188,7 +188,7 @@ export function AgentDecisions({ rows, backtestRunId }: { rows: DecisionRow[]; b
                   {row.message.cleanText.slice(0, 80)}
                 </span>
                 {pnl !== null && (
-                  <span className={`tabular-nums font-medium shrink-0 ${pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-foreground'}`}>
+                  <span className={`tabular-nums font-medium shrink-0 ${pnl > 0 ? 'text-profit' : pnl < 0 ? 'text-loss' : 'text-foreground'}`}>
                     {formatCurrency(pnl)}
                   </span>
                 )}

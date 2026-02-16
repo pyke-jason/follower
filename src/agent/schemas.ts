@@ -25,27 +25,40 @@ export const CheckRiskLimitsInput = z.object({
   maxRisk: z.number().optional(),
 });
 
-const OrderLegSchema = z.object({
+const AdjustmentRuleSchema = z.object({
+  type: z.enum(['PRICE_CHASE']),
+  stepAmount: z.number(),
+  intervalSec: z.number(),
+  maxSteps: z.number().optional(),
+});
+
+// --- Stock order ---
+export const PlaceStockOrderInput = z.object({
+  symbol: z.string().min(1),
+  direction: z.enum(['LONG', 'SHORT']),
+  quantity: zQuantity,
+  orderType: z.enum(['MARKET', 'LIMIT']).default('LIMIT'),
+  limitPrice: zPriceOpt,
+  adjustmentRules: z.array(AdjustmentRuleSchema).optional(),
+  cancelAfterSec: z.number().optional(),
+});
+
+// --- Option order (single-leg or spread) ---
+const OptionLegSchema = z.object({
   strike: zPrice,
-  expiry: z.string(),
-  type: z.enum(['CALL', 'PUT', 'STOCK']),
+  expiry: z.string().min(1),
+  optionType: z.enum(['CALL', 'PUT']),
   action: z.enum(['BUY', 'SELL']),
   quantity: zQuantity,
 });
 
-export const PlaceOrderInput = z.object({
+export const PlaceOptionOrderInput = z.object({
   symbol: z.string().min(1),
-  strategy: z.string().min(1),
   direction: z.enum(['LONG', 'SHORT']),
-  legs: z.array(OrderLegSchema).min(1),
+  legs: z.array(OptionLegSchema).min(1),
   orderType: z.enum(['MARKET', 'LIMIT']).default('LIMIT'),
   limitPrice: zPriceOpt,
-  adjustmentRules: z.array(z.object({
-    type: z.enum(['PRICE_CHASE']),
-    stepAmount: z.number(),
-    intervalSec: z.number(),
-    maxSteps: z.number().optional(),
-  })).optional(),
+  adjustmentRules: z.array(AdjustmentRuleSchema).optional(),
   cancelAfterSec: z.number().optional(),
 });
 
@@ -67,7 +80,7 @@ export const FlagForReviewInput = z.object({
 export const AgentTradeSchema = z.object({
   symbol: z.string().min(1),
   direction: z.enum(['LONG', 'SHORT']),
-  strategy: z.string().min(1),
+  strategy: z.string().optional(),
   entryPrice: zPrice,
   exitPrice: zNonNegPrice.optional(),
   quantity: zQuantity,
@@ -75,10 +88,10 @@ export const AgentTradeSchema = z.object({
   legs: z.array(z.object({
     strike: zPrice,
     expiry: z.string().min(1),
-    type: z.enum(['CALL', 'PUT', 'STOCK']),
+    optionType: z.enum(['CALL', 'PUT']),
     action: z.enum(['BUY', 'SELL']),
     quantity: zQuantity,
-  })).optional().default([]),
+  })).optional(),
 });
 
 export type AgentTrade = z.infer<typeof AgentTradeSchema>;

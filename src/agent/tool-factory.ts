@@ -9,12 +9,14 @@ export type ToolDef = {
 };
 import type { OrderManager } from '../orders/order-manager.js';
 import type { PositionSize } from '../position-sizing/index.js';
+import { z } from 'zod';
 import {
   GetQuoteInput,
   GetOptionsChainInput,
   GetOpenPositionsInput,
   CheckRiskLimitsInput,
-  PlaceOrderInput,
+  PlaceStockOrderInput,
+  PlaceOptionOrderInput,
   CalculatePositionSizeInput,
   FlagForReviewInput,
 } from './schemas.js';
@@ -24,14 +26,31 @@ export type RiskCheckResult = {
   reason?: string;
   traderDailyPnl: number;
   openPositionsOnSymbol: number;
-  traderMaxAllocation: number | null;
-  traderMaxDailyAllocation: number | null;
   startingEquity?: number;
   currentDrawdownPct?: number;
   buyingPower?: number;
   reconciliationAlerts?: number;
   totalOpenPositions?: number;
   maxTotalPositions?: number;
+};
+
+export type OrderLeg = {
+  strike: number;
+  expiry: string;
+  type: 'CALL' | 'PUT' | 'STOCK';
+  action: 'BUY' | 'SELL';
+  quantity: number;
+};
+
+export type FillInfo = {
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  strategy: string;
+  legs: OrderLeg[];
+  quantity: number;
+  filledPrice: number;
+  filledAt: Date;
+  orderId: string;
 };
 
 export type ToolDependencies = {
@@ -51,7 +70,74 @@ export type ToolDependencies = {
     strategy: string;
     spreadMaxRisk?: number;
   }) => Promise<PositionSize>;
+  onFill?: (fill: FillInfo) => Promise<{ tradeId: string } | null>;
+  onPending?: (orderId: string, fillInfo: FillInfo) => void;
 };
+
+/** Parse tool input with human-readable error messages for LLM self-correction. */
+function parseToolInput<T>(schema: z.ZodType<T>, input: unknown): T {
+  const result = schema.safeParse(input);
+  if (result.success) return result.data;
+  const messages = result.error.issues.map(i =>
+    `${i.path.join('.')}: ${i.message}`
+  ).join('; ');
+  throw new Error(`Invalid input: ${messages}`);
+}
+
+/** Infer option strategy from leg structure. */
+function inferStrategy(legs: { optionType: 'CALL' | 'PUT'; action: 'BUY' | 'SELL' }[]): string {
+  if (legs.length === 1) return legs[0].optionType;
+  if (legs.length === 2) {
+    const allCalls = legs.every(l => l.optionType === 'CALL');
+    const allPuts = legs.every(l => l.optionType === 'PUT');
+    const hasBuyAndSell = legs.some(l => l.action === 'BUY') && legs.some(l => l.action === 'SELL');
+    if (allCalls && hasBuyAndSell) return 'CDS';
+    if (allPuts && hasBuyAndSell) return 'PDS';
+  }
+  return 'SPREAD';
+}
+
+type ExecuteOrderParams = {
+  symbol: string;
+  strategy: string;
+  direction: 'LONG' | 'SHORT';
+  legs: OrderLeg[];
+  orderType: 'MARKET' | 'LIMIT';
+  limitPrice?: number;
+  adjustmentRules?: { type: 'PRICE_CHASE'; stepAmount: number; intervalSec: number; maxSteps?: number }[];
+  cancelAfterSec?: number;
+};
+
+/** Shared order execution: routes to broker/orderManager, fires onFill/onPending. */
+async function executeOrder(deps: ToolDependencies, params: ExecuteOrderParams): Promise<import('../broker/types.js').OrderResult> {
+  let result: import('../broker/types.js').OrderResult;
+  if (deps.orderManager) {
+    result = await deps.orderManager.submitOrder(params);
+  } else {
+    const { adjustmentRules, cancelAfterSec, ...orderParams } = params;
+    result = await deps.broker.placeOrder(orderParams);
+  }
+
+  const quantity = params.legs.reduce((max, leg) => Math.max(max, leg.quantity), 0);
+  const fillInfo: FillInfo = {
+    symbol: params.symbol,
+    direction: params.direction,
+    strategy: params.strategy,
+    legs: params.legs,
+    quantity,
+    filledPrice: result.filledPrice ?? params.limitPrice ?? 0,
+    filledAt: result.fillTimestamp ? new Date(result.fillTimestamp) : new Date(),
+    orderId: result.orderId,
+  };
+
+  if (result.status === 'FILLED' && deps.onFill) {
+    await deps.onFill(fillInfo);
+  } else if (result.status === 'OPEN' && deps.onPending) {
+    deps.onPending(result.orderId, fillInfo);
+  }
+
+  return result;
+}
 
 export function createTools(deps: ToolDependencies): ToolDef[] {
   return [
@@ -129,30 +215,16 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
       },
     },
     {
-      name: 'place_order',
-      description: 'Place a trade order. Supports stocks, single-leg options, and multi-leg spreads (CDS/PDS).',
+      name: 'place_stock_order',
+      description: 'Buy or sell shares of a stock or ETF. Do NOT use this for options — use place_option_order instead.',
       input_schema: {
         type: 'object',
         properties: {
-          symbol: { type: 'string' },
-          strategy: { type: 'string', description: 'CDS, PDS, CALL, PUT, STOCK' },
-          direction: { type: 'string', enum: ['LONG', 'SHORT'] },
-          legs: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                strike: { type: 'number' },
-                expiry: { type: 'string' },
-                type: { type: 'string', enum: ['CALL', 'PUT', 'STOCK'] },
-                action: { type: 'string', enum: ['BUY', 'SELL'] },
-                quantity: { type: 'number' },
-              },
-              required: ['strike', 'expiry', 'type', 'action', 'quantity'],
-            },
-          },
+          symbol: { type: 'string', description: 'Ticker symbol (e.g. AAPL, SPY, TSLA)' },
+          direction: { type: 'string', enum: ['LONG', 'SHORT'], description: 'LONG to buy shares, SHORT to sell short' },
+          quantity: { type: 'number', description: 'Number of shares to trade' },
           orderType: { type: 'string', enum: ['MARKET', 'LIMIT'], default: 'LIMIT' },
-          limitPrice: { type: 'number' },
+          limitPrice: { type: 'number', description: 'Limit price per share. Required for LIMIT orders.' },
           adjustmentRules: {
             type: 'array',
             items: {
@@ -168,27 +240,88 @@ export function createTools(deps: ToolDependencies): ToolDef[] {
           },
           cancelAfterSec: { type: 'number', description: 'Auto-cancel if unfilled after N seconds' },
         },
-        required: ['symbol', 'strategy', 'direction', 'legs'],
+        required: ['symbol', 'direction', 'quantity'],
       },
       execute: async (input) => {
-        const parsed = PlaceOrderInput.parse(input);
-        const params = {
+        const parsed = parseToolInput(PlaceStockOrderInput, input);
+        return executeOrder(deps, {
           symbol: parsed.symbol,
-          strategy: parsed.strategy,
+          strategy: 'STOCK',
           direction: parsed.direction,
-          legs: parsed.legs,
+          legs: [{
+            strike: 0,
+            expiry: '',
+            type: 'STOCK' as const,
+            action: parsed.direction === 'LONG' ? 'BUY' as const : 'SELL' as const,
+            quantity: parsed.quantity,
+          }],
           orderType: parsed.orderType,
           limitPrice: parsed.limitPrice,
           adjustmentRules: parsed.adjustmentRules,
           cancelAfterSec: parsed.cancelAfterSec,
-        };
-
-        if (deps.orderManager) {
-          return await deps.orderManager.submitOrder(params);
-        }
-        // Fallback: direct broker call (no adjustment rules support)
-        const { adjustmentRules, cancelAfterSec, ...orderParams } = params;
-        return await deps.broker.placeOrder(orderParams);
+        });
+      },
+    },
+    {
+      name: 'place_option_order',
+      description: 'Place an options trade — single-leg (naked call/put) or multi-leg spread (CDS, PDS). Strategy is inferred from legs. Do NOT use this for stock/ETF share trades — use place_stock_order instead.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Underlying ticker symbol (e.g. AAPL, not the OCC symbol)' },
+          direction: { type: 'string', enum: ['LONG', 'SHORT'], description: 'LONG for debit trades, SHORT for credit trades' },
+          legs: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                strike: { type: 'number', description: 'Strike price (must be > 0)' },
+                expiry: { type: 'string', description: 'Expiration date (YYYY-MM-DD)' },
+                optionType: { type: 'string', enum: ['CALL', 'PUT'] },
+                action: { type: 'string', enum: ['BUY', 'SELL'] },
+                quantity: { type: 'number', description: 'Number of contracts' },
+              },
+              required: ['strike', 'expiry', 'optionType', 'action', 'quantity'],
+            },
+          },
+          orderType: { type: 'string', enum: ['MARKET', 'LIMIT'], default: 'LIMIT' },
+          limitPrice: { type: 'number', description: 'Net debit/credit per contract' },
+          adjustmentRules: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['PRICE_CHASE'] },
+                stepAmount: { type: 'number', description: 'Dollar amount to adjust each step' },
+                intervalSec: { type: 'number', description: 'Seconds between adjustments' },
+                maxSteps: { type: 'number', description: 'Max adjustments (optional)' },
+              },
+              required: ['type', 'stepAmount', 'intervalSec'],
+            },
+          },
+          cancelAfterSec: { type: 'number', description: 'Auto-cancel if unfilled after N seconds' },
+        },
+        required: ['symbol', 'direction', 'legs'],
+      },
+      execute: async (input) => {
+        const parsed = parseToolInput(PlaceOptionOrderInput, input);
+        const strategy = inferStrategy(parsed.legs);
+        return executeOrder(deps, {
+          symbol: parsed.symbol,
+          strategy,
+          direction: parsed.direction,
+          legs: parsed.legs.map(l => ({
+            strike: l.strike,
+            expiry: l.expiry,
+            type: l.optionType as 'CALL' | 'PUT',
+            action: l.action,
+            quantity: l.quantity,
+          })),
+          orderType: parsed.orderType,
+          limitPrice: parsed.limitPrice,
+          adjustmentRules: parsed.adjustmentRules,
+          cancelAfterSec: parsed.cancelAfterSec,
+        });
       },
     },
     {

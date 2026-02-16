@@ -1,185 +1,10 @@
 import type { BacktestConfig, BacktestReport, TraderStats, StrategyStats, EquityPoint, ExtendedMetrics } from './types.js';
-import { PositionTracker } from './position-tracker.js';
 import { roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
 
 export type MtmSnapshot = {
   date: string;
   unrealizedPnl: number;
 };
-
-export type GenerateReportParams = {
-  config: BacktestConfig;
-  tracker: PositionTracker;
-  totalMessages: number;
-  tradableMessages: number;
-  stats: {
-    agentCallsUsed: number;
-    deterministicTrades: number;
-    agentTrades: number;
-    skippedLowConfidence: number;
-  };
-  startingEquity?: number;
-  skipReasons?: Map<string, number>;
-  mtmSnapshots?: MtmSnapshot[];
-};
-
-export function generateReport(params: GenerateReportParams): BacktestReport {
-  const { config, tracker, totalMessages, tradableMessages, stats, startingEquity = 100_000, skipReasons, mtmSnapshots } = params;
-  const closed = tracker.getClosed();
-  const open = tracker.getOpen();
-  const all = tracker.getAll();
-
-  const wins = closed.filter((p) => (p.pnl ?? 0) > 0);
-  const losses = closed.filter((p) => (p.pnl ?? 0) < 0);
-
-  const safePnl = (p: { pnl?: number }) => {
-    if (p.pnl == null) return 0; // open position — legitimate
-    if (!Number.isFinite(p.pnl)) {
-      throw new Error(`[Report] Position has non-finite PnL: ${p.pnl}. This indicates data corruption.`);
-    }
-    return p.pnl;
-  };
-  const totalPnl = closed.reduce((sum, p) => sum + safePnl(p), 0);
-  const avgWin = wins.length > 0
-    ? wins.reduce((sum, p) => sum + safePnl(p), 0) / wins.length
-    : 0;
-  const avgLoss = losses.length > 0
-    ? losses.reduce((sum, p) => sum + safePnl(p), 0) / losses.length
-    : 0;
-
-  const grossWins = wins.reduce((sum, p) => sum + safePnl(p), 0);
-  const grossLosses = Math.abs(losses.reduce((sum, p) => sum + safePnl(p), 0));
-  // Use PROFIT_FACTOR_INF as a sentinel for Infinity to stay within DB numeric bounds
-  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
-
-  const sortedClosed = [...closed].sort(
-    (a, b) => (a.closedAt?.getTime() ?? 0) - (b.closedAt?.getTime() ?? 0),
-  );
-
-  // By-trader stats
-  const byTrader: Record<string, TraderStats> = {};
-  for (const pos of closed) {
-    if (!byTrader[pos.trader]) {
-      byTrader[pos.trader] = { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
-    }
-    const ts = byTrader[pos.trader];
-    ts.trades++;
-    if ((pos.pnl ?? 0) > 0) ts.wins++;
-    else ts.losses++;
-    ts.totalPnl += safePnl(pos);
-    ts.winRate = ts.trades > 0 ? ts.wins / ts.trades : 0;
-  }
-
-  // By-strategy stats
-  const byStrategy: Record<string, StrategyStats> = {};
-  for (const pos of closed) {
-    if (!byStrategy[pos.strategy]) {
-      byStrategy[pos.strategy] = { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
-    }
-    const ss = byStrategy[pos.strategy];
-    ss.trades++;
-    if ((pos.pnl ?? 0) > 0) ss.wins++;
-    else ss.losses++;
-    ss.totalPnl += safePnl(pos);
-    ss.winRate = ss.trades > 0 ? ss.wins / ss.trades : 0;
-    ss.avgPnl = ss.trades > 0 ? ss.totalPnl / ss.trades : 0;
-  }
-
-  // ── Equity curve (daily) — built BEFORE drawdown so drawdown can use equity ──
-  const equityCurve: EquityPoint[] = [];
-  const dailyMap = new Map<string, { pnl: number; trades: number }>();
-
-  for (const pos of sortedClosed) {
-    const date = pos.closedAt?.toISOString().split('T')[0] ?? 'unknown';
-    const existing = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
-    existing.pnl += safePnl(pos);
-    existing.trades++;
-    dailyMap.set(date, existing);
-  }
-
-  // Index MTM snapshots by date for merging
-  const mtmByDate = new Map<string, number>();
-  if (mtmSnapshots) {
-    for (const snap of mtmSnapshots) {
-      mtmByDate.set(snap.date, snap.unrealizedPnl);
-    }
-    // Ensure MTM-only days (days with open positions but no closes) are in dailyMap
-    for (const snap of mtmSnapshots) {
-      if (!dailyMap.has(snap.date)) {
-        dailyMap.set(snap.date, { pnl: 0, trades: 0 });
-      }
-    }
-  }
-
-  let cumPnl = 0;
-  for (const [date, data] of [...dailyMap.entries()].sort()) {
-    cumPnl += data.pnl;
-    const unrealizedPnl = mtmByDate.get(date);
-    const equity = unrealizedPnl != null ? roundCents(cumPnl + unrealizedPnl) : undefined;
-    equityCurve.push({
-      date,
-      pnl: roundCents(data.pnl),
-      cumPnl: roundCents(cumPnl),
-      trades: data.trades,
-      unrealizedPnl: unrealizedPnl != null ? roundCents(unrealizedPnl) : undefined,
-      equity,
-    });
-  }
-
-  // ── Max drawdown from equity (realized + unrealized) ──
-  let peak = 0;
-  let maxDrawdown = 0;
-  if (mtmSnapshots && mtmSnapshots.length > 0) {
-    // Equity-based drawdown: uses true equity (cumPnl + unrealized)
-    for (const pt of equityCurve) {
-      const eq = pt.equity ?? pt.cumPnl;
-      if (eq > peak) peak = eq;
-      const dd = peak - eq;
-      if (dd > maxDrawdown) maxDrawdown = dd;
-    }
-  } else {
-    // Fallback: closed-trade-only drawdown (legacy behavior)
-    let running = 0;
-    for (const pos of sortedClosed) {
-      running += safePnl(pos);
-      if (running > peak) peak = running;
-      const dd = peak - running;
-      if (dd > maxDrawdown) maxDrawdown = dd;
-    }
-  }
-
-  // Extended metrics
-  const extendedMetrics = computeExtendedMetrics({
-    sortedClosed, equityCurve, totalPnl, maxDrawdown, startingEquity,
-  });
-
-  return {
-    config,
-    extendedMetrics,
-    summary: {
-      totalMessages,
-      tradedMessages: tradableMessages,
-      totalTrades: all.length,
-      wins: wins.length,
-      losses: losses.length,
-      winRate: closed.length > 0 ? wins.length / closed.length : 0,
-      totalPnl: roundCents(totalPnl),
-      avgWin: roundCents(avgWin),
-      avgLoss: roundCents(avgLoss),
-      maxDrawdown: roundCents(maxDrawdown),
-      profitFactor: roundCents(profitFactor),
-      agentCallsUsed: stats.agentCallsUsed,
-      deterministicTrades: stats.deterministicTrades,
-      agentTrades: stats.agentTrades,
-      skippedLowConfidence: stats.skippedLowConfidence,
-      openAtEnd: open.length,
-    },
-    byTrader,
-    byStrategy,
-    equityCurve,
-    skipReasons: skipReasons ? Object.fromEntries(skipReasons) : undefined,
-  };
-}
 
 function computeExtendedMetrics(params: {
   sortedClosed: { pnl?: number; openedAt: Date; closedAt?: Date }[];
@@ -295,15 +120,15 @@ function computeExtendedMetrics(params: {
 }
 
 /**
- * Compute report stats from raw DB trade rows (used for cancelled runs
- * where the PositionTracker is no longer available).
+ * Compute report stats from raw DB trade rows.
  */
 export function generateReportFromTrades(params: {
   trades: { pnl: string | null; status: string; trader: string; strategy: string;
             entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
   decisions: { path: string; decision: string }[];
+  mtmSnapshots?: MtmSnapshot[];
 }): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
-  const { trades, decisions } = params;
+  const { trades, decisions, mtmSnapshots } = params;
 
   const closed = trades.filter((t) => t.status === 'CLOSED');
   const open = trades.filter((t) => t.status === 'OPEN');
@@ -382,22 +207,34 @@ export function generateReportFromTrades(params: {
     existing.trades++;
     dailyMap.set(date, existing);
   }
+  // Build MTM lookup
+  const mtmByDate = new Map<string, number>();
+  if (mtmSnapshots) {
+    for (const snap of mtmSnapshots) {
+      mtmByDate.set(snap.date, snap.unrealizedPnl);
+    }
+  }
+
   let cumPnl = 0;
+  const startingEquityForCurve = 100_000;
   for (const [date, data] of [...dailyMap.entries()].sort()) {
     cumPnl += data.pnl;
+    const unrealizedPnl = mtmByDate.get(date) ?? 0;
+    const hasUnrealized = mtmByDate.has(date);
     equityCurve.push({
       date,
       pnl: roundCents(data.pnl),
       cumPnl: roundCents(cumPnl),
       trades: data.trades,
+      unrealizedPnl: hasUnrealized ? roundCents(unrealizedPnl) : undefined,
+      equity: hasUnrealized ? roundCents(startingEquityForCurve + cumPnl + unrealizedPnl) : undefined,
     });
   }
 
   // Derive execution stats from decisions
   const agentTrades = decisions.filter((d) => d.path === 'agent' && d.decision === 'EXECUTE').length;
-  const deterministicTrades = decisions.filter((d) => d.path === 'deterministic' && d.decision === 'EXECUTE').length;
   const agentCallsUsed = decisions.filter((d) => d.path === 'agent').length;
-  const skippedLowConfidence = decisions.filter((d) => d.path === 'skipped').length;
+  const skipped = decisions.filter((d) => d.decision === 'SKIP').length;
 
   // Extended metrics
   const sortedForMetrics = sortedClosed.map((t) => ({
@@ -423,9 +260,8 @@ export function generateReportFromTrades(params: {
       maxDrawdown: roundCents(maxDrawdown),
       profitFactor: roundCents(profitFactor),
       agentCallsUsed,
-      deterministicTrades,
       agentTrades,
-      skippedLowConfidence,
+      skipped,
       openAtEnd: open.length,
     },
     byTrader,
@@ -477,9 +313,9 @@ export function printReport(report: BacktestReport): void {
 
   console.log('  EXECUTION');
   console.log('  ' + '-'.repeat(40));
-  console.log(`  Deterministic:       ${s.deterministicTrades}`);
   console.log(`  Agent trades:        ${s.agentTrades}`);
   console.log(`  Agent calls:         ${s.agentCallsUsed}`);
+  console.log(`  Skipped:             ${s.skipped}`);
   console.log('');
 
   if (report.skipReasons && Object.keys(report.skipReasons).length > 0) {

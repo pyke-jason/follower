@@ -7,7 +7,6 @@ export interface SizingParams {
   symbol: string;
   entryPrice: number;
   equity: number;
-  maxAllocation: number;
   spreadMaxRisk?: number; // For options spreads: width - credit received
   maxQuantity?: number;   // Hard cap on quantity (e.g., 20 contracts for options)
 }
