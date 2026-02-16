@@ -1,4 +1,4 @@
-import type { HistoricalMessage, SimLeg, FillModel, SizingService, RiskService, ExecutionResult, ExecutionStep } from './types.js';
+import type { HistoricalMessage, SimLeg, FillModel, SizingService, RiskService, RiskCheckResult, ExecutionResult, ExecutionStep } from './types.js';
 import { SimBroker, computeModelFillPrice } from './sim-broker.js';
 import { PositionTracker } from './position-tracker.js';
 import type { SimClock } from './clock.js';
@@ -7,6 +7,37 @@ import { roundCents } from '../lib/numbers.js';
 import { formatOccSymbol, isOccOptionSymbol } from './occ-symbology.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
+
+function formatRiskReasoning(risk: RiskCheckResult): string {
+  if (risk.openOnSymbol == null) {
+    // No stats available, fall back to basic reasoning
+    return risk.allowed ? 'Risk check passed' : `Risk blocked: ${risk.reason}`;
+  }
+  const statsStr = `${risk.openOnSymbol}/${risk.maxOnSymbol} on symbol, ${risk.totalOpen}/${risk.maxTotal} total, exposure $${((risk.totalNotional ?? 0) / 1000).toFixed(0)}k/$${((risk.maxNotional ?? 0) / 1000).toFixed(0)}k`;
+  if (risk.allowed) {
+    return `Risk check passed — ${statsStr}`;
+  }
+  return `Risk blocked: ${risk.reason} (${statsStr})`;
+}
+
+function formatSizingReasoning(sizing: { quantity: number; reasoning: string; riskPerTrade: number; atr: number; effectiveRisk: number }, allocCap?: { maxAllocation: number; entryPrice: number }): string {
+  const parts: string[] = [];
+  if (sizing.atr > 0) parts.push(`ATR=$${sizing.atr.toFixed(2)}`);
+  parts.push(`risk=$${sizing.riskPerTrade.toFixed(0)}`);
+  if (sizing.effectiveRisk > 0) parts.push(`per-unit=$${sizing.effectiveRisk.toFixed(2)}`);
+
+  // Show allocation cap if it constrained the quantity
+  if (allocCap && allocCap.entryPrice > 0) {
+    const fromAlloc = Math.floor(allocCap.maxAllocation / allocCap.entryPrice);
+    if (sizing.effectiveRisk > 0) {
+      const fromRisk = Math.floor(sizing.riskPerTrade / sizing.effectiveRisk);
+      parts.push(`from-risk=${fromRisk} alloc-cap=${fromAlloc}`);
+    }
+  }
+
+  parts.push(`→ qty=${sizing.quantity}`);
+  return parts.join(' ');
+}
 
 /**
  * DeterministicExecutor: Fast path for high-confidence messages.
@@ -100,7 +131,7 @@ export class DeterministicExecutor {
       name: 'size_position',
       input: { trader: msg.author, symbol, entryPrice: price, strategy: strategy.strategy, spreadMaxRisk: isSpread ? price : undefined },
       output: { quantity: sizing.quantity, reasoning: sizing.reasoning, riskPerTrade: sizing.riskPerTrade, atr: sizing.atr, effectiveRisk: sizing.effectiveRisk },
-      reasoning: sizing.reasoning,
+      reasoning: formatSizingReasoning(sizing),
       durationMs: Date.now() - sizingStart,
     });
 
@@ -117,7 +148,7 @@ export class DeterministicExecutor {
       name: 'check_risk',
       input: { symbol, strategy: strategy.strategy, trader: msg.author },
       output: risk,
-      reasoning: risk.allowed ? 'Risk check passed' : `Risk blocked: ${risk.reason}`,
+      reasoning: formatRiskReasoning(risk),
       durationMs: Date.now() - riskStart,
     });
 
@@ -278,7 +309,7 @@ export class DeterministicExecutor {
       name: 'size_position',
       input: { trader: msg.author, symbol, entryPrice: netPremium, strategy: strategy.strategy, spreadMaxRisk: isSpread ? netPremium : undefined },
       output: { quantity: sizing.quantity, reasoning: sizing.reasoning, riskPerTrade: sizing.riskPerTrade, atr: sizing.atr, effectiveRisk: sizing.effectiveRisk },
-      reasoning: sizing.reasoning,
+      reasoning: formatSizingReasoning(sizing),
       durationMs: Date.now() - sizingStart,
     });
 
@@ -294,7 +325,7 @@ export class DeterministicExecutor {
       name: 'check_risk',
       input: { symbol, strategy: strategy.strategy, trader: msg.author },
       output: risk,
-      reasoning: risk.allowed ? 'Risk check passed' : `Risk blocked: ${risk.reason}`,
+      reasoning: formatRiskReasoning(risk),
       durationMs: Date.now() - riskStart,
     });
 

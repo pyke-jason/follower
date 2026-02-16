@@ -2,6 +2,11 @@ import type { BacktestConfig, BacktestReport, TraderStats, StrategyStats, Equity
 import { PositionTracker } from './position-tracker.js';
 import { roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
 
+export type MtmSnapshot = {
+  date: string;
+  unrealizedPnl: number;
+};
+
 export type GenerateReportParams = {
   config: BacktestConfig;
   tracker: PositionTracker;
@@ -15,10 +20,11 @@ export type GenerateReportParams = {
   };
   startingEquity?: number;
   skipReasons?: Map<string, number>;
+  mtmSnapshots?: MtmSnapshot[];
 };
 
 export function generateReport(params: GenerateReportParams): BacktestReport {
-  const { config, tracker, totalMessages, tradableMessages, stats, startingEquity = 100_000, skipReasons } = params;
+  const { config, tracker, totalMessages, tradableMessages, stats, startingEquity = 100_000, skipReasons, mtmSnapshots } = params;
   const closed = tracker.getClosed();
   const open = tracker.getOpen();
   const all = tracker.getAll();
@@ -46,19 +52,9 @@ export function generateReport(params: GenerateReportParams): BacktestReport {
   // Use PROFIT_FACTOR_INF as a sentinel for Infinity to stay within DB numeric bounds
   const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
 
-  // Max drawdown
-  let peak = 0;
-  let maxDrawdown = 0;
-  let running = 0;
   const sortedClosed = [...closed].sort(
     (a, b) => (a.closedAt?.getTime() ?? 0) - (b.closedAt?.getTime() ?? 0),
   );
-  for (const pos of sortedClosed) {
-    running += safePnl(pos);
-    if (running > peak) peak = running;
-    const dd = peak - running;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
 
   // By-trader stats
   const byTrader: Record<string, TraderStats> = {};
@@ -89,7 +85,7 @@ export function generateReport(params: GenerateReportParams): BacktestReport {
     ss.avgPnl = ss.trades > 0 ? ss.totalPnl / ss.trades : 0;
   }
 
-  // Equity curve (daily)
+  // ── Equity curve (daily) — built BEFORE drawdown so drawdown can use equity ──
   const equityCurve: EquityPoint[] = [];
   const dailyMap = new Map<string, { pnl: number; trades: number }>();
 
@@ -101,15 +97,55 @@ export function generateReport(params: GenerateReportParams): BacktestReport {
     dailyMap.set(date, existing);
   }
 
+  // Index MTM snapshots by date for merging
+  const mtmByDate = new Map<string, number>();
+  if (mtmSnapshots) {
+    for (const snap of mtmSnapshots) {
+      mtmByDate.set(snap.date, snap.unrealizedPnl);
+    }
+    // Ensure MTM-only days (days with open positions but no closes) are in dailyMap
+    for (const snap of mtmSnapshots) {
+      if (!dailyMap.has(snap.date)) {
+        dailyMap.set(snap.date, { pnl: 0, trades: 0 });
+      }
+    }
+  }
+
   let cumPnl = 0;
   for (const [date, data] of [...dailyMap.entries()].sort()) {
     cumPnl += data.pnl;
+    const unrealizedPnl = mtmByDate.get(date);
+    const equity = unrealizedPnl != null ? roundCents(cumPnl + unrealizedPnl) : undefined;
     equityCurve.push({
       date,
       pnl: roundCents(data.pnl),
       cumPnl: roundCents(cumPnl),
       trades: data.trades,
+      unrealizedPnl: unrealizedPnl != null ? roundCents(unrealizedPnl) : undefined,
+      equity,
     });
+  }
+
+  // ── Max drawdown from equity (realized + unrealized) ──
+  let peak = 0;
+  let maxDrawdown = 0;
+  if (mtmSnapshots && mtmSnapshots.length > 0) {
+    // Equity-based drawdown: uses true equity (cumPnl + unrealized)
+    for (const pt of equityCurve) {
+      const eq = pt.equity ?? pt.cumPnl;
+      if (eq > peak) peak = eq;
+      const dd = peak - eq;
+      if (dd > maxDrawdown) maxDrawdown = dd;
+    }
+  } else {
+    // Fallback: closed-trade-only drawdown (legacy behavior)
+    let running = 0;
+    for (const pos of sortedClosed) {
+      running += safePnl(pos);
+      if (running > peak) peak = running;
+      const dd = peak - running;
+      if (dd > maxDrawdown) maxDrawdown = dd;
+    }
   }
 
   // Extended metrics
@@ -154,8 +190,15 @@ function computeExtendedMetrics(params: {
 }): ExtendedMetrics {
   const { sortedClosed, equityCurve, totalPnl, maxDrawdown, startingEquity } = params;
 
-  // Daily PnL array from equity curve
-  const dailyPnls = equityCurve.map((pt) => pt.pnl);
+  // Daily PnL from equity deltas (captures unrealized swings) when MTM data exists,
+  // otherwise falls back to realized daily pnl.
+  const hasMtm = equityCurve.some((pt) => pt.equity != null);
+  const dailyPnls = hasMtm
+    ? (() => {
+        const equities = equityCurve.map((pt) => pt.equity ?? pt.cumPnl);
+        return equities.slice(1).map((eq, i) => eq - equities[i]);
+      })()
+    : equityCurve.map((pt) => pt.pnl);
   const tradingDays = dailyPnls.length || 1;
 
   const meanDailyPnl = dailyPnls.length > 0

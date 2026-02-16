@@ -31,7 +31,7 @@ export default function RootLayout({
               <AppSidebar />
               <SidebarInset className="overflow-hidden max-h-svh flex flex-col">
                 <TopBar />
-                <div className="flex-1 overflow-auto p-6">{children}</div>
+                <div className="flex-1 overflow-auto px-6 pt-6">{children}</div>
               </SidebarInset>
             </RunScopeProvider>
           </Suspense>

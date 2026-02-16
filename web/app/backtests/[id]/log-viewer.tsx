@@ -1,23 +1,24 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, Terminal } from 'lucide-react';
 import { CopyButton } from '../../components/copy-button';
 
 export function LogViewer({
   runId,
   isRunning,
-  defaultCollapsed = false,
+  defaultCollapsed = true,
 }: {
   runId: string;
   isRunning: boolean;
   defaultCollapsed?: boolean;
 }) {
   const [logs, setLogs] = useState('');
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [open, setOpen] = useState(!defaultCollapsed);
+  const [height, setHeight] = useState(280);
   const preRef = useRef<HTMLPreElement>(null);
   const wasAtBottom = useRef(true);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
 
   const getLogs = useCallback(() => logs, [logs]);
 
@@ -48,10 +49,10 @@ export function LogViewer({
 
   useEffect(() => {
     const el = preRef.current;
-    if (el && wasAtBottom.current && !collapsed && isRunning) {
+    if (el && wasAtBottom.current && open && isRunning) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [logs, collapsed, isRunning]);
+  }, [logs, open, isRunning]);
 
   function handleScroll() {
     const el = preRef.current;
@@ -60,40 +61,62 @@ export function LogViewer({
     }
   }
 
-  if (!logs) return null;
+  const onResizeStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragRef.current = { startY: e.clientY, startH: height };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [height]);
 
-  const lineCount = logs.split('\n').length;
+  const onResizeMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    const delta = dragRef.current.startY - e.clientY;
+    setHeight(Math.min(Math.max(dragRef.current.startH + delta, 120), 600));
+  }, []);
+
+  const onResizeEnd = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  const lineCount = logs ? logs.split('\n').length : 0;
 
   return (
-    <Card className="py-0 gap-0">
-      <CardHeader
-        className="border-b py-3 px-4 cursor-pointer select-none flex items-center gap-2"
-        onClick={() => setCollapsed((c) => !c)}
+    <div className="sticky bottom-0 -mx-6 z-40 flex flex-col border-t border-border bg-card">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-4 py-1.5 text-xs hover:bg-muted/40 transition-colors cursor-pointer select-none"
       >
-        <ChevronRight
-          className={`size-4 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`}
-        />
-        <CardTitle className="text-sm flex-1">
-          Process Logs
-          {collapsed && (
-            <span className="ml-2 text-muted-foreground font-normal">
-              &middot; {lineCount.toLocaleString()} lines
-            </span>
-          )}
-        </CardTitle>
-        <CopyButton getText={getLogs} className="ml-auto" />
-      </CardHeader>
-      {!collapsed && (
-        <CardContent className="p-0">
+        <Terminal className="size-3 text-muted-foreground" />
+        <span className="font-medium text-muted-foreground">Logs</span>
+        {lineCount > 0 && (
+          <span className="text-muted-foreground/60 tabular-nums">{lineCount.toLocaleString()} lines</span>
+        )}
+        {isRunning && (
+          <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <CopyButton getText={getLogs} />
+          {open ? <ChevronDown className="size-3 text-muted-foreground" /> : <ChevronUp className="size-3 text-muted-foreground" />}
+        </div>
+      </button>
+      {open && (
+        <>
+          <div
+            onPointerDown={onResizeStart}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            className="h-1 cursor-ns-resize hover:bg-border transition-colors border-t border-border/50"
+          />
           <pre
             ref={preRef}
             onScroll={handleScroll}
-            className="max-h-96 overflow-y-auto p-4 text-xs font-mono text-muted-foreground whitespace-pre-wrap"
+            style={{ height }}
+            className="overflow-y-auto px-4 py-2 text-xs font-mono text-muted-foreground whitespace-pre-wrap"
           >
-            {logs}
+            {logs || 'No logs yet.'}
           </pre>
-        </CardContent>
+        </>
       )}
-    </Card>
+    </div>
   );
 }

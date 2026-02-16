@@ -7,6 +7,8 @@ import { DeterministicExecutor } from './deterministic-executor.js';
 import type { SizingService, RiskService, SimPosition } from './types.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReport } from './report.js';
+import type { MtmSnapshot } from './report.js';
+import { parseOccSymbol, formatOccSymbol } from './occ-symbology.js';
 import { createTools } from '../agent/tool-factory.js';
 import { runAgent } from '../agent/trade-agent.js';
 import type { AgentStep } from '../agent/trade-agent.js';
@@ -120,6 +122,128 @@ async function persistTradeClose(tradeId: string, position: SimPosition): Promis
       closeMessageId: position.closeMessageId ?? null,
     })
     .where(eq(schema.trades.id, tradeId));
+}
+
+/**
+ * Build a map of position ID -> current mark price for all open positions.
+ * For stocks: mid price. For options: re-quote each leg and compute net premium.
+ * Errors are caught per-position (no data = skip).
+ */
+async function buildMarkPrices(
+  tracker: PositionTracker,
+  priceProvider: BacktestPriceProvider,
+  at: Date,
+): Promise<Map<string, number>> {
+  const markPrices = new Map<string, number>();
+
+  for (const pos of tracker.getOpen()) {
+    try {
+      if (pos.strategy === 'STOCK') {
+        const quote = await priceProvider.getQuote(pos.symbol, at);
+        markPrices.set(pos.id, (quote.bid + quote.ask) / 2);
+      } else if (pos.legs.length > 0) {
+        // Options/spreads: re-quote each leg and compute net premium
+        let netPremium = 0;
+        let allLegsQuoted = true;
+        for (const leg of pos.legs) {
+          try {
+            const occSymbol = formatOccSymbol({
+              underlying: pos.symbol,
+              expiration: leg.expiry,
+              type: leg.type === 'STOCK' ? 'CALL' : leg.type,
+              strike: leg.strike,
+            });
+            const quote = await priceProvider.getQuote(occSymbol, at);
+            const legMid = (quote.bid + quote.ask) / 2;
+            // BUY legs are assets (positive value), SELL legs are liabilities (negative)
+            netPremium += leg.action === 'BUY' ? legMid : -legMid;
+          } catch {
+            allLegsQuoted = false;
+            break;
+          }
+        }
+        if (allLegsQuoted) {
+          markPrices.set(pos.id, netPremium);
+        }
+      } else {
+        // Single-leg option without legs array — quote the position symbol directly
+        const quote = await priceProvider.getQuote(pos.symbol, at);
+        markPrices.set(pos.id, (quote.bid + quote.ask) / 2);
+      }
+    } catch {
+      // No data for this position — skip (unrealized = $0 for this position)
+    }
+  }
+
+  return markPrices;
+}
+
+/**
+ * Sweep expired options: at each day boundary, check all open option positions
+ * and close any with expired legs at intrinsic value (ITM) or $0 (OTM).
+ */
+async function sweepExpiredOptions(
+  tracker: PositionTracker,
+  priceProvider: BacktestPriceProvider,
+  currentDate: string, // YYYY-MM-DD
+  positionDbIds: PositionDbIds,
+  runId?: string,
+): Promise<number> {
+  let closedCount = 0;
+
+  for (const pos of tracker.getOpen()) {
+    if (pos.strategy === 'STOCK') continue;
+    if (pos.legs.length === 0) continue;
+
+    // Check if any leg has expired
+    const hasExpiredLeg = pos.legs.some((leg) => leg.expiry <= currentDate);
+    if (!hasExpiredLeg) continue;
+
+    // Compute intrinsic value of the position at expiry
+    let netIntrinsic = 0;
+    for (const leg of pos.legs) {
+      if (leg.expiry > currentDate) continue; // only process expired legs
+      if (leg.type === 'STOCK') continue;
+
+      let underlyingPrice: number;
+      try {
+        // Get underlying quote at the expired date
+        const expiryDate = new Date(leg.expiry + 'T20:00:00Z'); // 4pm ET
+        const quote = await priceProvider.getQuote(pos.symbol, expiryDate);
+        underlyingPrice = (quote.bid + quote.ask) / 2;
+      } catch {
+        // No underlying data — assume $0 intrinsic (conservative)
+        underlyingPrice = leg.type === 'CALL' ? 0 : Infinity;
+      }
+
+      const intrinsic = leg.type === 'CALL'
+        ? Math.max(0, underlyingPrice - leg.strike)
+        : Math.max(0, leg.strike - underlyingPrice);
+
+      // BUY legs are positive (we receive intrinsic), SELL legs negative (we pay)
+      netIntrinsic += leg.action === 'BUY' ? intrinsic : -intrinsic;
+    }
+
+    // Close the position at net intrinsic value
+    const exitPrice = Math.max(0, netIntrinsic); // floor at 0 for net debit positions
+    const expiryTimestamp = new Date(currentDate + 'T20:00:00Z');
+    const closed = tracker.close(pos.id, exitPrice, expiryTimestamp);
+
+    if (closed) {
+      log.debug(`EXPIRE: ${pos.id} ${pos.symbol} ${pos.strategy} intrinsic=$${netIntrinsic.toFixed(2)} exit=$${exitPrice.toFixed(2)} PnL=$${closed.pnl?.toFixed(2)}`);
+      closedCount++;
+
+      // Persist to DB if running with a runId
+      if (runId) {
+        const existingIds = positionDbIds.get(pos.id);
+        if (existingIds) {
+          await persistTradeClose(existingIds.tradeId, closed);
+        }
+      }
+    }
+  }
+
+  return closedCount;
 }
 
 /**
@@ -238,32 +362,37 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     async check(input: { symbol: string; strategy: string; trader: string }) {
       const openOnSymbol = tracker.getOpenBySymbol(input.symbol).length;
       const totalOpen = tracker.getOpen().length;
+      const maxOnSymbol = 3;
+      const maxTotal = 20;
       const totalOpenNotional = tracker.getOpen().reduce(
         (sum, p) => sum + Math.abs(p.entryPrice * p.quantity * (p.strategy !== 'STOCK' ? 100 : 1)), 0,
       );
       const dailyPnl = tracker.getDailyPnl(clock.now());
       const balance = await broker.getAccountBalance();
+      const maxNotional = balance.equity * 2;
 
-      if (openOnSymbol >= 3) {
-        return { allowed: false, reason: `${openOnSymbol} positions already open on ${input.symbol}` };
+      const stats = { openOnSymbol, maxOnSymbol, totalOpen, maxTotal, totalNotional: totalOpenNotional, maxNotional };
+
+      if (openOnSymbol >= maxOnSymbol) {
+        return { allowed: false, reason: `${openOnSymbol} positions already open on ${input.symbol}`, ...stats };
       }
-      if (totalOpen >= 20) {
-        return { allowed: false, reason: `${totalOpen} total open positions (max 20)` };
+      if (totalOpen >= maxTotal) {
+        return { allowed: false, reason: `${totalOpen} total open positions (max ${maxTotal})`, ...stats };
       }
-      if (totalOpenNotional > balance.equity * 2) {
+      if (totalOpenNotional > maxNotional) {
         // Include top notional contributors for debugging
         const positions = tracker.getOpen()
           .map(p => ({ sym: p.symbol, strat: p.strategy, dir: p.direction, qty: p.quantity, entry: p.entryPrice, notional: Math.abs(p.entryPrice * p.quantity * (p.strategy !== 'STOCK' ? 100 : 1)) }))
           .sort((a, b) => b.notional - a.notional)
           .slice(0, 3);
         const posDetail = positions.map(p => `${p.dir} ${p.strat} ${p.sym} qty=${p.qty} @$${p.entry} ($${p.notional.toFixed(0)})`).join('; ');
-        return { allowed: false, reason: `notional exposure $${totalOpenNotional.toFixed(0)} > 2x equity $${(balance.equity * 2).toFixed(0)} [top: ${posDetail}]` };
+        return { allowed: false, reason: `notional exposure $${totalOpenNotional.toFixed(0)} > 2x equity $${maxNotional.toFixed(0)} [top: ${posDetail}]`, ...stats };
       }
       if (dailyPnl < 0 && Math.abs(dailyPnl) > startingEquity * 0.05) {
-        return { allowed: false, reason: `daily loss $${dailyPnl.toFixed(0)} > 5% of starting equity` };
+        return { allowed: false, reason: `daily loss $${dailyPnl.toFixed(0)} > 5% of starting equity`, ...stats };
       }
 
-      return { allowed: true };
+      return { allowed: true, ...stats };
     },
   };
 
@@ -294,9 +423,32 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   // Maps sim position ID → DB row IDs for live persistence
   const positionDbIds: PositionDbIds = new Map();
 
+  // Day-boundary tracking for MTM snapshots and option expiration sweeps
+  let lastMsgDay = '';
+  const mtmSnapshots: MtmSnapshot[] = [];
+
   // Single message loop — broker.advanceTo() handles lazy tick replay for working orders
   for (let i = 0; i < tradableMessages.length; i++) {
     const msg = tradableMessages[i];
+    const msgDay = msg.timestamp.toISOString().split('T')[0];
+
+    // ── Day boundary: sweep expired options + MTM snapshot ──
+    if (lastMsgDay && msgDay !== lastMsgDay && tracker.getOpen().length > 0) {
+      // 1. Sweep expired options first (they become closed trades)
+      const expiredCount = await sweepExpiredOptions(tracker, priceProvider, lastMsgDay, positionDbIds, runId);
+      if (expiredCount > 0) {
+        log.debug(`Day ${lastMsgDay}: expired ${expiredCount} option position(s)`);
+      }
+
+      // 2. MTM snapshot for remaining open positions
+      const eodTime = new Date(lastMsgDay + 'T20:00:00Z'); // 4pm ET
+      const markPrices = await buildMarkPrices(tracker, priceProvider, eodTime);
+      const unrealizedPnl = tracker.computeUnrealizedPnl(markPrices);
+      mtmSnapshots.push({ date: lastMsgDay, unrealizedPnl });
+      log.debug(`MTM ${lastMsgDay}: unrealized=$${unrealizedPnl.toFixed(2)} (${markPrices.size}/${tracker.getOpen().length} positions marked)`);
+    }
+
+    lastMsgDay = msgDay;
     clock.advance(msg.timestamp);
     await broker.advanceTo(msg.timestamp);
     await orderManager.tick(msg.timestamp);
@@ -314,6 +466,20 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       (stats) => { agentCallsUsed = stats.agentCallsUsed; deterministicTrades = stats.deterministicTrades; agentTrades = stats.agentTrades; skippedLowConfidence = stats.skippedLowConfidence; },
       positionDbIds, agentProvider, sizingService, riskService, startingEquity, runId,
     );
+  }
+
+  // Final day: sweep + MTM for the last trading day
+  if (lastMsgDay && tracker.getOpen().length > 0) {
+    const expiredCount = await sweepExpiredOptions(tracker, priceProvider, lastMsgDay, positionDbIds, runId);
+    if (expiredCount > 0) {
+      log.debug(`Day ${lastMsgDay} (final): expired ${expiredCount} option position(s)`);
+    }
+
+    const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
+    const markPrices = await buildMarkPrices(tracker, priceProvider, eodTime);
+    const unrealizedPnl = tracker.computeUnrealizedPnl(markPrices);
+    mtmSnapshots.push({ date: lastMsgDay, unrealizedPnl });
+    log.debug(`MTM ${lastMsgDay} (final): unrealized=$${unrealizedPnl.toFixed(2)} (${markPrices.size}/${tracker.getOpen().length} positions marked)`);
   }
 
   orderManager.destroy();
@@ -340,6 +506,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     stats: { agentCallsUsed, deterministicTrades, agentTrades, skippedLowConfidence },
     startingEquity,
     skipReasons,
+    mtmSnapshots,
   });
 
   // Backfill PnL on runDecisions from the trades table (safety net)
@@ -443,8 +610,11 @@ async function processMessage(
     confidence: msg.confidence,
   };
 
+  const confidenceThreshold = 0.70;
+
   // High confidence → deterministic
   if (executor.canHandle(msg)) {
+    log.debug(`  path: DETERMINISTIC (conf=${msg.confidence.toFixed(2)} ≥ ${confidenceThreshold.toFixed(2)})`);
     try {
       const result = await executor.execute(msg);
 
@@ -470,7 +640,7 @@ async function processMessage(
           ? ` legs=[${p.legs.map(l => `${l.action} ${l.type}${l.strike ? ' $' + l.strike : ''}${l.expiry ? ' ' + l.expiry : ''} @$${l.fillPrice}`).join(', ')}]`
           : '';
         const pnlStr = p.pnl != null ? ` PnL=$${p.pnl.toFixed(2)}` : '';
-        log.debug(`  → deterministic ${result.action} ${p.direction} ${p.strategy} ${p.symbol} qty=${p.quantity} @ $${p.entryPrice}${pnlStr}${legsStr}`);
+        log.debug(`  → deterministic ${result.action} ${p.direction} ${p.strategy} ${p.symbol} qty=${p.quantity} @ $${p.entryPrice}${pnlStr}${legsStr} (${Date.now() - decisionStart}ms)`);
         stats.deterministicTrades++;
 
         let tradeId: string | undefined;
@@ -512,13 +682,7 @@ async function processMessage(
           });
         }
       } else {
-        // Log execution steps even for skips
-        if (result.steps && result.steps.length > 0) {
-          for (const step of result.steps) {
-            log.debug(`  [${step.name}] ${step.reasoning}${step.durationMs != null ? ` (${step.durationMs}ms)` : ''}`);
-          }
-        }
-        log.debug(`  → deterministic SKIP: ${result.reason ?? 'no reason'}`);
+        log.debug(`  → deterministic SKIP: ${result.reason ?? 'no reason'} (${Date.now() - decisionStart}ms)`);
         trackSkip(result.reason ?? 'no reason');
         if (runId) {
           await db.insert(schema.runDecisions).values({
@@ -552,14 +716,24 @@ async function processMessage(
 
   // Low confidence → agent (if enabled and budget remaining)
   if (config.useAgent && stats.agentCallsUsed < (config.maxAgentCalls ?? Infinity)) {
+    const callNum = stats.agentCallsUsed + 1;
+    const maxCalls = config.maxAgentCalls ?? '∞';
+    const agentModel = config.agentModel ?? 'default';
+    log.debug(`  path: AGENT (conf=${msg.confidence.toFixed(2)} < ${confidenceThreshold.toFixed(2)}, call ${callNum}/${maxCalls})`);
+    log.debug(`  agent: starting (model=${agentModel}, call ${callNum}/${maxCalls})`);
+    const agentStart = Date.now();
     try {
       const agentResult = await runAgentForBacktest(
         msg, broker, tracker, priceProvider, clock, orderManager,
         positionDbIds, agentProvider, sizingService, riskService, startingEquity, runId,
       );
+      const agentDuration = Date.now() - agentStart;
       stats.agentCallsUsed++;
       if (agentResult) {
-        log.debug(`  → agent EXECUTE: ${agentResult.reasoning}`);
+        const tokenStr = agentResult.usage ? `, ${((agentResult.usage.inputTokens + agentResult.usage.outputTokens) / 1000).toFixed(1)}k tokens` : '';
+        const turnStr = agentResult.turns != null ? `, ${agentResult.turns} turns` : '';
+        log.debug(`  agent: done in ${agentDuration}ms (${turnStr.slice(2)}${tokenStr})`);
+        log.debug(`  → agent EXECUTE: ${agentResult.reasoning} (${Date.now() - decisionStart}ms)`);
         stats.agentTrades++;
         if (runId) {
           await db.insert(schema.runDecisions).values({
@@ -573,7 +747,8 @@ async function processMessage(
           });
         }
       } else {
-        log.debug(`  → agent SKIP`);
+        log.debug(`  agent: done in ${agentDuration}ms (no trade)`);
+        log.debug(`  → agent SKIP (${Date.now() - decisionStart}ms)`);
         trackSkip('agent decided to skip');
         if (runId) {
           await db.insert(schema.runDecisions).values({
@@ -587,7 +762,7 @@ async function processMessage(
         }
       }
     } catch (err) {
-      log.error(`Agent error for message ${msg.id}:`, err);
+      log.error(`Agent error for message ${msg.id} (${Date.now() - agentStart}ms):`, err);
       trackSkip(`Agent error: ${err instanceof Error ? err.message : String(err)}`);
       if (runId) {
         await db.insert(schema.runDecisions).values({
@@ -603,8 +778,9 @@ async function processMessage(
   } else {
     const reason = config.useAgent
       ? `agent budget exhausted (${stats.agentCallsUsed}/${config.maxAgentCalls ?? '∞'} calls used)`
-      : `low confidence (${msg.confidence.toFixed(2)} < 0.70), agent disabled`;
-    log.debug(`  → skipped (${reason})`);
+      : `low confidence, agent disabled`;
+    log.debug(`  path: SKIP (conf=${msg.confidence.toFixed(2)} < ${confidenceThreshold.toFixed(2)}, ${config.useAgent ? 'budget exhausted' : 'agent disabled'})`);
+    log.debug(`  → skipped (${reason}) (${Date.now() - decisionStart}ms)`);
     stats.skippedLowConfidence++;
     trackSkip(reason);
     if (runId) {
@@ -636,7 +812,7 @@ async function runAgentForBacktest(
   riskService: RiskService,
   startingEquity: number,
   runId?: string,
-): Promise<{ tradeId?: string; reasoning: string } | null> {
+): Promise<{ tradeId?: string; reasoning: string; usage?: import('../agent/providers.js').LLMUsage; turns?: number } | null> {
   // Prefetch Databento data for the symbols in this message
   await priceProvider.prefetch(msg.symbols, msg.timestamp);
 
@@ -697,7 +873,8 @@ async function runAgentForBacktest(
     confidence: msg.confidence,
   };
 
-  const { steps, result, model } = await runAgent(taskContext, simTools, agentProvider);
+  const { steps, result, model, usage } = await runAgent(taskContext, simTools, agentProvider);
+  const toolTurns = steps.filter(s => s.tool).length;
 
   if (result?.decision === 'EXECUTE' && result.trade) {
     // Record the trade in the position tracker
@@ -746,7 +923,7 @@ async function runAgentForBacktest(
       }
     }
 
-    return { tradeId, reasoning: result.reasoning };
+    return { tradeId, reasoning: result.reasoning, usage, turns: toolTurns };
   }
 
   return null;

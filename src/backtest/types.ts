@@ -134,14 +134,28 @@ export type EquityPoint = {
   pnl: number;
   cumPnl: number;
   trades: number;
+  unrealizedPnl?: number;  // total unrealized PnL of open positions at EOD
+  equity?: number;          // cumPnl + unrealizedPnl (the "true" equity value)
 };
 
 export interface SizingService {
   calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }): Promise<PositionSize>;
 }
 
+export type RiskCheckResult = {
+  allowed: boolean;
+  reason?: string;
+  /** Stats populated by the backtest risk service for enriched logging */
+  openOnSymbol?: number;
+  maxOnSymbol?: number;
+  totalOpen?: number;
+  maxTotal?: number;
+  totalNotional?: number;
+  maxNotional?: number;
+};
+
 export interface RiskService {
-  check(input: { symbol: string; strategy: string; trader: string }): Promise<{ allowed: boolean; reason?: string }>;
+  check(input: { symbol: string; strategy: string; trader: string }): Promise<RiskCheckResult>;
 }
 
 export type ExecutionStep = {

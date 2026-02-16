@@ -185,27 +185,62 @@ export class SimBroker implements BrokerService {
   }
 
   async getPositions(): Promise<BrokerPosition[]> {
-    return this.tracker.getOpen().map((pos) => ({
-      symbol: pos.symbol,
-      quantity: pos.quantity,
-      averageCost: pos.entryPrice,
-      marketValue: 0,
-      unrealizedPnl: 0,
-      assetType: pos.strategy === 'STOCK' ? 'EQ' : 'OP',
-    }));
+    const positions: BrokerPosition[] = [];
+    for (const pos of this.tracker.getOpen()) {
+      let currentPrice = pos.entryPrice;
+      try {
+        const quote = await this.marketData.getQuote(pos.symbol, this.clock.now());
+        currentPrice = (quote.bid + quote.ask) / 2;
+      } catch {
+        // No market data — fall back to entry price (unrealized = 0)
+      }
+
+      const diff = currentPrice - pos.entryPrice;
+      const multiplier = pos.direction === 'LONG' ? 1 : -1;
+      const contractMultiplier = pos.strategy === 'STOCK' ? 1 : 100;
+      const unrealizedPnl = roundCents(diff * multiplier * pos.quantity * contractMultiplier);
+      const marketValue = roundCents(currentPrice * pos.quantity * contractMultiplier);
+
+      positions.push({
+        symbol: pos.symbol,
+        quantity: pos.quantity,
+        averageCost: pos.entryPrice,
+        marketValue,
+        unrealizedPnl,
+        assetType: pos.strategy === 'STOCK' ? 'EQ' : 'OP',
+      });
+    }
+    return positions;
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
-    const totalPnl = this.tracker.getTotalPnl();
-    const equity = this.startingEquity + totalPnl;
+    const realizedPnl = this.tracker.getTotalPnl();
+
+    // Compute unrealized PnL from current market prices
+    let unrealizedPnl = 0;
+    for (const pos of this.tracker.getOpen()) {
+      try {
+        const quote = await this.marketData.getQuote(pos.symbol, this.clock.now());
+        const currentPrice = (quote.bid + quote.ask) / 2;
+        const diff = currentPrice - pos.entryPrice;
+        const multiplier = pos.direction === 'LONG' ? 1 : -1;
+        const contractMultiplier = pos.strategy === 'STOCK' ? 1 : 100;
+        unrealizedPnl += diff * multiplier * pos.quantity * contractMultiplier;
+      } catch {
+        // No market data for this position — skip (conservative: unrealized = 0)
+      }
+    }
+    unrealizedPnl = roundCents(unrealizedPnl);
+
+    const equity = this.startingEquity + realizedPnl + unrealizedPnl;
     return {
       accountId: 'SIM',
-      cashBalance: equity,
+      cashBalance: this.startingEquity + realizedPnl,
       buyingPower: equity,
       equity,
-      marketValue: 0,
-      unrealizedPnl: 0,
-      realizedPnl: totalPnl,
+      marketValue: roundCents(unrealizedPnl),
+      unrealizedPnl,
+      realizedPnl,
       timestamp: this.clock.now().toISOString(),
     };
   }

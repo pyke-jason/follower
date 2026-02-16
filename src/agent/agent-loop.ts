@@ -1,5 +1,8 @@
 import type { ToolDef } from './tool-factory.js';
 import type { LLMProvider, ModelIdentity, LLMUsage } from './providers.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('Agent');
 
 export type AgentStep = {
   tool?: string;
@@ -27,6 +30,38 @@ export type AgentConfig = {
   maxTokens?: number; // default 2048
 };
 
+/** Produce a short one-line summary of a tool's output for logging. */
+function summarizeToolOutput(toolName: string, output: unknown): string {
+  if (output == null) return '(null)';
+  if (typeof output === 'object' && 'error' in (output as Record<string, unknown>)) {
+    return `ERROR: ${(output as Record<string, unknown>).error}`;
+  }
+  try {
+    const json = JSON.stringify(output);
+    if (json.length <= 120) return json;
+    // Pull out salient fields for common tools
+    const obj = output as Record<string, unknown>;
+    if (toolName === 'get_open_positions' && Array.isArray(obj)) {
+      return `${obj.length} position(s)`;
+    }
+    if (toolName === 'get_quote' && obj.bid != null) {
+      return `bid=${obj.bid} ask=${obj.ask}`;
+    }
+    if (toolName === 'calculate_position_size' && obj.quantity != null) {
+      return `qty=${obj.quantity}`;
+    }
+    if (toolName === 'check_risk_limits') {
+      return obj.allowed ? 'allowed' : `blocked: ${obj.reason ?? 'unknown'}`;
+    }
+    if (toolName === 'place_order' && obj.status != null) {
+      return obj.status === 'FILLED' ? `FILLED @ $${obj.filledPrice}` : `${obj.status}`;
+    }
+    return json.slice(0, 100) + '…';
+  } catch {
+    return String(output).slice(0, 100);
+  }
+}
+
 /**
  * Generic agentic loop: send messages, execute tools, repeat until done.
  * The caller builds the initial user prompt and passes it as `userPrompt`.
@@ -40,6 +75,7 @@ export async function runAgentLoop(
 
   const steps: AgentStep[] = [];
   let result: unknown | null = null;
+  let toolCallIndex = 0;
   const usage: LLMUsage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
 
   const messages: unknown[] = [provider.makeUserMessage(userPrompt)];
@@ -85,13 +121,16 @@ export async function runAgentLoop(
     const toolResults: Array<{ toolCallId: string; output: string; isError?: boolean }> = [];
 
     for (const toolCall of response.toolCalls) {
+      toolCallIndex++;
       const toolDef = tools.find((t) => t.name === toolCall.name);
       if (!toolDef) {
+        const reasoning = `${toolCall.name} → ERROR: unknown tool`;
         toolResults.push({
           toolCallId: toolCall.id,
           output: JSON.stringify({ error: `Unknown tool: ${toolCall.name}` }),
         });
-        steps.push({ tool: toolCall.name, input: toolCall.input, output: { error: 'unknown tool' } });
+        steps.push({ tool: toolCall.name, input: toolCall.input, output: { error: 'unknown tool' }, reasoning });
+        log.debug(`  turn ${toolCallIndex}: ${reasoning}`);
         continue;
       }
 
@@ -99,9 +138,11 @@ export async function runAgentLoop(
       try {
         const output = await toolDef.execute(toolCall.input);
         const toolDuration = Date.now() - toolStart;
+        const reasoning = `${toolCall.name} → ${summarizeToolOutput(toolCall.name, output)}`;
 
-        steps.push({ tool: toolCall.name, input: toolCall.input, output, durationMs: toolDuration });
+        steps.push({ tool: toolCall.name, input: toolCall.input, output, reasoning, durationMs: toolDuration });
         toolResults.push({ toolCallId: toolCall.id, output: JSON.stringify(output) });
+        log.debug(`  turn ${toolCallIndex}: ${reasoning} (${toolDuration}ms)`);
 
         // Let caller intercept tool calls for result extraction
         if (onToolCall) {
@@ -111,9 +152,11 @@ export async function runAgentLoop(
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         const toolDuration = Date.now() - toolStart;
+        const reasoning = `${toolCall.name} → ERROR: ${errMsg}`;
 
-        steps.push({ tool: toolCall.name, input: toolCall.input, output: { error: errMsg }, durationMs: toolDuration });
+        steps.push({ tool: toolCall.name, input: toolCall.input, output: { error: errMsg }, reasoning, durationMs: toolDuration });
         toolResults.push({ toolCallId: toolCall.id, output: JSON.stringify({ error: errMsg }), isError: true });
+        log.debug(`  turn ${toolCallIndex}: ${reasoning} (${toolDuration}ms)`);
       }
     }
 

@@ -145,7 +145,7 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   summary:         text('summary', { mode: 'json' }).$type<BacktestRunSummary | null>(),
   byTrader:        text('by_trader', { mode: 'json' }).$type<Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> | null>(),
   byStrategy:      text('by_strategy', { mode: 'json' }).$type<Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> | null>(),
-  equityCurve:     text('equity_curve', { mode: 'json' }).$type<{ date: string; pnl: number; cumPnl: number; trades: number }[] | null>(),
+  equityCurve:     text('equity_curve', { mode: 'json' }).$type<{ date: string; pnl: number; cumPnl: number; trades: number; unrealizedPnl?: number; equity?: number }[] | null>(),
   createdAt:       text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:       text('started_at'),
   completedAt:     text('completed_at'),

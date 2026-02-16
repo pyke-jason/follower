@@ -35,27 +35,33 @@ export function BreakdownCharts({
         .sort((a, b) => b.pnl - a.pnl)
     : [];
 
-  if (!traderData.length && !strategyData.length) return null;
+  const noData = (
+    <div className="flex items-center justify-center text-xs text-muted-foreground h-[120px]">
+      No data yet
+    </div>
+  );
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {traderData.length > 0 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">P&L by Trader</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
+      <Card className="py-0 gap-0">
+        <CardHeader className="border-b py-3 px-4">
+          <CardTitle className="text-sm">P&L by Trader</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 pb-2 px-2">
+          {traderData.length > 0 ? (
             <BarChartComponent
               data={traderData}
               xKey="name"
               yKey="pnl"
               layout="vertical"
               colorByValue
-              height={Math.max(200, traderData.length * 40)}
+              height={Math.max(120, traderData.length * 40)}
               formatY={(v: number) => formatCurrency(v)}
               tooltipFormatter={(value: number) => [formatCurrency(value), 'P&L']}
             />
-          </CardContent>
+          ) : noData}
+        </CardContent>
+        {traderData.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-4 pb-3">
             {traderData.map((t) => (
               <Link
@@ -67,25 +73,27 @@ export function BreakdownCharts({
               </Link>
             ))}
           </div>
-        </Card>
-      )}
-      {strategyData.length > 0 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">P&L by Strategy</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
+        )}
+      </Card>
+      <Card className="py-0 gap-0">
+        <CardHeader className="border-b py-3 px-4">
+          <CardTitle className="text-sm">P&L by Strategy</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 pb-2 px-2">
+          {strategyData.length > 0 ? (
             <BarChartComponent
               data={strategyData}
               xKey="name"
               yKey="pnl"
               layout="vertical"
               colorByValue
-              height={Math.max(200, strategyData.length * 40)}
+              height={Math.max(120, strategyData.length * 40)}
               formatY={(v: number) => formatCurrency(v)}
               tooltipFormatter={(value: number) => [formatCurrency(value), 'P&L']}
             />
-          </CardContent>
+          ) : noData}
+        </CardContent>
+        {strategyData.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-4 pb-3">
             {strategyData.map((s) => (
               <Link
@@ -97,8 +105,8 @@ export function BreakdownCharts({
               </Link>
             ))}
           </div>
-        </Card>
-      )}
+        )}
+      </Card>
     </div>
   );
 }

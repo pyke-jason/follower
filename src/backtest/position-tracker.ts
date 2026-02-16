@@ -1,5 +1,6 @@
 import type { SimPosition, SimLeg } from './types.js';
 import { createLogger } from '../lib/logger.js';
+import { roundCents } from '../lib/numbers.js';
 
 const log = createLogger('Position');
 
@@ -240,5 +241,22 @@ export class PositionTracker {
 
   getTotalPnl(): number {
     return this.getClosed().reduce((sum, p) => sum + (p.pnl ?? 0), 0);
+  }
+
+  /**
+   * Compute total unrealized PnL for all open positions using mark prices.
+   * @param markPrices Map of position ID -> current mark price (net premium for options)
+   */
+  computeUnrealizedPnl(markPrices: Map<string, number>): number {
+    let total = 0;
+    for (const pos of this.getOpen()) {
+      const markPrice = markPrices.get(pos.id);
+      if (markPrice == null) continue;
+      const diff = markPrice - pos.entryPrice;
+      const multiplier = pos.direction === 'LONG' ? 1 : -1;
+      const contractMultiplier = pos.strategy === 'STOCK' ? 1 : 100;
+      total += diff * multiplier * pos.quantity * contractMultiplier;
+    }
+    return roundCents(total);
   }
 }
