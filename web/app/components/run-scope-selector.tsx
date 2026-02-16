@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { Check, ChevronsUpDown, FlaskConical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -19,7 +18,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
-import { isRunScopedPath } from '@/lib/run-scope';
+import { useRunScope } from './run-scope-provider';
 
 type RunItem = {
   id: string;
@@ -33,10 +32,7 @@ type RunItem = {
 };
 
 export function RunScopeSelector() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const runId = searchParams.get('run');
+  const { runId, runBrief, selectRun } = useRunScope();
 
   const [open, setOpen] = useState(false);
   const [runs, setRuns] = useState<RunItem[]>([]);
@@ -56,23 +52,9 @@ export function RunScopeSelector() {
       .finally(() => setLoading(false));
   }, [open, fetched]);
 
-  const activeRun = runs.find((r) => r.id === runId);
-
-  function selectRun(id: string | null) {
+  function handleSelect(id: string | null) {
     setOpen(false);
-    if (id === null) {
-      // Go live: strip ?run= from current URL
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete('run');
-      const qs = params.toString();
-      router.push(qs ? `${pathname}?${qs}` : pathname);
-      return;
-    }
-    // If on an unscoped page, navigate to / first
-    const target = isRunScopedPath(pathname) ? pathname : '/';
-    const params = new URLSearchParams(searchParams.toString());
-    params.set('run', id);
-    router.push(`${target}?${params.toString()}`);
+    selectRun(id);
   }
 
   function formatPnl(pnl: number | null): string {
@@ -89,16 +71,23 @@ export function RunScopeSelector() {
           size="sm"
           role="combobox"
           aria-expanded={open}
-          className="h-7 gap-2 text-xs font-normal px-2.5"
+          className="h-auto min-h-7 gap-2 text-xs font-normal px-2.5 py-1"
         >
           {runId ? (
             <>
-              <FlaskConical className="h-3.5 w-3.5 text-blue-400" />
-              <span className="text-blue-300 max-w-[200px] truncate">
-                {activeRun
-                  ? activeRun.name || `${activeRun.traders.join(', ')} ${activeRun.startDate}`
-                  : `Run ${runId.slice(0, 8)}...`}
-              </span>
+              <FlaskConical className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <div className="flex flex-col items-start leading-tight max-w-[200px]">
+                <span className="text-blue-300 truncate w-full">
+                  {runBrief
+                    ? runBrief.traders.join(', ') || runBrief.name || `Run ${runId.slice(0, 8)}...`
+                    : `Run ${runId.slice(0, 8)}...`}
+                </span>
+                {runBrief && (
+                  <span className="text-[10px] text-muted-foreground truncate w-full">
+                    {runBrief.startDate} – {runBrief.endDate}
+                  </span>
+                )}
+              </div>
             </>
           ) : (
             <>
@@ -117,7 +106,7 @@ export function RunScopeSelector() {
               {loading ? 'Loading...' : 'No backtest runs found.'}
             </CommandEmpty>
             <CommandGroup>
-              <CommandItem value="__live" onSelect={() => selectRun(null)}>
+              <CommandItem value="__live" onSelect={() => handleSelect(null)}>
                 <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 mr-2" />
                 <span className="flex-1">Live</span>
                 <Check
@@ -136,7 +125,7 @@ export function RunScopeSelector() {
                       <CommandItem
                         key={r.id}
                         value={`${r.id} ${label}`}
-                        onSelect={() => selectRun(r.id)}
+                        onSelect={() => handleSelect(r.id)}
                       >
                         <FlaskConical className="h-3.5 w-3.5 text-blue-400 mr-2 shrink-0" />
                         <div className="flex-1 min-w-0">

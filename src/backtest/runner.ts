@@ -1,5 +1,5 @@
 import { SimClock } from './clock.js';
-import { MessagePriceProvider, DatabentoMarketDataProvider } from './market-data.js';
+import { DatabentoMarketDataProvider } from './market-data.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker } from './sim-broker.js';
 import { PositionTracker } from './position-tracker.js';
@@ -20,7 +20,6 @@ import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.
 import type { TaskContext } from '../db/schema.js';
 import type { Trade } from '../db/schema.js';
 import { createLogger } from '../lib/logger.js';
-import { seedOptionPrices } from './helpers.js';
 import { safeParseFloat } from '../lib/numbers.js';
 
 const log = createLogger('Backtest');
@@ -39,6 +38,7 @@ async function persistTradeOpen(
     agentResult?: { decision: string; reasoning: string } | null;
     modelProvider?: string;
     modelName?: string;
+    messageContext?: TaskContext;
   },
 ): Promise<{ taskId: string; tradeId: string }> {
   const taskId = crypto.randomUUID();
@@ -50,7 +50,7 @@ async function persistTradeOpen(
     assignee: opts.source === 'agent' ? 'agent' : 'deterministic',
     modelProvider: opts.modelProvider ?? null,
     modelName: opts.modelName ?? null,
-    context: {
+    context: opts.messageContext ?? {
       messageId: position.sourceMessageId,
       author: position.trader,
       symbols: [position.symbol],
@@ -201,10 +201,11 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   log.info(`${tradableMessages.length} tradable messages (with badges, not paper)`);
 
   // Init components
+  if (!config.databentoApiKey) {
+    throw new Error('Backtest requires a Databento API key. Set databentoApiKey in config.');
+  }
   const clock = new SimClock(config.startDate);
-  const priceProvider: BacktestPriceProvider = config.databentoApiKey
-    ? new DatabentoMarketDataProvider(config.databentoApiKey, config.databentoDataset ?? 'DBEQ.BASIC')
-    : new MessagePriceProvider();
+  const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
   const tracker = new PositionTracker();
   const fillModel = config.fillModel ?? 'orats';
   const startingEquity = 100_000;
@@ -250,7 +251,13 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
         return { allowed: false, reason: `${totalOpen} total open positions (max 20)` };
       }
       if (totalOpenNotional > balance.equity * 2) {
-        return { allowed: false, reason: `notional exposure $${totalOpenNotional.toFixed(0)} > 2x equity $${(balance.equity * 2).toFixed(0)}` };
+        // Include top notional contributors for debugging
+        const positions = tracker.getOpen()
+          .map(p => ({ sym: p.symbol, strat: p.strategy, dir: p.direction, qty: p.quantity, entry: p.entryPrice, notional: Math.abs(p.entryPrice * p.quantity * (p.strategy !== 'STOCK' ? 100 : 1)) }))
+          .sort((a, b) => b.notional - a.notional)
+          .slice(0, 3);
+        const posDetail = positions.map(p => `${p.dir} ${p.strat} ${p.sym} qty=${p.qty} @$${p.entry} ($${p.notional.toFixed(0)})`).join('; ');
+        return { allowed: false, reason: `notional exposure $${totalOpenNotional.toFixed(0)} > 2x equity $${(balance.equity * 2).toFixed(0)} [top: ${posDetail}]` };
       }
       if (dailyPnl < 0 && Math.abs(dailyPnl) > startingEquity * 0.05) {
         return { allowed: false, reason: `daily loss $${dailyPnl.toFixed(0)} > 5% of starting equity` };
@@ -260,7 +267,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     },
   };
 
-  const executor = new DeterministicExecutor(broker, tracker, clock, priceProvider, fillModel, sizingService, riskService);
+  const executor = new DeterministicExecutor(broker, tracker, clock, fillModel, sizingService, riskService);
 
   const orderManager = new OrderManager({
     broker,
@@ -282,6 +289,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   let deterministicTrades = 0;
   let agentTrades = 0;
   let skippedLowConfidence = 0;
+  const skipReasons = new Map<string, number>();
 
   // Maps sim position ID → DB row IDs for live persistence
   const positionDbIds: PositionDbIds = new Map();
@@ -294,19 +302,35 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     await orderManager.tick(msg.timestamp);
 
     if (i > 0 && i % 100 === 0) {
-      log.info(`Processed ${i}/${tradableMessages.length} messages...`);
+      const openCount = tracker.getOpen().length;
+      const closedCount = tracker.getClosed().length;
+      const totalPnl = tracker.getTotalPnl();
+      log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openCount} closed=${closedCount} PnL=$${totalPnl.toFixed(2)}`);
     }
 
     await processMessage(
       msg, broker, tracker, priceProvider, clock, executor,
-      orderManager, config, { agentCallsUsed, deterministicTrades, agentTrades, skippedLowConfidence },
+      orderManager, config, { agentCallsUsed, deterministicTrades, agentTrades, skippedLowConfidence, skipReasons },
       (stats) => { agentCallsUsed = stats.agentCallsUsed; deterministicTrades = stats.deterministicTrades; agentTrades = stats.agentTrades; skippedLowConfidence = stats.skippedLowConfidence; },
       positionDbIds, agentProvider, sizingService, riskService, startingEquity, runId,
     );
   }
 
   orderManager.destroy();
-  log.info(`Done. Generating report...`);
+
+  // Print market data quality summary
+  priceProvider.printDataSummary();
+
+  // Print end-of-run summary
+  const openCount = tracker.getOpen().length;
+  const closedCount = tracker.getClosed().length;
+  const totalPnl = tracker.getTotalPnl();
+  log.info(`Done. det=${deterministicTrades} agent=${agentTrades} skipped=${skippedLowConfidence} open=${openCount} closed=${closedCount} PnL=$${totalPnl.toFixed(2)}`);
+  if (skipReasons.size > 0) {
+    const sorted = Array.from(skipReasons.entries()).sort((a, b) => b[1] - a[1]);
+    log.info(`Skip reasons: ${sorted.map(([r, n]) => `${r}=${n}`).join(', ')}`);
+  }
+  log.info(`Generating report...`);
 
   const report = generateReport({
     config,
@@ -315,6 +339,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     tradableMessages: tradableMessages.length,
     stats: { agentCallsUsed, deterministicTrades, agentTrades, skippedLowConfidence },
     startingEquity,
+    skipReasons,
   });
 
   // Backfill PnL on runDecisions from the trades table (safety net)
@@ -348,6 +373,7 @@ type Stats = {
   deterministicTrades: number;
   agentTrades: number;
   skippedLowConfidence: number;
+  skipReasons: Map<string, number>;
 };
 
 async function processMessage(
@@ -369,18 +395,82 @@ async function processMessage(
   runId?: string,
 ): Promise<void> {
   const decisionStart = Date.now();
+  const trackSkip = (reason: string) => {
+    // Normalize reasons into categories for aggregation
+    let category = reason;
+    if (reason.startsWith('risk blocked:')) category = 'risk blocked';
+    else if (reason.startsWith('Execution error:')) category = 'execution error';
+    else if (reason.startsWith('Agent error:')) category = 'agent error';
+    else if (reason.startsWith('No Databento data') || reason.includes('[MarketData]')) category = 'no market data';
+    else if (reason.startsWith('sizing returned 0')) category = 'sizing returned 0';
+    else if (reason.startsWith('limit order not filled')) category = 'limit order not filled';
+    else if (reason.startsWith('no open position')) category = 'no open position';
+    else if (reason.startsWith('invalid price')) category = 'invalid price';
+    stats.skipReasons.set(category, (stats.skipReasons.get(category) ?? 0) + 1);
+  };
 
   log.debug(
     `msg ${msg.id.slice(0, 8)} | ${msg.author} | ${msg.symbols.join(',')} | ` +
-    `action=${msg.actionHint ?? '?'} conf=${msg.confidence.toFixed(2)}`,
+    `action=${msg.actionHint ?? '?'} dir=${msg.directionHint ?? '?'} conf=${msg.confidence.toFixed(2)} ` +
+    `badges=[${msg.badges.join(',')}]`,
   );
+  if (msg.detectedStrategies.length > 0) {
+    const stratStr = msg.detectedStrategies.map(s =>
+      `${s.strategy}${s.strikes?.length ? ` strikes=${s.strikes.join('/')}` : ''}${s.expiry ? ` exp=${s.expiry}` : ''}`,
+    ).join('; ');
+    log.debug(`  strategies: ${stratStr}`);
+  }
+  log.debug(`  text: "${msg.cleanText.slice(0, 200)}${msg.cleanText.length > 200 ? '...' : ''}"`);
+  if (msg.actionHint === 'CLOSE' && msg.symbols.length > 0) {
+    const openForSymbol = tracker.getOpenBySymbol(msg.symbols[0]).filter(p => p.trader === msg.author);
+    if (openForSymbol.length > 0) {
+      log.debug(`  open positions for ${msg.symbols[0]}/${msg.author}: ${openForSymbol.map(p => `${p.id} ${p.direction} ${p.strategy} qty=${p.quantity} @$${p.entryPrice}`).join('; ')}`);
+    } else {
+      log.debug(`  no open positions for ${msg.symbols[0]}/${msg.author}`);
+    }
+  }
+
+  // Build rich message context for DB persistence
+  const messageContext: TaskContext = {
+    messageId: msg.id,
+    author: msg.author,
+    cleanText: msg.cleanText,
+    badges: msg.badges,
+    symbols: msg.symbols,
+    actionHint: msg.actionHint,
+    directionHint: msg.directionHint,
+    detectedStrategies: msg.detectedStrategies,
+    confidence: msg.confidence,
+  };
 
   // High confidence → deterministic
   if (executor.canHandle(msg)) {
     try {
       const result = await executor.execute(msg);
+
+      // Convert execution steps to AgentStep shape for persistence
+      const executionSteps: AgentStep[] = (result.steps ?? []).map(s => ({
+        tool: s.name,
+        input: s.input,
+        output: s.output,
+        reasoning: s.reasoning,
+        durationMs: s.durationMs,
+      }));
+
+      // Log execution steps in debug mode
+      if (result.steps && result.steps.length > 0) {
+        for (const step of result.steps) {
+          log.debug(`  [${step.name}] ${step.reasoning}${step.durationMs != null ? ` (${step.durationMs}ms)` : ''}`);
+        }
+      }
+
       if (result.action !== 'SKIP' && result.position) {
-        log.debug(`  → deterministic ${result.action} ${result.position.symbol} @ $${result.position.entryPrice}`);
+        const p = result.position;
+        const legsStr = p.legs.length > 0
+          ? ` legs=[${p.legs.map(l => `${l.action} ${l.type}${l.strike ? ' $' + l.strike : ''}${l.expiry ? ' ' + l.expiry : ''} @$${l.fillPrice}`).join(', ')}]`
+          : '';
+        const pnlStr = p.pnl != null ? ` PnL=$${p.pnl.toFixed(2)}` : '';
+        log.debug(`  → deterministic ${result.action} ${p.direction} ${p.strategy} ${p.symbol} qty=${p.quantity} @ $${p.entryPrice}${pnlStr}${legsStr}`);
         stats.deterministicTrades++;
 
         let tradeId: string | undefined;
@@ -389,6 +479,9 @@ async function processMessage(
             const ids = await persistTradeOpen(runId, result.position, {
               source: 'deterministic',
               taskType: 'EXECUTE_TRADE',
+              agentSteps: executionSteps,
+              agentResult: { decision: 'EXECUTE', reasoning: result.reason },
+              messageContext,
             });
             positionDbIds.set(result.position.id, ids);
             tradeId = ids.tradeId;
@@ -401,6 +494,9 @@ async function processMessage(
               const ids = await persistTradeOpen(runId, result.position, {
                 source: 'deterministic',
                 taskType: 'CLOSE_POSITION',
+                agentSteps: executionSteps,
+                agentResult: { decision: 'EXECUTE', reasoning: result.reason },
+                messageContext,
               });
               tradeId = ids.tradeId;
             }
@@ -410,13 +506,20 @@ async function processMessage(
             messageId: msg.id,
             path: 'deterministic',
             decision: 'EXECUTE',
-            reasoning: 'High confidence deterministic execution',
+            reasoning: result.reason,
             tradeId,
             durationMs: Date.now() - decisionStart,
           });
         }
       } else {
+        // Log execution steps even for skips
+        if (result.steps && result.steps.length > 0) {
+          for (const step of result.steps) {
+            log.debug(`  [${step.name}] ${step.reasoning}${step.durationMs != null ? ` (${step.durationMs}ms)` : ''}`);
+          }
+        }
         log.debug(`  → deterministic SKIP: ${result.reason ?? 'no reason'}`);
+        trackSkip(result.reason ?? 'no reason');
         if (runId) {
           await db.insert(schema.runDecisions).values({
             backtestRunId: runId,
@@ -430,7 +533,8 @@ async function processMessage(
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      log.warn(`Deterministic execution error for ${msg.symbols.join(',')}: ${errMsg}`);
+      log.warn(`Deterministic execution error for ${msg.symbols.join(',')} (action=${msg.actionHint}, strategies=${msg.detectedStrategies.map(s => s.strategy).join('/')}): ${errMsg}`);
+      trackSkip(`Execution error: ${errMsg}`);
       if (runId) {
         await db.insert(schema.runDecisions).values({
           backtestRunId: runId,
@@ -455,7 +559,7 @@ async function processMessage(
       );
       stats.agentCallsUsed++;
       if (agentResult) {
-        log.debug(`  → agent EXECUTE`);
+        log.debug(`  → agent EXECUTE: ${agentResult.reasoning}`);
         stats.agentTrades++;
         if (runId) {
           await db.insert(schema.runDecisions).values({
@@ -470,6 +574,7 @@ async function processMessage(
         }
       } else {
         log.debug(`  → agent SKIP`);
+        trackSkip('agent decided to skip');
         if (runId) {
           await db.insert(schema.runDecisions).values({
             backtestRunId: runId,
@@ -483,6 +588,7 @@ async function processMessage(
       }
     } catch (err) {
       log.error(`Agent error for message ${msg.id}:`, err);
+      trackSkip(`Agent error: ${err instanceof Error ? err.message : String(err)}`);
       if (runId) {
         await db.insert(schema.runDecisions).values({
           backtestRunId: runId,
@@ -495,8 +601,12 @@ async function processMessage(
       }
     }
   } else {
-    log.debug(`  → skipped (low confidence, agent ${config.useAgent ? 'budget exhausted' : 'disabled'})`);
+    const reason = config.useAgent
+      ? `agent budget exhausted (${stats.agentCallsUsed}/${config.maxAgentCalls ?? '∞'} calls used)`
+      : `low confidence (${msg.confidence.toFixed(2)} < 0.70), agent disabled`;
+    log.debug(`  → skipped (${reason})`);
     stats.skippedLowConfidence++;
+    trackSkip(reason);
     if (runId) {
       await db.insert(schema.runDecisions).values({
         backtestRunId: runId,
@@ -527,32 +637,8 @@ async function runAgentForBacktest(
   startingEquity: number,
   runId?: string,
 ): Promise<{ tradeId?: string; reasoning: string } | null> {
-  // Prefetch Databento data if available
-  if (priceProvider instanceof DatabentoMarketDataProvider) {
-    await priceProvider.prefetch(msg.symbols, msg.timestamp);
-  } else {
-    // MessagePriceProvider fallback: seed from detectedStrategies + regex on cleanText
-    for (let i = 0; i < msg.detectedStrategies.length; i++) {
-      const strat = msg.detectedStrategies[i];
-      const sym = msg.symbols[i];
-      if (sym && strat.price) {
-        priceProvider.setPrice(sym, strat.price, msg.timestamp);
-      }
-    }
-    // Fallback: try to extract a price from the message text for the first symbol
-    if (msg.symbols[0] && !msg.detectedStrategies[0]?.price) {
-      const priceMatch = msg.cleanText.match(/\b(\d+(?:\.\d{1,2})?)\b/);
-      if (priceMatch) {
-        const price = safeParseFloat(priceMatch[1]);
-        if (price > 0.5 && price < 100_000) {
-          priceProvider.setPrice(msg.symbols[0], price, msg.timestamp);
-        }
-      }
-    }
-  }
-
-  // Seed option prices from detectedStrategies (Databento DBEQ.BASIC has no options data)
-  seedOptionPrices(priceProvider, msg.detectedStrategies, msg.symbols, msg.timestamp);
+  // Prefetch Databento data for the symbols in this message
+  await priceProvider.prefetch(msg.symbols, msg.timestamp);
 
   // Build injected tools using sim broker
   const simTools = createTools({
@@ -653,6 +739,7 @@ async function runAgentForBacktest(
           agentResult: { decision: result.decision, reasoning: result.reasoning },
           modelProvider: model.provider,
           modelName: model.model,
+          messageContext: taskContext,
         });
         positionDbIds.set(position.id, ids);
         tradeId = ids.tradeId;

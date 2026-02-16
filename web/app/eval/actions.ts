@@ -27,6 +27,9 @@ export async function saveLabel(formData: FormData) {
       strikes,
       quantity: (formData.get('quantity') as string) || null,
       expiry: (formData.get('expiry') as string) || null,
+      exitPercent: formData.has('exitPercent')
+        ? parseFloat(formData.get('exitPercent') as string) || null
+        : undefined,
       notes: (formData.get('notes') as string) || null,
       reviewed: true,
       updatedAt: new Date().toISOString(),

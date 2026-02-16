@@ -72,6 +72,30 @@ export function AgentDecisions({ rows, backtestRunId }: { rows: DecisionRow[]; b
       message: r.message.cleanText.slice(0, 60),
     }));
 
+  // Aggregate skip reasons from reasoning strings
+  const skipReasonCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      if (r.decision.decision !== 'SKIP' || !r.decision.reasoning) continue;
+      const reason = r.decision.reasoning;
+      let category = reason;
+      if (reason.startsWith('risk blocked:') || reason.includes('notional exposure')) category = 'risk blocked';
+      else if (reason.startsWith('Execution error:') || reason.includes('No Databento data') || reason.includes('No price seeded')) category = 'no market data';
+      else if (reason.includes('no open position')) category = 'no open position';
+      else if (reason.includes('sizing returned 0')) category = 'sizing returned 0';
+      else if (reason.includes('limit order not filled')) category = 'limit not filled';
+      else if (reason.includes('Low confidence') || reason.includes('agent disabled')) category = 'low confidence';
+      else if (reason.includes('Agent budget')) category = 'agent budget';
+      else if (reason.includes('no price') || reason.includes('no symbol') || reason.includes('no detected strategy')) category = 'missing data';
+      else if (reason.includes('Agent error')) category = 'agent error';
+      else if (reason.includes('Agent decided to skip')) category = 'agent skip';
+      else if (reason.includes('paper trade')) category = 'paper trade';
+      else if (reason.includes('no badges')) category = 'no badges';
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [rows]);
+
   return (
     <div className="space-y-4">
       {/* Summary */}
@@ -82,6 +106,18 @@ export function AgentDecisions({ rows, backtestRunId }: { rows: DecisionRow[]; b
         <span className="text-muted-foreground">|</span>
         <span className="text-muted-foreground">{rows.length} total decisions</span>
       </div>
+
+      {/* Skip reason breakdown */}
+      {skipReasonCounts.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">Skip reasons:</span>
+          {skipReasonCounts.map(([reason, count]) => (
+            <Badge key={reason} variant="outline" className="text-xs font-normal text-zinc-400 border-zinc-700">
+              {reason} ({count})
+            </Badge>
+          ))}
+        </div>
+      )}
 
       {/* Scatter chart */}
       {scatterData.length > 0 && (

@@ -14,10 +14,11 @@ export type GenerateReportParams = {
     skippedLowConfidence: number;
   };
   startingEquity?: number;
+  skipReasons?: Map<string, number>;
 };
 
 export function generateReport(params: GenerateReportParams): BacktestReport {
-  const { config, tracker, totalMessages, tradableMessages, stats, startingEquity = 100_000 } = params;
+  const { config, tracker, totalMessages, tradableMessages, stats, startingEquity = 100_000, skipReasons } = params;
   const closed = tracker.getClosed();
   const open = tracker.getOpen();
   const all = tracker.getAll();
@@ -140,6 +141,7 @@ export function generateReport(params: GenerateReportParams): BacktestReport {
     byTrader,
     byStrategy,
     equityCurve,
+    skipReasons: skipReasons ? Object.fromEntries(skipReasons) : undefined,
   };
 }
 
@@ -432,9 +434,22 @@ export function printReport(report: BacktestReport): void {
 
   console.log('  EXECUTION');
   console.log('  ' + '-'.repeat(40));
+  console.log(`  Deterministic:       ${s.deterministicTrades}`);
   console.log(`  Agent trades:        ${s.agentTrades}`);
   console.log(`  Agent calls:         ${s.agentCallsUsed}`);
   console.log('');
+
+  if (report.skipReasons && Object.keys(report.skipReasons).length > 0) {
+    const totalSkipped = Object.values(report.skipReasons).reduce((a, b) => a + b, 0);
+    console.log(`  SKIP REASONS (${totalSkipped} skipped)`);
+    console.log('  ' + '-'.repeat(40));
+    const sorted = Object.entries(report.skipReasons).sort((a, b) => b[1] - a[1]);
+    for (const [reason, count] of sorted) {
+      const pct = ((count / totalSkipped) * 100).toFixed(0);
+      console.log(`  ${reason.padEnd(32)} ${String(count).padStart(4)}  (${pct.padStart(2)}%)`);
+    }
+    console.log('');
+  }
 
   if (Object.keys(report.byTrader).length > 0) {
     console.log('  BY TRADER');

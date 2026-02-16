@@ -24,7 +24,7 @@ export default async function NewBacktestPage({
   }
 
   return (
-    <div className="space-y-4 max-w-2xl">
+    <div className="space-y-4 max-w-2xl mx-auto">
       <div className="flex items-center gap-3">
         <Link href="/backtests" className="text-sm text-muted-foreground hover:text-foreground">
           &larr; Backtests

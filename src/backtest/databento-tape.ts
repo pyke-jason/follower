@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
-import { zCoercePrice } from '../lib/zod-financial.js';
+import { zCoercePrice, formatZodError } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('QuoteTape');
@@ -332,7 +332,6 @@ export async function loadQuoteTapeForDay(params: {
   let bytesRead = 0;
   let records = 0;
   let jsonErr = 0;
-  let zodErr = 0;
   let noQuote = 0;
   let outsideMktHrs = 0;
   const reader = Readable.from(res.body as any);
@@ -355,9 +354,10 @@ export async function loadQuoteTapeForDay(params: {
     records++;
     const recordResult = DatabentoRecord.safeParse(raw);
     if (!recordResult.success) {
-      zodErr++;
-      log.debug(`zod validation failed: ${recordResult.error.issues.map(i => i.message).join('; ')}`);
-      continue;
+      throw new Error(
+        `[QuoteTape] Schema mismatch on record ${records} for ${uncachedSymbols.join(',')} on ${params.day}: ` +
+        `${formatZodError(recordResult.error)}\n  Record: ${JSON.stringify(raw).slice(0, 500)}`
+      );
     }
     const record = recordResult.data;
 
@@ -386,7 +386,6 @@ export async function loadQuoteTapeForDay(params: {
     `records=${records}`,
   ];
   if (jsonErr) parts.push(`jsonErr=${jsonErr}`);
-  if (zodErr) parts.push(`zodErr=${zodErr}`);
   if (noQuote) parts.push(`noQuote=${noQuote}`);
   if (outsideMktHrs) parts.push(`outsideMktHrs=${outsideMktHrs}`);
   parts.push(`ticks=${totalTicks}`);
@@ -395,14 +394,6 @@ export async function loadQuoteTapeForDay(params: {
   if (requestId) parts.push(`req=${requestId}`);
   parts.push(`dur=${durMs}ms`);
   log.info(parts.join(' '));
-
-  // Fail-fast: if API returned records but every one failed zod validation, it's a schema mismatch
-  if (records > 0 && totalTicks === 0 && zodErr > 0) {
-    throw new Error(
-      `[QuoteTape] Fatal: ${zodErr}/${records} records failed zod validation for ${uncachedSymbols.join(',')} on ${params.day}. ` +
-      `This indicates a schema mismatch with the Databento API response.`
-    );
-  }
 
   // Populate fetch metadata per symbol for downstream error enrichment
   for (const sym of uncachedSymbols) {
@@ -416,11 +407,19 @@ export async function loadQuoteTapeForDay(params: {
     });
   }
 
-  // Cache each symbol's day data
+  // Cache each symbol's day data (skip caching empty results on weekdays — likely a transient API issue)
+  const dayDate = new Date(params.day + 'T12:00:00Z');
+  const dayOfWeek = dayDate.getUTCDay(); // 0=Sun, 6=Sat
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+
   for (const [symbol, ticks] of ticksBySymbol) {
     ticks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const cachePath = getDayCachePath({ dataset: params.dataset, schema: resolvedSchema, symbol, day: params.day });
-    await writeCache(cachePath, ticks);
+    if (ticks.length === 0 && isWeekday) {
+      log.warn(`Skipping cache write for ${symbol} on ${params.day} (weekday with 0 ticks — possible transient API issue)`);
+    } else {
+      await writeCache(cachePath, ticks);
+    }
     allTicks.push(...ticks);
   }
 

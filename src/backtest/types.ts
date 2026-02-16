@@ -109,6 +109,7 @@ export type BacktestReport = {
   byTrader: Record<string, TraderStats>;
   byStrategy: Record<string, StrategyStats>;
   equityCurve: EquityPoint[];
+  skipReasons?: Record<string, number>;
 };
 
 export type TraderStats = {
@@ -143,9 +144,18 @@ export interface RiskService {
   check(input: { symbol: string; strategy: string; trader: string }): Promise<{ allowed: boolean; reason?: string }>;
 }
 
+export type ExecutionStep = {
+  name: string;
+  input?: unknown;
+  output?: unknown;
+  reasoning: string;
+  durationMs?: number;
+};
+
 export type ExecutionResult = {
   action: 'OPEN' | 'CLOSE' | 'SKIP';
   position?: SimPosition;
   reason: string;
   usedAgent: boolean;
+  steps?: ExecutionStep[];
 };

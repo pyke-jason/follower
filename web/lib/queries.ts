@@ -91,6 +91,50 @@ export async function getTradeSteps(taskId: string) {
     .orderBy(schema.taskSteps.stepNumber);
 }
 
+export async function getTradeByTaskId(taskId: string) {
+  const [trade] = await db
+    .select()
+    .from(schema.trades)
+    .where(eq(schema.trades.taskId, taskId));
+  return trade ?? null;
+}
+
+export async function getRunDecisionForTask(messageId: string, backtestRunId: string) {
+  const [decision] = await db
+    .select()
+    .from(schema.runDecisions)
+    .where(
+      and(
+        eq(schema.runDecisions.messageId, messageId),
+        eq(schema.runDecisions.backtestRunId, backtestRunId),
+      )
+    );
+  return decision ?? null;
+}
+
+export async function getNearbyMessages(
+  author: string,
+  timestamp: string,
+  windowMinutes = 60,
+) {
+  const center = new Date(timestamp);
+  const start = new Date(center.getTime() - windowMinutes * 60 * 1000).toISOString();
+  const end = new Date(center.getTime() + windowMinutes * 60 * 1000).toISOString();
+
+  return db
+    .select()
+    .from(schema.messages)
+    .where(
+      and(
+        eq(schema.messages.author, author),
+        gte(schema.messages.timestamp, start),
+        lte(schema.messages.timestamp, end),
+      )
+    )
+    .orderBy(asc(schema.messages.timestamp))
+    .limit(50);
+}
+
 export async function getMessages(opts: {
   author?: string;
   authors?: string[];
@@ -450,6 +494,7 @@ export async function getBacktestRunBrief(id: string) {
     id: run.id,
     name: run.name,
     status: run.status,
+    traders: config.traders ?? [],
     startDate: config.startDate?.split('T')[0] ?? '',
     endDate: config.endDate?.split('T')[0] ?? '',
     agentModel: config.agentModel ?? 'default',

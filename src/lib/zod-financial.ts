@@ -1,4 +1,17 @@
 import { z } from 'zod';
+import type { ZodError } from 'zod';
+
+/** Format a ZodError into a compact human-readable string with field paths.
+ *  e.g. "hd.ts_event: expected string, received null; bid_px_00: expected number, received undefined" */
+export function formatZodError(err: ZodError): string {
+  return err.issues.map(i => {
+    const path = i.path.length > 0 ? i.path.join('.') : '(root)';
+    const detail = 'expected' in i
+      ? `expected ${(i as any).expected}, received ${(i as any).received}`
+      : i.message;
+    return `${path}: ${detail}`;
+  }).join('; ');
+}
 
 /** Entry prices, option strikes — must be positive finite. */
 export const zPrice = z.number().finite().positive();

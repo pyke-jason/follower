@@ -1,15 +1,13 @@
-import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js';
+import type { Quote, OptionsChain, Bar } from '../broker/types.js';
 import { loadQuoteTapeForDay, toDateKey, getFetchMeta } from './databento-tape.js';
 import type { QuoteTick } from './databento-tape.js';
+import { isOccOptionSymbol } from './occ-symbology.js';
 import { createLogger } from '../lib/logger.js';
-import { safeParseFloat } from '../lib/numbers.js';
 
 const log = createLogger('MarketData');
 
 /**
  * MarketDataProvider: Abstraction for getting price data at a point in time.
- * The MessagePriceProvider implementation extracts prices from the message text.
- * A Databento adapter would implement this same interface with real historical data.
  */
 export interface MarketDataProvider {
   getQuote(symbol: string, at: Date): Promise<Quote>;
@@ -17,134 +15,13 @@ export interface MarketDataProvider {
   getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]>;
 }
 
-/** Extended interface that both MessagePriceProvider and DatabentoMarketDataProvider implement. */
+/** Backtest price provider backed by real market data. */
 export interface BacktestPriceProvider extends MarketDataProvider {
   getPriceSnapshot(symbols: string[]): Record<string, number>;
-  setOptionPrice(key: string, price: number, at: Date): void;
-  setPrice(symbol: string, price: number, at: Date, spreadPct?: number): void;
   /** Return ticks for a symbol between two timestamps (inclusive). Used by SimBroker.advanceTo(). */
   getTicksInRange(symbol: string, from: Date, to: Date): Promise<QuoteTick[]>;
-  /** Check if a real (non-message-seeded) quote exists for this symbol around this time. */
-  hasQuote(symbol: string, at: Date): boolean;
-}
-
-/**
- * MessagePriceProvider: Extracts prices from message text.
- * When a trade message says "Long CSCO 73.41", we use 73.41 as the price.
- * Creates synthetic bid/ask around the stated price with configurable spread width.
- */
-export class MessagePriceProvider implements BacktestPriceProvider {
-  // Cache of prices set by the backtest runner from each message
-  private priceCache = new Map<string, { price: number; timestamp: Date; spreadPct?: number }>();
-
-  /** Called by the runner before processing each message to seed price data.
-   *  spreadPct controls the synthetic bid-ask width (e.g. 0.10 = 10% of price). */
-  setPrice(symbol: string, price: number, at: Date, spreadPct?: number): void {
-    this.priceCache.set(symbol, { price, timestamp: at, spreadPct });
-  }
-
-  /** Set option price for a specific strike */
-  setOptionPrice(key: string, price: number, at: Date): void {
-    this.priceCache.set(key, { price, timestamp: at });
-  }
-
-  getPriceSnapshot(symbols: string[]): Record<string, number> {
-    const result: Record<string, number> = {};
-    for (const sym of symbols) {
-      const cached = this.priceCache.get(sym);
-      if (cached) result[sym] = cached.price;
-    }
-    return result;
-  }
-
-  async getQuote(symbol: string, at: Date): Promise<Quote> {
-    const cached = this.priceCache.get(symbol);
-    if (!cached) {
-      throw new Error(`[MarketData] No price seeded for symbol "${symbol}" at ${at.toISOString()}. Call setPrice() before getQuote().`);
-    }
-    const price = cached.price;
-    const spreadPct = cached.spreadPct ?? 0.001; // default 0.1% for stocks
-    const spread = price * spreadPct;
-
-    return {
-      symbol,
-      bid: price - spread / 2,
-      ask: price + spread / 2,
-      last: price,
-      volume: 1_000_000,
-      timestamp: at.toISOString(),
-    };
-  }
-
-  async getOptionsChain(
-    symbol: string,
-    expiry: string,
-    optionType: 'CALL' | 'PUT',
-    at: Date,
-  ): Promise<OptionsChain> {
-    // Generate synthetic strikes around any known price
-    const cachedKeys = Array.from(this.priceCache.entries())
-      .filter(([k]) => k.startsWith(`${symbol}:${optionType}:`));
-
-    const strikes: OptionsStrike[] = cachedKeys.map(([key, { price }]) => {
-      const strike = safeParseFloat(key.split(':')[2]);
-      const spread = price * 0.10; // 10% spread for options
-      return {
-        strike,
-        bid: Math.max(0, price - spread / 2),
-        ask: price + spread / 2,
-        last: price,
-        iv: 0.3,
-        delta: optionType === 'CALL' ? 0.5 : -0.5,
-        gamma: 0.02,
-        theta: -0.05,
-        openInterest: 1000,
-      };
-    });
-
-    // If no cached option data, return empty chain
-    return {
-      symbol,
-      expiry,
-      optionType,
-      strikes,
-    };
-  }
-
-  /** MessagePriceProvider never has real quotes — only seeded from message text. */
-  hasQuote(_symbol: string, _at: Date): boolean {
-    return false;
-  }
-
-  async getTicksInRange(_symbol: string, _from: Date, _to: Date): Promise<QuoteTick[]> {
-    return [];
-  }
-
-  async getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]> {
-    const cached = this.priceCache.get(symbol);
-    if (!cached) {
-      throw new Error(`[MarketData] No price seeded for symbol "${symbol}" at ${at.toISOString()}. Call setPrice() before getBars().`);
-    }
-    const price = cached.price;
-
-    // Generate synthetic daily bars with small random-ish variation around the price
-    const bars: Bar[] = [];
-    for (let i = barsBack; i >= 0; i--) {
-      const date = new Date(at);
-      date.setDate(date.getDate() - i);
-      // Synthesize small variation (~1-2% of price) for ATR computation
-      const variation = price * 0.015;
-      bars.push({
-        timestamp: date.toISOString(),
-        open: price - variation * 0.3,
-        high: price + variation,
-        low: price - variation,
-        close: price + variation * 0.2,
-        volume: 1_000_000,
-      });
-    }
-    return bars;
-  }
+  /** Prefetch data for multiple symbols at a point in time. */
+  prefetch(symbols: string[], at: Date): Promise<void>;
 }
 
 /**
@@ -157,12 +34,12 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   private dayTicks = new Map<string, QuoteTick[]>();
   /** symbol -> most recent mid price (for getPriceSnapshot) */
   private latestQuotes = new Map<string, number>();
-  /** "SYM:CALL:150" -> option premium (seeded from message) */
-  private optionCache = new Map<string, { price: number; timestamp: Date }>();
 
   constructor(
     private apiKey: string,
     private dataset: string = 'DBEQ.BASIC',
+    private refreshCache: boolean = false,
+    private optionsDataset: string = 'OPRA.PILLAR',
   ) {}
 
   /**
@@ -174,26 +51,37 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const uncached = symbols.filter((s) => !this.dayTicks.has(`${s}:${day}`));
 
     if (uncached.length > 0) {
-      log.debug(`Prefetching ${uncached.join(',')} for ${day}`);
-      const ticks = await loadQuoteTapeForDay({
-        apiKey: this.apiKey,
-        dataset: this.dataset,
-        symbols: uncached,
-        day,
-      });
+      // Partition into equities vs options for separate dataset calls
+      const equitySyms = uncached.filter((s) => !isOccOptionSymbol(s));
+      const optionSyms = uncached.filter((s) => isOccOptionSymbol(s));
 
-      // Group ticks by symbol and store
-      const bySymbol = new Map<string, QuoteTick[]>();
-      for (const sym of uncached) bySymbol.set(sym, []);
-      for (const tick of ticks) {
-        let bucket = bySymbol.get(tick.symbol);
-        if (!bucket) { bucket = []; bySymbol.set(tick.symbol, bucket); }
-        bucket.push(tick);
-      }
-      for (const [sym, symTicks] of bySymbol) {
-        symTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-        this.dayTicks.set(`${sym}:${day}`, symTicks);
-      }
+      const fetchBatch = async (syms: string[], dataset: string) => {
+        log.debug(`Prefetching ${syms.join(',')} for ${day} (${dataset})`);
+        const ticks = await loadQuoteTapeForDay({
+          apiKey: this.apiKey,
+          dataset,
+          symbols: syms,
+          day,
+          refreshCache: this.refreshCache,
+        });
+
+        const bySymbol = new Map<string, QuoteTick[]>();
+        for (const sym of syms) bySymbol.set(sym, []);
+        for (const tick of ticks) {
+          let bucket = bySymbol.get(tick.symbol);
+          if (!bucket) { bucket = []; bySymbol.set(tick.symbol, bucket); }
+          bucket.push(tick);
+        }
+        for (const [sym, symTicks] of bySymbol) {
+          symTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+          this.dayTicks.set(`${sym}:${day}`, symTicks);
+        }
+      };
+
+      const fetches: Promise<void>[] = [];
+      if (equitySyms.length > 0) fetches.push(fetchBatch(equitySyms, this.dataset));
+      if (optionSyms.length > 0) fetches.push(fetchBatch(optionSyms, this.optionsDataset));
+      await Promise.all(fetches);
     }
 
     // Update latestQuotes for each symbol using last tick at or before `at`
@@ -205,23 +93,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         this.latestQuotes.set(sym, (tick.bid + tick.ask) / 2);
       }
     }
-  }
-
-  /** No-op — prices come from Databento. Kept for BacktestPriceProvider compatibility. */
-  setPrice(_symbol: string, _price: number, _at: Date, _spreadPct?: number): void {
-    // no-op
-  }
-
-  /** Store option price from message text. DBEQ.BASIC has no options data. */
-  setOptionPrice(key: string, price: number, at: Date): void {
-    this.optionCache.set(key, { price, timestamp: at });
-  }
-
-  /** Check if Databento ticks are loaded for this symbol on the given day. */
-  hasQuote(symbol: string, at: Date): boolean {
-    const day = toDateKey(at);
-    const ticks = this.dayTicks.get(`${symbol}:${day}`);
-    return ticks != null && ticks.length > 0;
   }
 
   /** Return latest known mid prices from prefetch/getQuote calls. */
@@ -258,7 +129,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       bid: tick.bid,
       ask: tick.ask,
       last: mid,
-      volume: 1_000_000,
+      volume: 0, // tick-level volume not available from quote data
       timestamp: tick.timestamp.toISOString(),
     };
   }
@@ -321,32 +192,13 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   }
 
   async getOptionsChain(
-    symbol: string,
-    expiry: string,
-    optionType: 'CALL' | 'PUT',
+    _symbol: string,
+    _expiry: string,
+    _optionType: 'CALL' | 'PUT',
     _at: Date,
   ): Promise<OptionsChain> {
-    // Options data comes from seeded optionCache (DBEQ.BASIC has no options)
-    const cachedKeys = Array.from(this.optionCache.entries())
-      .filter(([k]) => k.startsWith(`${symbol}:${optionType}:`));
-
-    const strikes: OptionsStrike[] = cachedKeys.map(([key, { price }]) => {
-      const strike = safeParseFloat(key.split(':')[2]);
-      const spread = price * 0.10; // 10% spread for options
-      return {
-        strike,
-        bid: Math.max(0, price - spread / 2),
-        ask: price + spread / 2,
-        last: price,
-        iv: 0.3,
-        delta: optionType === 'CALL' ? 0.5 : -0.5,
-        gamma: 0.02,
-        theta: -0.05,
-        openInterest: 1000,
-      };
-    });
-
-    return { symbol, expiry, optionType, strikes };
+    // No real options data available yet (need OPRA feed)
+    throw new Error('[MarketData] Options chain data not available — requires OPRA data feed');
   }
 
   async getTicksInRange(symbol: string, from: Date, to: Date): Promise<QuoteTick[]> {
@@ -380,11 +232,13 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const cached = this.dayTicks.get(key);
     if (cached) return cached;
 
+    const dataset = isOccOptionSymbol(symbol) ? this.optionsDataset : this.dataset;
     const ticks = await loadQuoteTapeForDay({
       apiKey: this.apiKey,
-      dataset: this.dataset,
+      dataset,
       symbols: [symbol],
       day,
+      refreshCache: this.refreshCache,
     });
 
     // Filter to this symbol (loadQuoteTapeForDay may return only this symbol, but be safe)
@@ -420,5 +274,29 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     }
 
     return result;
+  }
+
+  /** Log per-symbol data quality summary. Call after backtest loop completes. */
+  printDataSummary(): void {
+    // Group dayTicks by symbol
+    const bySymbol = new Map<string, { days: number; emptyDays: number; totalTicks: number }>();
+
+    for (const [key, ticks] of this.dayTicks) {
+      const symbol = key.split(':')[0];
+      let entry = bySymbol.get(symbol);
+      if (!entry) { entry = { days: 0, emptyDays: 0, totalTicks: 0 }; bySymbol.set(symbol, entry); }
+      entry.days++;
+      entry.totalTicks += ticks.length;
+      if (ticks.length === 0) entry.emptyDays++;
+    }
+
+    if (bySymbol.size === 0) return;
+
+    log.info('QuoteTape Data Summary:');
+    const sorted = [...bySymbol.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    for (const [symbol, { days, emptyDays, totalTicks }] of sorted) {
+      const status = emptyDays === days ? '!! ALL EMPTY' : emptyDays > 0 ? `! ${emptyDays} empty` : 'ok';
+      log.info(`  ${symbol.padEnd(8)} ${totalTicks.toLocaleString().padStart(8)} ticks across ${days - emptyDays}/${days} days  ${status}`);
+    }
   }
 }

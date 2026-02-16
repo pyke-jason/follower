@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ChevronRight } from 'lucide-react';
+import { CopyButton } from '../../components/copy-button';
 
 export function LogViewer({
   runId,
@@ -17,6 +18,8 @@ export function LogViewer({
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const preRef = useRef<HTMLPreElement>(null);
   const wasAtBottom = useRef(true);
+
+  const getLogs = useCallback(() => logs, [logs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +73,7 @@ export function LogViewer({
         <ChevronRight
           className={`size-4 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`}
         />
-        <CardTitle className="text-sm">
+        <CardTitle className="text-sm flex-1">
           Process Logs
           {collapsed && (
             <span className="ml-2 text-muted-foreground font-normal">
@@ -78,6 +81,7 @@ export function LogViewer({
             </span>
           )}
         </CardTitle>
+        <CopyButton getText={getLogs} className="ml-auto" />
       </CardHeader>
       {!collapsed && (
         <CardContent className="p-0">

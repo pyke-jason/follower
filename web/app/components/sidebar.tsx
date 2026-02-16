@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Users,
@@ -27,6 +27,7 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar';
 import { isRunScopedPath } from '@/lib/run-scope';
+import { useRunScope } from './run-scope-provider';
 
 const navLinks = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
@@ -42,8 +43,7 @@ const navLinks = [
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const runId = searchParams.get('run');
+  const { runId } = useRunScope();
 
   function buildHref(path: string): string {
     if (!runId || !isRunScopedPath(path)) return path;

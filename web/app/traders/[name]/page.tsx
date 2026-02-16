@@ -56,7 +56,7 @@ export default async function TraderDetailPage({
   ];
 
   return (
-    <div className="space-y-6 max-w-5xl animate-in-up">
+    <div className="space-y-6 animate-in-up">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link href="/traders" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -80,39 +80,44 @@ export default async function TraderDetailPage({
       {/* Metrics */}
       {summary.totalTrades > 0 && <MetricStrip metrics={metrics} />}
 
-      {/* Equity Curve */}
-      {equityData.length > 1 && (
-        <Card className="py-0 gap-0 overflow-hidden">
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Cumulative P&L
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0 pb-1">
-            <OverviewEquityCurve data={equityData} />
-          </CardContent>
-        </Card>
-      )}
+      {/* Charts Grid */}
+      {(equityData.length > 1 || strategyChartData.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6">
+          {/* Equity Curve */}
+          {equityData.length > 1 && (
+            <Card className="py-0 gap-0 overflow-hidden">
+              <CardHeader className="py-3 px-4">
+                <CardTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  Cumulative P&L
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0 pb-1">
+                <OverviewEquityCurve data={equityData} />
+              </CardContent>
+            </Card>
+          )}
 
-      {/* Strategy Breakdown */}
-      {strategyChartData.length > 0 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">P&L by Strategy</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <BarChartComponent
-              data={strategyChartData}
-              xKey="name"
-              yKey="pnl"
-              layout="vertical"
-              colorByValue
-              height={Math.max(150, strategyChartData.length * 40)}
-              formatY={(v: number) => formatCurrency(v)}
-              tooltipFormatter={(value: number) => [formatCurrency(value), 'P&L']}
-            />
-          </CardContent>
-        </Card>
+          {/* Strategy Breakdown */}
+          {strategyChartData.length > 0 && (
+            <Card className="py-0 gap-0">
+              <CardHeader className="border-b py-3 px-4">
+                <CardTitle className="text-sm">P&L by Strategy</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-2 px-2">
+                <BarChartComponent
+                  data={strategyChartData}
+                  xKey="name"
+                  yKey="pnl"
+                  layout="vertical"
+                  colorByValue
+                  height={Math.max(150, strategyChartData.length * 40)}
+                  formatY={(v: number) => formatCurrency(v)}
+                  tooltipFormatter={(value: number) => [formatCurrency(value), 'P&L']}
+                />
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
 
       {/* Recent Trades */}

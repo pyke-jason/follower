@@ -1,66 +1,21 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams, usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { RunScopeSelector } from './run-scope-selector';
 import { SignalSheet } from './signal-sheet';
-import { Radio, TrendingUp, TrendingDown } from 'lucide-react';
-
-interface StatusData {
-  openTrades: number;
-  todayPnl: number;
-  pendingTasks: number;
-  tradingBlocked?: boolean;
-  unresolvedAlertCount?: number;
-  runBrief?: {
-    id: string;
-    name: string | null;
-    status: string;
-    startDate: string;
-    endDate: string;
-    agentModel: string;
-    totalPnl: number;
-    winRate: number;
-    totalTrades: number;
-  };
-}
+import { TrendingUp, TrendingDown } from 'lucide-react';
+import { useRunScope } from './run-scope-provider';
 
 export function TopBar() {
-  const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const router = useRouter();
-  const runId = searchParams.get('run');
-
-  const [status, setStatus] = useState<StatusData | null>(null);
-
-  const fetchStatus = useCallback(() => {
-    const url = runId ? `/api/status?run=${runId}` : '/api/status';
-    fetch(url)
-      .then((r) => r.json())
-      .then(setStatus)
-      .catch(() => {});
-  }, [runId]);
-
-  useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 5_000);
-    const onFocus = () => fetchStatus();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [fetchStatus]);
+  const { runId, runBrief: brief, status, selectRun } = useRunScope();
 
   const pnl = status?.todayPnl ?? 0;
   const pnlSign = pnl >= 0 ? '+' : '';
   const pnlColor = pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-muted-foreground';
   const PnlIcon = pnl >= 0 ? TrendingUp : TrendingDown;
 
-  const brief = status?.runBrief;
   const showLiveAlert = !runId && (status?.tradingBlocked || (status?.unresolvedAlertCount ?? 0) > 0);
 
   const formatDateRange = (start: string, end: string) => {
@@ -69,10 +24,6 @@ export function TopBar() {
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     };
     return `${fmt(start)}\u2013${fmt(end)}`;
-  };
-
-  const handleExitScope = () => {
-    router.push(pathname);
   };
 
   const fmtCurrency = (v: number) =>
@@ -187,7 +138,7 @@ export function TopBar() {
           <div className="flex-1" />
 
           <button
-            onClick={handleExitScope}
+            onClick={() => selectRun(null)}
             className="text-muted-foreground hover:text-foreground whitespace-nowrap"
           >
             &times; Exit Scope

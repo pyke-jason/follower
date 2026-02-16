@@ -220,67 +220,8 @@ export default async function BacktestDetailPage({
     </p>
   );
 
-  // --- Status-aware content sections ---
-  const errorCard = run.error ? (
-    <Card className="py-4 gap-2 border-red-800 bg-red-950">
-      <CardHeader className="py-0">
-        <CardTitle className="text-sm text-red-400">Error</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono">
-          {run.error}
-        </pre>
-      </CardContent>
-    </Card>
-  ) : null;
-
-  const tabs = hasTabData ? (
-    <BacktestTabs
-      performance={performanceContent}
-      decisions={decisionsContent}
-      trades={tradesContent}
-      hasDecisions={decisions.length > 0}
-    />
-  ) : null;
-
-  function renderBody() {
-    switch (run.status) {
-      case 'COMPLETED':
-        return (
-          <>
-            {tabs}
-            <LogViewer runId={id} isRunning={false} defaultCollapsed />
-          </>
-        );
-
-      case 'FAILED':
-        return (
-          <>
-            {errorCard}
-            <LogViewer runId={id} isRunning={false} />
-          </>
-        );
-
-      case 'CANCELLED':
-        return (
-          <>
-            {errorCard}
-            {tabs}
-            <LogViewer runId={id} isRunning={false} defaultCollapsed />
-          </>
-        );
-
-      // RUNNING / PENDING
-      default:
-        return (
-          <>
-            <RunProgress runId={id} totalMessages={summary?.totalMessages} />
-            <LogViewer runId={id} isRunning={isRunning} />
-            {tabs}
-          </>
-        );
-    }
-  }
+  // Consistent layout: same order regardless of state.
+  // Sections show/hide but never move position.
 
   // Build MetricStrip for top-level summary
   const topMetrics: Metric[] = summary ? [
@@ -292,7 +233,7 @@ export default async function BacktestDetailPage({
   ] : [];
 
   return (
-    <div className="space-y-6 max-w-6xl animate-in-up">
+    <div className="space-y-6 animate-in-up">
       {isRunning && <AutoRefresh intervalMs={3000} />}
 
       {/* Header with action toolbar */}
@@ -310,37 +251,34 @@ export default async function BacktestDetailPage({
               <Copy className="size-3" /> Clone &amp; Edit
             </Link>
           </Button>
-          {(run.status === 'COMPLETED' || run.status === 'RUNNING' || run.status === 'CANCELLED') && (
+          <Separator orientation="vertical" className="!h-4 mx-1" />
+          <Button variant="ghost" size="xs" asChild>
+            <Link href={`/?run=${run.id}`}>
+              <LayoutDashboard className="size-3" /> Dashboard
+            </Link>
+          </Button>
+          <Button variant="ghost" size="xs" asChild>
+            <Link href={`/trades?run=${run.id}`}>
+              <TrendingUp className="size-3" /> Trades
+            </Link>
+          </Button>
+          <Button variant="ghost" size="xs" asChild>
+            <Link href={`/tasks?run=${run.id}`}>
+              <ListTodo className="size-3" /> Tasks
+            </Link>
+          </Button>
+          {isRunning && (
             <>
               <Separator orientation="vertical" className="!h-4 mx-1" />
-              <Button variant="ghost" size="xs" asChild>
-                <Link href={`/?run=${run.id}`}>
-                  <LayoutDashboard className="size-3" /> Dashboard
-                </Link>
-              </Button>
-              <Button variant="ghost" size="xs" asChild>
-                <Link href={`/trades?run=${run.id}`}>
-                  <TrendingUp className="size-3" /> Trades
-                </Link>
-              </Button>
-              <Button variant="ghost" size="xs" asChild>
-                <Link href={`/tasks?run=${run.id}`}>
-                  <ListTodo className="size-3" /> Tasks
-                </Link>
-              </Button>
+              <form action={cancelBacktestRun}>
+                <input type="hidden" name="runId" value={run.id} />
+                <Button type="submit" variant="secondary" size="xs">
+                  <Square className="size-3" /> Cancel
+                </Button>
+              </form>
             </>
           )}
-          {(isRunning || run.status === 'COMPLETED' || run.status === 'RUNNING') && (
-            <Separator orientation="vertical" className="!h-4 mx-1" />
-          )}
-          {isRunning && (
-            <form action={cancelBacktestRun}>
-              <input type="hidden" name="runId" value={run.id} />
-              <Button type="submit" variant="secondary" size="xs">
-                <Square className="size-3" /> Cancel
-              </Button>
-            </form>
-          )}
+          <Separator orientation="vertical" className="!h-4 mx-1" />
           <form action={deleteBacktestRun}>
             <input type="hidden" name="runId" value={run.id} />
             <Button type="submit" variant="ghost" size="xs" className="text-red-400 hover:text-red-300 hover:bg-red-950">
@@ -379,8 +317,41 @@ export default async function BacktestDetailPage({
         <MetricStrip metrics={topMetrics} />
       )}
 
-      {/* Status-aware body */}
-      {renderBody()}
+      {/* Progress — only while running */}
+      {isRunning && (
+        <RunProgress runId={id} totalMessages={summary?.totalMessages} />
+      )}
+
+      {/* Error — only when there is one */}
+      {run.error && (
+        <Card className="py-4 gap-2 border-red-800 bg-red-950">
+          <CardHeader className="py-0">
+            <CardTitle className="text-sm text-red-400">Error</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono">
+              {run.error}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Tabs — always in this slot when data exists */}
+      {hasTabData && (
+        <BacktestTabs
+          performance={performanceContent}
+          decisions={decisionsContent}
+          trades={tradesContent}
+          hasDecisions={decisions.length > 0}
+        />
+      )}
+
+      {/* Logs — always at the bottom, collapsed unless running/failed */}
+      <LogViewer
+        runId={id}
+        isRunning={isRunning}
+        defaultCollapsed={run.status !== 'RUNNING' && run.status !== 'PENDING' && run.status !== 'FAILED'}
+      />
     </div>
   );
 }
