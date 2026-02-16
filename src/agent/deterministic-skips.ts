@@ -14,11 +14,15 @@ export type SkipCheckOpts = {
   maxAgentCalls?: number;
 };
 
-/** Check if message text references futures symbols (e.g. /ES, /NQ) */
-function referencesFutures(context: TaskContext): boolean {
+/** Check if message ONLY references futures symbols (e.g. /ES, /NQ) */
+function onlyFutures(context: TaskContext): boolean {
   const symbols = context.symbols ?? [];
   const text = context.cleanText ?? '';
-  return symbols.some((s) => s.startsWith('/')) || /\b\/[A-Z]{2,4}\b/.test(text);
+  const hasFutures = symbols.some((s) => s.startsWith('/')) || /(?:^|\s)\/[A-Z]{2,4}\b/.test(text);
+  if (!hasFutures) return false;
+  // If there are non-futures symbols, let the agent handle it
+  const nonFutures = symbols.filter((s) => !s.startsWith('/'));
+  return nonFutures.length === 0;
 }
 
 /**
@@ -49,8 +53,8 @@ export function shouldSkipDeterministic(
     };
   }
 
-  // 2. Futures symbols
-  if (referencesFutures(context)) {
+  // 2. Futures-only messages
+  if (onlyFutures(context)) {
     return { category: 'futures', reason: 'Futures symbols not supported' };
   }
 

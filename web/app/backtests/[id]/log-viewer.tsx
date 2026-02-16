@@ -15,7 +15,7 @@ export function LogViewer({
 }) {
   const [logs, setLogs] = useState('');
   const [open, setOpen] = useState(!defaultCollapsed);
-  const [height, setHeight] = useState(280);
+  const [height, setHeight] = useState(560);
   const preRef = useRef<HTMLPreElement>(null);
   const wasAtBottom = useRef(true);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);

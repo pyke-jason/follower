@@ -58,6 +58,7 @@ export type OrderResult = {
   commission?: number;
   fillTimestamp?: string;
   legFills?: LegFill[];
+  message?: string;
 };
 
 export type BrokerPosition = {

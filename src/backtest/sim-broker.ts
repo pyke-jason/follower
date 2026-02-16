@@ -112,20 +112,23 @@ export class SimBroker implements BrokerService {
       }
 
       // Fill immediately if limit is within the current spread
+      let quote: Awaited<ReturnType<typeof this.getQuote>>;
       try {
-        const quote = await this.getQuote(params.symbol);
-        const isBuy = params.legs[0]?.action === 'BUY';
-        const withinSpread = isBuy
-          ? params.limitPrice >= quote.bid
-          : params.limitPrice <= quote.ask;
-
-        if (withinSpread) {
-          const filledPrice = roundCents(params.limitPrice);
-          log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid} ask=${quote.ask})`);
-          return { orderId, status: 'FILLED', filledPrice };
-        }
+        quote = await this.getQuote(params.symbol);
       } catch {
-        // No price data — queue as working, let ticks determine fill
+        log.debug(`  LIMIT rejected: no market data for ${params.symbol}`);
+        return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
+      }
+
+      const isBuy = params.legs[0]?.action === 'BUY';
+      const withinSpread = isBuy
+        ? params.limitPrice >= quote.bid
+        : params.limitPrice <= quote.ask;
+
+      if (withinSpread) {
+        const filledPrice = roundCents(params.limitPrice);
+        log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid} ask=${quote.ask})`);
+        return { orderId, status: 'FILLED', filledPrice };
       }
 
       // Queue for tick-based filling
@@ -139,7 +142,13 @@ export class SimBroker implements BrokerService {
     }
 
     // MARKET orders fill instantly using the fill model
-    const quote = await this.getQuote(params.symbol);
+    let quote: Awaited<ReturnType<typeof this.getQuote>>;
+    try {
+      quote = await this.getQuote(params.symbol);
+    } catch {
+      log.debug(`  MARKET rejected: no market data for ${params.symbol}`);
+      return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
+    }
     const fillPrice = this.computeFillPrice(params, quote);
     const roundedFill = roundCents(fillPrice);
 

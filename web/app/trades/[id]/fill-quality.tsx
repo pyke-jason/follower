@@ -1,4 +1,5 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { StatItem } from '../../components/stat-item';
 import { formatCurrency } from '@/lib/format';
 import type { Trade } from '../../../../src/db/schema';
 import { safeParseFloat } from '../../../../src/lib/numbers';
@@ -33,61 +34,56 @@ export function FillQuality({ trade }: { trade: Trade }) {
       <CardContent className="py-3">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           {brokerPrice !== 0 && (
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Broker Fill</p>
+            <StatItem label="Broker Fill">
               <p className="text-foreground font-medium tabular-nums">{formatCurrency(brokerPrice)}</p>
-            </div>
+            </StatItem>
           )}
           {expectedPrice !== 0 && (
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Expected</p>
+            <StatItem label="Expected">
               <p className="text-foreground font-medium tabular-nums">{formatCurrency(expectedPrice)}</p>
-            </div>
+            </StatItem>
           )}
           {slippage !== null && (
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Slippage</p>
+            <StatItem label="Slippage">
               <p className={`font-medium tabular-nums ${slippage > 0 ? 'text-loss' : slippage < 0 ? 'text-profit' : 'text-foreground'}`}>
                 {formatCurrency(slippage)}
                 {slippagePct !== null && (
                   <span className="text-xs text-muted-foreground ml-1">({slippagePct.toFixed(2)}%)</span>
                 )}
               </p>
-            </div>
+            </StatItem>
           )}
           {commission !== 0 && (
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Commission</p>
+            <StatItem label="Commission">
               <p className="text-foreground font-medium tabular-nums">{formatCurrency(commission)}</p>
-            </div>
+            </StatItem>
           )}
           {trade.brokerFillQty && (
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Fill Qty</p>
+            <StatItem label="Fill Qty">
               <p className="text-foreground font-medium tabular-nums">{trade.brokerFillQty}</p>
-            </div>
+            </StatItem>
           )}
           {timeToFill && (
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Time to Fill</p>
+            <StatItem label="Time to Fill">
               <p className="text-foreground font-medium tabular-nums">{timeToFill}</p>
-            </div>
+            </StatItem>
           )}
         </div>
 
         {/* Per-leg fills */}
         {legFills && legFills.length > 0 && (
           <div className="mt-3 pt-3 border-t border-border/50">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Leg Fills</p>
-            <div className="space-y-1">
-              {legFills.map((leg, i) => (
-                <div key={i} className="flex items-center gap-3 text-xs">
-                  <span className="font-medium text-foreground">{leg.symbol}</span>
-                  <span className="text-muted-foreground">{leg.side}</span>
-                  <span className="tabular-nums">{leg.fillQty} @ {formatCurrency(leg.fillPrice)}</span>
-                </div>
-              ))}
-            </div>
+            <StatItem label="Leg Fills">
+              <div className="space-y-1">
+                {legFills.map((leg, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs">
+                    <span className="font-medium text-foreground">{leg.symbol}</span>
+                    <span className="text-muted-foreground">{leg.side}</span>
+                    <span className="tabular-nums">{leg.fillQty} @ {formatCurrency(leg.fillPrice)}</span>
+                  </div>
+                ))}
+              </div>
+            </StatItem>
           </div>
         )}
       </CardContent>

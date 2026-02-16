@@ -487,13 +487,25 @@ export async function getBacktestRunBrief(id: string) {
       name: schema.backtestRuns.name,
       status: schema.backtestRuns.status,
       config: schema.backtestRuns.config,
-      summary: schema.backtestRuns.summary,
     })
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, id));
   if (!run) return null;
+
+  // Always compute live from trades — fresh for running backtests, no stale summary JSON
+  const [stats] = await db
+    .select({
+      totalTrades: count(),
+      totalPnl: sql<string>`COALESCE(SUM(CASE WHEN ${schema.trades.status} = 'CLOSED' THEN CAST(${schema.trades.pnl} AS REAL) END), 0)`,
+      wins: sql<number>`SUM(CASE WHEN ${schema.trades.status} = 'CLOSED' AND CAST(${schema.trades.pnl} AS REAL) > 0 THEN 1 ELSE 0 END)`,
+      closed: sql<number>`SUM(CASE WHEN ${schema.trades.status} = 'CLOSED' THEN 1 ELSE 0 END)`,
+    })
+    .from(schema.trades)
+    .where(eq(schema.trades.backtestRunId, id));
+
   const config = run.config as import('../../src/db/schema').BacktestRunConfig;
-  const summary = run.summary as import('../../src/db/schema').BacktestRunSummary | null;
+  const closed = stats?.closed ?? 0;
+  const wins = stats?.wins ?? 0;
   return {
     id: run.id,
     name: run.name,
@@ -502,9 +514,9 @@ export async function getBacktestRunBrief(id: string) {
     startDate: config.startDate?.split('T')[0] ?? '',
     endDate: config.endDate?.split('T')[0] ?? '',
     agentModel: config.agentModel ?? 'default',
-    totalPnl: summary?.totalPnl ?? 0,
-    winRate: summary?.winRate ?? 0,
-    totalTrades: summary?.totalTrades ?? 0,
+    totalPnl: safeParseFloat(stats?.totalPnl),
+    winRate: closed > 0 ? wins / closed : 0,
+    totalTrades: stats?.totalTrades ?? 0,
   };
 }
 

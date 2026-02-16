@@ -1,5 +1,5 @@
 import type { BacktestConfig, BacktestReport, TraderStats, StrategyStats, EquityPoint, ExtendedMetrics } from './types.js';
-import { roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
+import { safeParseFloat, roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
 
 export type MtmSnapshot = {
   date: string;
@@ -120,49 +120,31 @@ function computeExtendedMetrics(params: {
 }
 
 /**
- * Compute report stats from raw DB trade rows.
+ * Trade-derived stats: summary, breakdowns, equity curve.
+ * Shared by the runner (generateReportFromTrades) and the web detail page.
  */
-export function generateReportFromTrades(params: {
-  trades: { pnl: string | null; status: string; trader: string; strategy: string;
-            entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
-  decisions: { path: string; decision: string }[];
-  mtmSnapshots?: MtmSnapshot[];
-}): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
-  const { trades, decisions, mtmSnapshots } = params;
-
+export function computeCoreStats<T extends {
+  pnl: string | null; status: string; trader: string; strategy: string;
+  openedAt: string | null; closedAt: string | null;
+}>(trades: T[], mtmSnapshots?: MtmSnapshot[]) {
   const closed = trades.filter((t) => t.status === 'CLOSED');
-  const open = trades.filter((t) => t.status === 'OPEN');
+  const open = trades.filter((t) => t.status !== 'CLOSED');
 
-  const safePnl = (pnlStr: string | null): number => {
-    if (pnlStr == null) return 0;
-    const n = parseFloat(pnlStr);
-    return Number.isFinite(n) ? n : 0;
-  };
+  const wins = closed.filter((t) => safeParseFloat(t.pnl) > 0);
+  const losses = closed.filter((t) => safeParseFloat(t.pnl) <= 0);
 
-  const wins = closed.filter((t) => safePnl(t.pnl) > 0);
-  const losses = closed.filter((t) => safePnl(t.pnl) <= 0);
-
-  const totalPnl = closed.reduce((sum, t) => sum + safePnl(t.pnl), 0);
-  const avgWin = wins.length > 0
-    ? wins.reduce((sum, t) => sum + safePnl(t.pnl), 0) / wins.length
-    : 0;
-  const avgLoss = losses.length > 0
-    ? losses.reduce((sum, t) => sum + safePnl(t.pnl), 0) / losses.length
-    : 0;
-
-  const grossWins = wins.reduce((sum, t) => sum + safePnl(t.pnl), 0);
-  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + safePnl(t.pnl), 0));
+  const totalPnl = closed.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0);
+  const grossWins = wins.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0);
+  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0));
   const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
 
-  // Max drawdown
-  let peak = 0;
-  let maxDrawdown = 0;
-  let running = 0;
+  // Max drawdown from closed trades in chronological order
   const sortedClosed = [...closed].sort(
     (a, b) => (a.closedAt ?? '').localeCompare(b.closedAt ?? ''),
   );
+  let peak = 0, maxDrawdown = 0, running = 0;
   for (const t of sortedClosed) {
-    running += safePnl(t.pnl);
+    running += safeParseFloat(t.pnl);
     if (running > peak) peak = running;
     const dd = peak - running;
     if (dd > maxDrawdown) maxDrawdown = dd;
@@ -171,50 +153,38 @@ export function generateReportFromTrades(params: {
   // By-trader stats
   const byTrader: Record<string, TraderStats> = {};
   for (const t of closed) {
-    if (!byTrader[t.trader]) {
-      byTrader[t.trader] = { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
-    }
-    const ts = byTrader[t.trader];
+    const ts = byTrader[t.trader] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
     ts.trades++;
-    if (safePnl(t.pnl) > 0) ts.wins++;
-    else ts.losses++;
-    ts.totalPnl += safePnl(t.pnl);
-    ts.winRate = ts.trades > 0 ? ts.wins / ts.trades : 0;
+    if (safeParseFloat(t.pnl) > 0) ts.wins++; else ts.losses++;
+    ts.totalPnl += safeParseFloat(t.pnl);
+    ts.winRate = ts.wins / ts.trades;
   }
 
   // By-strategy stats
   const byStrategy: Record<string, StrategyStats> = {};
   for (const t of closed) {
-    if (!byStrategy[t.strategy]) {
-      byStrategy[t.strategy] = { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
-    }
-    const ss = byStrategy[t.strategy];
+    const ss = byStrategy[t.strategy] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
     ss.trades++;
-    if (safePnl(t.pnl) > 0) ss.wins++;
-    else ss.losses++;
-    ss.totalPnl += safePnl(t.pnl);
-    ss.winRate = ss.trades > 0 ? ss.wins / ss.trades : 0;
-    ss.avgPnl = ss.trades > 0 ? ss.totalPnl / ss.trades : 0;
+    if (safeParseFloat(t.pnl) > 0) ss.wins++; else ss.losses++;
+    ss.totalPnl += safeParseFloat(t.pnl);
+    ss.winRate = ss.wins / ss.trades;
+    ss.avgPnl = ss.totalPnl / ss.trades;
   }
 
   // Equity curve (daily)
-  const equityCurve: EquityPoint[] = [];
   const dailyMap = new Map<string, { pnl: number; trades: number }>();
   for (const t of sortedClosed) {
     const date = t.closedAt?.split('T')[0] ?? 'unknown';
     const existing = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
-    existing.pnl += safePnl(t.pnl);
+    existing.pnl += safeParseFloat(t.pnl);
     existing.trades++;
     dailyMap.set(date, existing);
   }
-  // Build MTM lookup
   const mtmByDate = new Map<string, number>();
   if (mtmSnapshots) {
-    for (const snap of mtmSnapshots) {
-      mtmByDate.set(snap.date, snap.unrealizedPnl);
-    }
+    for (const snap of mtmSnapshots) mtmByDate.set(snap.date, snap.unrealizedPnl);
   }
-
+  const equityCurve: EquityPoint[] = [];
   let cumPnl = 0;
   const startingEquityForCurve = 100_000;
   for (const [date, data] of [...dailyMap.entries()].sort()) {
@@ -231,6 +201,35 @@ export function generateReportFromTrades(params: {
     });
   }
 
+  const summary = {
+    totalTrades: trades.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: closed.length > 0 ? wins.length / closed.length : 0,
+    totalPnl: roundCents(totalPnl),
+    avgWin: roundCents(wins.length > 0 ? grossWins / wins.length : 0),
+    avgLoss: roundCents(losses.length > 0 ? (grossLosses / losses.length) * -1 : 0),
+    maxDrawdown: roundCents(maxDrawdown),
+    profitFactor: roundCents(profitFactor),
+    openAtEnd: open.length,
+  };
+
+  return { summary, byTrader, byStrategy, equityCurve, sortedClosed };
+}
+
+/**
+ * Compute report stats from raw DB trade rows.
+ * Thin wrapper: calls computeCoreStats then adds decision-derived execution stats + extendedMetrics.
+ */
+export function generateReportFromTrades(params: {
+  trades: { pnl: string | null; status: string; trader: string; strategy: string;
+            entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
+  decisions: { path: string; decision: string }[];
+  mtmSnapshots?: MtmSnapshot[];
+}): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
+  const { trades, decisions, mtmSnapshots } = params;
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots);
+
   // Derive execution stats from decisions
   const agentTrades = decisions.filter((d) => d.path === 'agent' && d.decision === 'EXECUTE').length;
   const agentCallsUsed = decisions.filter((d) => d.path === 'agent').length;
@@ -238,31 +237,23 @@ export function generateReportFromTrades(params: {
 
   // Extended metrics
   const sortedForMetrics = sortedClosed.map((t) => ({
-    pnl: safePnl(t.pnl),
+    pnl: safeParseFloat(t.pnl),
     openedAt: new Date(t.openedAt ?? 0),
     closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
   }));
   const extendedMetrics = computeExtendedMetrics({
-    sortedClosed: sortedForMetrics, equityCurve, totalPnl, maxDrawdown, startingEquity: 100_000,
+    sortedClosed: sortedForMetrics, equityCurve, totalPnl: core.totalPnl,
+    maxDrawdown: core.maxDrawdown, startingEquity: 100_000,
   });
 
   return {
     summary: {
+      ...core,
       totalMessages: 0,
       tradedMessages: 0,
-      totalTrades: trades.length,
-      wins: wins.length,
-      losses: losses.length,
-      winRate: closed.length > 0 ? wins.length / closed.length : 0,
-      totalPnl: roundCents(totalPnl),
-      avgWin: roundCents(avgWin),
-      avgLoss: roundCents(avgLoss),
-      maxDrawdown: roundCents(maxDrawdown),
-      profitFactor: roundCents(profitFactor),
       agentCallsUsed,
       agentTrades,
       skipped,
-      openAtEnd: open.length,
     },
     byTrader,
     byStrategy,

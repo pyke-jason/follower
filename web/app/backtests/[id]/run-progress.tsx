@@ -15,6 +15,8 @@ interface RunProgressProps {
   llmTokens: { input: number; output: number };
   liveMetrics: LiveMetrics | null;
   status: string;
+  startedAt: string | null;
+  completedAt: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -30,20 +32,28 @@ export function RunProgress({
   llmTokens,
   liveMetrics,
   status,
+  startedAt,
+  completedAt,
 }: RunProgressProps) {
   const isActive = status === 'RUNNING' || status === 'PENDING';
 
-  // Elapsed timer — only ticks for active runs
-  const [mountTime] = useState(() => Date.now());
-  const [elapsed, setElapsed] = useState(0);
+  // Elapsed timer based on actual run startedAt
+  const startMs = startedAt ? new Date(startedAt).getTime() : null;
+  const endMs = completedAt ? new Date(completedAt).getTime() : null;
+
+  const [elapsed, setElapsed] = useState(() => {
+    if (!startMs) return 0;
+    const end = endMs ?? Date.now();
+    return Math.floor((end - startMs) / 1000);
+  });
 
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || !startMs) return;
     const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - mountTime) / 1000));
+      setElapsed(Math.floor((Date.now() - startMs) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [mountTime, isActive]);
+  }, [startMs, isActive]);
 
   const pct = totalMessages > 0 ? Math.round((processedMessages / totalMessages) * 100) : 0;
 
@@ -82,7 +92,7 @@ export function RunProgress({
         {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
           <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
         )}
-        {isActive && <InfoChip label={elapsedStr} icon={Clock} />}
+        {startMs != null && elapsed > 0 && <InfoChip label={elapsedStr} icon={Clock} />}
       </div>
     </div>
   );

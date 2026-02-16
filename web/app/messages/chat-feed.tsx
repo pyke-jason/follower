@@ -5,6 +5,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatBubble } from './chat-bubble';
 import { DateSeparator } from './date-separator';
 import { ArrowDown } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type { Message } from '../../../src/db/schema';
 
 type FeedItem =
@@ -33,27 +34,38 @@ function buildFeedItems(messages: Message[]): FeedItem[] {
 
 export function ChatFeed({
   messages,
-  firstItemIndex,
+  firstItemIndex = 0,
   onLoadOlder,
-  isLoadingOlder,
-  hasMore,
+  isLoadingOlder = false,
+  hasMore = false,
+  focusMessageId,
+  highlightMessageId,
 }: {
   messages: Message[];
-  firstItemIndex: number;
-  onLoadOlder: () => void;
-  isLoadingOlder: boolean;
-  hasMore: boolean;
+  firstItemIndex?: number;
+  onLoadOlder?: () => void;
+  isLoadingOlder?: boolean;
+  hasMore?: boolean;
+  focusMessageId?: string;
+  highlightMessageId?: string;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const feedItems = buildFeedItems(messages);
 
+  const focusIndex = focusMessageId
+    ? feedItems.findIndex(
+        (item) => item.type === 'message' && item.message.id === focusMessageId,
+      )
+    : -1;
+  const initialIndex = focusIndex >= 0 ? focusIndex : feedItems.length - 1;
+
   const handleStartReached = useCallback(() => {
-    if (!isLoadingOlder && hasMore) {
+    if (onLoadOlder && !isLoadingOlder && hasMore) {
       onLoadOlder();
     }
-  }, [isLoadingOlder, hasMore, onLoadOlder]);
+  }, [onLoadOlder, isLoadingOlder, hasMore]);
 
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({
@@ -78,7 +90,7 @@ export function ChatFeed({
         ref={virtuosoRef}
         data={feedItems}
         firstItemIndex={firstItemIndex}
-        initialTopMostItemIndex={feedItems.length - 1}
+        initialTopMostItemIndex={initialIndex}
         startReached={handleStartReached}
         atBottomStateChange={(atBottom) => setShowScrollBtn(!atBottom)}
         followOutput="smooth"
@@ -86,12 +98,17 @@ export function ChatFeed({
           if (item.type === 'date') {
             return <DateSeparator date={item.date} />;
           }
-          return <ChatBubble message={item.message} />;
+          const isHighlighted = item.message.id === highlightMessageId;
+          return (
+            <div className={cn(isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20')}>
+              <ChatBubble message={item.message} />
+            </div>
+          );
         }}
         computeItemKey={(_index, item) => item.key}
         style={{ height: '100%' }}
         className="[scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.700)_transparent]"
-        components={{
+        components={onLoadOlder ? {
           Header: () =>
             isLoadingOlder ? (
               <div className="py-3 text-center text-xs text-muted-foreground">
@@ -102,11 +119,11 @@ export function ChatFeed({
                 Beginning of messages
               </div>
             ) : null,
-        }}
+        } : undefined}
       />
 
-      {/* Scroll-to-bottom FAB */}
-      {showScrollBtn && (
+      {/* Scroll-to-bottom FAB — only in full chat mode */}
+      {onLoadOlder && showScrollBtn && (
         <button
           onClick={scrollToBottom}
           className="absolute bottom-4 right-4 p-2 rounded-full bg-card border border-border text-muted-foreground hover:bg-accent shadow-warm-md transition-colors"

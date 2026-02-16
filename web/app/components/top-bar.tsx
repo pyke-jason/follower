@@ -129,7 +129,7 @@ export function TopBar() {
 
           <span className="text-muted-foreground">&middot;</span>
           <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-            {Math.round(brief.winRate)}% WR
+            {Math.round(brief.winRate * 100)}% WR
           </span>
 
           <span className="text-muted-foreground">&middot;</span>

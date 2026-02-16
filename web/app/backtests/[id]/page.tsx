@@ -25,7 +25,8 @@ import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft 
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 
-import { PROFIT_FACTOR_INF, pctDisplay, roundCents } from '../../../../src/lib/numbers';
+import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
+import { computeCoreStats } from '../../../../src/backtest/report';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,7 +51,7 @@ export default async function BacktestDetailPage({
 
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(closedTrades, allTrades.length, run.summary as BacktestRunSummary | null);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(allTrades, decisions);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -272,11 +273,13 @@ export default async function BacktestDetailPage({
         {/* Progress / run stats — always visible for consistent layout */}
         <RunProgress
           processedMessages={decisions.length}
-          totalMessages={summary?.tradedMessages ?? 0}
+          totalMessages={(run.summary as BacktestRunSummary | null)?.tradedMessages ?? 0}
           agentModel={config.agentModel ?? 'default'}
           llmTokens={llmTokens}
           liveMetrics={liveMetrics}
           status={run.status}
+          startedAt={run.startedAt}
+          completedAt={run.completedAt}
         />
 
         {/* Error — only when there is one (hide for cancelled runs) */}
@@ -331,111 +334,22 @@ export type RollingWinRatePoint = { tradeNum: number; date: string; winRate: num
 export type StrategyEquityPoint = Record<string, number | string>;
 
 function computeFromTrades(
-  closed: TradeRow[],
-  totalTradeCount: number,
-  precomputedSummary: BacktestRunSummary | null,
-  storedEquityCurve?: { date: string; cumPnl: number; equity?: number; unrealizedPnl?: number }[] | null,
+  allTrades: TradeRow[],
+  decisions: { decision: { path: string; decision: string } }[],
 ) {
-  const pnl = (t: TradeRow) => { const n = parseFloat(t.pnl ?? ''); return Number.isFinite(n) ? n : 0; };
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades);
 
-  const wins = closed.filter((t) => pnl(t) > 0);
-  const losses = closed.filter((t) => pnl(t) <= 0);
-  const totalPnl = closed.reduce((s, t) => s + pnl(t), 0);
+  // Execution stats from already-loaded decisions — no precomputed fallback
+  const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;
+  const agentTrades = decisions.filter((d) => d.decision.path === 'agent' && d.decision.decision === 'EXECUTE').length;
+  const skipped = decisions.filter((d) => d.decision.decision === 'SKIP').length;
 
-  const grossWins = wins.reduce((s, t) => s + pnl(t), 0);
-  const grossLosses = Math.abs(losses.reduce((s, t) => s + pnl(t), 0));
-  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
+  const summary = { ...core, totalMessages: 0, tradedMessages: 0, agentCallsUsed, agentTrades, skipped };
 
-  // Max drawdown from closed trades in chronological order
-  const sorted = [...closed].sort((a, b) => (a.closedAt ?? '').localeCompare(b.closedAt ?? ''));
-  let peak = 0, maxDrawdown = 0, running = 0;
-  for (const t of sorted) {
-    running += pnl(t);
-    if (running > peak) peak = running;
-    const dd = peak - running;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
-
-  // Summary: trade-derived fields always from DB, non-trade fields from precomputed when available
-  const summary: BacktestRunSummary = {
-    totalMessages: precomputedSummary?.totalMessages ?? 0,
-    tradedMessages: precomputedSummary?.tradedMessages ?? 0,
-    totalTrades: totalTradeCount,
-    wins: wins.length,
-    losses: losses.length,
-    winRate: closed.length > 0 ? wins.length / closed.length : 0,
-    totalPnl: roundCents(totalPnl),
-    avgWin: roundCents(wins.length > 0 ? grossWins / wins.length : 0),
-    avgLoss: roundCents(losses.length > 0 ? grossLosses / losses.length * -1 : 0),
-    maxDrawdown: roundCents(maxDrawdown),
-    profitFactor: roundCents(profitFactor),
-    agentCallsUsed: precomputedSummary?.agentCallsUsed ?? 0,
-    agentTrades: precomputedSummary?.agentTrades ?? 0,
-    skipped: precomputedSummary?.skipped ?? 0,
-    openAtEnd: totalTradeCount - closed.length,
-  };
-
-  // By trader
-  const byTrader: Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> = {};
-  for (const t of closed) {
-    const s = byTrader[t.trader] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
-    s.trades++;
-    if (pnl(t) > 0) s.wins++; else s.losses++;
-    s.totalPnl += pnl(t);
-    s.winRate = s.wins / s.trades;
-  }
-
-  // By strategy
-  const byStrategy: Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> = {};
-  for (const t of closed) {
-    const s = byStrategy[t.strategy] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
-    s.trades++;
-    if (pnl(t) > 0) s.wins++; else s.losses++;
-    s.totalPnl += pnl(t);
-    s.winRate = s.wins / s.trades;
-    s.avgPnl = s.totalPnl / s.trades;
-  }
-
-  // Equity curve (daily)
-  const dailyMap = new Map<string, { pnl: number; trades: number }>();
-  for (const t of sorted) {
-    const date = t.closedAt?.split('T')[0] ?? 'unknown';
-    const d = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
-    d.pnl += pnl(t);
-    d.trades++;
-    dailyMap.set(date, d);
-  }
-  const equityCurve: { date: string; pnl: number; cumPnl: number; trades: number; equity?: number }[] = [];
-  let cumPnl = 0;
-
-  // If we have a stored equity curve with equity data, use it and merge daily pnl
-  if (storedEquityCurve && storedEquityCurve.length > 0 && storedEquityCurve.some(pt => pt.equity != null)) {
-    const dailyPnlMap = new Map<string, number>();
-    const dailyTradesMap = new Map<string, number>();
-    for (const [date, d] of dailyMap.entries()) {
-      dailyPnlMap.set(date, d.pnl);
-      dailyTradesMap.set(date, d.trades);
-    }
-    for (const pt of storedEquityCurve) {
-      equityCurve.push({
-        date: pt.date,
-        pnl: roundCents(dailyPnlMap.get(pt.date) ?? 0),
-        cumPnl: roundCents(pt.cumPnl),
-        trades: dailyTradesMap.get(pt.date) ?? 0,
-        equity: pt.equity != null ? roundCents(pt.equity) : undefined,
-      });
-    }
-  } else {
-    for (const [date, d] of [...dailyMap.entries()].sort()) {
-      cumPnl += d.pnl;
-      equityCurve.push({ date, pnl: roundCents(d.pnl), cumPnl: roundCents(cumPnl), trades: d.trades });
-    }
-  }
-
-  // --- Trade Scatter data ---
-  const tradeScatter: TradeScatterPoint[] = sorted.map((t) => ({
+  // --- Chart builders (detail-page-specific) ---
+  const tradeScatter: TradeScatterPoint[] = sortedClosed.map((t) => ({
     date: (t.closedAt ?? t.openedAt ?? '').split('T')[0],
-    pnl: pnl(t),
+    pnl: safeParseFloat(t.pnl),
     strategy: t.strategy,
     direction: t.direction,
     quantity: t.quantity ?? 1,
@@ -443,53 +357,42 @@ function computeFromTrades(
     trader: t.trader,
   }));
 
-  // --- Rolling Win Rate ---
   const rollingWinRate: RollingWinRatePoint[] = [];
-  if (sorted.length >= 5) {
-    // Adaptive window: max(5, total/5) capped at 20
-    const windowSize = Math.min(20, Math.max(5, Math.floor(sorted.length / 5)));
-    for (let i = windowSize - 1; i < sorted.length; i++) {
-      const window = sorted.slice(i - windowSize + 1, i + 1);
-      const windowWins = window.filter((t) => pnl(t) > 0).length;
+  if (sortedClosed.length >= 5) {
+    const windowSize = Math.min(20, Math.max(5, Math.floor(sortedClosed.length / 5)));
+    for (let i = windowSize - 1; i < sortedClosed.length; i++) {
+      const window = sortedClosed.slice(i - windowSize + 1, i + 1);
+      const windowWins = window.filter((t) => safeParseFloat(t.pnl) > 0).length;
       rollingWinRate.push({
         tradeNum: i + 1,
-        date: (sorted[i].closedAt ?? '').split('T')[0],
+        date: (sortedClosed[i].closedAt ?? '').split('T')[0],
         winRate: roundCents(windowWins / windowSize),
         windowSize,
       });
     }
   }
 
-  // --- Strategy Equity (cumulative P&L per strategy) ---
-  const strategies = [...new Set(sorted.map((t) => t.strategy))];
+  const strategies = [...new Set(sortedClosed.map((t) => t.strategy))];
   const strategyEquity: StrategyEquityPoint[] = [];
   if (strategies.length >= 2) {
     const cumByStrategy: Record<string, number> = {};
     for (const s of strategies) cumByStrategy[s] = 0;
-
-    // Group sorted trades by date
     const dateGroups = new Map<string, TradeRow[]>();
-    for (const t of sorted) {
+    for (const t of sortedClosed) {
       const date = (t.closedAt ?? '').split('T')[0];
-      const group = dateGroups.get(date) ?? [];
-      group.push(t);
-      dateGroups.set(date, group);
+      (dateGroups.get(date) ?? (() => { const a: TradeRow[] = []; dateGroups.set(date, a); return a; })()).push(t);
     }
-
     for (const [date, trades] of [...dateGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      for (const t of trades) {
-        cumByStrategy[t.strategy] += pnl(t);
-      }
+      for (const t of trades) cumByStrategy[t.strategy] += safeParseFloat(t.pnl);
       const point: StrategyEquityPoint = { date };
-      for (const s of strategies) {
-        point[s] = roundCents(cumByStrategy[s]);
-      }
+      for (const s of strategies) point[s] = roundCents(cumByStrategy[s]);
       strategyEquity.push(point);
     }
   }
 
+  const hasTrades = allTrades.length > 0;
   return {
-    summary: closed.length > 0 || totalTradeCount > 0 ? summary : null,
+    summary: hasTrades ? summary : null,
     byTrader: Object.keys(byTrader).length > 0 ? byTrader : null,
     byStrategy: Object.keys(byStrategy).length > 0 ? byStrategy : null,
     equityCurve: equityCurve.length > 0 ? equityCurve : null,

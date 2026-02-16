@@ -58,13 +58,20 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       const optionSyms = uncached.filter((s) => isOccOptionSymbol(s));
 
       const fetchBatch = async (syms: string[], dataset: string) => {
-        const ticks = await loadQuoteTapeForDay({
-          apiKey: this.apiKey,
-          dataset,
-          symbols: syms,
-          day,
-          refreshCache: this.refreshCache,
-        });
+        let ticks: QuoteTick[];
+        try {
+          ticks = await loadQuoteTapeForDay({
+            apiKey: this.apiKey,
+            dataset,
+            symbols: syms,
+            day,
+            refreshCache: this.refreshCache,
+          });
+        } catch {
+          log.warn(`[prefetch] Failed: ${syms.join(',')} ${day}`);
+          for (const sym of syms) this.dayTicks.set(`${sym}:${day}`, []);
+          return;
+        }
 
         const bySymbol = new Map<string, QuoteTick[]>();
         for (const sym of syms) bySymbol.set(sym, []);
@@ -312,13 +319,20 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     if (cached) return cached;
 
     const dataset = isOccOptionSymbol(symbol) ? this.optionsDataset : this.dataset;
-    const ticks = await loadQuoteTapeForDay({
-      apiKey: this.apiKey,
-      dataset,
-      symbols: [symbol],
-      day,
-      refreshCache: this.refreshCache,
-    });
+    let ticks: QuoteTick[];
+    try {
+      ticks = await loadQuoteTapeForDay({
+        apiKey: this.apiKey,
+        dataset,
+        symbols: [symbol],
+        day,
+        refreshCache: this.refreshCache,
+      });
+    } catch {
+      log.warn(`[loadDay] Failed: ${symbol} ${day}`);
+      this.dayTicks.set(key, []);
+      return [];
+    }
 
     // Filter to this symbol (loadQuoteTapeForDay may return only this symbol, but be safe)
     const symTicks = ticks.filter((t) => t.symbol === symbol);

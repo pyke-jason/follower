@@ -74,7 +74,7 @@ export async function startBacktest(formData: FormData) {
       .where(eq(schema.backtestRuns.id, runId));
   }
 
-  redirect('/backtests');
+  redirect(`/backtests/${runId}`);
 }
 
 export async function cancelBacktestRun(formData: FormData) {

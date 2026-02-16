@@ -186,8 +186,14 @@ async function fetchWithRetry(
 
       // Non-200 2xx (e.g. 206) — Databento uses these for billing/quota errors
       if (res.status >= 200 && res.status < 300 && res.status !== 200) {
+        const headers: Record<string, string> = {};
+        res.headers.forEach((v, k) => { headers[k] = v; });
         const text = await res.text();
-        throw new Error(`Databento ${res.status} (unexpected): ${text.slice(0, 500) || '(empty body)'}`);
+        throw new Error(
+          `Databento ${res.status}: ${text.slice(0, 500) || '(empty body)'}` +
+          ` | day=${context.day ?? '?'} symbols=${(context.symbols ?? []).join(',')}` +
+          ` | headers=${JSON.stringify(headers)}`,
+        );
       }
 
       // 4xx (non-429) — not transient, don't retry

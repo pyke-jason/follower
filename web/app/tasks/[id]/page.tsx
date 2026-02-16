@@ -5,9 +5,10 @@ import {
 } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { InfoChip } from '../../components/info-chip';
+import { StatItem } from '../../components/stat-item';
+import { LegsTable } from '../../components/legs-table';
 import { StepViewer } from '../../components/step-viewer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { formatDate, formatTime, formatCurrency, pnlColor, formatDuration } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
@@ -16,7 +17,7 @@ import Link from 'next/link';
 import { AutoRefresh } from '../../components/auto-refresh';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ChatBubble } from '../../messages/chat-bubble';
+import { ChatPreview } from '../../messages/chat-preview';
 import type { TaskContext, TaskResult, DetectedStrategy, TradeLeg } from '../../../../src/db/schema';
 
 export const dynamic = 'force-dynamic';
@@ -88,22 +89,18 @@ export default async function TaskDetailPage({
           {/* ── Task Info Grid ────────────────────────────── */}
           <Card className="py-4 gap-0">
             <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Assignee</p>
+              <StatItem label="Assignee">
                 <p className="text-foreground font-medium">{task.assignee}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Priority</p>
+              </StatItem>
+              <StatItem label="Priority">
                 <p className="text-foreground font-medium">{task.priority}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Created</p>
+              </StatItem>
+              <StatItem label="Created">
                 <p className="text-foreground">{formatDate(task.createdAt)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Completed</p>
+              </StatItem>
+              <StatItem label="Completed">
                 <p className="text-foreground">{formatDate(task.completedAt)}</p>
-              </div>
+              </StatItem>
             </CardContent>
             {(task.modelProvider || task.modelName) && (
               <CardContent className="pt-0 flex items-center gap-2 flex-wrap">
@@ -113,24 +110,36 @@ export default async function TaskDetailPage({
             )}
           </Card>
 
-          {/* ── Decision Card ─────────────────────────────── */}
-          {result && (
+          {/* ── Decision Card (merged with runDecision) ───── */}
+          {(result || runDecision) && (
             <Card className="py-0 gap-0 overflow-hidden">
               <CardHeader className="border-b py-3 px-4">
                 <CardTitle className="text-sm font-medium">Decision</CardTitle>
               </CardHeader>
               <CardContent className="py-4">
                 <div className="flex items-center gap-3 mb-3">
-                  <Badge label={result.decision} />
-                  <InfoChip label="agent" />
-                  {task.startedAt && task.completedAt && (
+                  <Badge label={result?.decision ?? runDecision?.decision ?? ''} />
+                  {runDecision?.path && <InfoChip label={runDecision.path} />}
+                  {!runDecision?.path && <InfoChip label="agent" />}
+                  {runDecision?.pnl != null && (
+                    <span className={cn('font-medium tabular-nums', pnlColor(runDecision.pnl))}>
+                      {formatCurrency(runDecision.pnl)}
+                    </span>
+                  )}
+                  {runDecision?.durationMs != null ? (
+                    <span className="text-xs text-muted-foreground tabular-nums ml-auto">
+                      {runDecision.durationMs < 1000
+                        ? `${runDecision.durationMs}ms`
+                        : `${(runDecision.durationMs / 1000).toFixed(1)}s`}
+                    </span>
+                  ) : task.startedAt && task.completedAt ? (
                     <span className="text-xs text-muted-foreground tabular-nums ml-auto">
                       {formatDuration(task.startedAt, task.completedAt)}
                     </span>
-                  )}
+                  ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  {result.reasoning}
+                  {result?.reasoning ?? runDecision?.reasoning}
                 </p>
               </CardContent>
             </Card>
@@ -158,84 +167,25 @@ export default async function TaskDetailPage({
                   <Badge label={trade.status} />
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Entry</p>
+                  <StatItem label="Entry">
                     <p className="text-foreground font-medium tabular-nums">{formatCurrency(trade.entryPrice)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Exit</p>
+                  </StatItem>
+                  <StatItem label="Exit">
                     <p className="text-foreground font-medium tabular-nums">{formatCurrency(trade.exitPrice)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Quantity</p>
+                  </StatItem>
+                  <StatItem label="Quantity">
                     <p className="text-foreground font-medium tabular-nums">{trade.quantity}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">P&L</p>
+                  </StatItem>
+                  <StatItem label="P&L">
                     <p className={cn('text-lg font-bold tabular-nums', pnlColor(trade.pnl))}>
                       {formatCurrency(trade.pnl)}
                     </p>
-                  </div>
+                  </StatItem>
                 </div>
                 {legs.length > 0 && (
                   <div className="mt-4 pt-3 border-t border-border/50">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Symbol</TableHead>
-                          <TableHead>Type</TableHead>
-                          <TableHead className="text-right">Strike</TableHead>
-                          <TableHead>Expiry</TableHead>
-                          <TableHead>Action</TableHead>
-                          <TableHead className="text-right">Qty</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {legs.map((leg, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="font-medium">{leg.symbol}</TableCell>
-                            <TableCell><Badge label={leg.type} /></TableCell>
-                            <TableCell className="text-right tabular-nums">{leg.strike}</TableCell>
-                            <TableCell className="text-muted-foreground text-xs">{leg.expiry}</TableCell>
-                            <TableCell>{leg.action}</TableCell>
-                            <TableCell className="text-right tabular-nums">{leg.quantity}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <LegsTable legs={legs} />
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* ── Run Decision (backtest only) ──────────────── */}
-          {runDecision && (
-            <Card className="py-0 gap-0 overflow-hidden">
-              <CardHeader className="border-b py-3 px-4">
-                <CardTitle className="text-sm font-medium">Run Decision</CardTitle>
-              </CardHeader>
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <Badge label={runDecision.decision} />
-                  <InfoChip label={runDecision.path} />
-                  {runDecision.pnl != null && (
-                    <span className={cn('font-medium tabular-nums', pnlColor(runDecision.pnl))}>
-                      {formatCurrency(runDecision.pnl)}
-                    </span>
-                  )}
-                  {runDecision.durationMs != null && (
-                    <span className="text-xs text-muted-foreground tabular-nums ml-auto">
-                      {runDecision.durationMs < 1000
-                        ? `${runDecision.durationMs}ms`
-                        : `${(runDecision.durationMs / 1000).toFixed(1)}s`}
-                    </span>
-                  )}
-                </div>
-                {runDecision.reasoning && (
-                  <p className="text-sm text-muted-foreground leading-relaxed mt-3">
-                    {runDecision.reasoning}
-                  </p>
                 )}
               </CardContent>
             </Card>
@@ -289,30 +239,16 @@ export default async function TaskDetailPage({
         {/* ── Right Column (sticky) ────────────────────── */}
         <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
           {/* ── Chat Context ─────────────────────────────── */}
-          {(nearbyMessages.length > 0 || sourceMessage) && (
-            <Card className="py-0 gap-0 overflow-hidden">
-              <CardHeader className="border-b py-3 px-4">
-                <CardTitle className="text-sm font-medium">
-                  Chat Context
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                {(nearbyMessages.length > 0 ? nearbyMessages : sourceMessage ? [sourceMessage] : []).map((msg) => {
-                  const isSource = msg.id === task.messageId;
-                  return (
-                    <div
-                      key={msg.id}
-                      className={cn(
-                        isSource && 'bg-info/5 ring-1 ring-inset ring-info/20',
-                      )}
-                    >
-                      <ChatBubble message={msg} />
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
+          <ChatPreview
+            messages={nearbyMessages.length > 0 ? nearbyMessages : sourceMessage ? [sourceMessage] : []}
+            focusMessageId={task.messageId ?? undefined}
+            author={sourceMessage?.author ?? context.author ?? undefined}
+            viewAllHref={
+              context.author
+                ? `/messages?authors=${encodeURIComponent(context.author)}`
+                : '/messages'
+            }
+          />
 
           {/* ── Parsed Context ────────────────────────────── */}
           {(context.confidence != null || context.actionHint || context.directionHint || (context.detectedStrategies?.length ?? 0) > 0 || (context.badges?.length ?? 0) > 0) && (
@@ -323,8 +259,7 @@ export default async function TaskDetailPage({
               <CardContent className="py-4">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   {context.confidence != null && (
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Confidence</p>
+                    <StatItem label="Confidence">
                       <p className={cn(
                         'font-medium tabular-nums',
                         (context.confidence as number) >= 0.8
@@ -335,52 +270,51 @@ export default async function TaskDetailPage({
                       )}>
                         {((context.confidence as number) * 100).toFixed(0)}%
                       </p>
-                    </div>
+                    </StatItem>
                   )}
                   {context.actionHint && (
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Action</p>
+                    <StatItem label="Action">
                       <Badge label={context.actionHint} />
-                    </div>
+                    </StatItem>
                   )}
                   {context.directionHint && (
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Direction</p>
+                    <StatItem label="Direction">
                       <Badge label={context.directionHint} />
-                    </div>
+                    </StatItem>
                   )}
                   {context.symbols && context.symbols.length > 0 && (
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Symbols</p>
+                    <StatItem label="Symbols">
                       <div className="flex gap-1 flex-wrap">
                         {context.symbols.map((s, i) => (
                           <InfoChip key={i} label={s} />
                         ))}
                       </div>
-                    </div>
+                    </StatItem>
                   )}
                 </div>
                 {context.detectedStrategies && context.detectedStrategies.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-border/50">
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Strategies</p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {context.detectedStrategies.map((ds, i) => (
-                        <div key={i} className="flex items-center gap-1">
-                          <Badge label={ds.strategy} />
-                          <span className="text-xs text-muted-foreground tabular-nums">
-                            {(ds.confidence * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    <StatItem label="Strategies">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {context.detectedStrategies.map((ds, i) => (
+                          <div key={i} className="flex items-center gap-1">
+                            <Badge label={ds.strategy} />
+                            <span className="text-xs text-muted-foreground tabular-nums">
+                              {(ds.confidence * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </StatItem>
                   </div>
                 )}
                 {context.badges && context.badges.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-border/50">
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Badges</p>
-                    <div className="flex gap-1 flex-wrap">
-                      {context.badges.map((b, i) => <Badge key={i} label={b} />)}
-                    </div>
+                    <StatItem label="Badges">
+                      <div className="flex gap-1 flex-wrap">
+                        {context.badges.map((b, i) => <Badge key={i} label={b} />)}
+                      </div>
+                    </StatItem>
                   </div>
                 )}
               </CardContent>
