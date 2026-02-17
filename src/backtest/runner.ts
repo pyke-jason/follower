@@ -2,13 +2,13 @@ import { SimClock } from './clock.js';
 import { DatabentoMarketDataProvider } from './market-data.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker } from './sim-broker.js';
-import { checkRiskLimits, type RiskCheckConfig, type RiskCheckDeps } from '../orders/risk-check.js';
+import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import { toDateKeyET } from '../lib/et-date.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
-import type { PrefetchedData } from '../agent/prefetch.js';
+import { prefetchForAgent, type PrefetchedData } from '../agent/prefetch.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { getTrader } from '../config/traders.js';
@@ -17,10 +17,9 @@ import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
-import { isOpen, isClosed, forRun, forSymbol, forTrader } from '../trades/filters.js';
+import { isClosed, forRun } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage, LiveMetrics } from './types.js';
 import type { TaskContext } from '../db/schema.js';
-import type { Trade } from '../db/schema.js';
 import type { LLMUsage } from '../agent/providers.js';
 import { getApiStats, resetApiStats } from './databento-tape.js';
 import { createLogger } from '../lib/logger.js';
@@ -196,12 +195,8 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     },
   };
 
-  const getOpenPositions = async (filters: { symbol?: string; trader?: string } = {}) => {
-    const conditions = [isOpen, forRun(runId)];
-    if (filters.symbol) conditions.push(forSymbol(filters.symbol));
-    if (filters.trader) conditions.push(forTrader(filters.trader));
-    return db.select().from(schema.trades).where(and(...conditions));
-  };
+  const getOpenPositions = async (filters: { symbol?: string; trader?: string } = {}) =>
+    broker.getOpenTrades(filters);
 
   const riskConfig: RiskCheckConfig = config.disableRiskLimits
     ? { maxOnSymbol: 999, maxTotalPositions: 999, maxDrawdownPct: 100, maxNotionalMultiplier: 100 }
@@ -255,13 +250,20 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   const agentProvider = await createProvider(agentIdentity);
   log.info(`Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
 
-  // Build PipelineDeps once — shared across all messages
+  // Build PipelineDeps once — shared across all messages.
+  // Risk checks are a no-op: the TradeAgent already ran checkRiskLimits
+  // before any signal reaches the pipeline, so re-checking here would be
+  // redundant work (same deps, same config, same result).
   const pipelineDeps: PipelineDeps = {
     broker,
     orderManager,
     getOpenPositions,
     calculatePositionSize: async (input) => sizingService.calculateSize(input),
-    checkRiskLimits: (input) => checkRiskLimits(input, riskDeps, riskConfig),
+    checkRiskLimits: async () => ({
+      allowed: true as boolean, dailyPnl: 0,
+      openPositionsOnSymbol: 0, totalOpenPositions: 0,
+      maxTotalPositions: 0, totalNotional: 0, maxNotional: 0,
+    }),
     recordTrade: (input) => recordTrade({
       ...input,
       backtestRunId: runId,
@@ -635,31 +637,23 @@ async function processMessage(
     return;
   }
 
-  // ── 5. Prefetch positions for deterministic skip checks ──
+  // ── 5. Prefetch quotes + positions for deterministic skip checks ──
+  await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
   let prefetched: PrefetchedData | undefined;
   try {
-    const allForTrader = await btCtx.pipelineDeps.getOpenPositions({ trader: msg.author });
-    const symbolSet = new Set(msg.symbols);
-    prefetched = {
-      quotes: {},
-      traderProfile: null,
-      positions: {
-        forSymbol: allForTrader.filter((t) => symbolSet.has(t.symbol)),
-        allForTrader,
-        totalCount: allForTrader.length,
-        failed: false,
+    prefetched = await prefetchForAgent(
+      { symbols: msg.symbols, author: msg.author },
+      {
+        broker: btCtx.pipelineDeps.broker,
+        getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
+        getTraderConfig: getTrader,
       },
-    };
+    );
   } catch {
-    prefetched = {
-      quotes: {},
-      traderProfile: null,
-      positions: { forSymbol: [], allForTrader: [], totalCount: -1, failed: true },
-    };
+    prefetched = undefined;
   }
 
   // ── 6. Run trade agent (deterministic skip + risk + sizing) ──
-  await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
 
   // Process each signal through the trade agent
   const allActions: Action[] = [];

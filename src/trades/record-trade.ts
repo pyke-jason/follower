@@ -7,6 +7,7 @@ import { db, schema } from '../db/client.js';
 import { eq, and } from 'drizzle-orm';
 import { isOpen, forRun, forSymbol, forTrader } from './filters.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
+import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('RecordTrade');
@@ -39,20 +40,6 @@ export type RecordTradeResult = {
   /** The trade row after the operation */
   trade: typeof schema.trades.$inferSelect;
 };
-
-/** Compute PnL from entry/exit prices, direction, strategy, quantity */
-function computePnl(
-  entryPrice: number,
-  exitPrice: number,
-  direction: string,
-  strategy: string,
-  quantity: number,
-): number {
-  const diff = exitPrice - entryPrice;
-  const multiplier = direction === 'LONG' ? 1 : -1;
-  const contractMultiplier = strategy === 'STOCK' ? 1 : 100;
-  return roundCents(diff * multiplier * quantity * contractMultiplier);
-}
 
 export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeResult | null> {
   const {
@@ -125,7 +112,11 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
     const qty = existing.quantity ?? 1;
-    const pnl = computePnl(entry, exit, existing.direction, existing.strategy, qty);
+    const pnl = computeTradePnl({
+      entryPrice: entry, exitPrice: exit,
+      direction: existing.direction as 'LONG' | 'SHORT',
+      strategy: existing.strategy, quantity: qty,
+    });
 
     await db.update(schema.trades)
       .set({
@@ -180,7 +171,11 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
-    const pnl = computePnl(entry, exit, existing.direction, existing.strategy, trimQty);
+    const pnl = computeTradePnl({
+      entryPrice: entry, exitPrice: exit,
+      direction: existing.direction as 'LONG' | 'SHORT',
+      strategy: existing.strategy, quantity: trimQty,
+    });
 
     // Create closed child trade
     const childId = crypto.randomUUID();

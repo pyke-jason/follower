@@ -461,10 +461,11 @@ export class SimBroker implements BrokerService {
     return row?.count ?? 0;
   }
 
-  /** Get all open trade rows for this run, optionally filtered by trader. */
-  async getOpenTrades(trader?: string): Promise<Trade[]> {
+  /** Get all open trade rows for this run, optionally filtered by trader/symbol. */
+  async getOpenTrades(filters?: { trader?: string; symbol?: string }): Promise<Trade[]> {
     const conditions = [isOpen, forRun(this.backtestRunId)];
-    if (trader) conditions.push(eq(schema.trades.trader, trader));
+    if (filters?.trader) conditions.push(eq(schema.trades.trader, filters.trader));
+    if (filters?.symbol) conditions.push(eq(schema.trades.symbol, filters.symbol));
     return db.select().from(schema.trades).where(and(...conditions));
   }
 

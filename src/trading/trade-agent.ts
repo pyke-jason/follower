@@ -8,6 +8,7 @@
 import type { Signal } from '../agent/schemas.js';
 import type { Trade } from '../db/schema.js';
 import type { AccountBalance, Quote, OrderParams } from '../broker/types.js';
+import { buildOrderFromSignal } from '../pipeline/execute.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
 import type { SkipCheckOpts } from '../agent/deterministic-skips.js';
@@ -109,7 +110,7 @@ export class RuleBasedTradeAgent implements TradeAgent {
     }
 
     // 4. Build order from signal
-    const order = this.buildOrder(signal, quantity);
+    const order = buildOrderFromSignal(signal, quantity);
     return [{
       type: 'PLACE_ORDER',
       order,
@@ -122,33 +123,5 @@ export class RuleBasedTradeAgent implements TradeAgent {
   async onBacktestEnd(_state: PortfolioState): Promise<Action[]> {
     // Force-close is handled by SimBroker.forceCloseAll directly
     return [{ type: 'NO_OP', reasoning: 'Backtest end — positions closed by broker' }];
-  }
-
-  private buildOrder(signal: Signal, quantity: number): OrderParams {
-    const isStock = signal.strategy === 'STOCK';
-    const legs = isStock
-      ? [{
-          strike: 0,
-          expiry: '',
-          type: 'STOCK' as const,
-          action: (signal.direction === 'LONG' ? 'BUY' : 'SELL') as 'BUY' | 'SELL',
-          quantity,
-        }]
-      : (signal.legs ?? []).map(l => ({
-          strike: l.strike,
-          expiry: l.expiry,
-          type: l.optionType as 'CALL' | 'PUT',
-          action: l.action as 'BUY' | 'SELL',
-          quantity,
-        }));
-
-    return {
-      symbol: signal.symbol,
-      strategy: signal.strategy,
-      direction: signal.direction,
-      legs,
-      orderType: signal.limitPrice ? 'LIMIT' : 'MARKET',
-      limitPrice: signal.limitPrice,
-    };
   }
 }
