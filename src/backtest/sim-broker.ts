@@ -154,13 +154,13 @@ export class SimBroker implements BrokerService {
       }
     }
 
-    // For multi-leg spreads, normalize to positive values with bid <= ask
-    if (optionLegs.length > 1) {
-      const absBid = Math.abs(netBid);
-      const absAsk = Math.abs(netAsk);
-      netBid = Math.min(absBid, absAsk);
-      netAsk = Math.max(absBid, absAsk);
-    }
+    // Normalize to positive values with bid <= ask.
+    // SELL legs produce negative net values (representing credit received);
+    // normalize so fill computations and limit checks always use positive prices.
+    const absBid = Math.abs(netBid);
+    const absAsk = Math.abs(netAsk);
+    netBid = Math.min(absBid, absAsk);
+    netAsk = Math.max(absBid, absAsk);
 
     const mid = (netBid + netAsk) / 2;
     return {
@@ -505,10 +505,8 @@ export class SimBroker implements BrokerService {
     const legCount = params.legs.length || 1;
     const price = computeModelFillPrice({ fillModel: this.fillModel, bid: quote.bid, ask: quote.ask, isBuy, legCount });
 
-    // For spreads, use absolute value
-    if (params.legs.length > 1) {
-      return Math.abs(price);
-    }
-    return price;
+    // Quote is already normalized to positive bid/ask by getOptionSpreadQuote,
+    // but guard with abs for safety
+    return Math.abs(price);
   }
 }
