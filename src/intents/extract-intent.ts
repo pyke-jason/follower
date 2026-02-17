@@ -8,7 +8,7 @@ import type { Quote, OptionsChain } from '../broker/types.js';
 import type { TrackedTrader } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { runAgentLoop } from '../agent/agent-loop.js';
-import { FlagForReviewInput, parseDecisionJson } from '../agent/schemas.js';
+import { FlagForReviewInput, SubmitDecisionInput } from '../agent/schemas.js';
 import { getRecentTraderMessages, getRecentChatMessages, formatTraderContext, formatChatContext } from './trader-context.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
@@ -139,24 +139,7 @@ the original trade call that this trader is following.
   Only use flag_for_review when the strategy type itself is truly ambiguous.
 - Always explain your reasoning. Your steps are audited.
 
-After using tools, respond with a JSON block:
-\`\`\`json
-{
-  "decision": "EXECUTE" | "SKIP" | "MANUAL_REVIEW",
-  "reasoning": "...",
-  "signals": [
-    {
-      "action": "OPEN" | "CLOSE" | "ADD" | "TRIM",
-      "symbol": "AAPL",
-      "direction": "LONG" | "SHORT",
-      "strategy": "STOCK" | "CALL" | "PUT" | "CDS" | "PDS",
-      "limitPrice": 150.25,
-      "exitPercent": 0.5,
-      "legs": [{ "strike": 150, "expiry": "2025-12-19", "optionType": "CALL", "action": "BUY" }]
-    }
-  ]
-}
-\`\`\`
+After using tools, call **submit_decision** with your parsed signals. For EXECUTE, include a signals array. For SKIP or MANUAL_REVIEW, omit signals.
 
 **IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
 
@@ -345,8 +328,12 @@ export async function extractIntent(
     {
       systemPrompt: INTENT_SYSTEM_PROMPT,
       tools,
-      parseResult: parseDecisionJson,
       onToolCall: (name, input) => {
+        if (name === 'submit_decision') {
+          const parsed = SubmitDecisionInput.safeParse(input);
+          if (parsed.success) return parsed.data satisfies TaskResult;
+          return null;
+        }
         if (name === 'flag_for_review') {
           const flagParsed = FlagForReviewInput.safeParse(input);
           return {

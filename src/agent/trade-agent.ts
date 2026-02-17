@@ -3,7 +3,7 @@ import type { TaskContext } from '../db/schema.js';
 import type { TaskResult } from './schemas.js';
 import type { LLMProvider } from './providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from './providers.js';
-import { FlagForReviewInput, parseDecisionJson } from './schemas.js';
+import { FlagForReviewInput, SubmitDecisionInput } from './schemas.js';
 import { runAgentLoop } from './agent-loop.js';
 import type { AgentStep } from './agent-loop.js';
 import type { ModelIdentity, LLMUsage } from './providers.js';
@@ -105,24 +105,7 @@ Only flag_for_review when:
 - Always explain your reasoning. Your steps are audited.
 - If an exit arrives but we have no matching open position (check with get_open_positions), skip.
 
-After using tools, respond with a JSON block:
-\`\`\`json
-{
-  "decision": "EXECUTE" | "SKIP" | "MANUAL_REVIEW",
-  "reasoning": "...",
-  "signals": [
-    {
-      "action": "OPEN" | "CLOSE" | "ADD" | "TRIM",
-      "symbol": "AAPL",
-      "direction": "LONG" | "SHORT",
-      "strategy": "STOCK" | "CALL" | "PUT" | "CDS" | "PDS",
-      "limitPrice": 150.25,
-      "exitPercent": 0.5,
-      "legs": [{ "strike": 150, "expiry": "2025-12-19", "optionType": "CALL", "action": "BUY" }]
-    }
-  ]
-}
-\`\`\`
+After using tools, call **submit_decision** with your classification. For EXECUTE, include a signals array. For SKIP or MANUAL_REVIEW, omit signals.
 
 **IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
 
@@ -229,8 +212,12 @@ export async function runAgent(
     {
       systemPrompt: SYSTEM_PROMPT,
       tools: activeTools,
-      parseResult: parseDecisionJson,
       onToolCall: (name, input) => {
+        if (name === 'submit_decision') {
+          const parsed = SubmitDecisionInput.safeParse(input);
+          if (parsed.success) return parsed.data satisfies TaskResult;
+          return null;
+        }
         if (name === 'flag_for_review') {
           const flagParsed = FlagForReviewInput.safeParse(input);
           return {

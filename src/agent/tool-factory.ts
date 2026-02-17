@@ -5,6 +5,7 @@ import {
   GetOptionsChainInput,
   GetOpenPositionsInput,
   FlagForReviewInput,
+  SubmitDecisionInput,
 } from './schemas.js';
 
 export type ToolDef = {
@@ -75,6 +76,53 @@ export function createBaseTools(deps: BaseToolDeps): ToolDef[] {
           reason: parsed.reason,
           uncertainty: parsed.uncertainty,
         };
+      },
+    },
+    {
+      name: 'submit_decision',
+      description: 'Submit your final trade classification decision. Call this exactly once after analysis.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          decision: { type: 'string', enum: ['EXECUTE', 'SKIP', 'MANUAL_REVIEW'] },
+          reasoning: { type: 'string', description: 'Why you made this decision' },
+          signals: {
+            type: 'array',
+            description: 'Trade signals (required for EXECUTE)',
+            items: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['OPEN', 'CLOSE', 'ADD', 'TRIM'] },
+                symbol: { type: 'string' },
+                direction: { type: 'string', enum: ['LONG', 'SHORT'] },
+                strategy: { type: 'string', enum: ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS'] },
+                limitPrice: { type: 'number' },
+                exitPercent: { type: 'number', description: '0.0-1.0 for TRIM' },
+                legs: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      strike: { type: 'number' },
+                      expiry: { type: 'string' },
+                      optionType: { type: 'string', enum: ['CALL', 'PUT'] },
+                      action: { type: 'string', enum: ['BUY', 'SELL'] },
+                    },
+                    required: ['strike', 'expiry', 'optionType', 'action'],
+                  },
+                },
+              },
+              required: ['action', 'symbol', 'direction', 'strategy'],
+            },
+          },
+        },
+        required: ['decision', 'reasoning'],
+      },
+      execute: async (input) => {
+        // Validate through Zod — will throw on invalid input, which the
+        // agent loop surfaces as a tool error so the LLM can self-correct.
+        SubmitDecisionInput.parse(input);
+        return { accepted: true };
       },
     },
   ];
