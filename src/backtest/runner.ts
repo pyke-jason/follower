@@ -24,7 +24,7 @@ import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
 import { isOpen, isClosed, forRun, forSymbol, forTrader } from '../trades/filters.js';
-import type { BacktestConfig, BacktestReport, HistoricalMessage, LiveMetrics } from './types.js';
+import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage, LiveMetrics } from './types.js';
 import type { TaskContext } from '../db/schema.js';
 import type { Trade } from '../db/schema.js';
 import type { LLMUsage } from '../agent/providers.js';
@@ -257,12 +257,14 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   if (!runId) throw new Error('runId is required for backtest');
 
   log.info(`Loading messages for ${config.traders.join(', ')}...`);
-  log.info(`Date range: ${config.startDate.toISOString().split('T')[0]} to ${config.endDate.toISOString().split('T')[0]}`);
+  const startDate = new Date(config.startDate);
+  const endDate = new Date(config.endDate);
+  log.info(`Date range: ${config.startDate.split('T')[0]} to ${config.endDate.split('T')[0]}`);
 
   // Load messages
   const allMessages = await loadHistoricalMessages({
-    startDate: config.startDate,
-    endDate: config.endDate,
+    startDate,
+    endDate,
     traders: config.traders,
   });
 
@@ -294,10 +296,10 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   if (!config.databentoApiKey) {
     throw new Error('Backtest requires a Databento API key. Set databentoApiKey in config.');
   }
-  const clock = new SimClock(config.startDate);
+  const clock = new SimClock(startDate);
   const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
   const fillModel = config.fillModel ?? 'orats';
-  const startingEquity = 100_000;
+  const startingEquity = config.startingEquity ?? 100_000;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
 
   const sizer = buildPositionSizer(
@@ -329,12 +331,14 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     return db.select().from(schema.trades).where(and(...conditions));
   };
 
-  const riskConfig: RiskCheckConfig = {
-    maxOnSymbol: 3,
-    maxTotalPositions: 20,
-    maxDrawdownPct: 5,
-    maxNotionalMultiplier: 2,
-  };
+  const riskConfig: RiskCheckConfig = config.disableRiskLimits
+    ? { maxOnSymbol: 999, maxTotalPositions: 999, maxDrawdownPct: 100, maxNotionalMultiplier: 100 }
+    : {
+        maxOnSymbol: config.maxOnSymbol ?? 3,
+        maxTotalPositions: config.maxTotalPositions ?? 20,
+        maxDrawdownPct: config.maxDrawdownPct ?? 5,
+        maxNotionalMultiplier: config.maxNotionalMultiplier ?? 2,
+      };
 
   const riskDeps: RiskCheckDeps = {
     getOpenTrades: getOpenPositions,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, type ReactNode } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatBubble } from './chat-bubble';
 import { DateSeparator } from './date-separator';
@@ -40,6 +40,7 @@ export function ChatFeed({
   hasMore = false,
   focusMessageId,
   highlightMessageId,
+  renderItem,
 }: {
   messages: Message[];
   firstItemIndex?: number;
@@ -48,6 +49,7 @@ export function ChatFeed({
   hasMore?: boolean;
   focusMessageId?: string;
   highlightMessageId?: string;
+  renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -99,6 +101,9 @@ export function ChatFeed({
             return <DateSeparator date={item.date} />;
           }
           const isHighlighted = item.message.id === highlightMessageId;
+          if (renderItem) {
+            return renderItem(item.message, isHighlighted);
+          }
           return (
             <div className={cn(isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20')}>
               <ChatBubble message={item.message} />

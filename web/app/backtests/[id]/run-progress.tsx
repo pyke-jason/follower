@@ -6,7 +6,7 @@ import { InfoChip } from '../../components/info-chip';
 import { formatCurrency } from '@/lib/format';
 import { estimateLlmCost } from '../../../../src/lib/llm-cost';
 import type { LiveMetrics } from '../../../../src/backtest/types';
-import { Clock, DollarSign, TrendingDown, Database, Layers } from 'lucide-react';
+import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers } from 'lucide-react';
 
 interface RunProgressProps {
   processedMessages: number;
@@ -78,8 +78,8 @@ export function RunProgress({
       <div className="flex items-center gap-2 flex-wrap">
         {liveMetrics?.unrealizedPnl != null && (
           <InfoChip
-            label={`${formatCurrency(liveMetrics.unrealizedPnl)} unreal.`}
-            icon={TrendingDown}
+            label={`${formatCurrency(liveMetrics.unrealizedPnl)} unrealized`}
+            icon={liveMetrics.unrealizedPnl >= 0 ? TrendingUp : TrendingDown}
             className={liveMetrics.unrealizedPnl >= 0 ? 'text-profit' : 'text-loss'}
           />
         )}

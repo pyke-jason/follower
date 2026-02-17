@@ -30,14 +30,20 @@ app.post('/spawn', async (c) => {
     startDate: string;
     endDate: string;
     traders: string[];
-    useQuoteTape?: boolean;
     agentProvider?: string;
     agentModel?: string;
     refreshQuoteCache?: boolean;
     logLevel?: string;
+    disableRiskLimits?: boolean;
+    maxOnSymbol?: number;
+    maxTotalPositions?: number;
+    maxDrawdownPct?: number;
+    maxAgentCalls?: number;
+    startingEquity?: number;
   }>();
 
-  const { runId, startDate, endDate, traders, useQuoteTape, agentProvider, agentModel, refreshQuoteCache, logLevel } = body;
+  const { runId, startDate, endDate, traders, agentProvider, agentModel, refreshQuoteCache, logLevel,
+    disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity } = body;
 
   const args = [
     startDate,
@@ -45,8 +51,14 @@ app.post('/spawn', async (c) => {
     traders.join(','),
     ...(agentProvider ? ['--agent-provider', agentProvider] : []),
     ...(agentModel ? ['--agent-model', agentModel] : []),
-    ...(useQuoteTape ? ['--quote-tape'] : []),
+    '--quote-tape',
     ...(refreshQuoteCache ? ['--refresh-quote-cache'] : []),
+    ...(disableRiskLimits ? ['--disable-risk-limits'] : []),
+    ...(maxOnSymbol != null ? ['--max-on-symbol', String(maxOnSymbol)] : []),
+    ...(maxTotalPositions != null ? ['--max-total-positions', String(maxTotalPositions)] : []),
+    ...(maxDrawdownPct != null ? ['--max-drawdown-pct', String(maxDrawdownPct)] : []),
+    ...(maxAgentCalls != null ? ['--max-agent-calls', String(maxAgentCalls)] : []),
+    ...(startingEquity != null ? ['--starting-equity', String(startingEquity)] : []),
     '--log-level', logLevel ?? 'debug',
     '--run-id', runId,
   ];

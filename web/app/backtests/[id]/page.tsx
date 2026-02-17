@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getEnrichedMessages } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -18,7 +18,9 @@ import { BreakdownCharts } from './breakdown-charts';
 import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
 import { StrategyEquityChart } from './strategy-equity';
-import { AgentDecisions } from './agent-decisions';
+import { EnrichedChatPanel } from '../../components/enriched-chat-panel';
+import { DecisionScatter } from './decision-scatter';
+import { aggregateSkipReasons } from '../../../../src/lib/skip-reasons';
 import { TradeRow } from '../../components/trade-row';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
@@ -42,9 +44,15 @@ export default async function BacktestDetailPage({
   const config = run.config as BacktestRunConfig;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
 
-  const [decisions, allTrades] = await Promise.all([
+  const [decisions, allTrades, enrichedResult] = await Promise.all([
     getRunDecisions(id),
     getTradesByBacktestRun(id, { includeOpen: true }),
+    getEnrichedMessages({
+      traders: config.traders,
+      startDate: config.startDate,
+      endDate: config.endDate,
+      runId: id,
+    }),
   ]);
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
@@ -59,7 +67,8 @@ export default async function BacktestDetailPage({
 
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions);
+  const configStartingEquity = config.startingEquity ?? 100_000;
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, configStartingEquity);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -154,13 +163,47 @@ export default async function BacktestDetailPage({
     </div>
   );
 
-  // --- Agent Decisions Tab content ---
-  const decisionsContent = decisions.length > 0 ? (
-    <AgentDecisions rows={decisions} backtestRunId={id} />
-  ) : (
-    <p className="text-sm text-muted-foreground text-center py-6">
-      No agent decisions recorded for this run.
-    </p>
+  // --- Messages Tab content (enriched chat feed) ---
+  const decisionSummary = decisions.length > 0 ? {
+    executedCount: decisions.filter((d) => d.decision.decision === 'EXECUTE').length,
+    skippedCount: decisions.filter((d) => d.decision.decision === 'SKIP').length,
+    totalDecisions: decisions.length,
+    skipReasonCounts: aggregateSkipReasons(
+      decisions.map((d) => ({ decision: d.decision.decision, reasoning: d.decision.reasoning })),
+    ),
+  } : null;
+
+  const scatterData = decisions
+    .filter((r) => r.decision.pnl != null)
+    .map((r) => ({
+      date: r.message.timestamp.split('T')[0],
+      pnl: safeParseFloat(r.decision.pnl),
+      decision: r.decision.decision,
+      message: r.message.cleanText.slice(0, 60),
+    }));
+
+  const scatterChart = scatterData.length > 0 ? (
+    <Card className="py-0 gap-0">
+      <CardHeader className="border-b py-3 px-4">
+        <CardTitle className="text-sm">Decision Outcomes</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4 pb-2 px-2">
+        <DecisionScatter data={scatterData} />
+      </CardContent>
+    </Card>
+  ) : undefined;
+
+  const messagesContent = (
+    <EnrichedChatPanel
+      initialMessages={enrichedResult.rows}
+      initialCursor={enrichedResult.nextCursor}
+      runId={id}
+      traders={config.traders}
+      startDate={config.startDate}
+      endDate={config.endDate}
+      decisionSummary={decisionSummary}
+      scatterChart={scatterChart}
+    />
   );
 
   // --- Trades Tab content ---
@@ -263,7 +306,11 @@ export default async function BacktestDetailPage({
           <Separator orientation="vertical" className="!h-4" />
           <span className="text-muted-foreground tabular-nums">{config.startDate.split('T')[0]} &ndash; {config.endDate.split('T')[0]}</span>
           <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground">{config.agentModel ?? 'default'}</span>
+          <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
+          <Separator orientation="vertical" className="!h-4" />
+          <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
+          <span className="text-muted-foreground tabular-nums">${((config.startingEquity ?? 100_000) / 1000).toFixed(0)}k</span>
+          {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
           {summary && (
             <>
               <Separator orientation="vertical" className="!h-4" />
@@ -307,9 +354,9 @@ export default async function BacktestDetailPage({
         {/* Tabs — always in this slot when data exists */}
       <BacktestTabs
         performance={performanceContent}
-        decisions={decisionsContent}
+        messages={messagesContent}
         trades={tradesContent}
-        hasDecisions={decisions.length > 0}
+        hasMessages={enrichedResult.rows.length > 0}
       />
     </div>
 
@@ -344,8 +391,9 @@ export type StrategyEquityPoint = Record<string, number | string>;
 function computeFromTrades(
   allTrades: TradeRow[],
   decisions: { decision: { path: string; decision: string } }[],
+  startingEquity = 100_000,
 ) {
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades);
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, undefined, startingEquity);
 
   // Execution stats from already-loaded decisions — no precomputed fallback
   const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;

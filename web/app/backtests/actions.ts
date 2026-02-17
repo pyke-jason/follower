@@ -4,7 +4,7 @@ import { db, schema } from '@/lib/db';
 import { eq, inArray } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTradesByBacktestRun, getRunDecisions } from '@/lib/queries';
+import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
 import type { BacktestRunConfig } from '../../../src/db/schema';
 
@@ -14,11 +14,16 @@ export async function startBacktest(formData: FormData) {
   const startDate = formData.get('startDate') as string;
   const endDate = formData.get('endDate') as string;
   const tradersRaw = formData.get('traders') as string;
-  const useQuoteTape = formData.get('useQuoteTape') === 'on';
   const refreshQuoteCache = formData.get('refreshQuoteCache') === 'on';
   const agentProvider = (formData.get('agentProvider') as string) || undefined;
   const agentModel = (formData.get('agentModel') as string) || undefined;
   const logLevel = (formData.get('logLevel') as string) || 'debug';
+  const disableRiskLimits = formData.get('disableRiskLimits') === 'on';
+  const maxOnSymbol = formData.get('maxOnSymbol') ? Number(formData.get('maxOnSymbol')) : undefined;
+  const maxTotalPositions = formData.get('maxTotalPositions') ? Number(formData.get('maxTotalPositions')) : undefined;
+  const maxDrawdownPct = formData.get('maxDrawdownPct') ? Number(formData.get('maxDrawdownPct')) : undefined;
+  const maxAgentCalls = formData.get('maxAgentCalls') ? Number(formData.get('maxAgentCalls')) : undefined;
+  const startingEquity = formData.get('startingEquity') ? Number(formData.get('startingEquity')) : undefined;
 
   if (!startDate || !endDate || !tradersRaw) {
     throw new Error('Missing required fields');
@@ -33,10 +38,16 @@ export async function startBacktest(formData: FormData) {
     startDate: new Date(startDate + 'T00:00:00Z').toISOString(),
     endDate: new Date(endDate + 'T23:59:59Z').toISOString(),
     traders,
-    useQuoteTape,
+    useQuoteTape: true,
     ...(agentProvider ? { agentProvider } : {}),
     ...(agentModel ? { agentModel } : {}),
     ...(refreshQuoteCache ? { refreshQuoteCache } : {}),
+    ...(disableRiskLimits ? { disableRiskLimits } : {}),
+    ...(maxOnSymbol != null ? { maxOnSymbol } : {}),
+    ...(maxTotalPositions != null ? { maxTotalPositions } : {}),
+    ...(maxDrawdownPct != null ? { maxDrawdownPct } : {}),
+    ...(maxAgentCalls != null ? { maxAgentCalls } : {}),
+    ...(startingEquity != null ? { startingEquity } : {}),
   };
 
   const runId = crypto.randomUUID();
@@ -54,10 +65,16 @@ export async function startBacktest(formData: FormData) {
       startDate,
       endDate,
       traders,
-      useQuoteTape,
+      useQuoteTape: true,
       ...(agentProvider ? { agentProvider } : {}),
       ...(agentModel ? { agentModel } : {}),
       ...(refreshQuoteCache ? { refreshQuoteCache } : {}),
+      ...(disableRiskLimits ? { disableRiskLimits } : {}),
+      ...(maxOnSymbol != null ? { maxOnSymbol } : {}),
+      ...(maxTotalPositions != null ? { maxTotalPositions } : {}),
+      ...(maxDrawdownPct != null ? { maxDrawdownPct } : {}),
+      ...(maxAgentCalls != null ? { maxAgentCalls } : {}),
+      ...(startingEquity != null ? { startingEquity } : {}),
       logLevel,
     }),
   });
@@ -232,4 +249,15 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
   }
 
   revalidatePath('/backtests');
+}
+
+export async function fetchEnrichedMessages(
+  traders: string[],
+  startDate: string,
+  endDate: string,
+  cursor?: string,
+  runId?: string,
+  roleFilter?: 'all' | 'executed' | 'skipped',
+) {
+  return getEnrichedMessages({ traders, startDate, endDate, cursor, runId, roleFilter });
 }

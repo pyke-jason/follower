@@ -4,14 +4,16 @@ import {
   useState,
   useOptimistic,
   useTransition,
-  useRef,
   useEffect,
+  useCallback,
+  memo,
 } from 'react';
 import Link from 'next/link';
-import { Search, X, Plus, Pencil, ListPlus, Trash2 } from 'lucide-react';
+import { Search, X, Plus, ListPlus, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableHeader,
@@ -43,6 +45,7 @@ import {
   setNotes,
   bulkAdd,
   bulkRemove,
+  bulkToggleStrategy,
 } from './actions';
 
 const ALL_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'] as const;
@@ -57,13 +60,27 @@ const STRAT_CLASSES: Record<string, string> = {
   STOCK: `data-[state=on]:!bg-sky-500/15 data-[state=on]:!text-sky-800 dark:data-[state=on]:!text-sky-300 ${STRAT_OFF}`,
 };
 
+const BULK_ON: Record<string, string> = {
+  CDS: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-400/40',
+  PDS: 'bg-violet-500/15 text-violet-800 dark:text-violet-300 border-violet-400/40',
+  CALL: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-400/40',
+  PUT: 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-400/40',
+  STOCK: 'bg-sky-500/15 text-sky-800 dark:text-sky-300 border-sky-400/40',
+};
+
 type OptAction =
   | { type: 'add'; name: string }
   | { type: 'addAll'; names: string[] }
   | { type: 'remove'; name: string }
   | { type: 'removeAll'; names: string[] }
   | { type: 'toggle'; name: string }
-  | { type: 'strategies'; name: string; strategies: string[] };
+  | { type: 'strategies'; name: string; strategies: string[] }
+  | {
+      type: 'bulkStrategy';
+      names: string[];
+      strategy: string;
+      enable: boolean;
+    };
 
 export function TraderRoster({
   traders,
@@ -73,6 +90,7 @@ export function TraderRoster({
   authors: string[];
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [, startTransition] = useTransition();
 
   const [optimistic, addOptimistic] = useOptimistic(
@@ -116,17 +134,31 @@ export function TraderRoster({
               ? { ...t, strategies: action.strategies }
               : t,
           );
+        case 'bulkStrategy':
+          return state.map((t) => {
+            if (!action.names.includes(t.name)) return t;
+            const current = (t.strategies as string[]) || [];
+            const strategies = action.enable
+              ? current.includes(action.strategy)
+                ? current
+                : [...current, action.strategy]
+              : current.filter((s) => s !== action.strategy);
+            return { ...t, strategies };
+          });
       }
     },
   );
 
-  // / to open search
+  // / to open search, Escape to clear selection
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA') {
         e.preventDefault();
         setAddOpen(true);
+      }
+      if (e.key === 'Escape') {
+        setSelected(new Set());
       }
     }
     window.addEventListener('keydown', onKey);
@@ -135,6 +167,30 @@ export function TraderRoster({
 
   const trackedSet = new Set(optimistic.map((t) => t.name));
   const available = authors.filter((a) => !trackedSet.has(a));
+
+  // Derive pruned selection inline — no effect needed
+  const active = new Set([...selected].filter((n) => trackedSet.has(n)));
+  const allSelected =
+    optimistic.length > 0 && active.size === optimistic.length;
+  const someSelected = active.size > 0 && !allSelected;
+
+  // Stable callbacks for TraderRow — take name/trader as argument
+  const toggleSelect = useCallback((name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(optimistic.map((t) => t.name)));
+    }
+  }
 
   function doAdd(name: string) {
     setAddOpen(false);
@@ -153,58 +209,151 @@ export function TraderRoster({
     });
   }
 
-  function doRemove(name: string) {
-    startTransition(async () => {
-      addOptimistic({ type: 'remove', name });
-      await removeTrader(name);
-    });
-  }
+  const doRemove = useCallback(
+    (name: string) => {
+      startTransition(async () => {
+        addOptimistic({ type: 'remove', name });
+        await removeTrader(name);
+      });
+    },
+    [addOptimistic, startTransition],
+  );
 
-  function doRemoveAll() {
-    const names = optimistic.map((t) => t.name);
+  function doRemoveSelected() {
+    const names = [...active];
     if (!names.length) return;
+    setSelected(new Set());
     startTransition(async () => {
       addOptimistic({ type: 'removeAll', names });
       await bulkRemove(names);
     });
   }
 
-  function doToggle(trader: TrackedTrader) {
+  function doRemoveAll() {
+    const names = optimistic.map((t) => t.name);
+    if (!names.length) return;
+    setSelected(new Set());
     startTransition(async () => {
-      addOptimistic({ type: 'toggle', name: trader.name });
-      await toggleEnabled(trader.name, !!trader.enabled);
+      addOptimistic({ type: 'removeAll', names });
+      await bulkRemove(names);
     });
   }
 
-  function doStrategiesChange(name: string, strategies: string[]) {
+  const doToggle = useCallback(
+    (name: string, enabled: boolean) => {
+      startTransition(async () => {
+        addOptimistic({ type: 'toggle', name });
+        await toggleEnabled(name, enabled);
+      });
+    },
+    [addOptimistic, startTransition],
+  );
+
+  const doStrategiesChange = useCallback(
+    (name: string, strategies: string[]) => {
+      startTransition(async () => {
+        addOptimistic({ type: 'strategies', name, strategies });
+        await setStrategies(name, strategies);
+      });
+    },
+    [addOptimistic, startTransition],
+  );
+
+  function doBulkStrategy(strategy: string, enable: boolean) {
+    const names = [...active];
     startTransition(async () => {
-      addOptimistic({ type: 'strategies', name, strategies });
-      await setStrategies(name, strategies);
+      addOptimistic({ type: 'bulkStrategy', names, strategy, enable });
+      await bulkToggleStrategy(names, strategy, enable);
     });
+  }
+
+  // Aggregate strategy state for selected traders
+  function getStrategyState(strategy: string): 'all' | 'none' | 'mixed' {
+    if (active.size === 0) return 'none';
+    const selectedTraders = optimistic.filter((t) => active.has(t.name));
+    const count = selectedTraders.filter((t) =>
+      ((t.strategies as string[]) || []).includes(strategy),
+    ).length;
+    if (count === selectedTraders.length) return 'all';
+    if (count === 0) return 'none';
+    return 'mixed';
   }
 
   return (
     <div className="space-y-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
+      {/* Header row — transforms into bulk actions when selected */}
+      <div className="flex items-center justify-between min-h-[36px]">
         <h2 className="text-lg font-semibold text-foreground">
           Tracked Traders
-        </h2>
-        <div className="flex items-center gap-2">
-          {optimistic.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground/60 hover:text-destructive h-7 text-xs"
-              onClick={doRemoveAll}
-            >
-              <Trash2 className="h-3 w-3 mr-1" />
-              Remove all
-            </Button>
-          )}
-          <span className="text-xs text-muted-foreground font-mono tabular-nums">
+          <span className="ml-2 text-xs text-muted-foreground font-mono font-normal tabular-nums">
             {optimistic.length}
           </span>
+        </h2>
+        <div className="flex items-center gap-1.5">
+          {active.size > 0 ? (
+            <>
+              <span className="text-xs text-muted-foreground font-medium mr-1">
+                {active.size} sel
+              </span>
+              {ALL_STRATEGIES.map((s) => {
+                const state = getStrategyState(s);
+                const isOn = state === 'all';
+                const isMixed = state === 'mixed';
+                return (
+                  <button
+                    key={s}
+                    onClick={() => doBulkStrategy(s, !isOn)}
+                    className={cn(
+                      'px-2 py-1 rounded text-[11px] font-mono font-semibold border cursor-pointer transition-all hover:brightness-110 active:scale-95',
+                      isOn
+                        ? BULK_ON[s]
+                        : isMixed
+                          ? `${BULK_ON[s]} opacity-50`
+                          : 'border-border/50 text-muted-foreground/30',
+                    )}
+                    title={
+                      isOn
+                        ? `Disable ${s} for selected`
+                        : `Enable ${s} for selected`
+                    }
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+              <div className="h-4 w-px bg-border mx-1" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                onClick={doRemoveSelected}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Remove
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground"
+                onClick={() => setSelected(new Set())}
+              >
+                <X className="h-3 w-3 mr-1" />
+                Clear
+              </Button>
+            </>
+          ) : (
+            optimistic.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground/60 hover:text-destructive h-7 text-xs"
+                onClick={doRemoveAll}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Remove all
+              </Button>
+            )
+          )}
         </div>
       </div>
 
@@ -283,7 +432,19 @@ export function TraderRoster({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[160px]">Name</TableHead>
+                <TableHead className="w-[40px] pl-4">
+                  <Checkbox
+                    checked={
+                      allSelected
+                        ? true
+                        : someSelected
+                          ? 'indeterminate'
+                          : false
+                    }
+                    onCheckedChange={toggleSelectAll}
+                  />
+                </TableHead>
+                <TableHead className="w-[140px]">Name</TableHead>
                 <TableHead className="w-[70px]">Active</TableHead>
                 <TableHead>Strategies</TableHead>
                 <TableHead>Notes</TableHead>
@@ -295,11 +456,11 @@ export function TraderRoster({
                 <TraderRow
                   key={trader.name}
                   trader={trader}
-                  onToggle={() => doToggle(trader)}
-                  onRemove={() => doRemove(trader.name)}
-                  onStrategiesChange={(val) =>
-                    doStrategiesChange(trader.name, val)
-                  }
+                  isSelected={active.has(trader.name)}
+                  onSelect={toggleSelect}
+                  onToggle={doToggle}
+                  onRemove={doRemove}
+                  onStrategiesChange={doStrategiesChange}
                 />
               ))}
             </TableBody>
@@ -310,23 +471,38 @@ export function TraderRoster({
   );
 }
 
-/* ── Table row ───────────────────────────────────────── */
+/* ── Memoized table row ─────────────────────────────── */
 
-function TraderRow({
+const TraderRow = memo(function TraderRow({
   trader,
+  isSelected,
+  onSelect,
   onToggle,
   onRemove,
   onStrategiesChange,
 }: {
   trader: TrackedTrader;
-  onToggle: () => void;
-  onRemove: () => void;
-  onStrategiesChange: (strategies: string[]) => void;
+  isSelected: boolean;
+  onSelect: (name: string) => void;
+  onToggle: (name: string, enabled: boolean) => void;
+  onRemove: (name: string) => void;
+  onStrategiesChange: (name: string, strategies: string[]) => void;
 }) {
   const strategies = (trader.strategies as string[]) || [];
 
   return (
-    <TableRow className={!trader.enabled ? 'opacity-40' : ''}>
+    <TableRow
+      className={cn(
+        !trader.enabled && 'opacity-40',
+        isSelected && 'bg-primary/5',
+      )}
+    >
+      <TableCell className="pl-4">
+        <Checkbox
+          checked={isSelected}
+          onCheckedChange={() => onSelect(trader.name)}
+        />
+      </TableCell>
       <TableCell className="font-medium">
         <div className="flex items-center gap-2">
           <span
@@ -347,14 +523,14 @@ function TraderRow({
         <Switch
           checked={!!trader.enabled}
           size="sm"
-          onCheckedChange={onToggle}
+          onCheckedChange={() => onToggle(trader.name, !!trader.enabled)}
         />
       </TableCell>
       <TableCell>
         <ToggleGroup
           type="multiple"
           value={strategies}
-          onValueChange={onStrategiesChange}
+          onValueChange={(val) => onStrategiesChange(trader.name, val)}
           variant="outline"
           size="sm"
           spacing={1}
@@ -382,7 +558,7 @@ function TraderRow({
           variant="ghost"
           size="icon"
           className="h-7 w-7 text-muted-foreground/30 hover:text-destructive"
-          onClick={onRemove}
+          onClick={() => onRemove(trader.name)}
           title={`Remove ${trader.name}`}
         >
           <X className="h-3.5 w-3.5" />
@@ -390,7 +566,7 @@ function TraderRow({
       </TableCell>
     </TableRow>
   );
-}
+});
 
 /* ── Inline notes cell ───────────────────────────────── */
 
@@ -401,60 +577,38 @@ function NotesCell({
   name: string;
   notes: string | null;
 }) {
-  const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(notes ?? '');
-  const ref = useRef<HTMLInputElement>(null);
   const [, startTransition] = useTransition();
 
   useEffect(() => {
     setValue(notes ?? '');
   }, [notes]);
-  useEffect(() => {
-    if (editing) ref.current?.focus();
-  }, [editing]);
 
   function save() {
-    setEditing(false);
     const trimmed = value.trim();
     if (trimmed !== (notes ?? '')) {
       startTransition(() => setNotes(name, trimmed || null));
     }
   }
 
-  if (editing) {
-    return (
-      <input
-        ref={ref}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            save();
-          }
-          if (e.key === 'Escape') {
-            setValue(notes ?? '');
-            setEditing(false);
-          }
-        }}
-        autoComplete="off"
-        className="text-xs bg-transparent border-b border-ring text-muted-foreground outline-none w-full max-w-48"
-        placeholder="Add note..."
-      />
-    );
-  }
-
   return (
-    <button
-      onClick={() => setEditing(true)}
-      className="group flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors max-w-48 truncate"
-      title="Click to edit"
-    >
-      <span className={notes ? '' : 'text-muted-foreground/40'}>
-        {notes || '--'}
-      </span>
-      <Pencil className="h-2.5 w-2.5 shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
-    </button>
+    <input
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+        if (e.key === 'Escape') {
+          setValue(notes ?? '');
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      autoComplete="off"
+      placeholder="--"
+      className="text-xs bg-transparent text-muted-foreground outline-none w-full max-w-48 border-b border-transparent focus:border-ring focus:text-foreground placeholder:text-muted-foreground/40 transition-colors"
+    />
   );
 }

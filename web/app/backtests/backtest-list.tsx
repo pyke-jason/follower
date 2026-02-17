@@ -11,7 +11,7 @@ import { formatCurrency, formatDate } from '@/lib/format';
 import Link from 'next/link';
 import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../src/db/schema';
-import { pctDisplay } from '../../../src/lib/numbers';
+import { pctDisplay, PROFIT_FACTOR_INF } from '../../../src/lib/numbers';
 import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
 function formatDuration(ms: number | null): string {
@@ -163,9 +163,12 @@ export function BacktestList({
                 <TableHead>Status</TableHead>
                 <TableHead>Traders</TableHead>
                 <TableHead>Date Range</TableHead>
+                <TableHead>Model</TableHead>
                 <TableHead className="text-right">Trades</TableHead>
                 <TableHead className="text-right">Win Rate</TableHead>
                 <TableHead className="text-right">P&L</TableHead>
+                <TableHead className="text-right">PF</TableHead>
+                <TableHead className="text-right">Max DD</TableHead>
                 <TableHead className="w-[72px]">Curve</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>Created</TableHead>
@@ -209,12 +212,12 @@ export function BacktestList({
                         <Badge label={run.status} />
                       </Link>
                     </TableCell>
-                    <TableCell>
-                      <Link href={`/backtests/${run.id}`} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
+                    <TableCell className="max-w-[180px]">
+                      <Link href={`/backtests/${run.id}`} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40 truncate block" title={run.name ?? config.traders.join(', ')}>
                         {run.name ?? config.traders.join(', ')}
                       </Link>
                       {run.experimentTag && (
-                        <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted/40 px-1 py-0.5 rounded border border-border/30 border-dashed">
+                        <span className="text-[10px] text-muted-foreground bg-muted/40 px-1 py-0.5 rounded border border-border/30 border-dashed">
                           {run.experimentTag}
                         </span>
                       )}
@@ -222,12 +225,21 @@ export function BacktestList({
                     <TableCell className="text-muted-foreground text-xs tabular-nums">
                       {startDate} &ndash; {endDate}
                     </TableCell>
+                    <TableCell className="text-muted-foreground text-xs truncate max-w-[120px]" title={config.agentModel ?? 'default'}>
+                      {(config.agentModel ?? 'default').replace(/^(claude-|grok-)/, '').replace(/-202\d+$/, '')}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{summary?.totalTrades ?? '--'}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {summary ? pctDisplay(summary.winRate) : '--'}
                     </TableCell>
                     <TableCell className={`text-right tabular-nums font-medium ${pnlColor}`}>
                       {summary ? formatCurrency(summary.totalPnl) : '--'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {summary ? (summary.profitFactor >= PROFIT_FACTOR_INF ? '99.99' : summary.profitFactor.toFixed(2)) : '--'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {summary ? formatCurrency(summary.maxDrawdown) : '--'}
                     </TableCell>
                     <TableCell>
                       {sparkData.length > 1 && (

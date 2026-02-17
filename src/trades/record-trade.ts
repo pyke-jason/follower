@@ -65,6 +65,17 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
   const now = new Date().toISOString();
 
+  // Guard: backtest trades must have explicit timestamps — never fall back to
+  // wall-clock time, which collapses the equity curve to a single day.
+  if (isBacktest || backtestRunId) {
+    if (action === 'OPEN' && !openedAt) {
+      throw new Error(`recordTrade: backtest OPEN for ${symbol} missing openedAt timestamp`);
+    }
+    if ((action === 'CLOSE' || action === 'TRIM') && !closedAt) {
+      throw new Error(`recordTrade: backtest ${action} for ${symbol} missing closedAt timestamp`);
+    }
+  }
+
   // Build scoped filter for finding existing positions
   const scopeFilters = [
     isOpen,

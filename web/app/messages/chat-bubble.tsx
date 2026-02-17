@@ -3,7 +3,6 @@ import { MessageContent } from './message-content';
 import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
 import type { Message } from '../../../src/db/schema';
-import { safeParseFloat } from '../../../src/lib/numbers';
 
 function getAccentBorder(message: Message): string {
   const action = message.actionHint;
@@ -19,19 +18,17 @@ function getAccentBorder(message: Message): string {
   return 'border-l-border';
 }
 
-export function ChatBubble({ message }: { message: Message }) {
+export function ChatBubble({ message, noBorder }: { message: Message; noBorder?: boolean }) {
   const badges = (message.badges as string[]) || [];
   const symbols = (message.symbols as string[]) || [];
   const isSignal =
     !!message.actionHint || badges.length > 0 || symbols.length > 0;
 
-  const accentClass = getAccentBorder(message);
-  const hasIndicators = !!message.confidence || !!message.isPaperTrade;
-
+  const accentClass = noBorder ? '' : `border-l-2 ${getAccentBorder(message)}`;
   return (
     <div
       data-message-id={message.id}
-      className={`flex gap-3 px-4 py-1.5 border-l-2 hover:bg-white/[0.02] ${accentClass}`}
+      className={`flex gap-3 px-4 py-1.5 hover:bg-white/[0.02] ${accentClass}`}
     >
       <AuthorAvatar name={message.author} />
 
@@ -57,19 +54,11 @@ export function ChatBubble({ message }: { message: Message }) {
         >
           <MessageContent message={message} />
 
-          {/* Subtle inline indicators */}
-          {hasIndicators && (
-            <span className="inline-flex items-center gap-1.5 ml-2 align-middle">
-              {message.confidence && (
-                <span className="text-[11px] text-muted-foreground">
-                  {Math.round(safeParseFloat(message.confidence) * 100)}%
-                </span>
-              )}
-              {message.isPaperTrade && (
-                <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
-                  PAPER
-                </span>
-              )}
+          {message.isPaperTrade && (
+            <span className="inline-flex items-center ml-2 align-middle">
+              <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
+                PAPER
+              </span>
             </span>
           )}
         </div>

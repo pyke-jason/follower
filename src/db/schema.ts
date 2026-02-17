@@ -296,9 +296,17 @@ export type BacktestRunConfig = {
   useQuoteTape: boolean;
   agentProvider?: string;  // 'anthropic' | 'xai'
   agentModel?: string;     // e.g. 'claude-sonnet-4-5-20250929'
-  fillModel?: string;      // 'orats' | 'midpoint' | 'natural'
+  fillModel?: 'orats' | 'midpoint' | 'natural';
   name?: string;           // human label for the run
   refreshQuoteCache?: boolean;
+  startingEquity?: number;  // default: 100_000
+  maxAgentCalls?: number;
+  // Risk limit overrides (defaults: maxOnSymbol=3, maxTotalPositions=20, maxDrawdownPct=5, maxNotionalMultiplier=2)
+  maxOnSymbol?: number;
+  maxTotalPositions?: number;
+  maxDrawdownPct?: number;
+  maxNotionalMultiplier?: number;
+  disableRiskLimits?: boolean;
 };
 
 export type BacktestRunSummary = {

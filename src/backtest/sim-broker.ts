@@ -190,7 +190,7 @@ export class SimBroker implements BrokerService {
       if (withinSpread) {
         const filledPrice = roundCents(params.limitPrice);
         log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
-        return { orderId, status: 'FILLED', filledPrice };
+        return { orderId, status: 'FILLED', filledPrice, fillTimestamp: this.clock.now().toISOString() };
       }
 
       // Queue for tick-based filling
@@ -223,6 +223,7 @@ export class SimBroker implements BrokerService {
       orderId,
       status: 'FILLED',
       filledPrice: roundedFill,
+      fillTimestamp: this.clock.now().toISOString(),
     };
   }
 

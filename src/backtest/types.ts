@@ -1,4 +1,4 @@
-import type { DetectedStrategy } from '../db/schema.js';
+import type { DetectedStrategy, BacktestRunConfig } from '../db/schema.js';
 
 export type FillModel = 'orats' | 'midpoint' | 'natural';
 
@@ -36,17 +36,13 @@ export type HistoricalMessage = {
   confidence: number;
 };
 
-export type BacktestConfig = {
-  startDate: Date;
-  endDate: Date;
-  traders: string[];
-  fillModel?: FillModel;
+/**
+ * Runtime backtest config. Extends the DB-stored BacktestRunConfig with
+ * runtime-only fields (secrets, log level, dataset overrides).
+ */
+export type BacktestConfig = BacktestRunConfig & {
   databentoApiKey?: string;
   databentoDataset?: string;  // default 'DBEQ.BASIC' (uses mbp-1 schema; OPRA.PILLAR uses cbbo-1s)
-  agentProvider?: string;     // 'anthropic' | 'xai' — default 'anthropic'
-  agentModel?: string;        // e.g. 'claude-sonnet-4-5-20250929'
-  maxAgentCalls?: number;
-  refreshQuoteCache?: boolean; // delete and re-download Databento cache entries
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
 };
 

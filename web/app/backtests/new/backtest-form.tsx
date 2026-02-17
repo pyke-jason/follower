@@ -35,9 +35,9 @@ export function BacktestForm({
   defaultTraders: string;
   defaultConfig?: BacktestRunConfig;
 }) {
-  const [provider, setProvider] = useState(defaultConfig?.agentProvider ?? 'anthropic');
+  const [provider, setProvider] = useState(defaultConfig?.agentProvider ?? 'xai');
   const [model, setModel] = useState(
-    defaultConfig?.agentModel ?? MODELS_BY_PROVIDER[defaultConfig?.agentProvider ?? 'anthropic']?.[0] ?? MODELS_BY_PROVIDER.anthropic[0],
+    defaultConfig?.agentModel ?? MODELS_BY_PROVIDER[defaultConfig?.agentProvider ?? 'xai']?.[1] ?? MODELS_BY_PROVIDER.xai[1],
   );
 
   function handleProviderChange(value: string) {
@@ -112,8 +112,31 @@ export function BacktestForm({
       </div>
 
       <div className="flex items-center gap-3">
-        <Switch name="useQuoteTape" id="useQuoteTape" defaultChecked={defaultConfig?.useQuoteTape ?? true} />
-        <Label htmlFor="useQuoteTape" className="text-sm">Use quote tape (Databento)</Label>
+        <Switch name="disableRiskLimits" id="disableRiskLimits" defaultChecked={defaultConfig?.disableRiskLimits ?? false} />
+        <Label htmlFor="disableRiskLimits" className="text-sm">Disable risk limits</Label>
+      </div>
+
+      <div className="grid grid-cols-5 gap-4">
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Starting equity</Label>
+          <Input name="startingEquity" type="number" placeholder="100,000" defaultValue={defaultConfig?.startingEquity ?? ''} className="h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Max on symbol</Label>
+          <Input name="maxOnSymbol" type="number" placeholder="3" defaultValue={defaultConfig?.maxOnSymbol ?? ''} className="h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Max positions</Label>
+          <Input name="maxTotalPositions" type="number" placeholder="20" defaultValue={defaultConfig?.maxTotalPositions ?? ''} className="h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Max DD %</Label>
+          <Input name="maxDrawdownPct" type="number" step="0.1" placeholder="5" defaultValue={defaultConfig?.maxDrawdownPct ?? ''} className="h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Max agent calls</Label>
+          <Input name="maxAgentCalls" type="number" placeholder="∞" defaultValue={defaultConfig?.maxAgentCalls ?? ''} className="h-9" />
+        </div>
       </div>
 
       <div className="flex gap-2 pt-2">

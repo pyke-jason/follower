@@ -1,5 +1,6 @@
 'use client';
 
+import { useId } from 'react';
 import { cn } from '@/lib/utils';
 
 interface SparklineProps {
@@ -40,7 +41,7 @@ export function Sparkline({
   const linePath = `M ${points.join(' L ')}`;
   const areaPath = `${linePath} L ${padding + innerWidth},${padding + innerHeight} L ${padding},${padding + innerHeight} Z`;
 
-  const gradientId = `spark-${Math.random().toString(36).slice(2, 8)}`;
+  const gradientId = `spark-${useId()}`;
 
   return (
     <svg

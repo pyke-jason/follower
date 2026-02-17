@@ -78,3 +78,30 @@ export async function bulkRemove(names: string[]) {
     .where(inArray(schema.trackedTraders.name, names));
   refresh();
 }
+
+export async function bulkToggleStrategy(
+  names: string[],
+  strategy: string,
+  enable: boolean,
+) {
+  if (!names.length) return;
+  const traders = await db
+    .select()
+    .from(schema.trackedTraders)
+    .where(inArray(schema.trackedTraders.name, names));
+  for (const trader of traders) {
+    const current = (trader.strategies as string[]) || [];
+    const next = enable
+      ? current.includes(strategy)
+        ? current
+        : [...current, strategy]
+      : current.filter((s) => s !== strategy);
+    if (next.length !== current.length || !next.every((s) => current.includes(s))) {
+      await db
+        .update(schema.trackedTraders)
+        .set({ strategies: next })
+        .where(eq(schema.trackedTraders.name, trader.name));
+    }
+  }
+  refresh();
+}

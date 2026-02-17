@@ -822,3 +822,97 @@ export async function getParentTrade(tradeId: string) {
     .where(eq(schema.trades.id, trade.parentTradeId));
   return parent ?? null;
 }
+
+// ─── Enriched Messages (trade-overlay chat feed) ────
+
+export async function getEnrichedMessages(opts: {
+  traders: string[];
+  startDate: string;
+  endDate: string;
+  runId?: string;
+  cursor?: string;
+  limit?: number;
+  /** Server-side role filter: 'executed' = has trade, 'skipped' = has decision */
+  roleFilter?: 'all' | 'executed' | 'skipped';
+}) {
+  const pageSize = opts.limit ?? 100;
+  const conditions: SQL[] = [
+    gte(schema.messages.timestamp, opts.startDate),
+    lte(schema.messages.timestamp, opts.endDate),
+  ];
+  if (opts.traders.length > 0) {
+    conditions.push(or(...opts.traders.map((t) => eq(schema.messages.author, t)))!);
+  }
+  if (opts.cursor) {
+    conditions.push(lt(schema.messages.timestamp, opts.cursor));
+  }
+
+  // Build LEFT JOIN conditions for runDecisions (backtest-only)
+  const decisionJoin = opts.runId
+    ? and(
+        eq(schema.runDecisions.messageId, schema.messages.id),
+        eq(schema.runDecisions.backtestRunId, opts.runId),
+      )
+    : sql`0 = 1`; // never match for live — live doesn't use runDecisions
+
+  // Role-based server-side filtering
+  if (opts.roleFilter === 'executed') {
+    conditions.push(isNotNull(schema.trades.id));
+  } else if (opts.roleFilter === 'skipped') {
+    conditions.push(isNotNull(schema.runDecisions.decision));
+  }
+
+  const rows = await db
+    .select({
+      message: schema.messages,
+      trade: {
+        id: schema.trades.id,
+        symbol: schema.trades.symbol,
+        direction: schema.trades.direction,
+        strategy: schema.trades.strategy,
+        entryPrice: schema.trades.entryPrice,
+        exitPrice: schema.trades.exitPrice,
+        pnl: schema.trades.pnl,
+        status: schema.trades.status,
+        quantity: schema.trades.quantity,
+        openedAt: schema.trades.openedAt,
+        closedAt: schema.trades.closedAt,
+      },
+      decision: {
+        decision: schema.runDecisions.decision,
+        reasoning: schema.runDecisions.reasoning,
+        pnl: schema.runDecisions.pnl,
+        path: schema.runDecisions.path,
+        durationMs: schema.runDecisions.durationMs,
+      },
+    })
+    .from(schema.messages)
+    .leftJoin(
+      schema.trades,
+      and(
+        eq(schema.trades.sourceMessageId, schema.messages.id),
+        tradeScope(opts.runId),
+      ),
+    )
+    .leftJoin(schema.runDecisions, decisionJoin)
+    .where(and(...conditions))
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(pageSize + 1);
+
+  const hasMore = rows.length > pageSize;
+  const result = hasMore ? rows.slice(0, pageSize) : rows;
+
+  // Normalize: trade/decision fields are all null when no join match
+  const enriched = result.map((r) => ({
+    message: r.message,
+    trade: r.trade?.id ? (r.trade as import('../../src/lib/enriched-message').TradeOutcome) : null,
+    decision: r.decision?.decision
+      ? (r.decision as import('../../src/lib/enriched-message').MessageDecision)
+      : null,
+  }));
+
+  return {
+    rows: enriched,
+    nextCursor: hasMore ? result[result.length - 1].message.timestamp : null,
+  };
+}

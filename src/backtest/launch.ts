@@ -12,13 +12,17 @@ import { setLogLevel, createLogger } from '../lib/logger.js';
 import type { LogLevel } from '../lib/logger.js';
 import type { BacktestConfig, FillModel } from './types.js';
 import { db, schema } from '../db/client.js';
-import type { BacktestRunConfig } from '../db/schema.js';
+
+function parseArg(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  return idx !== -1 && args[idx + 1] ? args[idx + 1] : undefined;
+}
 
 async function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 3) {
-    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--fill-model orats|midpoint|natural] [--quote-tape] [--agent-provider NAME] [--agent-model NAME] [--refresh-quote-cache] [--log-level debug|info|warn|error] [--run-id ID]');
+    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--fill-model orats|midpoint|natural] [--agent-provider NAME] [--agent-model NAME] [--refresh-quote-cache] [--log-level debug|info|warn|error] [--run-id ID] [--disable-risk-limits] [--max-on-symbol N] [--max-total-positions N]');
     process.exit(1);
   }
 
@@ -31,85 +35,76 @@ async function main() {
     process.exit(1);
   }
 
-  const useDatabento = args.includes('--quote-tape');
-
+  const startDateIso = startDate.toISOString();
+  const endDateIso = endDate.toISOString();
   let fillModel: FillModel = 'orats';
-  const fillModelIdx = args.indexOf('--fill-model');
-  if (fillModelIdx !== -1 && args[fillModelIdx + 1]) {
-    const val = args[fillModelIdx + 1] as FillModel;
-    if (!['orats', 'midpoint', 'natural'].includes(val)) {
-      console.error(`Invalid fill model "${val}". Must be one of: orats, midpoint, natural`);
+  const fillModelArg = parseArg(args, '--fill-model');
+  if (fillModelArg) {
+    if (!['orats', 'midpoint', 'natural'].includes(fillModelArg)) {
+      console.error(`Invalid fill model "${fillModelArg}". Must be one of: orats, midpoint, natural`);
       process.exit(1);
     }
-    fillModel = val;
+    fillModel = fillModelArg as FillModel;
   }
 
-  let agentProvider: string | undefined;
-  const providerIdx = args.indexOf('--agent-provider');
-  if (providerIdx !== -1 && args[providerIdx + 1]) {
-    agentProvider = args[providerIdx + 1];
-  }
-
-  let agentModel: string | undefined;
-  const modelIdx = args.indexOf('--agent-model');
-  if (modelIdx !== -1 && args[modelIdx + 1]) {
-    agentModel = args[modelIdx + 1];
-  }
-
+  const agentProvider = parseArg(args, '--agent-provider');
+  const agentModel = parseArg(args, '--agent-model');
   const refreshQuoteCache = args.includes('--refresh-quote-cache');
+  const disableRiskLimits = args.includes('--disable-risk-limits');
+
+  const maxOnSymbolArg = parseArg(args, '--max-on-symbol');
+  const maxTotalPositionsArg = parseArg(args, '--max-total-positions');
+  const maxDrawdownPctArg = parseArg(args, '--max-drawdown-pct');
+  const maxAgentCallsArg = parseArg(args, '--max-agent-calls');
+  const startingEquityArg = parseArg(args, '--starting-equity');
 
   let logLevel: LogLevel = 'debug';
-  const logLevelIdx = args.indexOf('--log-level');
-  if (logLevelIdx !== -1 && args[logLevelIdx + 1]) {
-    const val = args[logLevelIdx + 1] as LogLevel;
-    if (!['debug', 'info', 'warn', 'error'].includes(val)) {
-      console.error(`Invalid log level "${val}". Must be one of: debug, info, warn, error`);
+  const logLevelArg = parseArg(args, '--log-level');
+  if (logLevelArg) {
+    if (!['debug', 'info', 'warn', 'error'].includes(logLevelArg)) {
+      console.error(`Invalid log level "${logLevelArg}". Must be one of: debug, info, warn, error`);
       process.exit(1);
     }
-    logLevel = val;
+    logLevel = logLevelArg as LogLevel;
   }
   setLogLevel(logLevel);
 
-  let runId: string | undefined;
-  const runIdIdx = args.indexOf('--run-id');
-  if (runIdIdx !== -1 && args[runIdIdx + 1]) {
-    runId = args[runIdIdx + 1];
-  }
-
-  // Auto-create DB run row when launched from CLI (no --run-id)
-  if (!runId) {
-    runId = crypto.randomUUID();
-    const runConfig: BacktestRunConfig = {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-      traders,
-      useQuoteTape: useDatabento,
-    };
-    await db.insert(schema.backtestRuns).values({
-      id: runId,
-      status: 'PENDING',
-      config: runConfig,
-    });
-  }
-
-  const databentoApiKey = process.env.DATABENTO_API_KEY;
-  if (useDatabento && !databentoApiKey) {
-    console.error('DATABENTO_API_KEY env var is required when using --quote-tape');
-    process.exit(1);
-  }
+  let runId = parseArg(args, '--run-id');
 
   const config: BacktestConfig = {
-    startDate,
-    endDate,
+    startDate: startDateIso,
+    endDate: endDateIso,
     traders,
+    useQuoteTape: true,
     fillModel,
-    databentoApiKey: useDatabento ? databentoApiKey : undefined,
+    databentoApiKey: process.env.DATABENTO_API_KEY,
     databentoDataset: process.env.DATABENTO_DATASET ?? 'DBEQ.BASIC',
     agentProvider,
     agentModel,
     refreshQuoteCache,
     logLevel,
+    disableRiskLimits: disableRiskLimits || undefined,
+    ...(maxOnSymbolArg ? { maxOnSymbol: parseInt(maxOnSymbolArg, 10) } : {}),
+    ...(maxTotalPositionsArg ? { maxTotalPositions: parseInt(maxTotalPositionsArg, 10) } : {}),
+    ...(maxDrawdownPctArg ? { maxDrawdownPct: parseFloat(maxDrawdownPctArg) } : {}),
+    ...(maxAgentCallsArg ? { maxAgentCalls: parseInt(maxAgentCallsArg, 10) } : {}),
+    ...(startingEquityArg ? { startingEquity: parseInt(startingEquityArg, 10) } : {}),
   };
+
+  if (!config.databentoApiKey) {
+    console.error('DATABENTO_API_KEY env var is required.');
+    process.exit(1);
+  }
+
+  // Auto-create DB run row when launched from CLI (no --run-id)
+  if (!runId) {
+    runId = crypto.randomUUID();
+    await db.insert(schema.backtestRuns).values({
+      id: runId,
+      status: 'PENDING',
+      config,
+    });
+  }
 
   const log = createLogger('Backtest');
   log.info(`Starting (run ${runId ?? 'no-id'})...`);

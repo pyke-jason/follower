@@ -126,7 +126,7 @@ function computeExtendedMetrics(params: {
 export function computeCoreStats<T extends {
   pnl: string | null; status: string; trader: string; strategy: string;
   openedAt: string | null; closedAt: string | null;
-}>(trades: T[], mtmSnapshots?: MtmSnapshot[]) {
+}>(trades: T[], mtmSnapshots?: MtmSnapshot[], startingEquity = 100_000) {
   const closed = trades.filter((t) => t.status === 'CLOSED');
   const open = trades.filter((t) => t.status !== 'CLOSED');
 
@@ -186,7 +186,7 @@ export function computeCoreStats<T extends {
   }
   const equityCurve: EquityPoint[] = [];
   let cumPnl = 0;
-  const startingEquityForCurve = 100_000;
+  const startingEquityForCurve = startingEquity;
   for (const [date, data] of [...dailyMap.entries()].sort()) {
     cumPnl += data.pnl;
     const unrealizedPnl = mtmByDate.get(date) ?? 0;
@@ -226,9 +226,10 @@ export function generateReportFromTrades(params: {
             entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
   decisions: { path: string; decision: string }[];
   mtmSnapshots?: MtmSnapshot[];
+  startingEquity?: number;
 }): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
-  const { trades, decisions, mtmSnapshots } = params;
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots);
+  const { trades, decisions, mtmSnapshots, startingEquity = 100_000 } = params;
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, startingEquity);
 
   // Derive execution stats from decisions
   const agentTrades = decisions.filter((d) => d.path === 'agent' && d.decision === 'EXECUTE').length;
@@ -243,7 +244,7 @@ export function generateReportFromTrades(params: {
   }));
   const extendedMetrics = computeExtendedMetrics({
     sortedClosed: sortedForMetrics, equityCurve, totalPnl: core.totalPnl,
-    maxDrawdown: core.maxDrawdown, startingEquity: 100_000,
+    maxDrawdown: core.maxDrawdown, startingEquity,
   });
 
   return {
@@ -268,7 +269,7 @@ export function printReport(report: BacktestReport): void {
   console.log('\n' + '='.repeat(60));
   console.log('  BACKTEST REPORT');
   console.log('='.repeat(60));
-  console.log(`  Period:     ${report.config.startDate.toISOString().split('T')[0]} to ${report.config.endDate.toISOString().split('T')[0]}`);
+  console.log(`  Period:     ${report.config.startDate.split('T')[0]} to ${report.config.endDate.split('T')[0]}`);
   console.log(`  Traders:    ${report.config.traders.join(', ')}`);
   console.log(`  Agent:      ${report.config.agentProvider ?? 'anthropic'}/${report.config.agentModel ?? 'default'}`);
   console.log('');
