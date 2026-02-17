@@ -1,4 +1,4 @@
-import { getMessages, getDistinctAuthors } from '@/lib/queries';
+import { getMessages, getDistinctAuthors, getLatestIntents } from '@/lib/queries';
 import { ChatRoom } from './chat-room';
 import { AutoRefresh } from '../components/auto-refresh';
 
@@ -16,6 +16,8 @@ export default async function MessagesPage() {
     ? initialMessages[initialMessages.length - 1].timestamp
     : null;
 
+  const intents = await getLatestIntents(initialMessages.map((m) => m.id));
+
   return (
     // -m-6 counteracts the parent p-6 for full-bleed chat layout
     <div className="-m-6 h-full flex flex-col">
@@ -23,6 +25,7 @@ export default async function MessagesPage() {
       <ChatRoom
         initialMessages={initialMessages}
         initialCursor={nextCursor}
+        initialIntents={intents}
         authors={authors}
       />
     </div>

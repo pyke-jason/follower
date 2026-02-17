@@ -1,8 +1,10 @@
 import { AuthorAvatar } from './author-avatar';
 import { MessageContent } from './message-content';
+import { IntentStrip } from './intent-strip';
 import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
 import type { Message } from '../../../src/db/schema';
+import type { MessageIntent } from './actions';
 
 function getAccentBorder(message: Message): string {
   const action = message.actionHint;
@@ -18,7 +20,7 @@ function getAccentBorder(message: Message): string {
   return 'border-l-border';
 }
 
-export function ChatBubble({ message, noBorder }: { message: Message; noBorder?: boolean }) {
+export function ChatBubble({ message, noBorder, intent }: { message: Message; noBorder?: boolean; intent?: MessageIntent | null }) {
   const badges = (message.badges as string[]) || [];
   const symbols = (message.symbols as string[]) || [];
   const isSignal =
@@ -62,6 +64,7 @@ export function ChatBubble({ message, noBorder }: { message: Message; noBorder?:
             </span>
           )}
         </div>
+        {intent && <IntentStrip intent={intent} />}
       </div>
     </div>
   );

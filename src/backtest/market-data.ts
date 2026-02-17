@@ -251,6 +251,10 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       refreshCache: this.refreshCache,
     });
 
+    // Cache individual OCC symbol ticks so getQuote(occSymbol) works later
+    // (e.g., when SimBroker prices option spread legs during execution)
+    this.cacheOccTicks(ticks, day);
+
     // Build latest tick per strike at or before `at`
     const strikes = this.buildStrikesFromTicks(ticks, at);
 
@@ -273,6 +277,28 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const expiries = new Set(definitions.filter(d => d.callPut === callPutFilter).map(d => d.expiry));
     log.debug(`${symbol} available ${optionType} expiries: ${[...expiries].sort().slice(0, 10).join(', ')}`);
     return { symbol, expiry, optionType, strikes: [] };
+  }
+
+  /**
+   * Cache individual OCC symbol ticks from a batch fetch (loadSpecificContracts)
+   * into the dayTicks map so subsequent getQuote(occSymbol) calls find them.
+   */
+  private cacheOccTicks(ticks: QuoteTick[], day: string): void {
+    const bySymbol = new Map<string, QuoteTick[]>();
+    for (const tick of ticks) {
+      let bucket = bySymbol.get(tick.symbol);
+      if (!bucket) { bucket = []; bySymbol.set(tick.symbol, bucket); }
+      bucket.push(tick);
+    }
+    for (const [sym, symTicks] of bySymbol) {
+      const key = `${sym}:${day}`;
+      const existing = this.dayTicks.get(key);
+      // Override if not cached or if previously cached as empty (failed individual fetch)
+      if (!existing || existing.length === 0) {
+        symTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        this.dayTicks.set(key, symTicks);
+      }
+    }
   }
 
   /** Extract latest bid/ask per strike from ticks at or before a timestamp. */

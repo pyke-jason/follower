@@ -1,7 +1,21 @@
 'use server';
 
-import { getMessages, getMessageById } from '@/lib/queries';
+import { getMessages, getMessageById, getLatestIntents } from '@/lib/queries';
 import type { Message } from '../../../src/db/schema';
+
+export type MessageIntent = {
+  id: string;
+  messageId: string;
+  model: string;
+  version: number;
+  decision: string;
+  reasoning: string | null;
+  signals: import('../../../src/db/schema').Signal[] | null;
+  durationMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  createdAt: string | null;
+};
 
 export type MessageFilters = {
   authors?: string[];
@@ -15,7 +29,11 @@ const PAGE_SIZE = 50;
 
 export async function fetchMessages(
   filters: MessageFilters
-): Promise<{ messages: Message[]; nextCursor: string | null }> {
+): Promise<{
+  messages: Message[];
+  intents: Record<string, MessageIntent>;
+  nextCursor: string | null;
+}> {
   const rows = await getMessages({
     authors: filters.authors,
     startDate: filters.startDate,
@@ -34,7 +52,9 @@ export async function fetchMessages(
     ? messages[messages.length - 1].timestamp
     : null;
 
-  return { messages, nextCursor };
+  const intents = await getLatestIntents(messages.map((m) => m.id));
+
+  return { messages, intents, nextCursor };
 }
 
 export async function fetchMessage(id: string): Promise<Message | null> {

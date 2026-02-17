@@ -17,10 +17,12 @@ export function EnrichedChatBubble({
   enriched,
   runId,
   isHighlighted,
+  isPending,
 }: {
   enriched: EnrichedMessage;
   runId?: string;
   isHighlighted?: boolean;
+  isPending?: boolean;
 }) {
   const role = getMessageRole(enriched);
 
@@ -32,6 +34,7 @@ export function EnrichedChatBubble({
         role === 'skipped' && 'border-l-amber-400/40',
         role === 'noise' && 'border-l-transparent',
         isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20',
+        isPending && 'opacity-40',
       )}
     >
       <ChatBubble message={enriched.message} noBorder />

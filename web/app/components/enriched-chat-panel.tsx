@@ -24,6 +24,8 @@ export function EnrichedChatPanel({
   endDate,
   decisionSummary,
   scatterChart,
+  isRunning,
+  lastProcessedTs,
 }: {
   initialMessages: EnrichedMessage[];
   initialCursor: string | null;
@@ -38,6 +40,8 @@ export function EnrichedChatPanel({
     skipReasonCounts: [string, number][];
   } | null;
   scatterChart?: React.ReactNode;
+  isRunning?: boolean;
+  lastProcessedTs?: string | null;
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [cursor, setCursor] = useState(initialCursor);
@@ -66,6 +70,14 @@ export function EnrichedChatPanel({
   }, [messages, selectedReasons]);
 
   const plainMessages = useMemo(() => visibleMessages.map((m) => m.message), [visibleMessages]);
+
+  // Find the last message at or before the processing cursor (for scroll anchoring)
+  const anchorMessageId = useMemo(() => {
+    if (!isRunning || !lastProcessedTs) return undefined;
+    // Messages are in DESC order; find the first one whose timestamp <= cutoff
+    const found = visibleMessages.find((m) => m.message.timestamp <= lastProcessedTs);
+    return found?.message.id;
+  }, [isRunning, lastProcessedTs, visibleMessages]);
 
   // Server-side filter change: reload messages with new role filter
   const handleFilterChange = useCallback(
@@ -111,15 +123,17 @@ export function EnrichedChatPanel({
     (message: Message, isHighlighted: boolean) => {
       const enriched = enrichmentMap.get(message.id);
       if (!enriched) return null;
+      const isPending = !!(isRunning && lastProcessedTs && message.timestamp > lastProcessedTs);
       return (
         <EnrichedChatBubble
           enriched={enriched}
           runId={runId}
           isHighlighted={isHighlighted}
+          isPending={isPending}
         />
       );
     },
-    [enrichmentMap, runId],
+    [enrichmentMap, runId, isRunning, lastProcessedTs],
   );
 
   const toggleReason = (reason: string) => {
@@ -237,6 +251,8 @@ export function EnrichedChatPanel({
           isLoadingOlder={isLoading}
           hasMore={cursor !== null}
           renderItem={renderItem}
+          focusMessageId={anchorMessageId}
+          anchorMessageId={anchorMessageId}
         />
       </div>
     </div>

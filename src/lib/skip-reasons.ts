@@ -23,12 +23,12 @@ export function categorizeSkipReason(reasoning: string): string {
 
 /** Aggregate skip reasons from an array of decisions, returning sorted [category, count] pairs. */
 export function aggregateSkipReasons(
-  decisions: { decision: string; reasoning: string | null }[],
+  decisions: { decision: string; reasoning: string | null; skipCategory?: string | null }[],
 ): [string, number][] {
   const counts = new Map<string, number>();
   for (const d of decisions) {
     if (d.decision !== 'SKIP' || !d.reasoning) continue;
-    const category = categorizeSkipReason(d.reasoning);
+    const category = d.skipCategory ?? categorizeSkipReason(d.reasoning);
     counts.set(category, (counts.get(category) ?? 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);

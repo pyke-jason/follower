@@ -112,6 +112,26 @@ export class SimBroker implements BrokerService {
       throw new Error('getOptionSpreadQuote called with no option legs');
     }
 
+    // Warm the cache: fetch the options chain for each unique expiry+type combination.
+    // getOptionsChain uses loadSpecificContracts (batch) which works reliably,
+    // and caches individual OCC ticks so getQuote(occSymbol) below can find them.
+    const seenChains = new Set<string>();
+    for (const leg of optionLegs) {
+      const chainKey = `${params.symbol}:${leg.expiry}:${leg.type}`;
+      if (seenChains.has(chainKey)) continue;
+      seenChains.add(chainKey);
+      try {
+        await this.marketData.getOptionsChain(
+          params.symbol,
+          leg.expiry,
+          leg.type as 'CALL' | 'PUT',
+          at,
+        );
+      } catch {
+        // Chain fetch failed — individual quotes below will also fail
+      }
+    }
+
     let netBid = 0;
     let netAsk = 0;
 

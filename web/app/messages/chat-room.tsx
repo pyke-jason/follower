@@ -3,7 +3,7 @@
 import { useState, useCallback, useTransition, useEffect } from 'react';
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
-import { fetchMessages, type MessageFilters } from './actions';
+import { fetchMessages, type MessageFilters, type MessageIntent } from './actions';
 import type { Message } from '../../../src/db/schema';
 
 const START_INDEX = 100_000;
@@ -11,13 +11,16 @@ const START_INDEX = 100_000;
 export function ChatRoom({
   initialMessages,
   initialCursor,
+  initialIntents,
   authors,
 }: {
   initialMessages: Message[];
   initialCursor: string | null;
+  initialIntents: Record<string, MessageIntent>;
   authors: string[];
 }) {
   const [messages, setMessages] = useState(initialMessages);
+  const [intents, setIntents] = useState(initialIntents);
   const [cursor, setCursor] = useState(initialCursor);
   const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX);
   const [filters, setFilters] = useState<MessageFilters>({});
@@ -45,6 +48,7 @@ export function ChatRoom({
       startLoadingTransition(async () => {
         const result = await fetchMessages(newFilters);
         setMessages(result.messages);
+        setIntents(result.intents);
         setCursor(result.nextCursor);
       });
     },
@@ -62,13 +66,10 @@ export function ChatRoom({
         return;
       }
 
-      // buildFeedItems will reverse these, so count the feed items that
-      // will be prepended (messages + date separators). To keep it simple,
-      // approximate with just message count — the firstItemIndex adjustment
-      // only needs to be >= actual prepend count; Virtuoso handles the rest.
       const newItemCount = result.messages.length + 5; // padding for date separators
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
+      setIntents((prev) => ({ ...prev, ...result.intents }));
       setCursor(result.nextCursor);
     });
   }, [cursor, filters]);
@@ -82,6 +83,7 @@ export function ChatRoom({
       />
       <ChatFeed
         messages={messages}
+        intents={intents}
         firstItemIndex={firstItemIndex}
         onLoadOlder={handleLoadOlder}
         isLoadingOlder={isLoadingOlder}

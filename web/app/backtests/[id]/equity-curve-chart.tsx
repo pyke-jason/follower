@@ -71,7 +71,7 @@ export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
             formatCurrency(value as number),
             name === 'cumPnl' ? 'Cumulative'
               : name === 'pnl' ? 'Daily P&L'
-              : name === 'equity' ? 'Equity'
+              : name === 'equity' ? 'Incl. Unrealized'
               : name ?? '',
           ]}
         />

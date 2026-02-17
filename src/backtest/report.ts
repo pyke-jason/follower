@@ -186,7 +186,6 @@ export function computeCoreStats<T extends {
   }
   const equityCurve: EquityPoint[] = [];
   let cumPnl = 0;
-  const startingEquityForCurve = startingEquity;
   for (const [date, data] of [...dailyMap.entries()].sort()) {
     cumPnl += data.pnl;
     const unrealizedPnl = mtmByDate.get(date) ?? 0;
@@ -197,7 +196,7 @@ export function computeCoreStats<T extends {
       cumPnl: roundCents(cumPnl),
       trades: data.trades,
       unrealizedPnl: hasUnrealized ? roundCents(unrealizedPnl) : undefined,
-      equity: hasUnrealized ? roundCents(startingEquityForCurve + cumPnl + unrealizedPnl) : undefined,
+      equity: hasUnrealized ? roundCents(cumPnl + unrealizedPnl) : undefined,
     });
   }
 
@@ -231,9 +230,10 @@ export function generateReportFromTrades(params: {
   const { trades, decisions, mtmSnapshots, startingEquity = 100_000 } = params;
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, startingEquity);
 
-  // Derive execution stats from decisions
-  const agentTrades = decisions.filter((d) => d.path === 'agent' && d.decision === 'EXECUTE').length;
-  const agentCallsUsed = decisions.filter((d) => d.path === 'agent').length;
+  // Derive execution stats from decisions — count both live agent and cached intent paths
+  const isClassified = (d: { path: string }) => d.path === 'agent' || d.path === 'intent';
+  const agentTrades = decisions.filter((d) => isClassified(d) && d.decision === 'EXECUTE').length;
+  const agentCallsUsed = decisions.filter((d) => isClassified(d)).length;
   const skipped = decisions.filter((d) => d.decision === 'SKIP').length;
 
   // Extended metrics

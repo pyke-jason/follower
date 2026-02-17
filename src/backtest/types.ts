@@ -107,7 +107,7 @@ export type EquityPoint = {
   cumPnl: number;
   trades: number;
   unrealizedPnl?: number;  // total unrealized PnL of open positions at EOD
-  equity?: number;          // cumPnl + unrealizedPnl (the "true" equity value)
+  equity?: number;          // cumPnl + unrealizedPnl (total P&L including unrealized)
 };
 
 /**
@@ -130,6 +130,8 @@ export type LiveMetrics = {
   databentoApiFetches: number;
   databentoApiBytesRead: number;
   updatedAt: string;
+  /** ISO timestamp of the last message processed in Phase 2. Used by the UI to grey out unprocessed messages. */
+  lastProcessedMessageTs?: string | null;
 };
 
 

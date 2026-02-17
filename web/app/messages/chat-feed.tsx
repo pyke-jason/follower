@@ -7,6 +7,7 @@ import { DateSeparator } from './date-separator';
 import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
 import type { Message } from '../../../src/db/schema';
+import type { MessageIntent } from './actions';
 
 type FeedItem =
   | { type: 'date'; date: string; key: string }
@@ -40,6 +41,8 @@ export function ChatFeed({
   hasMore = false,
   focusMessageId,
   highlightMessageId,
+  anchorMessageId,
+  intents,
   renderItem,
 }: {
   messages: Message[];
@@ -49,6 +52,9 @@ export function ChatFeed({
   hasMore?: boolean;
   focusMessageId?: string;
   highlightMessageId?: string;
+  /** When set, scroll-to-bottom button scrolls here instead of absolute bottom. */
+  anchorMessageId?: string;
+  intents?: Record<string, MessageIntent>;
   renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -63,18 +69,26 @@ export function ChatFeed({
     : -1;
   const initialIndex = focusIndex >= 0 ? focusIndex : feedItems.length - 1;
 
+  // Anchor index for the scroll button (recenter to last processed message)
+  const anchorIndex = anchorMessageId
+    ? feedItems.findIndex(
+        (item) => item.type === 'message' && item.message.id === anchorMessageId,
+      )
+    : -1;
+
   const handleStartReached = useCallback(() => {
     if (onLoadOlder && !isLoadingOlder && hasMore) {
       onLoadOlder();
     }
   }, [onLoadOlder, isLoadingOlder, hasMore]);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToAnchor = useCallback(() => {
+    const targetIndex = anchorIndex >= 0 ? anchorIndex : feedItems.length - 1;
     virtuosoRef.current?.scrollToIndex({
-      index: feedItems.length - 1,
+      index: targetIndex,
       behavior: 'smooth',
     });
-  }, [feedItems.length]);
+  }, [anchorIndex, feedItems.length]);
 
   if (messages.length === 0) {
     return (
@@ -106,7 +120,7 @@ export function ChatFeed({
           }
           return (
             <div className={cn(isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20')}>
-              <ChatBubble message={item.message} />
+              <ChatBubble message={item.message} intent={intents?.[item.message.id]} />
             </div>
           );
         }}
@@ -128,7 +142,7 @@ export function ChatFeed({
       />
 
       {onLoadOlder && showScrollBtn && (
-        <ScrollToBottom onClick={scrollToBottom} />
+        <ScrollToBottom onClick={scrollToAnchor} />
       )}
     </div>
   );

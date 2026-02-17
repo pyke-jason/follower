@@ -4,7 +4,7 @@ import { db, schema } from '@/lib/db';
 import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages } from '@/lib/queries';
+import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
 import type { BacktestRunConfig } from '../../../src/db/schema';
 
@@ -143,10 +143,11 @@ export async function cancelBacktestRun(formData: FormData) {
     });
   }
 
-  // Compute partial stats from whatever trades/decisions were persisted before cancel
-  const [trades, rawDecisions] = await Promise.all([
+  // Compute partial stats from whatever trades/decisions/MTM were persisted before cancel
+  const [trades, rawDecisions, mtmSnapshots] = await Promise.all([
     getTradesByBacktestRun(runId, { includeOpen: true }),
     getRunDecisions(runId),
+    getMtmSnapshots(runId),
   ]);
 
   if (trades.length > 0) {
@@ -165,6 +166,7 @@ export async function cancelBacktestRun(formData: FormData) {
         closedAt: t.closedAt,
       })),
       decisions,
+      mtmSnapshots,
     });
     await db.update(schema.backtestRuns)
       .set({
@@ -208,6 +210,7 @@ export async function deleteBacktestRun(formData: FormData) {
 
   await db.delete(schema.trades).where(eq(schema.trades.backtestRunId, runId));
   await db.delete(schema.tasks).where(eq(schema.tasks.backtestRunId, runId));
+  await db.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
   await db.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, runId));
 
   // Clean up log file via local API
@@ -265,6 +268,7 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
 
   await db.delete(schema.trades).where(inArray(schema.trades.backtestRunId, runIds));
   await db.delete(schema.tasks).where(inArray(schema.tasks.backtestRunId, runIds));
+  await db.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.backtestRunId, runIds));
   await db.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, runIds));
 
   // Clean up log files

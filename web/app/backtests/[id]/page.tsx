@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getEnrichedMessages } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getEnrichedMessages, getMtmSnapshots } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -44,7 +44,7 @@ export default async function BacktestDetailPage({
   const config = run.config as BacktestRunConfig;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
 
-  const [decisions, allTrades, enrichedResult] = await Promise.all([
+  const [decisions, allTrades, enrichedResult, mtmSnapshots] = await Promise.all([
     getRunDecisions(id),
     getTradesByBacktestRun(id, { includeOpen: true }),
     getEnrichedMessages({
@@ -53,6 +53,7 @@ export default async function BacktestDetailPage({
       endDate: config.endDate,
       runId: id,
     }),
+    getMtmSnapshots(id),
   ]);
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
@@ -68,7 +69,7 @@ export default async function BacktestDetailPage({
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
   const configStartingEquity = config.startingEquity ?? 100_000;
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, configStartingEquity);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, configStartingEquity, mtmSnapshots);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -169,7 +170,7 @@ export default async function BacktestDetailPage({
     skippedCount: decisions.filter((d) => d.decision.decision === 'SKIP').length,
     totalDecisions: decisions.length,
     skipReasonCounts: aggregateSkipReasons(
-      decisions.map((d) => ({ decision: d.decision.decision, reasoning: d.decision.reasoning })),
+      decisions.map((d) => ({ decision: d.decision.decision, reasoning: d.decision.reasoning, skipCategory: d.decision.skipCategory })),
     ),
   } : null;
 
@@ -203,6 +204,8 @@ export default async function BacktestDetailPage({
       endDate={config.endDate}
       decisionSummary={decisionSummary}
       scatterChart={scatterChart}
+      isRunning={isRunning}
+      lastProcessedTs={isRunning ? liveMetrics?.lastProcessedMessageTs ?? null : null}
     />
   );
 
@@ -323,7 +326,17 @@ export default async function BacktestDetailPage({
               <div className="flex items-center gap-3 ml-auto tabular-nums">
                 <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades{summary.openAtEnd > 0 && <span className="text-muted-foreground/60"> + {summary.openAtEnd} open</span>}</span>
                 <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
-                <span className={summary.totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>{formatCurrency(summary.totalPnl)}</span>
+                {(() => {
+                  const unrealized = liveMetrics?.unrealizedPnl ?? 0;
+                  const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
+                  const totalPnl = hasOpen ? summary.totalPnl + unrealized : summary.totalPnl;
+                  return (
+                    <span className={totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>
+                      {formatCurrency(totalPnl)}
+                      {hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
+                    </span>
+                  );
+                })()}
                 <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>
                 <span className="text-muted-foreground">PF <span className="text-foreground font-semibold">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</span></span>
               </div>
@@ -398,8 +411,9 @@ function computeFromTrades(
   allTrades: TradeRow[],
   decisions: { decision: { path: string; decision: string } }[],
   startingEquity = 100_000,
+  mtmSnapshots?: { date: string; unrealizedPnl: number }[],
 ) {
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, undefined, startingEquity);
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, startingEquity);
 
   // Execution stats from already-loaded decisions — no precomputed fallback
   const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;

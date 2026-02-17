@@ -224,6 +224,9 @@ async function executeOpen(
   });
 
   log.debug(`OPEN ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${size.quantity} → ${result.status}`);
+  if (result.status === 'REJECTED') {
+    return { signal, executed: false, reason: result.message ?? 'Order rejected' };
+  }
   return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
 }
 
@@ -294,6 +297,9 @@ async function executeClose(
   });
 
   log.debug(`CLOSE ${existing.direction} ${existing.strategy} ${signal.symbol} qty=${quantity} → ${result.status}`);
+  if (result.status === 'REJECTED') {
+    return { signal, executed: false, reason: result.message ?? 'Order rejected' };
+  }
   return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
 }
 
@@ -366,6 +372,9 @@ async function executeAdd(
   });
 
   log.debug(`ADD ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${size.quantity} → ${result.status}`);
+  if (result.status === 'REJECTED') {
+    return { signal, executed: false, reason: result.message ?? 'Order rejected' };
+  }
   return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
 }
 
@@ -438,6 +447,9 @@ async function executeTrim(
   });
 
   log.debug(`TRIM ${existing.direction} ${existing.strategy} ${signal.symbol} qty=${trimQty}/${currentQty} → ${result.status}`);
+  if (result.status === 'REJECTED') {
+    return { signal, executed: false, reason: result.message ?? 'Order rejected' };
+  }
   return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
 }
 

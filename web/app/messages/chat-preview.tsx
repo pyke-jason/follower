@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useTransition, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { fetchMessages, fetchMessage } from './actions';
+import { fetchMessages, fetchMessage, type MessageIntent } from './actions';
 import Link from 'next/link';
 import type { Message } from '../../../src/db/schema';
 
@@ -27,16 +27,19 @@ export function ChatPreview({
   author,
   title = 'Chat Context',
   viewAllHref,
+  initialIntents,
 }: {
   messages: Message[];
   focusMessageId?: string;
   author?: string;
   title?: string;
   viewAllHref?: string;
+  initialIntents?: Record<string, MessageIntent>;
 }) {
   // initialMessages arrive ASC (oldest first) from getNearbyMessages.
   // ChatFeed expects DESC (newest first) — it reverses internally.
   const [messages, setMessages] = useState(() => [...initialMessages].reverse());
+  const [intents, setIntents] = useState<Record<string, MessageIntent>>(initialIntents ?? {});
   const [cursor, setCursor] = useState<string | null>(() => {
     if (initialMessages.length === 0) return null;
     // oldest message timestamp = cursor for loading older
@@ -67,6 +70,7 @@ export function ChatPreview({
       const newItemCount = result.messages.length + 5;
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
+      setIntents((prev) => ({ ...prev, ...result.intents }));
       setCursor(result.nextCursor);
     });
   }, [cursor, author]);
@@ -89,6 +93,7 @@ export function ChatPreview({
       <CardContent className="p-0 h-80 flex flex-col">
         <ChatFeed
           messages={messages}
+          intents={intents}
           firstItemIndex={firstItemIndex}
           focusMessageId={focusMessageId}
           highlightMessageId={focusMessageId}

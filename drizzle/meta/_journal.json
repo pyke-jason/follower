@@ -92,6 +92,13 @@
       "when": 1771219015736,
       "tag": "0012_first_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1771309329680,
+      "tag": "0013_loving_wild_child",
+      "breakpoints": true
     }
   ]
 }

@@ -236,6 +236,30 @@ export async function getMessageById(id: string) {
   return msg ?? null;
 }
 
+export async function getLatestIntents(messageIds: string[]) {
+  if (messageIds.length === 0) return {};
+  // Fetch all intents for these messages, dedupe to latest version per message in JS
+  const CHUNK = 500;
+  const all: (typeof schema.messageIntents.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageIntents)
+      .where(inArray(schema.messageIntents.messageId, chunk));
+    all.push(...rows);
+  }
+  // Keep highest version per messageId
+  const map: Record<string, typeof schema.messageIntents.$inferSelect> = {};
+  for (const row of all) {
+    const existing = map[row.messageId];
+    if (!existing || row.version > existing.version) {
+      map[row.messageId] = row;
+    }
+  }
+  return map;
+}
+
 export async function getPendingReviews(limit = 5, runId?: string) {
   return db
     .select()
@@ -370,6 +394,17 @@ export async function getRunDecisions(backtestRunId: string) {
     .leftJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
     .where(eq(schema.runDecisions.backtestRunId, backtestRunId))
     .orderBy(desc(schema.runDecisions.createdAt));
+}
+
+export async function getMtmSnapshots(backtestRunId: string) {
+  return db
+    .select({
+      date: schema.backtestMtmSnapshots.date,
+      unrealizedPnl: schema.backtestMtmSnapshots.unrealizedPnl,
+    })
+    .from(schema.backtestMtmSnapshots)
+    .where(eq(schema.backtestMtmSnapshots.backtestRunId, backtestRunId))
+    .orderBy(asc(schema.backtestMtmSnapshots.date));
 }
 
 export async function getTradesByBacktestRun(backtestRunId: string, opts?: { includeOpen?: boolean }) {

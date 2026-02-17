@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
+export type { Signal } from '../agent/schemas.js';
 
 // SQLite doesn't have native enums — use text columns with TS types for safety.
 
@@ -174,6 +175,7 @@ export const runDecisions = sqliteTable('run_decisions', {
   path:           text('path').notNull(),          // 'agent' | 'skipped'
   decision:       text('decision').notNull(),      // 'EXECUTE' | 'SKIP'
   reasoning:      text('reasoning'),
+  skipCategory:   text('skip_category'),           // e.g. 'risk blocked', 'agent skip', 'no open position'
   tradeId:        text('trade_id'),                // FK to resulting trade (null if SKIP)
   pnl:            text('pnl'),                     // outcome P&L, back-filled after close
   durationMs:     integer('duration_ms'),
@@ -184,6 +186,19 @@ export const runDecisions = sqliteTable('run_decisions', {
   index('idx_run_decisions_run').on(table.backtestRunId),
   index('idx_run_decisions_message').on(table.messageId),
   index('idx_run_decisions_run_message').on(table.backtestRunId, table.messageId),
+]);
+
+// ─── Backtest MTM Snapshots ──────────────────────────
+
+export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
+  id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id).notNull(),
+  date:           text('date').notNull(),           // YYYY-MM-DD (trading day)
+  unrealizedPnl:  real('unrealized_pnl').notNull(),
+  createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_mtm_snapshots_run').on(table.backtestRunId),
+  index('idx_mtm_snapshots_run_date').on(table.backtestRunId, table.date),
 ]);
 
 // ─── Tracked Traders ─────────────────────────────────
@@ -426,6 +441,7 @@ export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
+export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;
 export type MessageIntent = typeof messageIntents.$inferSelect;
 export type NewMessageIntent = typeof messageIntents.$inferInsert;
 export type EvalRun = typeof evalRuns.$inferSelect;

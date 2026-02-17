@@ -5,17 +5,18 @@ import { SimBroker } from './sim-broker.js';
 import { checkRiskLimits, type RiskCheckConfig, type RiskCheckDeps } from '../orders/risk-check.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import type { MtmSnapshot } from './report.js';
 import { toDateKeyET } from '../lib/et-date.js';
 import { formatOccSymbol } from './occ-symbology.js';
 import { createClassificationTools } from '../agent/tool-factory.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
 import { runAgent } from '../agent/trade-agent.js';
+import type { AgentStep } from '../agent/agent-loop.js';
+import type { Signal } from '../agent/schemas.js';
 import { prefetchForAgent } from '../agent/prefetch.js';
 import type { PrefetchedData } from '../agent/prefetch.js';
 import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
-import type { LLMProvider } from '../agent/providers.js';
+import type { LLMProvider, ModelIdentity } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { getTrader } from '../config/traders.js';
 import { OrderManager } from '../orders/order-manager.js';
@@ -34,8 +35,6 @@ import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { extractBatchIntents } from '../intents/extract-batch.js';
 import type { IntentExtractionDeps } from '../intents/extract-intent.js';
 import { INTENT_VERSION } from '../intents/extract-intent.js';
-import { replayMessageWithIntent } from './replay.js';
-import type { ReplayDeps } from './replay.js';
 import type { MessageIntent, Message } from '../db/schema.js';
 import { inArray } from 'drizzle-orm';
 
@@ -460,6 +459,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
                 databentoApiFetches: 0,
                 databentoApiBytesRead: 0,
                 updatedAt: new Date().toISOString(),
+                lastProcessedMessageTs: null,
               } satisfies LiveMetrics,
             })
             .where(eq(schema.backtestRuns.id, runId))
@@ -471,14 +471,6 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   const cachedIntents = batchResult.intents;
   log.info(`Phase 1 complete: ${batchResult.progress.cached} cached, ${batchResult.progress.fresh} fresh, ${batchResult.progress.errors} errors`);
 
-  // Build replay deps for Phase 2
-  const replayDeps: ReplayDeps = {
-    runId,
-    pipelineDeps,
-    maxOnSymbol: riskConfig.maxOnSymbol,
-    maxTotalPositions: riskConfig.maxTotalPositions,
-  };
-
   // Stats tracking
   let agentCallsUsed = 0;
   let agentTrades = 0;
@@ -487,7 +479,6 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
 
   // Day-boundary tracking for MTM snapshots and option expiration sweeps
   let lastMsgDay = '';
-  const mtmSnapshots: MtmSnapshot[] = [];
 
   // Live metrics tracking — written to DB after every message
   resetApiStats();
@@ -518,7 +509,11 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
         const markPrices = await buildMarkPrices(runId, priceProvider, eodTime);
         const openTradesForMtm = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
         const unrealizedPnl = computeUnrealizedPnl(openTradesForMtm, markPrices);
-        mtmSnapshots.push({ date: lastMsgDay, unrealizedPnl });
+        await db.insert(schema.backtestMtmSnapshots).values({
+          backtestRunId: runId,
+          date: lastMsgDay,
+          unrealizedPnl,
+        });
         log.debug(`MTM ${lastMsgDay}: unrealized=$${unrealizedPnl.toFixed(2)} (${markPrices.size}/${openTradesForMtm.length} positions marked)`);
       }
     }
@@ -535,52 +530,13 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount[0].count} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
     }
 
-    // Use cached intent (Phase 2 replay) if available, otherwise fall back to agent
-    const cachedIntent = cachedIntents.get(msg.id);
-    if (cachedIntent) {
-      const decisionStart = Date.now();
-      const replayResult = await replayMessageWithIntent(msg, cachedIntent, replayDeps);
-      const durationMs = Date.now() - decisionStart;
-
-      if (replayResult.traded) {
-        agentTrades++;
-        await db.insert(schema.runDecisions).values({
-          backtestRunId: runId,
-          messageId: msg.id,
-          path: 'intent',
-          decision: 'EXECUTE',
-          reasoning: replayResult.reasoning,
-          tradeId: replayResult.tradeId,
-          durationMs,
-          inputTokens: cachedIntent.inputTokens,
-          outputTokens: cachedIntent.outputTokens,
-        });
-      } else {
-        skipped++;
-        const category = replayResult.pipelineFailure ? 'pipeline failure' : (replayResult.intentDecision === 'EXECUTE' ? 'replay skip' : 'intent skip');
-        const reason = replayResult.pipelineFailure
-          ? `[pipeline] ${replayResult.pipelineFailure} | Intent: ${replayResult.reasoning}`
-          : replayResult.reasoning;
-        skipReasons.set(category, (skipReasons.get(category) ?? 0) + 1);
-        await db.insert(schema.runDecisions).values({
-          backtestRunId: runId,
-          messageId: msg.id,
-          path: replayResult.pipelineFailure ? 'pipeline_failure' : 'intent',
-          decision: 'SKIP',
-          reasoning: reason,
-          durationMs,
-          inputTokens: cachedIntent.inputTokens,
-          outputTokens: cachedIntent.outputTokens,
-        });
-      }
-    } else {
-      // Fallback: no cached intent — run the full agent path
-      await processMessage(
-        msg, btCtx,
-        { agentCallsUsed, agentTrades, skipped, skipReasons },
-        (stats) => { agentCallsUsed = stats.agentCallsUsed; agentTrades = stats.agentTrades; skipped = stats.skipped; },
-      );
-    }
+    // Unified: processMessage handles both cached intent and live agent paths
+    await processMessage(
+      msg, btCtx,
+      { agentCallsUsed, agentTrades, skipped, skipReasons },
+      (stats) => { agentCallsUsed = stats.agentCallsUsed; agentTrades = stats.agentTrades; skipped = stats.skipped; },
+      cachedIntents.get(msg.id),
+    );
 
     // ── Write liveMetrics after every message ──
     // MTM is expensive (price lookups per position) — throttle it
@@ -612,6 +568,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
           databentoApiFetches: apiStats.fetches,
           databentoApiBytesRead: apiStats.bytesRead,
           updatedAt: new Date().toISOString(),
+          lastProcessedMessageTs: msg.timestamp.toISOString(),
         } satisfies LiveMetrics,
       })
       .where(eq(schema.backtestRuns.id, runId));
@@ -630,7 +587,11 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       const markPrices = await buildMarkPrices(runId, priceProvider, eodTime);
       const openTradesForMtm = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
       const unrealizedPnl = computeUnrealizedPnl(openTradesForMtm, markPrices);
-      mtmSnapshots.push({ date: lastMsgDay, unrealizedPnl });
+      await db.insert(schema.backtestMtmSnapshots).values({
+        backtestRunId: runId,
+        date: lastMsgDay,
+        unrealizedPnl,
+      });
       log.debug(`MTM ${lastMsgDay} (final): unrealized=$${unrealizedPnl.toFixed(2)} (${markPrices.size}/${openTradesForMtm.length} positions marked)`);
     }
   }
@@ -654,8 +615,9 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
 
   const allTrades = await db.select().from(schema.trades).where(forRun(runId));
   const allDecisions = await db.select().from(schema.runDecisions).where(eq(schema.runDecisions.backtestRunId, runId));
+  const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
 
-  const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots });
+  const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots: mtmRows });
   const report: BacktestReport = {
     config,
     ...reportData,
@@ -719,6 +681,7 @@ async function recordSkip(ctx: MessageContext, path: string, category: string, r
     messageId: ctx.msg.id,
     path,
     decision: 'SKIP',
+    skipCategory: category,
     reasoning: reason,
     durationMs: Date.now() - ctx.decisionStart,
     ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
@@ -728,6 +691,7 @@ async function recordSkip(ctx: MessageContext, path: string, category: string, r
 /** Record an execute decision */
 async function recordExecute(
   ctx: MessageContext,
+  path: string,
   reasoning: string,
   tradeId?: string,
   usage?: LLMUsage,
@@ -737,7 +701,7 @@ async function recordExecute(
   await db.insert(schema.runDecisions).values({
     backtestRunId: ctx.runId,
     messageId: ctx.msg.id,
-    path: 'agent',
+    path,
     decision: 'EXECUTE',
     reasoning,
     tradeId,
@@ -753,9 +717,11 @@ async function processMessage(
   btCtx: BacktestContext,
   stats: Stats,
   updateStats: (stats: Stats) => void,
+  cachedIntent?: MessageIntent,
 ): Promise<void> {
   const ctx: MessageContext = { msg, runId: btCtx.runId, stats, updateStats, decisionStart: Date.now() };
 
+  // ── 1. Shared logging ──
   log.debug(
     `msg ${msg.id.slice(0, 8)} | ${msg.author} | ${msg.symbols.join(',')} | ` +
     `action=${msg.actionHint ?? '?'} dir=${msg.directionHint ?? '?'} conf=${msg.confidence.toFixed(2)} ` +
@@ -769,6 +735,7 @@ async function processMessage(
   }
   log.debug(`  text: "${msg.cleanText.slice(0, 200)}${msg.cleanText.length > 200 ? '...' : ''}"`);
 
+  // ── 2. Build TaskContext ──
   const taskContext: TaskContext = {
     messageId: msg.id,
     messageTimestamp: msg.timestamp.toISOString(),
@@ -782,101 +749,140 @@ async function processMessage(
     confidence: msg.confidence,
   };
 
-  // Prefetch quotes, positions, and trader profile.
+  // ── 3. Prefetch + deterministic skip checks (branch on cachedIntent) ──
   let prefetched: PrefetchedData | undefined;
-  try {
-    prefetched = await prefetchForAgent(taskContext, {
-      broker: btCtx.pipelineDeps.broker,
-      getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
-      getTraderConfig: getTrader,
+
+  if (cachedIntent) {
+    // Intent path: minimal prefetch (positions only)
+    try {
+      const allForTrader = await btCtx.pipelineDeps.getOpenPositions({ trader: msg.author });
+      const symbolSet = new Set(msg.symbols);
+      prefetched = {
+        quotes: {},
+        traderProfile: null,
+        positions: {
+          forSymbol: allForTrader.filter((t) => symbolSet.has(t.symbol)),
+          allForTrader,
+          totalCount: allForTrader.length,
+          failed: false,
+        },
+      };
+    } catch {
+      prefetched = {
+        quotes: {},
+        traderProfile: null,
+        positions: { forSymbol: [], allForTrader: [], totalCount: -1, failed: true },
+      };
+    }
+
+    // No agent budget check for intent path
+    const skip = shouldSkipDeterministic(taskContext, prefetched, {
+      maxOnSymbol: btCtx.maxOnSymbol,
+      maxTotalPositions: btCtx.maxTotalPositions,
     });
-  } catch (err) {
-    log.warn(`  prefetch failed: ${err instanceof Error ? err.message : err}`);
+    if (skip) {
+      await recordSkip(ctx, 'skipped', skip.category, skip.reason);
+      updateStats(stats);
+      return;
+    }
+  } else {
+    // Agent path: full prefetch
+    try {
+      prefetched = await prefetchForAgent(taskContext, {
+        broker: btCtx.pipelineDeps.broker,
+        getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
+        getTraderConfig: getTrader,
+      });
+    } catch (err) {
+      log.warn(`  prefetch failed: ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Include agent budget in skip checks
+    const skip = shouldSkipDeterministic(taskContext, prefetched, {
+      maxOnSymbol: btCtx.maxOnSymbol,
+      maxTotalPositions: btCtx.maxTotalPositions,
+      agentCallsUsed: stats.agentCallsUsed,
+      maxAgentCalls: btCtx.config.maxAgentCalls,
+    });
+    if (skip) {
+      await recordSkip(ctx, 'skipped', skip.category, skip.reason);
+      updateStats(stats);
+      return;
+    }
   }
 
-  // Deterministic pre-checks using prefetched data
-  const skip = shouldSkipDeterministic(taskContext, prefetched, {
-    maxOnSymbol: btCtx.maxOnSymbol,
-    maxTotalPositions: btCtx.maxTotalPositions,
-    agentCallsUsed: stats.agentCallsUsed,
-    maxAgentCalls: btCtx.config.maxAgentCalls,
-  });
-  if (skip) {
-    await recordSkip(ctx, 'skipped', skip.category, skip.reason);
+  // ── 4. Get classification ──
+  let decision: string;
+  let signals: Signal[] | null;
+  let reasoning: string;
+  let usage: LLMUsage;
+  let path: 'intent' | 'agent';
+  let agentMeta: { steps: AgentStep[]; model: ModelIdentity } | undefined;
+
+  if (cachedIntent) {
+    decision = cachedIntent.decision;
+    signals = cachedIntent.signals ?? null;
+    reasoning = cachedIntent.reasoning ?? 'No reasoning';
+    usage = { inputTokens: cachedIntent.inputTokens ?? 0, outputTokens: cachedIntent.outputTokens ?? 0 };
+    path = 'intent';
+  } else {
+    const callNum = stats.agentCallsUsed + 1;
+    const maxCalls = btCtx.config.maxAgentCalls ?? '∞';
+    const agentModel = btCtx.config.agentModel ?? 'default';
+    log.debug(`  path: AGENT (call ${callNum}/${maxCalls}, model=${agentModel})`);
+
+    const classification = await classifyWithAgent(msg, btCtx, taskContext, prefetched);
+    stats.agentCallsUsed++;
+
+    decision = classification.decision;
+    signals = classification.signals;
+    reasoning = classification.reasoning;
+    usage = classification.usage;
+    path = 'agent';
+    agentMeta = { steps: classification.steps, model: classification.model };
+  }
+
+  // ── 5. Handle non-EXECUTE decisions ──
+  if (decision !== 'EXECUTE' || !signals || signals.length === 0) {
+    const skipCategory = path === 'intent'
+      ? (decision === 'EXECUTE' ? 'intent skip' : 'intent skip')
+      : 'agent skip';
+    await recordSkip(ctx, path, skipCategory, reasoning, usage);
     updateStats(stats);
     return;
   }
 
-  const callNum = stats.agentCallsUsed + 1;
-  const maxCalls = btCtx.config.maxAgentCalls ?? '∞';
-  const agentModel = btCtx.config.agentModel ?? 'default';
-  log.debug(`  path: AGENT (call ${callNum}/${maxCalls}, model=${agentModel})`);
-  const agentStart = Date.now();
-
-  const agentResult = await runAgentForBacktest(msg, btCtx, taskContext, prefetched);
-  const agentDuration = Date.now() - agentStart;
-  stats.agentCallsUsed++;
-  const tokenStr = `, ${((agentResult.usage.inputTokens + agentResult.usage.outputTokens) / 1000).toFixed(1)}k tokens`;
-  if (agentResult.traded) {
-    log.debug(`  agent: EXECUTE in ${agentDuration}ms (${agentResult.turns} turns${tokenStr})`);
-    await recordExecute(ctx, agentResult.reasoning, agentResult.tradeId, agentResult.usage);
-  } else if (agentResult.pipelineFailure) {
-    const failReason = `[pipeline] ${agentResult.pipelineFailure} | Agent: ${agentResult.reasoning}`;
-    log.warn(`  agent: EXECUTE → pipeline failed in ${agentDuration}ms: ${agentResult.pipelineFailure}`);
-    await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason, agentResult.usage);
-  } else {
-    log.debug(`  agent: skip in ${agentDuration}ms (${agentResult.turns} turns${tokenStr})`);
-    await recordSkip(ctx, 'agent', 'agent skip', agentResult.reasoning, agentResult.usage);
-  }
-  updateStats(stats);
-}
-
-async function runAgentForBacktest(
-  msg: HistoricalMessage,
-  btCtx: BacktestContext,
-  taskContext: TaskContext,
-  prefetched?: PrefetchedData,
-): Promise<{ traded: boolean; tradeId?: string; reasoning: string; usage: LLMUsage; turns: number; pipelineFailure?: string }> {
-  // Prefetch Databento data for the symbols in this message
+  // ── 6. Prefetch Databento data for pipeline execution ──
   await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
 
-  // Classification-only tools — no execution capabilities
-  const classificationTools = createClassificationTools({
-    broker: btCtx.pipelineDeps.broker,
-    getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
-  });
+  // ── 7. Execute pipeline (shared) ──
+  const pipelineResults = await executeSignals(
+    signals,
+    msg.author,
+    btCtx.pipelineDeps,
+    { messageId: msg.id, backtestRunId: btCtx.runId, isBacktest: true },
+  );
 
-  try {
-    const agentResult = await runAgent(taskContext, classificationTools, btCtx.agentProvider, prefetched);
-    const { steps, result, usage } = agentResult;
-    const model = agentResult.model;
-    const toolTurns = steps.filter(s => s.tool).length;
+  const executedResults = pipelineResults.filter(r => r.executed);
+  const firstTradeId = executedResults[0]?.tradeId;
 
-    const traded = result?.decision === 'EXECUTE' && result.signals && result.signals.length > 0;
-    const reasoning = result?.reasoning ?? 'Agent decided to skip';
+  const pipelineFailures = pipelineResults
+    .filter(r => !r.executed && r.reason)
+    .map(r => `${r.signal.action} ${r.signal.symbol}: ${r.reason}`);
 
-    let executedResults: { executed: boolean; tradeId?: string }[] = [];
-    let firstTradeId: string | undefined;
-    let pipelineFailures: string[] = [];
+  // ── 8. Record result ──
+  if (executedResults.length > 0 && firstTradeId) {
+    await recordExecute(ctx, path, reasoning, firstTradeId, usage);
+  } else if (pipelineFailures.length > 0) {
+    const failReason = `[pipeline] ${pipelineFailures.join('; ')} | ${path === 'agent' ? 'Agent' : 'Intent'}: ${reasoning}`;
+    log.warn(`  ${path}: EXECUTE → pipeline failed: ${pipelineFailures.join('; ')}`);
+    await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason, usage);
+  } else {
+    await recordSkip(ctx, path, `${path} skip`, reasoning, usage);
+  }
 
-    if (traded) {
-      const pipelineResults = await executeSignals(
-        result.signals!,
-        msg.author,
-        btCtx.pipelineDeps,
-        { messageId: msg.id, backtestRunId: btCtx.runId, isBacktest: true },
-      );
-
-      executedResults = pipelineResults.filter(r => r.executed);
-      firstTradeId = executedResults[0]?.tradeId;
-
-      // Collect pipeline failure reasons for logging
-      pipelineFailures = pipelineResults
-        .filter(r => !r.executed && r.reason)
-        .map(r => `${r.signal.action} ${r.signal.symbol}: ${r.reason}`);
-    }
-
-    // Persist task + steps for ALL agent decisions (not just executes)
+  // ── 9. Create tasks/taskSteps (agent path only) ──
+  if (agentMeta) {
     const btTaskId = crypto.randomUUID();
     const didExecute = executedResults.length > 0 && firstTradeId;
     await db.insert(schema.tasks).values({
@@ -885,8 +891,8 @@ async function runAgentForBacktest(
       taskType: didExecute ? 'EXECUTE_TRADE' : 'REVIEW_MESSAGE',
       status: didExecute ? 'COMPLETED' : 'SKIPPED',
       assignee: 'agent',
-      modelProvider: model.provider,
-      modelName: model.model,
+      modelProvider: agentMeta.model.provider,
+      modelName: agentMeta.model.model,
       context: taskContext,
       result: { decision: didExecute ? 'EXECUTE' : 'SKIP', reasoning },
       createdAt: msg.timestamp.toISOString(),
@@ -904,8 +910,8 @@ async function runAgentForBacktest(
       }
     }
 
-    for (let si = 0; si < steps.length; si++) {
-      const step = steps[si];
+    for (let si = 0; si < agentMeta.steps.length; si++) {
+      const step = agentMeta.steps[si];
       await db.insert(schema.taskSteps).values({
         taskId: btTaskId,
         stepNumber: si + 1,
@@ -916,16 +922,48 @@ async function runAgentForBacktest(
         durationMs: step.durationMs ?? null,
       });
     }
+  }
+
+  // ── 10. Update stats ──
+  updateStats(stats);
+}
+
+type AgentClassification = {
+  decision: string;
+  signals: Signal[] | null;
+  reasoning: string;
+  usage: LLMUsage;
+  steps: AgentStep[];
+  model: ModelIdentity;
+};
+
+async function classifyWithAgent(
+  msg: HistoricalMessage,
+  btCtx: BacktestContext,
+  taskContext: TaskContext,
+  prefetched?: PrefetchedData,
+): Promise<AgentClassification> {
+  // Prefetch Databento data for the symbols in this message
+  await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
+
+  // Classification-only tools — no execution capabilities
+  const classificationTools = createClassificationTools({
+    broker: btCtx.pipelineDeps.broker,
+    getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
+  });
+
+  try {
+    const agentResult = await runAgent(taskContext, classificationTools, btCtx.agentProvider, prefetched);
+    const { steps, result, usage } = agentResult;
+    const model = agentResult.model;
 
     return {
-      traded: executedResults.length > 0,
-      tradeId: firstTradeId,
-      reasoning,
+      decision: result?.decision ?? 'SKIP',
+      signals: result?.signals ?? null,
+      reasoning: result?.reasoning ?? 'Agent decided to skip',
       usage,
-      turns: toolTurns,
-      pipelineFailure: traded && executedResults.length === 0 && pipelineFailures.length > 0
-        ? pipelineFailures.join('; ')
-        : undefined,
+      steps,
+      model,
     };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
