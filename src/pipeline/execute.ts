@@ -95,10 +95,16 @@ const ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; 
  * Used by RuleBasedTradeAgent and internal pipeline executors.
  */
 export function buildOrderFromSignal(signal: Signal, quantity: number): OrderParams {
+  // CLOSE/TRIM don't carry legs on the signal — the pipeline rebuilds
+  // them from the existing position.  Pass an empty legs array; the
+  // pipeline's executeClose / executeTrim will replace it.
+  const needsLegs = signal.action === 'OPEN' || signal.action === 'ADD';
   const isStock = signal.strategy === 'STOCK';
-  const legs: OrderLeg[] = isStock
-    ? buildStockLegs(signal.direction, quantity)
-    : buildOptionLegs(signal, quantity);
+  const legs: OrderLeg[] = !needsLegs
+    ? []
+    : isStock
+      ? buildStockLegs(signal.direction, quantity)
+      : buildOptionLegs(signal, quantity);
   return {
     symbol: signal.symbol,
     strategy: signal.strategy,
