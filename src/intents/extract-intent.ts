@@ -149,31 +149,16 @@ After using tools, call **submit_decision** with your parsed signals. For EXECUT
 **IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
 
 /**
- * Create classification tools for intent extraction.
- * Uses shared base tools (quote, chain, flag) with a time-stamped broker wrapper,
- * plus get_recent_chat for resolving follow-trades.
+ * Create tools for intent extraction.
+ * Each tool gets a timestamp-pinned function so quotes/chains
+ * reflect market state at message time.
  */
 function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string): ToolDef[] {
   const msgTime = new Date(messageTimestamp);
 
-  // Wrap deps as a BrokerService that pins all calls to the message timestamp
-  const timestampedBroker = {
-    getQuote: (symbol: string) => deps.getQuote(symbol, msgTime),
-    getOptionsChain: (symbol: string, expiry: string, optionType: 'CALL' | 'PUT') =>
-      deps.getOptionsChain(symbol, expiry, optionType, msgTime),
-    // Stubs for unused BrokerService methods (intent extraction doesn't need them)
-    placeOrder: () => { throw new Error('not available'); },
-    modifyOrder: () => { throw new Error('not available'); },
-    cancelOrder: () => { throw new Error('not available'); },
-    getOrderStatus: () => { throw new Error('not available'); },
-    getPositions: () => { throw new Error('not available'); },
-    getAccountBalance: () => { throw new Error('not available'); },
-    getBars: () => { throw new Error('not available'); },
-  } as any; // BrokerService adapter — only quote/chain methods are called
-
   return [
-    getQuoteTool(timestampedBroker),
-    getOptionsChainTool(timestampedBroker),
+    getQuoteTool((symbol) => deps.getQuote(symbol, msgTime)),
+    getOptionsChainTool((symbol, expiry, optionType) => deps.getOptionsChain(symbol, expiry, optionType, msgTime)),
     flagForReviewTool(),
     submitDecisionTool(),
     {

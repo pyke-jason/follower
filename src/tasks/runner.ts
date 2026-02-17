@@ -142,8 +142,8 @@ async function processTask(task: Task): Promise<void> {
 
     // Classification-only tools — no execution capabilities
     const classificationTools = [
-      getQuoteTool(liveService),
-      getOptionsChainTool(liveService),
+      getQuoteTool((s) => liveService.getQuote(s)),
+      getOptionsChainTool((s, e, t) => liveService.getOptionsChain(s, e, t)),
       flagForReviewTool(),
       submitDecisionTool(),
       getOpenPositionsTool(getOpenPositions),

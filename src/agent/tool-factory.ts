@@ -1,4 +1,4 @@
-import type { BrokerService } from '../broker/interface.js';
+import type { Quote, OptionsChain } from '../broker/types.js';
 import type { Trade } from '../db/schema.js';
 import {
   GetQuoteInput,
@@ -17,7 +17,7 @@ export type ToolDef = {
 
 // ─── Individual tool builders ────────────────────────────────────────
 
-export function getQuoteTool(broker: BrokerService): ToolDef {
+export function getQuoteTool(getQuote: (symbol: string) => Promise<Quote>): ToolDef {
   return {
     name: 'get_quote',
     description: 'Get current bid/ask/last for a stock or ETF.',
@@ -30,12 +30,14 @@ export function getQuoteTool(broker: BrokerService): ToolDef {
     },
     execute: async (input) => {
       const { symbol } = GetQuoteInput.parse(input);
-      return await broker.getQuote(symbol);
+      return await getQuote(symbol);
     },
   };
 }
 
-export function getOptionsChainTool(broker: BrokerService): ToolDef {
+export function getOptionsChainTool(
+  getOptionsChain: (symbol: string, expiry: string, optionType: 'CALL' | 'PUT') => Promise<OptionsChain>,
+): ToolDef {
   return {
     name: 'get_options_chain',
     description: 'Get options chain filtered by expiry and type. Returns strikes with bid/ask. IV and greeks may not be available for historical data.',
@@ -50,7 +52,7 @@ export function getOptionsChainTool(broker: BrokerService): ToolDef {
     },
     execute: async (input) => {
       const { symbol, expiry, optionType } = GetOptionsChainInput.parse(input);
-      return await broker.getOptionsChain(symbol, expiry, optionType);
+      return await getOptionsChain(symbol, expiry, optionType);
     },
   };
 }
