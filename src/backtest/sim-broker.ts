@@ -4,11 +4,13 @@ import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
 import { db, schema } from '../db/client.js';
-import { and, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { isOpen, isClosed, forRun } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
+import type { Trade } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
+import { computeTradePnl } from '../lib/pnl.js';
 import { formatOccSymbol } from './occ-symbology.js';
 
 const log = createLogger('SimBroker');
@@ -314,6 +316,152 @@ export class SimBroker implements BrokerService {
     return this.getOptionSpreadQuote(params, at);
   }
 
+  // ─── Shared internals ────────────────────────────────────
+
+  /** Get mark price (mid) for a trade at a given time. Returns null on data failure. */
+  private async getMarkPrice(
+    row: { symbol: string; strategy: string; legs: unknown },
+    at: Date,
+  ): Promise<number | null> {
+    try {
+      const quote = await this.getTradeQuote(row, at);
+      return (quote.bid + quote.ask) / 2;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Build a map of trade ID -> current mark price for all open positions. */
+  async markToMarket(at?: Date): Promise<Map<string, number>> {
+    const time = at ?? this.clock.now();
+    const markPrices = new Map<string, number>();
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+
+    for (const t of openTrades) {
+      const mark = await this.getMarkPrice(t, time);
+      if (mark != null) markPrices.set(t.id, mark);
+    }
+    return markPrices;
+  }
+
+  /** Close a specific trade at a given price/time and record PnL. */
+  async closePositionAtPrice(tradeId: string, exitPrice: number, closedAt: string): Promise<{ pnl: number }> {
+    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
+    if (!trade) throw new Error(`Trade ${tradeId} not found`);
+
+    const pnl = computeTradePnl({
+      entryPrice: safeParseFloat(trade.entryPrice),
+      exitPrice,
+      direction: trade.direction as 'LONG' | 'SHORT',
+      strategy: trade.strategy,
+      quantity: trade.quantity ?? 1,
+    });
+
+    await db.update(schema.trades)
+      .set({
+        status: 'CLOSED',
+        exitPrice: String(exitPrice),
+        pnl: String(pnl),
+        closedAt,
+      })
+      .where(eq(schema.trades.id, tradeId));
+
+    return { pnl };
+  }
+
+  /** Sum unrealized PnL across all open positions using current marks. */
+  async getUnrealizedPnl(at?: Date): Promise<number> {
+    const time = at ?? this.clock.now();
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+
+    let total = 0;
+    for (const row of openTrades) {
+      const mark = await this.getMarkPrice(row, time);
+      if (mark == null) continue;
+      total += computeTradePnl({
+        entryPrice: safeParseFloat(row.entryPrice),
+        exitPrice: mark,
+        direction: row.direction as 'LONG' | 'SHORT',
+        strategy: row.strategy,
+        quantity: row.quantity ?? 1,
+      });
+    }
+    return roundCents(total);
+  }
+
+  /**
+   * Sweep expired options: close all open option positions with expired legs
+   * at intrinsic value (ITM) or $0 (OTM).
+   */
+  async sweepExpired(currentDate: string): Promise<number> {
+    let closedCount = 0;
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+
+    for (const t of openTrades) {
+      if (t.strategy === 'STOCK') continue;
+      const legs = Array.isArray(t.legs) ? t.legs as { symbol: string; strike: number; expiry: string; type: string; action: string; quantity: number; fillPrice: number }[] : [];
+      if (legs.length === 0) continue;
+
+      const hasExpiredLeg = legs.some((leg) => leg.expiry <= currentDate);
+      if (!hasExpiredLeg) continue;
+
+      // Compute intrinsic value at expiry
+      let netIntrinsic = 0;
+      for (const leg of legs) {
+        if (leg.expiry > currentDate) continue;
+        if (leg.type === 'STOCK') continue;
+
+        let underlyingPrice: number;
+        try {
+          const expiryDate = new Date(leg.expiry + 'T20:00:00Z');
+          const quote = await this.marketData.getQuote(t.symbol, expiryDate);
+          underlyingPrice = (quote.bid + quote.ask) / 2;
+        } catch {
+          underlyingPrice = leg.type === 'CALL' ? 0 : Infinity;
+        }
+
+        const intrinsic = leg.type === 'CALL'
+          ? Math.max(0, underlyingPrice - leg.strike)
+          : Math.max(0, leg.strike - underlyingPrice);
+
+        netIntrinsic += leg.action === 'BUY' ? intrinsic : -intrinsic;
+      }
+
+      const exitPrice = Math.max(0, netIntrinsic);
+      const expiryTimestamp = new Date(currentDate + 'T20:00:00Z');
+      await this.closePositionAtPrice(t.id, exitPrice, expiryTimestamp.toISOString());
+
+      log.debug(`EXPIRE: ${t.id} ${t.symbol} ${t.strategy} intrinsic=$${netIntrinsic.toFixed(2)} exit=$${exitPrice.toFixed(2)}`);
+      closedCount++;
+    }
+
+    return closedCount;
+  }
+
+  /** Force-close all open positions at current mark prices. */
+  async forceCloseAll(at: Date): Promise<number> {
+    const markPrices = await this.markToMarket(at);
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    let totalPnl = 0;
+
+    for (const t of openTrades) {
+      const mark = markPrices.get(t.id) ?? safeParseFloat(t.entryPrice);
+      const { pnl } = await this.closePositionAtPrice(t.id, mark, at.toISOString());
+      totalPnl += pnl;
+    }
+
+    return roundCents(totalPnl);
+  }
+
+  /** Get all open trade rows for this run, optionally filtered by trader. */
+  async getOpenTrades(trader?: string): Promise<Trade[]> {
+    const conditions = [isOpen, forRun(this.backtestRunId)];
+    if (trader) conditions.push(eq(schema.trades.trader, trader));
+    return db.select().from(schema.trades).where(and(...conditions));
+  }
+
+  // ─── BrokerService interface ────────────────────────────
+
   async getPositions(): Promise<BrokerPosition[]> {
     const openTrades = await db
       .select()
@@ -327,18 +475,11 @@ export class SimBroker implements BrokerService {
       const direction = row.direction as 'LONG' | 'SHORT';
       const strategy = row.strategy;
 
-      let currentPrice = entryPrice;
-      try {
-        const quote = await this.getTradeQuote(row, this.clock.now());
-        currentPrice = (quote.bid + quote.ask) / 2;
-      } catch {
-        // No market data — fall back to entry price (unrealized = 0)
-      }
-
-      const diff = currentPrice - entryPrice;
-      const multiplier = direction === 'LONG' ? 1 : -1;
+      const currentPrice = await this.getMarkPrice(row, this.clock.now()) ?? entryPrice;
+      const unrealizedPnl = computeTradePnl({
+        entryPrice, exitPrice: currentPrice, direction, strategy, quantity,
+      });
       const contractMultiplier = strategy === 'STOCK' ? 1 : 100;
-      const unrealizedPnl = roundCents(diff * multiplier * quantity * contractMultiplier);
       const marketValue = roundCents(currentPrice * quantity * contractMultiplier);
 
       positions.push({
@@ -354,38 +495,13 @@ export class SimBroker implements BrokerService {
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
-    // Realized PnL: sum of pnl from all closed trades in this run
     const [realizedRow] = await db
       .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
       .from(schema.trades)
       .where(and(isClosed, forRun(this.backtestRunId)));
     const realizedPnl = roundCents(realizedRow?.total ?? 0);
 
-    // Unrealized PnL: compute from open positions + current market prices
-    const openTrades = await db
-      .select()
-      .from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
-
-    let unrealizedPnl = 0;
-    for (const row of openTrades) {
-      try {
-        const entryPrice = safeParseFloat(row.entryPrice);
-        const quantity = row.quantity ?? 1;
-        const direction = row.direction as 'LONG' | 'SHORT';
-        const strategy = row.strategy;
-
-        const quote = await this.getTradeQuote(row, this.clock.now());
-        const currentPrice = (quote.bid + quote.ask) / 2;
-        const diff = currentPrice - entryPrice;
-        const multiplier = direction === 'LONG' ? 1 : -1;
-        const contractMultiplier = strategy === 'STOCK' ? 1 : 100;
-        unrealizedPnl += diff * multiplier * quantity * contractMultiplier;
-      } catch {
-        // No market data for this position — skip (conservative: unrealized = 0)
-      }
-    }
-    unrealizedPnl = roundCents(unrealizedPnl);
+    const unrealizedPnl = await this.getUnrealizedPnl();
 
     const equity = this.startingEquity + realizedPnl + unrealizedPnl;
     return {

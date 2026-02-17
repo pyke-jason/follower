@@ -6,7 +6,7 @@
  * The LLM has no control over this flow.
  */
 import type { BrokerService } from '../broker/interface.js';
-import type { OrderResult, WorkingOrderParams, AdjustmentRule } from '../broker/types.js';
+import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule } from '../broker/types.js';
 import type { OrderManager } from '../orders/order-manager.js';
 import type { Trade } from '../db/schema.js';
 import type { PositionSize } from '../position-sizing/index.js';
@@ -87,6 +87,27 @@ const ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; 
   CDS:   { stepAmount: 0.05, intervalSec: 5, cancelAfterSec: 60 },
   PDS:   { stepAmount: 0.05, intervalSec: 5, cancelAfterSec: 60 },
 };
+
+// ─── Public helper ─────────────────────────────────
+
+/**
+ * Pure function: convert a Signal + quantity into OrderParams.
+ * Used by RuleBasedTradeAgent and internal pipeline executors.
+ */
+export function buildOrderFromSignal(signal: Signal, quantity: number): OrderParams {
+  const isStock = signal.strategy === 'STOCK';
+  const legs: OrderLeg[] = isStock
+    ? buildStockLegs(signal.direction, quantity)
+    : buildOptionLegs(signal, quantity);
+  return {
+    symbol: signal.symbol,
+    strategy: signal.strategy,
+    direction: signal.direction,
+    legs,
+    orderType: signal.limitPrice ? 'LIMIT' : 'MARKET',
+    limitPrice: signal.limitPrice,
+  };
+}
 
 // ─── Helpers ────────────────────────────────────────
 

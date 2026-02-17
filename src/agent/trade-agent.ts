@@ -1,12 +1,14 @@
 import type { ToolDef } from './tool-factory.js';
-import type { TaskContext, TaskResult } from '../db/schema.js';
+import type { TaskContext } from '../db/schema.js';
+import type { TaskResult } from './schemas.js';
 import type { LLMProvider } from './providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from './providers.js';
-import { AgentDecisionSchema, FlagForReviewInput } from './schemas.js';
+import { FlagForReviewInput, parseDecisionJson } from './schemas.js';
 import { runAgentLoop } from './agent-loop.js';
 import type { AgentStep } from './agent-loop.js';
 import type { ModelIdentity, LLMUsage } from './providers.js';
 import type { PrefetchedData } from './prefetch.js';
+import { formatTimestampForLLM } from '../lib/et-date.js';
 
 export type { AgentStep };
 
@@ -124,29 +126,6 @@ After using tools, respond with a JSON block:
 
 **IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
 
-const etFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
-  hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-});
-
-/** Format ISO timestamp as "Tue, Sep 2, 2025, 10:32 AM ET" for the LLM. */
-function formatTimestampForLLM(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return etFormatter.format(d);
-}
-
-function parseTradeResult(text: string): TaskResult | null {
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-  const candidate = jsonMatch ? jsonMatch[1] : text;
-  try {
-    const raw = JSON.parse(candidate);
-    const parsed = AgentDecisionSchema.safeParse(raw);
-    if (parsed.success) return parsed.data as TaskResult;
-  } catch { /* not valid JSON */ }
-  return null;
-}
 
 /**
  * Build the user prompt for the trade agent.
@@ -250,7 +229,7 @@ export async function runAgent(
     {
       systemPrompt: SYSTEM_PROMPT,
       tools: activeTools,
-      parseResult: parseTradeResult,
+      parseResult: parseDecisionJson,
       onToolCall: (name, input) => {
         if (name === 'flag_for_review') {
           const flagParsed = FlagForReviewInput.safeParse(input);

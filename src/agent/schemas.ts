@@ -76,3 +76,22 @@ export const LabelResultSchema = z.object({
 });
 
 export type LabelResult = z.infer<typeof LabelResultSchema>;
+
+// ─── Decision JSON parsing ──────────────────────────────────────────
+
+export type TaskResult = z.infer<typeof AgentDecisionSchema>;
+
+/**
+ * Extract and validate a JSON decision block from agent text output.
+ * Handles both ```json fenced blocks and raw JSON.
+ */
+export function parseDecisionJson(text: string): TaskResult | null {
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+  const candidate = jsonMatch ? jsonMatch[1] : text;
+  try {
+    const raw = JSON.parse(candidate);
+    const parsed = AgentDecisionSchema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+  } catch { /* not valid JSON */ }
+  return null;
+}

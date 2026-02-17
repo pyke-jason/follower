@@ -14,13 +14,16 @@ export type ToolDef = {
   execute: (input: Record<string, unknown>) => Promise<unknown>;
 };
 
-export type ClassificationToolDeps = {
+export type BaseToolDeps = {
   broker: BrokerService;
+};
+
+export type ClassificationToolDeps = BaseToolDeps & {
   getOpenPositions: (filters: { symbol?: string; trader?: string }) => Promise<Trade[]>;
 };
 
-/** Read-only tools for the classification agent. No sizing, risk checks, or order placement. */
-export function createClassificationTools(deps: ClassificationToolDeps): ToolDef[] {
+/** Base tools: get_quote, get_options_chain, flag_for_review. Shared by both classification and intent extraction. */
+export function createBaseTools(deps: BaseToolDeps): ToolDef[] {
   return [
     {
       name: 'get_quote',
@@ -55,24 +58,6 @@ export function createClassificationTools(deps: ClassificationToolDeps): ToolDef
       },
     },
     {
-      name: 'get_open_positions',
-      description: 'Get all currently open trade positions, optionally filtered by symbol or trader.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Filter by symbol' },
-          trader: { type: 'string', description: 'Filter by trader name' },
-        },
-      },
-      execute: async (input) => {
-        const parsed = GetOpenPositionsInput.parse(input);
-        return await deps.getOpenPositions({
-          symbol: parsed.symbol,
-          trader: parsed.trader,
-        });
-      },
-    },
-    {
       name: 'flag_for_review',
       description: 'Flag this message for manual human review. Use when uncertain about the trade.',
       input_schema: {
@@ -90,6 +75,31 @@ export function createClassificationTools(deps: ClassificationToolDeps): ToolDef
           reason: parsed.reason,
           uncertainty: parsed.uncertainty,
         };
+      },
+    },
+  ];
+}
+
+/** Classification tools: base + get_open_positions. Used by the trade classification agent. */
+export function createClassificationTools(deps: ClassificationToolDeps): ToolDef[] {
+  return [
+    ...createBaseTools(deps),
+    {
+      name: 'get_open_positions',
+      description: 'Get all currently open trade positions, optionally filtered by symbol or trader.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Filter by symbol' },
+          trader: { type: 'string', description: 'Filter by trader name' },
+        },
+      },
+      execute: async (input) => {
+        const parsed = GetOpenPositionsInput.parse(input);
+        return await deps.getOpenPositions({
+          symbol: parsed.symbol,
+          trader: parsed.trader,
+        });
       },
     },
   ];

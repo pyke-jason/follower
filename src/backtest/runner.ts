@@ -6,17 +6,10 @@ import { checkRiskLimits, type RiskCheckConfig, type RiskCheckDeps } from '../or
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import { toDateKeyET } from '../lib/et-date.js';
-import { formatOccSymbol } from './occ-symbology.js';
-import { createClassificationTools } from '../agent/tool-factory.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
-import { runAgent } from '../agent/trade-agent.js';
-import type { AgentStep } from '../agent/agent-loop.js';
-import type { Signal } from '../agent/schemas.js';
-import { prefetchForAgent } from '../agent/prefetch.js';
 import type { PrefetchedData } from '../agent/prefetch.js';
-import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
-import type { LLMProvider, ModelIdentity } from '../agent/providers.js';
+import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { getTrader } from '../config/traders.js';
 import { OrderManager } from '../orders/order-manager.js';
@@ -31,12 +24,14 @@ import type { Trade } from '../db/schema.js';
 import type { LLMUsage } from '../agent/providers.js';
 import { getApiStats, resetApiStats } from './databento-tape.js';
 import { createLogger } from '../lib/logger.js';
-import { safeParseFloat, roundCents } from '../lib/numbers.js';
+import { safeParseFloat } from '../lib/numbers.js';
 import { extractBatchIntents } from '../intents/extract-batch.js';
 import type { IntentExtractionDeps } from '../intents/extract-intent.js';
 import { INTENT_VERSION } from '../intents/extract-intent.js';
 import type { MessageIntent, Message } from '../db/schema.js';
 import { inArray } from 'drizzle-orm';
+import { RuleBasedTradeAgent } from '../trading/trade-agent.js';
+import type { TradeAgent, Action } from '../trading/trade-agent.js';
 
 /**
  * Bundles all backtest-scoped dependencies so processMessage and
@@ -48,158 +43,12 @@ type BacktestContext = {
   priceProvider: BacktestPriceProvider;
   agentProvider: LLMProvider;
   pipelineDeps: PipelineDeps;
+  tradeAgent: TradeAgent;
   maxOnSymbol: number;
   maxTotalPositions: number;
 };
 
 const log = createLogger('Backtest');
-
-/**
- * Build a map of trade ID -> current mark price for all open positions.
- * For stocks: mid price. For options: re-quote each leg and compute net premium.
- * Errors are caught per-position (no data = skip).
- */
-async function buildMarkPrices(
-  runId: string,
-  priceProvider: BacktestPriceProvider,
-  at: Date,
-): Promise<Map<string, number>> {
-  const markPrices = new Map<string, number>();
-
-  const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
-
-  for (const t of openTrades) {
-    try {
-      if (t.strategy === 'STOCK') {
-        const quote = await priceProvider.getQuote(t.symbol, at);
-        markPrices.set(t.id, (quote.bid + quote.ask) / 2);
-      } else if (Array.isArray(t.legs) && (t.legs as any[]).length > 0) {
-        // Options/spreads: re-quote each leg and compute net premium
-        let netPremium = 0;
-        let allLegsQuoted = true;
-        const legs = t.legs as { symbol: string; strike: number; expiry: string; type: string; action: string; quantity: number; fillPrice: number }[];
-        for (const leg of legs) {
-          try {
-            const occSymbol = formatOccSymbol({
-              underlying: t.symbol,
-              expiration: leg.expiry,
-              type: leg.type === 'STOCK' ? 'CALL' : leg.type as 'CALL' | 'PUT',
-              strike: leg.strike,
-            });
-            const quote = await priceProvider.getQuote(occSymbol, at);
-            const legMid = (quote.bid + quote.ask) / 2;
-            // BUY legs are assets (positive value), SELL legs are liabilities (negative)
-            netPremium += leg.action === 'BUY' ? legMid : -legMid;
-          } catch {
-            allLegsQuoted = false;
-            break;
-          }
-        }
-        if (allLegsQuoted) {
-          markPrices.set(t.id, netPremium);
-        }
-      } else {
-        // Single-leg option without legs array — quote the position symbol directly
-        const quote = await priceProvider.getQuote(t.symbol, at);
-        markPrices.set(t.id, (quote.bid + quote.ask) / 2);
-      }
-    } catch {
-      // No data for this position — skip (unrealized = $0 for this position)
-    }
-  }
-
-  return markPrices;
-}
-
-/**
- * Compute unrealized PnL from trade rows and mark prices.
- */
-function computeUnrealizedPnl(trades: Trade[], markPrices: Map<string, number>): number {
-  let total = 0;
-  for (const t of trades) {
-    const markPrice = markPrices.get(t.id);
-    if (markPrice == null) continue;
-    const diff = markPrice - safeParseFloat(t.entryPrice);
-    const multiplier = t.direction === 'LONG' ? 1 : -1;
-    const contractMultiplier = t.strategy === 'STOCK' ? 1 : 100;
-    total += diff * multiplier * (t.quantity ?? 1) * contractMultiplier;
-  }
-  return roundCents(total);
-}
-
-/**
- * Sweep expired options: at each day boundary, check all open option positions
- * and close any with expired legs at intrinsic value (ITM) or $0 (OTM).
- */
-async function sweepExpiredOptions(
-  runId: string,
-  priceProvider: BacktestPriceProvider,
-  currentDate: string, // YYYY-MM-DD
-): Promise<number> {
-  let closedCount = 0;
-
-  const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
-
-  for (const t of openTrades) {
-    if (t.strategy === 'STOCK') continue;
-    const legs = Array.isArray(t.legs) ? t.legs as { symbol: string; strike: number; expiry: string; type: string; action: string; quantity: number; fillPrice: number }[] : [];
-    if (legs.length === 0) continue;
-
-    // Check if any leg has expired
-    const hasExpiredLeg = legs.some((leg) => leg.expiry <= currentDate);
-    if (!hasExpiredLeg) continue;
-
-    // Compute intrinsic value of the position at expiry
-    let netIntrinsic = 0;
-    for (const leg of legs) {
-      if (leg.expiry > currentDate) continue; // only process expired legs
-      if (leg.type === 'STOCK') continue;
-
-      let underlyingPrice: number;
-      try {
-        // Get underlying quote at the expired date
-        const expiryDate = new Date(leg.expiry + 'T20:00:00Z'); // 4pm ET
-        const quote = await priceProvider.getQuote(t.symbol, expiryDate);
-        underlyingPrice = (quote.bid + quote.ask) / 2;
-      } catch {
-        // No underlying data — assume $0 intrinsic (conservative)
-        underlyingPrice = leg.type === 'CALL' ? 0 : Infinity;
-      }
-
-      const intrinsic = leg.type === 'CALL'
-        ? Math.max(0, underlyingPrice - leg.strike)
-        : Math.max(0, leg.strike - underlyingPrice);
-
-      // BUY legs are positive (we receive intrinsic), SELL legs negative (we pay)
-      netIntrinsic += leg.action === 'BUY' ? intrinsic : -intrinsic;
-    }
-
-    // Close the position at net intrinsic value
-    const exitPrice = Math.max(0, netIntrinsic); // floor at 0 for net debit positions
-    const expiryTimestamp = new Date(currentDate + 'T20:00:00Z');
-
-    // Compute PnL
-    const entry = safeParseFloat(t.entryPrice);
-    const diff = exitPrice - entry;
-    const multiplier = t.direction === 'LONG' ? 1 : -1;
-    const contractMultiplier = t.strategy === 'STOCK' ? 1 : 100;
-    const pnl = roundCents(diff * multiplier * (t.quantity ?? 1) * contractMultiplier);
-
-    await db.update(schema.trades)
-      .set({
-        status: 'CLOSED',
-        exitPrice: String(exitPrice),
-        pnl: String(pnl),
-        closedAt: expiryTimestamp.toISOString(),
-      })
-      .where(eq(schema.trades.id, t.id));
-
-    log.debug(`EXPIRE: ${t.id} ${t.symbol} ${t.strategy} intrinsic=$${netIntrinsic.toFixed(2)} exit=$${exitPrice.toFixed(2)} PnL=$${pnl.toFixed(2)}`);
-    closedCount++;
-  }
-
-  return closedCount;
-}
 
 /**
  * Backtest orchestrator.
@@ -407,12 +256,24 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     },
   };
 
+  // Build the rule-based trade agent — wraps skip checks, risk, and sizing
+  const tradeAgent = new RuleBasedTradeAgent({
+    skipOpts: {
+      maxOnSymbol: riskConfig.maxOnSymbol,
+      maxTotalPositions: riskConfig.maxTotalPositions,
+    },
+    riskDeps,
+    riskConfig,
+    calculateSize: (input) => sizingService.calculateSize(input),
+  });
+
   const btCtx: BacktestContext = {
     runId,
     config,
     priceProvider,
     agentProvider,
     pipelineDeps,
+    tradeAgent,
     maxOnSymbol: riskConfig.maxOnSymbol,
     maxTotalPositions: riskConfig.maxTotalPositions,
   };
@@ -499,22 +360,20 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       const openCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
       if (openCount[0].count > 0) {
         // 1. Sweep expired options first (they become closed trades)
-        const expiredCount = await sweepExpiredOptions(runId, priceProvider, lastMsgDay);
+        const expiredCount = await broker.sweepExpired(lastMsgDay);
         if (expiredCount > 0) {
           log.debug(`Day ${lastMsgDay}: expired ${expiredCount} option position(s)`);
         }
 
         // 2. MTM snapshot for remaining open positions
         const eodTime = new Date(lastMsgDay + 'T20:00:00Z'); // 4pm ET
-        const markPrices = await buildMarkPrices(runId, priceProvider, eodTime);
-        const openTradesForMtm = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
-        const unrealizedPnl = computeUnrealizedPnl(openTradesForMtm, markPrices);
+        const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
         await db.insert(schema.backtestMtmSnapshots).values({
           backtestRunId: runId,
           date: lastMsgDay,
           unrealizedPnl,
         });
-        log.debug(`MTM ${lastMsgDay}: unrealized=$${unrealizedPnl.toFixed(2)} (${markPrices.size}/${openTradesForMtm.length} positions marked)`);
+        log.debug(`MTM ${lastMsgDay}: unrealized=$${unrealizedPnl.toFixed(2)}`);
       }
     }
 
@@ -548,10 +407,9 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
 
     if (shouldRecomputeMtm) {
       try {
-        const markPrices = await buildMarkPrices(runId, priceProvider, clock.now());
-        const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
-        lastMtmValue = computeUnrealizedPnl(openTrades, markPrices);
-        lastOpenCount = openTrades.length;
+        lastMtmValue = await broker.getUnrealizedPnl();
+        const openTrades = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
+        lastOpenCount = openTrades[0].count;
         lastMtmTime = Date.now();
       } catch {
         // Failed to compute MTM — carry forward last known value.
@@ -578,21 +436,19 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   if (lastMsgDay) {
     const openCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
     if (openCount[0].count > 0) {
-      const expiredCount = await sweepExpiredOptions(runId, priceProvider, lastMsgDay);
+      const expiredCount = await broker.sweepExpired(lastMsgDay);
       if (expiredCount > 0) {
         log.debug(`Day ${lastMsgDay} (final): expired ${expiredCount} option position(s)`);
       }
 
       const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
-      const markPrices = await buildMarkPrices(runId, priceProvider, eodTime);
-      const openTradesForMtm = await db.select().from(schema.trades).where(and(isOpen, forRun(runId)));
-      const unrealizedPnl = computeUnrealizedPnl(openTradesForMtm, markPrices);
+      const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
       await db.insert(schema.backtestMtmSnapshots).values({
         backtestRunId: runId,
         date: lastMsgDay,
         unrealizedPnl,
       });
-      log.debug(`MTM ${lastMsgDay} (final): unrealized=$${unrealizedPnl.toFixed(2)} (${markPrices.size}/${openTradesForMtm.length} positions marked)`);
+      log.debug(`MTM ${lastMsgDay} (final): unrealized=$${unrealizedPnl.toFixed(2)}`);
     }
   }
 
@@ -749,115 +605,78 @@ async function processMessage(
     confidence: msg.confidence,
   };
 
-  // ── 3. Prefetch + deterministic skip checks (branch on cachedIntent) ──
-  let prefetched: PrefetchedData | undefined;
-
-  if (cachedIntent) {
-    // Intent path: minimal prefetch (positions only)
-    try {
-      const allForTrader = await btCtx.pipelineDeps.getOpenPositions({ trader: msg.author });
-      const symbolSet = new Set(msg.symbols);
-      prefetched = {
-        quotes: {},
-        traderProfile: null,
-        positions: {
-          forSymbol: allForTrader.filter((t) => symbolSet.has(t.symbol)),
-          allForTrader,
-          totalCount: allForTrader.length,
-          failed: false,
-        },
-      };
-    } catch {
-      prefetched = {
-        quotes: {},
-        traderProfile: null,
-        positions: { forSymbol: [], allForTrader: [], totalCount: -1, failed: true },
-      };
-    }
-
-    // No agent budget check for intent path
-    const skip = shouldSkipDeterministic(taskContext, prefetched, {
-      maxOnSymbol: btCtx.maxOnSymbol,
-      maxTotalPositions: btCtx.maxTotalPositions,
-    });
-    if (skip) {
-      await recordSkip(ctx, 'skipped', skip.category, skip.reason);
-      updateStats(stats);
-      return;
-    }
-  } else {
-    // Agent path: full prefetch
-    try {
-      prefetched = await prefetchForAgent(taskContext, {
-        broker: btCtx.pipelineDeps.broker,
-        getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
-        getTraderConfig: getTrader,
-      });
-    } catch (err) {
-      log.warn(`  prefetch failed: ${err instanceof Error ? err.message : err}`);
-    }
-
-    // Include agent budget in skip checks
-    const skip = shouldSkipDeterministic(taskContext, prefetched, {
-      maxOnSymbol: btCtx.maxOnSymbol,
-      maxTotalPositions: btCtx.maxTotalPositions,
-      agentCallsUsed: stats.agentCallsUsed,
-      maxAgentCalls: btCtx.config.maxAgentCalls,
-    });
-    if (skip) {
-      await recordSkip(ctx, 'skipped', skip.category, skip.reason);
-      updateStats(stats);
-      return;
-    }
-  }
-
-  // ── 4. Get classification ──
-  let decision: string;
-  let signals: Signal[] | null;
-  let reasoning: string;
-  let usage: LLMUsage;
-  let path: 'intent' | 'agent';
-  let agentMeta: { steps: AgentStep[]; model: ModelIdentity } | undefined;
-
-  if (cachedIntent) {
-    decision = cachedIntent.decision;
-    signals = cachedIntent.signals ?? null;
-    reasoning = cachedIntent.reasoning ?? 'No reasoning';
-    usage = { inputTokens: cachedIntent.inputTokens ?? 0, outputTokens: cachedIntent.outputTokens ?? 0 };
-    path = 'intent';
-  } else {
-    const callNum = stats.agentCallsUsed + 1;
-    const maxCalls = btCtx.config.maxAgentCalls ?? '∞';
-    const agentModel = btCtx.config.agentModel ?? 'default';
-    log.debug(`  path: AGENT (call ${callNum}/${maxCalls}, model=${agentModel})`);
-
-    const classification = await classifyWithAgent(msg, btCtx, taskContext, prefetched);
-    stats.agentCallsUsed++;
-
-    decision = classification.decision;
-    signals = classification.signals;
-    reasoning = classification.reasoning;
-    usage = classification.usage;
-    path = 'agent';
-    agentMeta = { steps: classification.steps, model: classification.model };
-  }
-
-  // ── 5. Handle non-EXECUTE decisions ──
-  if (decision !== 'EXECUTE' || !signals || signals.length === 0) {
-    const skipCategory = path === 'intent'
-      ? (decision === 'EXECUTE' ? 'intent skip' : 'intent skip')
-      : 'agent skip';
-    await recordSkip(ctx, path, skipCategory, reasoning, usage);
+  // ── 3. Extract signals from cached intent ──
+  if (!cachedIntent) {
+    // No cached intent — skip this message (intent extraction should always
+    // happen in Phase 1 batch; this is a safety fallback)
+    await recordSkip(ctx, 'skipped', 'no intent', 'No cached intent for message');
     updateStats(stats);
     return;
   }
 
-  // ── 6. Prefetch Databento data for pipeline execution ──
+  const decision = cachedIntent.decision;
+  const signals = cachedIntent.signals ?? null;
+  const reasoning = cachedIntent.reasoning ?? 'No reasoning';
+  const usage: LLMUsage = { inputTokens: cachedIntent.inputTokens ?? 0, outputTokens: cachedIntent.outputTokens ?? 0 };
+
+  // ── 4. Handle non-EXECUTE decisions ──
+  if (decision !== 'EXECUTE' || !signals || signals.length === 0) {
+    await recordSkip(ctx, 'intent', 'intent skip', reasoning, usage);
+    updateStats(stats);
+    return;
+  }
+
+  // ── 5. Prefetch positions for deterministic skip checks ──
+  let prefetched: PrefetchedData | undefined;
+  try {
+    const allForTrader = await btCtx.pipelineDeps.getOpenPositions({ trader: msg.author });
+    const symbolSet = new Set(msg.symbols);
+    prefetched = {
+      quotes: {},
+      traderProfile: null,
+      positions: {
+        forSymbol: allForTrader.filter((t) => symbolSet.has(t.symbol)),
+        allForTrader,
+        totalCount: allForTrader.length,
+        failed: false,
+      },
+    };
+  } catch {
+    prefetched = {
+      quotes: {},
+      traderProfile: null,
+      positions: { forSymbol: [], allForTrader: [], totalCount: -1, failed: true },
+    };
+  }
+
+  // ── 6. Run trade agent (deterministic skip + risk + sizing) ──
   await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
 
-  // ── 7. Execute pipeline (shared) ──
+  // Process each signal through the trade agent
+  const allActions: Action[] = [];
+  for (const signal of signals) {
+    const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched);
+    allActions.push(...actions);
+  }
+
+  // ── 7. Execute actions through the pipeline ──
+  const executeableSignals = allActions
+    .filter((a): a is Extract<Action, { type: 'PLACE_ORDER' }> => a.type === 'PLACE_ORDER')
+    .map(a => a.signal);
+
+  const noOps = allActions.filter(a => a.type === 'NO_OP');
+
+  if (executeableSignals.length === 0) {
+    const noOpReason = noOps.length > 0
+      ? noOps.map(a => a.reasoning).join('; ')
+      : reasoning;
+    await recordSkip(ctx, 'intent', 'agent skip', noOpReason, usage);
+    updateStats(stats);
+    return;
+  }
+
   const pipelineResults = await executeSignals(
-    signals,
+    executeableSignals,
     msg.author,
     btCtx.pipelineDeps,
     { messageId: msg.id, backtestRunId: btCtx.runId, isBacktest: true },
@@ -872,102 +691,15 @@ async function processMessage(
 
   // ── 8. Record result ──
   if (executedResults.length > 0 && firstTradeId) {
-    await recordExecute(ctx, path, reasoning, firstTradeId, usage);
+    await recordExecute(ctx, 'intent', reasoning, firstTradeId, usage);
   } else if (pipelineFailures.length > 0) {
-    const failReason = `[pipeline] ${pipelineFailures.join('; ')} | ${path === 'agent' ? 'Agent' : 'Intent'}: ${reasoning}`;
-    log.warn(`  ${path}: EXECUTE → pipeline failed: ${pipelineFailures.join('; ')}`);
+    const failReason = `[pipeline] ${pipelineFailures.join('; ')} | Intent: ${reasoning}`;
+    log.warn(`  intent: EXECUTE → pipeline failed: ${pipelineFailures.join('; ')}`);
     await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason, usage);
   } else {
-    await recordSkip(ctx, path, `${path} skip`, reasoning, usage);
+    await recordSkip(ctx, 'intent', 'intent skip', reasoning, usage);
   }
 
-  // ── 9. Create tasks/taskSteps (agent path only) ──
-  if (agentMeta) {
-    const btTaskId = crypto.randomUUID();
-    const didExecute = executedResults.length > 0 && firstTradeId;
-    await db.insert(schema.tasks).values({
-      id: btTaskId,
-      messageId: msg.id,
-      taskType: didExecute ? 'EXECUTE_TRADE' : 'REVIEW_MESSAGE',
-      status: didExecute ? 'COMPLETED' : 'SKIPPED',
-      assignee: 'agent',
-      modelProvider: agentMeta.model.provider,
-      modelName: agentMeta.model.model,
-      context: taskContext,
-      result: { decision: didExecute ? 'EXECUTE' : 'SKIP', reasoning },
-      createdAt: msg.timestamp.toISOString(),
-      completedAt: msg.timestamp.toISOString(),
-      backtestRunId: btCtx.runId,
-    });
-
-    if (didExecute) {
-      for (const pr of executedResults) {
-        if (pr.tradeId) {
-          await db.update(schema.trades)
-            .set({ taskId: btTaskId })
-            .where(eq(schema.trades.id, pr.tradeId));
-        }
-      }
-    }
-
-    for (let si = 0; si < agentMeta.steps.length; si++) {
-      const step = agentMeta.steps[si];
-      await db.insert(schema.taskSteps).values({
-        taskId: btTaskId,
-        stepNumber: si + 1,
-        toolName: step.tool ?? null,
-        toolInput: step.input ?? null,
-        toolOutput: step.output ?? null,
-        reasoning: step.reasoning ?? null,
-        durationMs: step.durationMs ?? null,
-      });
-    }
-  }
-
-  // ── 10. Update stats ──
+  // ── 9. Update stats ──
   updateStats(stats);
-}
-
-type AgentClassification = {
-  decision: string;
-  signals: Signal[] | null;
-  reasoning: string;
-  usage: LLMUsage;
-  steps: AgentStep[];
-  model: ModelIdentity;
-};
-
-async function classifyWithAgent(
-  msg: HistoricalMessage,
-  btCtx: BacktestContext,
-  taskContext: TaskContext,
-  prefetched?: PrefetchedData,
-): Promise<AgentClassification> {
-  // Prefetch Databento data for the symbols in this message
-  await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
-
-  // Classification-only tools — no execution capabilities
-  const classificationTools = createClassificationTools({
-    broker: btCtx.pipelineDeps.broker,
-    getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
-  });
-
-  try {
-    const agentResult = await runAgent(taskContext, classificationTools, btCtx.agentProvider, prefetched);
-    const { steps, result, usage } = agentResult;
-    const model = agentResult.model;
-
-    return {
-      decision: result?.decision ?? 'SKIP',
-      signals: result?.signals ?? null,
-      reasoning: result?.reasoning ?? 'Agent decided to skip',
-      usage,
-      steps,
-      model,
-    };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log.warn(`  agent error: ${errMsg}`);
-    throw err;
-  }
 }
