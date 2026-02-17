@@ -453,6 +453,14 @@ export class SimBroker implements BrokerService {
     return roundCents(totalPnl);
   }
 
+  /** Get count of open positions for this run. */
+  async getOpenPositionCount(): Promise<number> {
+    const [row] = await db.select({ count: sql<number>`COUNT(*)` })
+      .from(schema.trades)
+      .where(and(isOpen, forRun(this.backtestRunId)));
+    return row?.count ?? 0;
+  }
+
   /** Get all open trade rows for this run, optionally filtered by trader. */
   async getOpenTrades(trader?: string): Promise<Trade[]> {
     const conditions = [isOpen, forRun(this.backtestRunId)];

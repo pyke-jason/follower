@@ -50,6 +50,23 @@ type BacktestContext = {
 
 const log = createLogger('Backtest');
 
+/** Single place to construct LiveMetrics — avoids scattered inline assembly. */
+function buildLiveMetrics(params: {
+  unrealizedPnl: number | null;
+  openPositionCount: number;
+  lastProcessedMessageTs: string | null;
+}): LiveMetrics {
+  const apiStats = getApiStats();
+  return {
+    unrealizedPnl: params.unrealizedPnl,
+    openPositionCount: params.openPositionCount,
+    databentoApiFetches: apiStats.fetches,
+    databentoApiBytesRead: apiStats.bytesRead,
+    updatedAt: new Date().toISOString(),
+    lastProcessedMessageTs: params.lastProcessedMessageTs,
+  };
+}
+
 /**
  * Backtest orchestrator.
  * Loads messages, initializes sim components, and replays chronologically.
@@ -314,14 +331,11 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
         if (progress.processed % 5 === 0 || progress.processed === progress.total) {
           db.update(schema.backtestRuns)
             .set({
-              liveMetrics: {
+              liveMetrics: buildLiveMetrics({
                 unrealizedPnl: null,
                 openPositionCount: 0,
-                databentoApiFetches: 0,
-                databentoApiBytesRead: 0,
-                updatedAt: new Date().toISOString(),
                 lastProcessedMessageTs: null,
-              } satisfies LiveMetrics,
+              }),
             })
             .where(eq(schema.backtestRuns.id, runId))
             .catch(() => {}); // fire and forget
@@ -357,8 +371,8 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
 
     // ── Day boundary: sweep expired options + MTM snapshot ──
     if (lastMsgDay && msgDay !== lastMsgDay) {
-      const openCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
-      if (openCount[0].count > 0) {
+      const openCount = await broker.getOpenPositionCount();
+      if (openCount > 0) {
         // 1. Sweep expired options first (they become closed trades)
         const expiredCount = await broker.sweepExpired(lastMsgDay);
         if (expiredCount > 0) {
@@ -383,10 +397,10 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     await orderManager.tick(msg.timestamp);
 
     if (i > 0 && i % 100 === 0) {
-      const openTradesCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
+      const openTradesCount = await broker.getOpenPositionCount();
       const closedTradesCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
       const totalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
-      log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount[0].count} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
+      log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
     }
 
     // Unified: processMessage handles both cached intent and live agent paths
@@ -408,8 +422,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     if (shouldRecomputeMtm) {
       try {
         lastMtmValue = await broker.getUnrealizedPnl();
-        const openTrades = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
-        lastOpenCount = openTrades[0].count;
+        lastOpenCount = await broker.getOpenPositionCount();
         lastMtmTime = Date.now();
       } catch {
         // Failed to compute MTM — carry forward last known value.
@@ -417,25 +430,21 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       }
     }
 
-    const apiStats = getApiStats();
     await db.update(schema.backtestRuns)
       .set({
-        liveMetrics: {
+        liveMetrics: buildLiveMetrics({
           unrealizedPnl: lastMtmValue,
           openPositionCount: lastOpenCount,
-          databentoApiFetches: apiStats.fetches,
-          databentoApiBytesRead: apiStats.bytesRead,
-          updatedAt: new Date().toISOString(),
           lastProcessedMessageTs: msg.timestamp.toISOString(),
-        } satisfies LiveMetrics,
+        }),
       })
       .where(eq(schema.backtestRuns.id, runId));
   }
 
   // Final day: sweep + MTM for the last trading day
   if (lastMsgDay) {
-    const openCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
-    if (openCount[0].count > 0) {
+    const openCount = await broker.getOpenPositionCount();
+    if (openCount > 0) {
       const expiredCount = await broker.sweepExpired(lastMsgDay);
       if (expiredCount > 0) {
         log.debug(`Day ${lastMsgDay} (final): expired ${expiredCount} option position(s)`);
@@ -458,11 +467,11 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   priceProvider.printDataSummary();
 
   // Print end-of-run summary
-  const finalOpenCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isOpen, forRun(runId)));
+  const finalOpenCount = await broker.getOpenPositionCount();
   const finalClosedCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
   const finalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
   const totalPnl = safeParseFloat(finalPnlResult[0].total);
-  log.info(`Done. trades=${agentTrades} skipped=${skipped} open=${finalOpenCount[0].count} closed=${finalClosedCount[0].count} PnL=$${totalPnl.toFixed(2)}`);
+  log.info(`Done. trades=${agentTrades} skipped=${skipped} open=${finalOpenCount} closed=${finalClosedCount[0].count} PnL=$${totalPnl.toFixed(2)}`);
   if (skipReasons.size > 0) {
     const sorted = Array.from(skipReasons.entries()).sort((a, b) => b[1] - a[1]);
     log.info(`Skip reasons: ${sorted.map(([r, n]) => `${r}=${n}`).join(', ')}`);
