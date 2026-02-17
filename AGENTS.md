@@ -28,7 +28,6 @@ src/
 ├── agent/
 │   ├── trade-agent.ts          # Claude agent system prompt + runner
 │   ├── agent-loop.ts           # Generic tool-use loop
-│   ├── label-agent.ts          # Eval labeling agent
 │   ├── tool-factory.ts         # Build tools for agent (broker, sizing, risk)
 │   ├── providers/              # LLM provider abstraction (anthropic, xai)
 │   └── schemas.ts              # Zod schemas for agent decisions
@@ -75,11 +74,7 @@ src/
 ├── reconciliation/
 │   └── index.ts                # ReconciliationScheduler, FillSweep, balance capture
 ├── eval/
-│   ├── label-runner.ts         # Auto-label messages using Claude agent
-│   ├── run-eval.ts             # Accuracy benchmark (labels vs parser)
-│   └── label-orchestrator.ts   # Parallel label workers
-├── mcp/
-│   └── label-server.ts         # MCP server exposing label tools to Claude Code
+│   └── run-eval.ts             # Accuracy benchmark (intents vs reviewed labels)
 ├── local-api/
 │   └── server.ts               # Hono API (backtest CRUD, logs, health)
 ├── lib/

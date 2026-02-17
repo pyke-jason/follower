@@ -260,6 +260,25 @@ export async function getLatestIntents(messageIds: string[]) {
   return map;
 }
 
+export async function getLabelsForMessages(messageIds: string[]) {
+  if (messageIds.length === 0) return {};
+  const CHUNK = 500;
+  const all: (typeof schema.messageLabels.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageLabels)
+      .where(inArray(schema.messageLabels.messageId, chunk));
+    all.push(...rows);
+  }
+  const map: Record<string, typeof schema.messageLabels.$inferSelect> = {};
+  for (const row of all) {
+    map[row.messageId] = row;
+  }
+  return map;
+}
+
 export async function getPendingReviews(limit = 5, runId?: string) {
   return db
     .select()
@@ -300,7 +319,6 @@ export async function getBacktestRunById(id: string) {
 
 export async function getLabels(opts: {
   reviewed?: boolean;
-  labelSet?: string;
   strategy?: string;
   limit?: number;
   offset?: number;
@@ -308,9 +326,6 @@ export async function getLabels(opts: {
   const conditions: SQL[] = [];
   if (opts.reviewed !== undefined) {
     conditions.push(eq(schema.messageLabels.reviewed, opts.reviewed));
-  }
-  if (opts.labelSet) {
-    conditions.push(eq(schema.messageLabels.labelSet, opts.labelSet));
   }
   if (opts.strategy) {
     conditions.push(eq(schema.messageLabels.strategy, opts.strategy));
@@ -419,17 +434,6 @@ export async function getTradesByBacktestRun(backtestRunId: string, opts?: { inc
     .orderBy(desc(schema.trades.closedAt));
 }
 
-export async function getLabelWithMessage(labelId: string) {
-  const [result] = await db
-    .select({
-      label: schema.messageLabels,
-      message: schema.messages,
-    })
-    .from(schema.messageLabels)
-    .innerJoin(schema.messages, eq(schema.messageLabels.messageId, schema.messages.id))
-    .where(eq(schema.messageLabels.id, labelId));
-  return result ?? null;
-}
 
 // ─── Dashboard Queries ──────────────────────────────
 

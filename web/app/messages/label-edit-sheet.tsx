@@ -19,168 +19,67 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { saveLabel, approveLabel, deleteLabel } from './actions';
-
-export type LabelData = {
-  id: string;
-  isTrade: boolean | null;
-  action: string | null;
-  direction: string | null;
-  strategy: string | null;
-  symbol: string | null;
-  price: string | null;
-  strikes: number[] | null;
-  quantity: string | null;
-  expiry: string | null;
-  exitPercent: number | null;
-  notes: string | null;
-  reviewed: boolean | null;
-};
-
-export type ParseHints = {
-  actionHint: string | null;
-  directionHint: string | null;
-  strategy: string | null;
-  price: number | null;
-  strikes: number[] | null;
-  expiry: string | null;
-  symbol: string | null;
-};
-
-type MessageInfo = {
-  author: string;
-  timestamp: string;
-  cleanText: string;
-};
+import { saveIntentLabel, type MessageIntent } from './actions';
+import type { Signal, MessageLabel } from '../../../src/db/schema';
 
 const NONE = '__none__';
 
-// --- LabelActions: inline buttons shown in table ---
+/** Derive initial form values from an existing label or from intent signals. */
+function getDefaults(intent: MessageIntent, label?: MessageLabel) {
+  const signals = (intent.signals ?? []) as Signal[];
+  const signal = signals[0];
 
-export function LabelActions({
-  label,
-  message,
-  parseHints,
-}: {
-  label: LabelData;
-  message: MessageInfo;
-  parseHints: ParseHints;
-}) {
-  const [open, setOpen] = useState(false);
+  // If a label already exists, use its values. Otherwise pre-fill from the intent.
+  if (label) {
+    return {
+      isTrade: label.isTrade ?? false,
+      action: label.action ?? NONE,
+      direction: label.direction ?? NONE,
+      strategy: label.strategy ?? NONE,
+      symbol: label.symbol ?? '',
+      price: label.price ?? '',
+      strikes: label.strikes?.join(', ') ?? '',
+      expiry: label.expiry ?? '',
+      quantity: label.quantity ?? '',
+      exitPercent: label.exitPercent != null ? String(label.exitPercent) : '',
+      notes: label.notes ?? '',
+    };
+  }
 
-  return (
-    <>
-      <div className="flex gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 text-xs px-2"
-          onClick={() => setOpen(true)}
-        >
-          Edit
-        </Button>
-        {!label.reviewed && (
-          <form action={approveLabel}>
-            <input type="hidden" name="id" value={label.id} />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs px-2 text-profit"
-              type="submit"
-            >
-              Ok
-            </Button>
-          </form>
-        )}
-      </div>
-      <LabelEditSheet
-        label={label}
-        message={message}
-        parseHints={parseHints}
-        open={open}
-        onOpenChange={setOpen}
-      />
-    </>
-  );
+  const isTrade = intent.decision === 'EXECUTE' && signals.length > 0;
+  return {
+    isTrade,
+    action: signal?.action ?? NONE,
+    direction: signal?.direction ?? NONE,
+    strategy: signal?.strategy ?? NONE,
+    symbol: signal?.symbol ?? '',
+    price: signal?.limitPrice ?? '',
+    strikes: signal?.legs?.map((l) => l.strike).join(', ') ?? '',
+    expiry: signal?.legs?.[0]?.expiry ?? '',
+    quantity: '',
+    exitPercent: signal?.exitPercent != null ? String(signal.exitPercent) : '',
+    notes: '',
+  };
 }
 
-// --- ComparisonGrid: side-by-side parse vs label ---
-
-function ComparisonRow({
-  field,
-  parseValue,
-  labelValue,
-}: {
-  field: string;
-  parseValue: string | null;
-  labelValue: string | null;
-}) {
-  const pv = parseValue ?? '–';
-  const lv = labelValue ?? '–';
-  const mismatch = parseValue != null && labelValue != null && parseValue !== labelValue;
-  return (
-    <div className="grid grid-cols-[100px_1fr_1fr] gap-2 text-xs py-1">
-      <span className="text-muted-foreground">{field}</span>
-      <span className="font-mono">{pv}</span>
-      <span className={`font-mono ${mismatch ? 'text-warning font-medium' : ''}`}>
-        {lv}
-      </span>
-    </div>
-  );
-}
-
-function ComparisonGrid({
-  parseHints,
+export function LabelEditSheet({
+  messageId,
+  intent,
   label,
-}: {
-  parseHints: ParseHints;
-  label: LabelData;
-}) {
-  return (
-    <div className="rounded-md border p-3 space-y-0">
-      <div className="grid grid-cols-[100px_1fr_1fr] gap-2 text-[10px] text-muted-foreground uppercase tracking-wide pb-1 border-b mb-1">
-        <span>Field</span>
-        <span>Parse</span>
-        <span>Label</span>
-      </div>
-      <ComparisonRow field="Action" parseValue={parseHints.actionHint} labelValue={label.action} />
-      <ComparisonRow field="Direction" parseValue={parseHints.directionHint} labelValue={label.direction} />
-      <ComparisonRow field="Strategy" parseValue={parseHints.strategy} labelValue={label.strategy} />
-      <ComparisonRow field="Symbol" parseValue={parseHints.symbol} labelValue={label.symbol} />
-      <ComparisonRow
-        field="Price"
-        parseValue={parseHints.price != null ? String(parseHints.price) : null}
-        labelValue={label.price}
-      />
-      <ComparisonRow
-        field="Strikes"
-        parseValue={parseHints.strikes?.join(', ') ?? null}
-        labelValue={label.strikes?.join(', ') ?? null}
-      />
-      <ComparisonRow field="Expiry" parseValue={parseHints.expiry} labelValue={label.expiry} />
-    </div>
-  );
-}
-
-// --- LabelEditSheet: the Sheet-based editor ---
-
-function LabelEditSheet({
-  label,
-  message,
-  parseHints,
   open,
   onOpenChange,
 }: {
-  label: LabelData;
-  message: MessageInfo;
-  parseHints: ParseHints;
+  messageId: string;
+  intent: MessageIntent;
+  label?: MessageLabel;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [isTrade, setIsTrade] = useState(label.isTrade ?? false);
-  const [action, setAction] = useState(label.action ?? NONE);
-  const [direction, setDirection] = useState(label.direction ?? NONE);
-  const [strategy, setStrategy] = useState(label.strategy ?? NONE);
+  const defaults = getDefaults(intent, label);
+  const [isTrade, setIsTrade] = useState(defaults.isTrade);
+  const [action, setAction] = useState(defaults.action);
+  const [direction, setDirection] = useState(defaults.direction);
+  const [strategy, setStrategy] = useState(defaults.strategy);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -188,18 +87,17 @@ function LabelEditSheet({
         <SheetHeader className="px-4 py-3 border-b shrink-0">
           <SheetTitle className="text-sm font-medium">Edit Label</SheetTitle>
           <p className="text-xs text-muted-foreground">
-            {message.author} &middot; {new Date(message.timestamp).toLocaleDateString()}
+            {label ? 'Editing existing label' : 'Creating label from intent'}
           </p>
         </SheetHeader>
 
         <form
           action={async (formData: FormData) => {
-            await saveLabel(formData);
+            await saveIntentLabel(messageId, formData);
             onOpenChange(false);
           }}
           className="flex flex-col flex-1 min-h-0"
         >
-          <input type="hidden" name="id" value={label.id} />
           <input type="hidden" name="isTrade" value={String(isTrade)} />
           <input type="hidden" name="action" value={action === NONE ? '' : action} />
           <input type="hidden" name="direction" value={direction === NONE ? '' : direction} />
@@ -207,15 +105,8 @@ function LabelEditSheet({
 
           <ScrollArea className="flex-1">
             <div className="p-4 space-y-4">
-              {/* Message text */}
-              <div className="rounded-md bg-muted/50 p-3">
-                <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                  {message.cleanText}
-                </p>
-              </div>
-
-              {/* Comparison grid */}
-              <ComparisonGrid parseHints={parseHints} label={label} />
+              {/* Intent comparison */}
+              <IntentComparisonGrid intent={intent} />
 
               {/* Classification */}
               <div className="space-y-3">
@@ -291,7 +182,7 @@ function LabelEditSheet({
                     <Label className="text-xs text-muted-foreground">Symbol</Label>
                     <Input
                       name="symbol"
-                      defaultValue={label.symbol ?? ''}
+                      defaultValue={defaults.symbol}
                       className="h-8 text-sm"
                       placeholder="AAPL"
                     />
@@ -300,7 +191,7 @@ function LabelEditSheet({
                     <Label className="text-xs text-muted-foreground">Price</Label>
                     <Input
                       name="price"
-                      defaultValue={label.price ?? ''}
+                      defaultValue={defaults.price}
                       className="h-8 text-sm"
                       placeholder="12.50"
                     />
@@ -314,7 +205,7 @@ function LabelEditSheet({
                         step="0.1"
                         min="0"
                         max="1"
-                        defaultValue={label.exitPercent ?? ''}
+                        defaultValue={defaults.exitPercent}
                         className="h-8 text-sm"
                         placeholder="0.5"
                       />
@@ -333,7 +224,7 @@ function LabelEditSheet({
                     <Label className="text-xs text-muted-foreground">Strikes</Label>
                     <Input
                       name="strikes"
-                      defaultValue={label.strikes?.join(', ') ?? ''}
+                      defaultValue={defaults.strikes}
                       className="h-8 text-sm"
                       placeholder="100, 110"
                     />
@@ -343,7 +234,7 @@ function LabelEditSheet({
                     <Input
                       name="expiry"
                       type="date"
-                      defaultValue={label.expiry ?? ''}
+                      defaultValue={defaults.expiry}
                       className="h-8 text-sm"
                     />
                   </div>
@@ -351,7 +242,7 @@ function LabelEditSheet({
                     <Label className="text-xs text-muted-foreground">Quantity</Label>
                     <Input
                       name="quantity"
-                      defaultValue={label.quantity ?? ''}
+                      defaultValue={defaults.quantity}
                       className="h-8 text-sm"
                       placeholder="5"
                     />
@@ -364,7 +255,7 @@ function LabelEditSheet({
                 <Label className="text-xs text-muted-foreground">Notes</Label>
                 <Input
                   name="notes"
-                  defaultValue={label.notes ?? ''}
+                  defaultValue={defaults.notes}
                   className="h-8 text-sm"
                   placeholder="Optional notes..."
                 />
@@ -374,20 +265,6 @@ function LabelEditSheet({
 
           {/* Footer */}
           <div className="border-t px-4 py-3 flex items-center gap-2 shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive"
-              type="button"
-              onClick={async () => {
-                const fd = new FormData();
-                fd.set('id', label.id);
-                await deleteLabel(fd);
-                onOpenChange(false);
-              }}
-            >
-              Delete
-            </Button>
             <div className="flex-1" />
             <Button variant="ghost" size="sm" type="button" onClick={() => onOpenChange(false)}>
               Cancel
@@ -399,5 +276,49 @@ function LabelEditSheet({
         </form>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** Shows what the intent extracted, for reference while editing. */
+function IntentComparisonGrid({ intent }: { intent: MessageIntent }) {
+  const signals = (intent.signals ?? []) as Signal[];
+  const signal = signals[0];
+
+  if (!signal && intent.decision === 'SKIP') {
+    return (
+      <div className="rounded-md border p-3 text-xs text-muted-foreground">
+        Intent: SKIP — {intent.reasoning?.slice(0, 120) ?? 'no reasoning'}
+      </div>
+    );
+  }
+
+  if (!signal) return null;
+
+  const rows: [string, string][] = [
+    ['Decision', intent.decision],
+    ['Action', signal.action],
+    ['Direction', signal.direction],
+    ['Strategy', signal.strategy],
+    ['Symbol', signal.symbol],
+  ];
+  if (signal.limitPrice) rows.push(['Price', signal.limitPrice]);
+  if (signal.legs?.length) {
+    rows.push(['Strikes', signal.legs.map((l) => l.strike).join(', ')]);
+    rows.push(['Expiry', signal.legs[0].expiry]);
+  }
+  if (signal.exitPercent != null) rows.push(['Exit %', String(signal.exitPercent)]);
+
+  return (
+    <div className="rounded-md border p-3 space-y-0">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wide pb-1 border-b mb-1">
+        Intent extraction
+      </div>
+      {rows.map(([field, value]) => (
+        <div key={field} className="grid grid-cols-[100px_1fr] gap-2 text-xs py-0.5">
+          <span className="text-muted-foreground">{field}</span>
+          <span className="font-mono">{value}</span>
+        </div>
+      ))}
+    </div>
   );
 }

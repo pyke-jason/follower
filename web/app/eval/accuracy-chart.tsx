@@ -10,18 +10,20 @@ type EvalRun = {
   directionAccuracy: number | null;
   strategyAccuracy: number | null;
   priceAccuracy: number | null;
-  exitPriceAccuracy: number | null;
   strikesAccuracy: number | null;
+  isTradeAccuracy?: number | null;
+  symbolAccuracy?: number | null;
 };
 
 const SERIES = [
   { key: 'overall', label: 'Overall', color: 'var(--color-chart-1)' },
-  { key: 'action', label: 'Action', color: 'var(--color-chart-2)' },
-  { key: 'direction', label: 'Direction', color: 'var(--color-chart-3)' },
-  { key: 'strategy', label: 'Strategy', color: 'var(--color-chart-4)' },
-  { key: 'price', label: 'Price', color: 'var(--color-chart-5)' },
-  { key: 'exitPrice', label: 'Exit Price', color: 'var(--color-profit)' },
-  { key: 'strikes', label: 'Strikes', color: 'var(--color-loss)' },
+  { key: 'isTrade', label: 'isTrade', color: 'var(--color-chart-2)' },
+  { key: 'action', label: 'Action', color: 'var(--color-chart-3)' },
+  { key: 'direction', label: 'Direction', color: 'var(--color-chart-4)' },
+  { key: 'strategy', label: 'Strategy', color: 'var(--color-chart-5)' },
+  { key: 'symbol', label: 'Symbol', color: 'var(--color-profit)' },
+  { key: 'price', label: 'Price', color: 'var(--color-loss)' },
+  { key: 'strikes', label: 'Strikes', color: 'var(--color-warning)' },
 ];
 
 export function AccuracyChart({ evalRuns }: { evalRuns: EvalRun[] }) {
@@ -30,11 +32,12 @@ export function AccuracyChart({ evalRuns }: { evalRuns: EvalRun[] }) {
   const data = evalRuns.map((run) => ({
     date: new Date(run.ranAt).toLocaleDateString(),
     overall: run.overallAccuracy != null ? +(run.overallAccuracy * 100).toFixed(1) : null,
+    isTrade: run.isTradeAccuracy != null ? +(run.isTradeAccuracy * 100).toFixed(1) : null,
     action: run.actionAccuracy != null ? +(run.actionAccuracy * 100).toFixed(1) : null,
     direction: run.directionAccuracy != null ? +(run.directionAccuracy * 100).toFixed(1) : null,
     strategy: run.strategyAccuracy != null ? +(run.strategyAccuracy * 100).toFixed(1) : null,
+    symbol: run.symbolAccuracy != null ? +(run.symbolAccuracy * 100).toFixed(1) : null,
     price: run.priceAccuracy != null ? +(run.priceAccuracy * 100).toFixed(1) : null,
-    exitPrice: run.exitPriceAccuracy != null ? +(run.exitPriceAccuracy * 100).toFixed(1) : null,
     strikes: run.strikesAccuracy != null ? +(run.strikesAccuracy * 100).toFixed(1) : null,
   }));
 

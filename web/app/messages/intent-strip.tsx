@@ -1,11 +1,16 @@
+'use client';
+
+import { useState, useTransition } from 'react';
 import { cn } from '@/lib/utils';
+import { Check, Pencil } from 'lucide-react';
 import {
   Popover,
   PopoverTrigger,
   PopoverContent,
 } from '@/components/ui/popover';
-import type { MessageIntent } from './actions';
-import type { Signal } from '../../../src/db/schema';
+import { approveIntent, type MessageIntent } from './actions';
+import { LabelEditSheet } from './label-edit-sheet';
+import type { Signal, MessageLabel } from '../../../src/db/schema';
 
 const DECISION_STYLES: Record<string, string> = {
   EXECUTE:
@@ -65,8 +70,25 @@ function IntentPopover({ intent }: { intent: MessageIntent }) {
   );
 }
 
-export function IntentStrip({ intent }: { intent: MessageIntent }) {
+export function IntentStrip({
+  intent,
+  messageId,
+  label,
+}: {
+  intent: MessageIntent;
+  messageId: string;
+  label?: MessageLabel;
+}) {
   const signals = (intent.signals ?? []) as Signal[];
+  const [editOpen, setEditOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const isApproved = label?.reviewed === true;
+
+  const handleApprove = () => {
+    startTransition(async () => {
+      await approveIntent(messageId, intent);
+    });
+  };
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap ml-11 py-0.5">
@@ -97,6 +119,41 @@ export function IntentStrip({ intent }: { intent: MessageIntent }) {
             : intent.reasoning}
         </span>
       )}
+
+      {/* Label review buttons */}
+      <div className="flex items-center gap-0.5 ml-auto">
+        <button
+          type="button"
+          onClick={handleApprove}
+          disabled={isPending}
+          title={isApproved ? 'Label approved' : 'Approve intent as correct'}
+          className={cn(
+            'inline-flex items-center justify-center w-5 h-5 rounded transition-colors',
+            isApproved
+              ? 'text-profit bg-profit/15'
+              : 'text-muted-foreground/40 hover:text-profit hover:bg-profit/10',
+            isPending && 'opacity-50',
+          )}
+        >
+          <Check className="w-3 h-3" strokeWidth={isApproved ? 3 : 2} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditOpen(true)}
+          title="Edit label"
+          className="inline-flex items-center justify-center w-5 h-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent transition-colors"
+        >
+          <Pencil className="w-3 h-3" />
+        </button>
+      </div>
+
+      <LabelEditSheet
+        messageId={messageId}
+        intent={intent}
+        label={label}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
     </div>
   );
 }
