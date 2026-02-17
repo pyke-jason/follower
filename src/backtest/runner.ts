@@ -31,6 +31,13 @@ import type { LLMUsage } from '../agent/providers.js';
 import { getApiStats, resetApiStats } from './databento-tape.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
+import { extractBatchIntents } from '../intents/extract-batch.js';
+import type { IntentExtractionDeps } from '../intents/extract-intent.js';
+import { INTENT_VERSION } from '../intents/extract-intent.js';
+import { replayMessageWithIntent } from './replay.js';
+import type { ReplayDeps } from './replay.js';
+import type { MessageIntent, Message } from '../db/schema.js';
+import { inArray } from 'drizzle-orm';
 
 /**
  * Bundles all backtest-scoped dependencies so processMessage and
@@ -411,6 +418,67 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     maxTotalPositions: riskConfig.maxTotalPositions,
   };
 
+  // ── Phase 1: Batch intent extraction ──
+  // Extract intents for all tradable messages up front (parallelized, cached).
+  // This is the expensive LLM phase — subsequent replays reuse cached intents.
+  const tradableIds = tradableMessages.map((m) => m.id);
+  let rawMessages: Message[] = [];
+  if (tradableIds.length > 0) {
+    // SQLite has a variable limit; chunk if needed
+    const CHUNK_SIZE = 500;
+    for (let c = 0; c < tradableIds.length; c += CHUNK_SIZE) {
+      const chunk = tradableIds.slice(c, c + CHUNK_SIZE);
+      const rows = await db.select().from(schema.messages).where(inArray(schema.messages.id, chunk));
+      rawMessages.push(...rows);
+    }
+  }
+
+  const intentDeps: IntentExtractionDeps = {
+    getQuote: (symbol, at) => priceProvider.getQuote(symbol, at),
+    getOptionsChain: (symbol, expiry, optionType, at) => priceProvider.getOptionsChain(symbol, expiry, optionType, at),
+    prefetch: (symbols, at) => priceProvider.prefetch(symbols, at),
+    getTraderConfig: getTrader,
+  };
+
+  log.info(`Phase 1: Extracting intents for ${rawMessages.length} messages...`);
+  const batchResult = await extractBatchIntents(
+    rawMessages,
+    agentIdentity.model,
+    agentProvider,
+    intentDeps,
+    {
+      concurrency: config.intentConcurrency ?? 5,
+      version: INTENT_VERSION,
+      onProgress: (progress) => {
+        // Update live metrics during Phase 1 so the UI shows progress
+        if (progress.processed % 5 === 0 || progress.processed === progress.total) {
+          db.update(schema.backtestRuns)
+            .set({
+              liveMetrics: {
+                unrealizedPnl: null,
+                openPositionCount: 0,
+                databentoApiFetches: 0,
+                databentoApiBytesRead: 0,
+                updatedAt: new Date().toISOString(),
+              } satisfies LiveMetrics,
+            })
+            .where(eq(schema.backtestRuns.id, runId))
+            .catch(() => {}); // fire and forget
+        }
+      },
+    },
+  );
+  const cachedIntents = batchResult.intents;
+  log.info(`Phase 1 complete: ${batchResult.progress.cached} cached, ${batchResult.progress.fresh} fresh, ${batchResult.progress.errors} errors`);
+
+  // Build replay deps for Phase 2
+  const replayDeps: ReplayDeps = {
+    runId,
+    pipelineDeps,
+    maxOnSymbol: riskConfig.maxOnSymbol,
+    maxTotalPositions: riskConfig.maxTotalPositions,
+  };
+
   // Stats tracking
   let agentCallsUsed = 0;
   let agentTrades = 0;
@@ -429,7 +497,8 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   let lastMtmValue: number | null = null;
   let lastOpenCount = 0;
 
-  // Single message loop — broker.advanceTo() handles lazy tick replay for working orders
+  // ── Phase 2: Deterministic replay ──
+  log.info(`Phase 2: Replaying ${tradableMessages.length} messages...`);
   for (let i = 0; i < tradableMessages.length; i++) {
     const msg = tradableMessages[i];
     const msgDay = toDateKeyET(msg.timestamp);
@@ -466,11 +535,52 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
       log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount[0].count} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
     }
 
-    await processMessage(
-      msg, btCtx,
-      { agentCallsUsed, agentTrades, skipped, skipReasons },
-      (stats) => { agentCallsUsed = stats.agentCallsUsed; agentTrades = stats.agentTrades; skipped = stats.skipped; },
-    );
+    // Use cached intent (Phase 2 replay) if available, otherwise fall back to agent
+    const cachedIntent = cachedIntents.get(msg.id);
+    if (cachedIntent) {
+      const decisionStart = Date.now();
+      const replayResult = await replayMessageWithIntent(msg, cachedIntent, replayDeps);
+      const durationMs = Date.now() - decisionStart;
+
+      if (replayResult.traded) {
+        agentTrades++;
+        await db.insert(schema.runDecisions).values({
+          backtestRunId: runId,
+          messageId: msg.id,
+          path: 'intent',
+          decision: 'EXECUTE',
+          reasoning: replayResult.reasoning,
+          tradeId: replayResult.tradeId,
+          durationMs,
+          inputTokens: cachedIntent.inputTokens,
+          outputTokens: cachedIntent.outputTokens,
+        });
+      } else {
+        skipped++;
+        const category = replayResult.pipelineFailure ? 'pipeline failure' : (replayResult.intentDecision === 'EXECUTE' ? 'replay skip' : 'intent skip');
+        const reason = replayResult.pipelineFailure
+          ? `[pipeline] ${replayResult.pipelineFailure} | Intent: ${replayResult.reasoning}`
+          : replayResult.reasoning;
+        skipReasons.set(category, (skipReasons.get(category) ?? 0) + 1);
+        await db.insert(schema.runDecisions).values({
+          backtestRunId: runId,
+          messageId: msg.id,
+          path: replayResult.pipelineFailure ? 'pipeline_failure' : 'intent',
+          decision: 'SKIP',
+          reasoning: reason,
+          durationMs,
+          inputTokens: cachedIntent.inputTokens,
+          outputTokens: cachedIntent.outputTokens,
+        });
+      }
+    } else {
+      // Fallback: no cached intent — run the full agent path
+      await processMessage(
+        msg, btCtx,
+        { agentCallsUsed, agentTrades, skipped, skipReasons },
+        (stats) => { agentCallsUsed = stats.agentCallsUsed; agentTrades = stats.agentTrades; skipped = stats.skipped; },
+      );
+    }
 
     // ── Write liveMetrics after every message ──
     // MTM is expensive (price lookups per position) — throttle it

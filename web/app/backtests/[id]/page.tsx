@@ -9,7 +9,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { formatCurrency } from '@/lib/format';
-import { deleteBacktestRun, cancelBacktestRun } from '../actions';
+import { deleteBacktestRun, cancelBacktestRun, invalidateIntentCache } from '../actions';
 import { LogViewer } from './log-viewer';
 import { BacktestTabs } from './backtest-tabs';
 import { EquityCurveChart } from './equity-curve-chart';
@@ -23,7 +23,7 @@ import { DecisionScatter } from './decision-scatter';
 import { aggregateSkipReasons } from '../../../../src/lib/skip-reasons';
 import { TradeRow } from '../../components/trade-row';
 import Link from 'next/link';
-import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import type { BacktestRunConfig } from '../../../../src/db/schema';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 
@@ -262,6 +262,12 @@ export default async function BacktestDetailPage({
                 <Copy className="size-3" /> Clone &amp; Edit
               </Link>
             </Button>
+            <form action={invalidateIntentCache}>
+              <input type="hidden" name="runId" value={run.id} />
+              <Button type="submit" variant="ghost" size="xs">
+                <RotateCcw className="size-3" /> Clear Intent Cache
+              </Button>
+            </form>
             <Separator orientation="vertical" className="!h-4 mx-1" />
             <Button variant="ghost" size="xs" asChild>
               <Link href={`/?run=${run.id}`}>

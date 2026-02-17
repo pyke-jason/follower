@@ -269,6 +269,36 @@ export const historicalFetchChunks = sqliteTable('historical_fetch_chunks', {
   index('idx_fetch_chunks_status').on(table.status),
 ]);
 
+// ─── Message Intents (Phase 1: classification cache) ─
+
+export const messageIntents = sqliteTable('message_intents', {
+  id:           text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  messageId:    text('message_id').references(() => messages.id).notNull(),
+  model:        text('model').notNull(),              // e.g. "grok-4-1-fast-non-reasoning"
+  version:      integer('version').notNull().default(1), // bump when classification prompt changes
+  decision:     text('decision').notNull(),            // EXECUTE | SKIP | MANUAL_REVIEW
+  reasoning:    text('reasoning'),
+  signals:      text('signals', { mode: 'json' }).$type<Signal[]>(),
+  durationMs:   integer('duration_ms'),
+  inputTokens:  integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  turns:        integer('turns'),
+  steps:        text('steps', { mode: 'json' }).$type<IntentStep[]>(),
+  createdAt:    text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_intents_message').on(table.messageId),
+  index('idx_intents_model_version').on(table.model, table.version),
+  uniqueIndex('idx_intents_unique').on(table.messageId, table.model, table.version),
+]);
+
+export type IntentStep = {
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  reasoning?: string;
+  durationMs?: number;
+};
+
 // ─── Eval Runs ──────────────────────────────────────
 
 export const evalRuns = sqliteTable('eval_runs', {
@@ -307,6 +337,7 @@ export type BacktestRunConfig = {
   maxDrawdownPct?: number;
   maxNotionalMultiplier?: number;
   disableRiskLimits?: boolean;
+  intentConcurrency?: number;  // Phase 1 parallel intent extraction workers (default: 5)
 };
 
 export type BacktestRunSummary = {
@@ -395,4 +426,6 @@ export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
+export type MessageIntent = typeof messageIntents.$inferSelect;
+export type NewMessageIntent = typeof messageIntents.$inferInsert;
 export type EvalRun = typeof evalRuns.$inferSelect;
