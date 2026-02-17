@@ -3,7 +3,12 @@ import { eq, and } from 'drizzle-orm';
 import type { TaskContext, Message, MessageIntent, IntentStep } from '../db/schema.js';
 import type { TaskResult } from '../agent/schemas.js';
 import type { ToolDef } from '../agent/tool-factory.js';
-import { createBaseTools } from '../agent/tool-factory.js';
+import {
+  getQuoteTool,
+  getOptionsChainTool,
+  flagForReviewTool,
+  submitDecisionTool,
+} from '../agent/tool-factory.js';
 import type { Quote, OptionsChain } from '../broker/types.js';
 import type { TrackedTrader } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
@@ -166,10 +171,11 @@ function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string)
     getBars: () => { throw new Error('not available'); },
   } as any; // BrokerService adapter — only quote/chain methods are called
 
-  const base = createBaseTools({ broker: timestampedBroker });
-
   return [
-    ...base,
+    getQuoteTool(timestampedBroker),
+    getOptionsChainTool(timestampedBroker),
+    flagForReviewTool(),
+    submitDecisionTool(),
     {
       name: 'get_recent_chat',
       description: 'Get recent chat room messages before this message. Use to resolve follow-trades: when a trader references another trader ("following Dave", "@spectre", "ty Hari") or posts a bare entry that might follow someone else\'s call. Optionally filter by author.',

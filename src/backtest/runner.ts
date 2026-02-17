@@ -18,10 +18,11 @@ import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
 import { isClosed, forRun } from '../trades/filters.js';
-import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage, LiveMetrics } from './types.js';
+import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage } from './types.js';
+import { buildLiveMetrics } from './live-metrics.js';
 import type { TaskContext } from '../db/schema.js';
 import type { LLMUsage } from '../agent/providers.js';
-import { getApiStats, resetApiStats } from './databento-tape.js';
+import { resetApiStats } from './databento-tape.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { extractBatchIntents } from '../intents/extract-batch.js';
@@ -48,23 +49,6 @@ type BacktestContext = {
 };
 
 const log = createLogger('Backtest');
-
-/** Single place to construct LiveMetrics — avoids scattered inline assembly. */
-function buildLiveMetrics(params: {
-  unrealizedPnl: number | null;
-  openPositionCount: number;
-  lastProcessedMessageTs: string | null;
-}): LiveMetrics {
-  const apiStats = getApiStats();
-  return {
-    unrealizedPnl: params.unrealizedPnl,
-    openPositionCount: params.openPositionCount,
-    databentoApiFetches: apiStats.fetches,
-    databentoApiBytesRead: apiStats.bytesRead,
-    updatedAt: new Date().toISOString(),
-    lastProcessedMessageTs: params.lastProcessedMessageTs,
-  };
-}
 
 /**
  * Backtest orchestrator.
