@@ -16,6 +16,9 @@ import type { PrefetchedData } from '../agent/prefetch.js';
 import type { TaskContext } from '../db/schema.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('TradeAgent');
 
 // ─── Value Objects ─────────────────────────────────
 
@@ -109,8 +112,12 @@ export class RuleBasedTradeAgent implements TradeAgent {
       quantity = size.quantity;
     }
 
-    // 4. Build order from signal
-    const order = buildOrderFromSignal(signal, quantity);
+    // 4. Build order from signal (CLOSE/TRIM don't need legs — the pipeline
+    //    rebuilds the order from the existing position's stored legs)
+    const order = (signal.action === 'CLOSE' || signal.action === 'TRIM')
+      ? { symbol: signal.symbol, strategy: signal.strategy, direction: signal.direction, legs: [], orderType: (signal.limitPrice ? 'LIMIT' : 'MARKET') as 'LIMIT' | 'MARKET', limitPrice: signal.limitPrice }
+      : buildOrderFromSignal(signal, quantity);
+    log.debug(`${signal.action} ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${quantity} legs=${order.legs.length}`);
     return [{
       type: 'PLACE_ORDER',
       order,

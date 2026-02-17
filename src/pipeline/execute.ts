@@ -123,7 +123,7 @@ function buildStockLegs(direction: 'LONG' | 'SHORT', quantity: number): OrderLeg
 
 function buildOptionLegs(signal: Signal, quantity: number): OrderLeg[] {
   if (!signal.legs || signal.legs.length === 0) {
-    throw new Error(`Options signal for ${signal.symbol} missing legs`);
+    throw new Error(`Options signal for ${signal.symbol} (${signal.action} ${signal.strategy}) missing legs`);
   }
   return signal.legs.map(l => ({
     strike: l.strike,
