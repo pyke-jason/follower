@@ -281,6 +281,39 @@ export class SimBroker implements BrokerService {
     };
   }
 
+  /**
+   * Get the current mid-price quote for a trade position.
+   * For STOCK: fetches equity quote directly.
+   * For options: re-quotes the spread via getOptionSpreadQuote using stored legs.
+   */
+  private async getTradeQuote(
+    row: { symbol: string; strategy: string; legs: unknown },
+    at: Date,
+  ): Promise<Quote> {
+    if (row.strategy === 'STOCK') {
+      return this.marketData.getQuote(row.symbol, at);
+    }
+
+    // Parse stored legs and build minimal OrderParams for getOptionSpreadQuote
+    const storedLegs = (typeof row.legs === 'string' ? JSON.parse(row.legs) : row.legs) as Array<{
+      strike: number; expiry: string; type: string; action: string; quantity?: number;
+    }>;
+    const params: OrderParams = {
+      symbol: row.symbol,
+      strategy: row.strategy,
+      direction: 'LONG', // direction doesn't affect spread quote computation
+      legs: storedLegs.map(l => ({
+        strike: l.strike,
+        expiry: l.expiry,
+        type: l.type as 'CALL' | 'PUT' | 'STOCK',
+        action: l.action as 'BUY' | 'SELL',
+        quantity: l.quantity ?? 1,
+      })),
+      orderType: 'MARKET',
+    };
+    return this.getOptionSpreadQuote(params, at);
+  }
+
   async getPositions(): Promise<BrokerPosition[]> {
     const openTrades = await db
       .select()
@@ -296,7 +329,7 @@ export class SimBroker implements BrokerService {
 
       let currentPrice = entryPrice;
       try {
-        const quote = await this.marketData.getQuote(row.symbol, this.clock.now());
+        const quote = await this.getTradeQuote(row, this.clock.now());
         currentPrice = (quote.bid + quote.ask) / 2;
       } catch {
         // No market data — fall back to entry price (unrealized = 0)
@@ -342,7 +375,7 @@ export class SimBroker implements BrokerService {
         const direction = row.direction as 'LONG' | 'SHORT';
         const strategy = row.strategy;
 
-        const quote = await this.marketData.getQuote(row.symbol, this.clock.now());
+        const quote = await this.getTradeQuote(row, this.clock.now());
         const currentPrice = (quote.bid + quote.ask) / 2;
         const diff = currentPrice - entryPrice;
         const multiplier = direction === 'LONG' ? 1 : -1;
