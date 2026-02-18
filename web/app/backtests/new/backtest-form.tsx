@@ -145,6 +145,17 @@ export function BacktestForm({
         </div>
       </div>
 
+      <div className="grid grid-cols-5 gap-4">
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Option comm ($/ct)</Label>
+          <Input name="commissionOptionPerContract" type="number" step="0.01" placeholder="0.50" defaultValue={defaultConfig?.commissionSchedule?.option?.perContract ?? '0.50'} className="h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1">Stock comm ($/sh)</Label>
+          <Input name="commissionStockPerShare" type="number" step="0.001" placeholder="0.00" defaultValue={defaultConfig?.commissionSchedule?.stock?.perShare ?? '0.00'} className="h-9" />
+        </div>
+      </div>
+
       <div className="flex gap-2 pt-2">
         <Button type="submit">Start Backtest</Button>
         <Button type="button" variant="ghost" asChild>

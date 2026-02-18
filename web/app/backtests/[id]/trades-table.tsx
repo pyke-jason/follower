@@ -9,7 +9,7 @@ import { TradeRow } from '../../components/trade-row';
 import { fetchTradeLinkedMessages } from '../actions';
 import { formatCurrency, pnlColor } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { Trade, Message, MessageLabel } from '../../../../src/db/schema';
+import type { Trade, Message, MessageLabel, CommissionSchedule } from '../../../../src/db/schema';
 import type { MessageIntent } from '../../messages/actions';
 
 const ChatFeed = dynamic(
@@ -23,7 +23,7 @@ type ChatContext = {
   labels: Record<string, MessageLabel>;
 };
 
-export function TradesTable({ trades, runId }: { trades: Trade[]; runId: string }) {
+export function TradesTable({ trades, runId, commissionSchedule }: { trades: Trade[]; runId: string; commissionSchedule?: CommissionSchedule }) {
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [context, setContext] = useState<ChatContext | null>(null);
   const [isLoading, startTransition] = useTransition();
@@ -82,6 +82,7 @@ export function TradesTable({ trades, runId }: { trades: Trade[]; runId: string 
                   key={t.id}
                   trade={t}
                   runId={runId}
+                  commissionSchedule={commissionSchedule}
                   onSelect={() => setSelectedTrade(t.id === selectedTrade?.id ? null : t)}
                 />
               ))}

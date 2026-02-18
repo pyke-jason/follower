@@ -57,6 +57,8 @@ async function main() {
   const maxDrawdownPctArg = parseArg(args, '--max-drawdown-pct');
   const maxAgentCallsArg = parseArg(args, '--max-agent-calls');
   const startingEquityArg = parseArg(args, '--starting-equity');
+  const commissionOptionArg = parseArg(args, '--commission-option');
+  const commissionStockArg = parseArg(args, '--commission-stock');
 
   let logLevel: LogLevel = 'debug';
   const logLevelArg = parseArg(args, '--log-level');
@@ -89,6 +91,12 @@ async function main() {
     ...(maxDrawdownPctArg ? { maxDrawdownPct: parseFloat(maxDrawdownPctArg) } : {}),
     ...(maxAgentCallsArg ? { maxAgentCalls: parseInt(maxAgentCallsArg, 10) } : {}),
     ...(startingEquityArg ? { startingEquity: parseInt(startingEquityArg, 10) } : {}),
+    ...((commissionOptionArg || commissionStockArg) ? {
+      commissionSchedule: {
+        ...(commissionOptionArg ? { option: { perContract: parseFloat(commissionOptionArg) } } : {}),
+        ...(commissionStockArg ? { stock: { perShare: parseFloat(commissionStockArg) } } : {}),
+      },
+    } : {}),
   };
 
   if (!config.databentoApiKey) {

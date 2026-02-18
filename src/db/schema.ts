@@ -300,6 +300,13 @@ export type IntentStep = {
   durationMs?: number;
 };
 
+// ─── Commission Schedule ─────────────────────────────
+
+export type CommissionSchedule = {
+  stock?: { perShare: number; minimum?: number; maximum?: number };
+  option?: { perContract: number };
+};
+
 // ─── Backtest Config/Summary Types ───────────────────
 
 export type BacktestRunConfig = {
@@ -321,6 +328,7 @@ export type BacktestRunConfig = {
   maxNotionalMultiplier?: number;
   disableRiskLimits?: boolean;
   intentConcurrency?: number;  // Phase 1 parallel intent extraction workers (default: 5)
+  commissionSchedule?: CommissionSchedule;
 };
 
 export type BacktestRunSummary = {
@@ -339,6 +347,8 @@ export type BacktestRunSummary = {
   agentTrades: number;
   skipped: number;
   openAtEnd: number;
+  totalCommissions?: number;
+  netPnl?: number;
 };
 
 // ─── Supporting Types ────────────────────────────────

@@ -40,10 +40,12 @@ app.post('/spawn', async (c) => {
     maxDrawdownPct?: number;
     maxAgentCalls?: number;
     startingEquity?: number;
+    commissionSchedule?: { stock?: { perShare: number }; option?: { perContract: number } };
   }>();
 
   const { runId, startDate, endDate, traders, agentProvider, agentModel, refreshQuoteCache, logLevel,
-    disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity } = body;
+    disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity,
+    commissionSchedule } = body;
 
   const args = [
     startDate,
@@ -59,6 +61,8 @@ app.post('/spawn', async (c) => {
     ...(maxDrawdownPct != null ? ['--max-drawdown-pct', String(maxDrawdownPct)] : []),
     ...(maxAgentCalls != null ? ['--max-agent-calls', String(maxAgentCalls)] : []),
     ...(startingEquity != null ? ['--starting-equity', String(startingEquity)] : []),
+    ...(commissionSchedule?.option?.perContract != null ? ['--commission-option', String(commissionSchedule.option.perContract)] : []),
+    ...(commissionSchedule?.stock?.perShare != null ? ['--commission-stock', String(commissionSchedule.stock.perShare)] : []),
     '--log-level', logLevel ?? 'debug',
     '--run-id', runId,
   ];

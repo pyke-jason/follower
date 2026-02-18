@@ -77,6 +77,8 @@ export type BacktestReport = {
     agentTrades: number;
     skipped: number;
     openAtEnd: number;
+    totalCommissions?: number;
+    netPnl?: number;
   };
   byTrader: Record<string, TraderStats>;
   byStrategy: Record<string, StrategyStats>;

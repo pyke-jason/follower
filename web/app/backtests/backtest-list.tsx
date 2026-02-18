@@ -182,9 +182,12 @@ export function BacktestList({
                 const sparkData = equityCurve?.map((e) => e.cumPnl) ?? [];
                 const startDate = config.startDate.split('T')[0];
                 const endDate = config.endDate.split('T')[0];
-                const pnlColor = summary && summary.totalPnl > 0
+                const displayPnl = summary
+                  ? ((summary.totalCommissions ?? 0) > 0 ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl)
+                  : 0;
+                const pnlColor = summary && displayPnl > 0
                   ? 'text-profit'
-                  : summary && summary.totalPnl < 0
+                  : summary && displayPnl < 0
                     ? 'text-loss'
                     : '';
                 const isSelected = selected.has(run.id);
@@ -233,7 +236,7 @@ export function BacktestList({
                       {summary ? pctDisplay(summary.winRate) : '--'}
                     </TableCell>
                     <TableCell className={`text-right tabular-nums font-medium ${pnlColor}`}>
-                      {summary ? formatCurrency(summary.totalPnl) : '--'}
+                      {summary ? formatCurrency(displayPnl) : '--'}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {summary ? (summary.profitFactor >= PROFIT_FACTOR_INF ? '99.99' : summary.profitFactor.toFixed(2)) : '--'}

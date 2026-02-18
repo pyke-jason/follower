@@ -1,5 +1,7 @@
 import type { BacktestConfig, BacktestReport, TraderStats, StrategyStats, EquityPoint, ExtendedMetrics } from './types.js';
+import type { CommissionSchedule } from '../db/schema.js';
 import { safeParseFloat, roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
+import { computeTradeCommission, computeEntrySideCommission } from '../lib/commission.js';
 
 export type MtmSnapshot = {
   date: string;
@@ -122,61 +124,76 @@ function computeExtendedMetrics(params: {
 /**
  * Trade-derived stats: summary, breakdowns, equity curve.
  * Shared by the runner (generateReportFromTrades) and the web detail page.
+ *
+ * When commissionSchedule is provided, all P&L metrics (wins/losses, drawdown,
+ * equity curve, profit factor) use net P&L (gross minus commission). The gross
+ * totalPnl is preserved in the summary for reference.
  */
 export function computeCoreStats<T extends {
   pnl: string | null; status: string; trader: string; strategy: string;
+  quantity: number | null; legs: unknown[] | null;
   openedAt: string | null; closedAt: string | null;
-}>(trades: T[], mtmSnapshots?: MtmSnapshot[], startingEquity = 100_000) {
+}>(trades: T[], mtmSnapshots?: MtmSnapshot[], startingEquity = 100_000, commissionSchedule?: CommissionSchedule) {
   const closed = trades.filter((t) => t.status === 'CLOSED');
   const open = trades.filter((t) => t.status !== 'CLOSED');
 
-  const wins = closed.filter((t) => safeParseFloat(t.pnl) > 0);
-  const losses = closed.filter((t) => safeParseFloat(t.pnl) <= 0);
+  // Per-trade net PnL (gross minus round-trip commission)
+  const netPnlOf = (t: T) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
 
-  const totalPnl = closed.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0);
-  const grossWins = wins.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0);
-  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0));
+  const wins = closed.filter((t) => netPnlOf(t) > 0);
+  const losses = closed.filter((t) => netPnlOf(t) <= 0);
+
+  const totalGrossPnl = closed.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0);
+  const closedCommissions = closed.reduce((sum, t) => sum + computeTradeCommission(t, commissionSchedule), 0);
+  const openCommissions = open.reduce((sum, t) => sum + computeEntrySideCommission(t, commissionSchedule), 0);
+  const totalCommissions = roundCents(closedCommissions + openCommissions);
+  const totalNetPnl = roundCents(totalGrossPnl - closedCommissions);
+
+  const grossWins = wins.reduce((sum, t) => sum + netPnlOf(t), 0);
+  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + netPnlOf(t), 0));
   const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
 
-  // Max drawdown from closed trades in chronological order
+  // Max drawdown from closed trades in chronological order (using net PnL)
   const sortedClosed = [...closed].sort(
     (a, b) => (a.closedAt ?? '').localeCompare(b.closedAt ?? ''),
   );
   let peak = 0, maxDrawdown = 0, running = 0;
   for (const t of sortedClosed) {
-    running += safeParseFloat(t.pnl);
+    running += netPnlOf(t);
     if (running > peak) peak = running;
     const dd = peak - running;
     if (dd > maxDrawdown) maxDrawdown = dd;
   }
 
-  // By-trader stats
+  // By-trader stats (net)
   const byTrader: Record<string, TraderStats> = {};
   for (const t of closed) {
+    const net = netPnlOf(t);
     const ts = byTrader[t.trader] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
     ts.trades++;
-    if (safeParseFloat(t.pnl) > 0) ts.wins++; else ts.losses++;
-    ts.totalPnl += safeParseFloat(t.pnl);
+    if (net > 0) ts.wins++; else ts.losses++;
+    ts.totalPnl += net;
     ts.winRate = ts.wins / ts.trades;
   }
 
-  // By-strategy stats
+  // By-strategy stats (net)
   const byStrategy: Record<string, StrategyStats> = {};
   for (const t of closed) {
+    const net = netPnlOf(t);
     const ss = byStrategy[t.strategy] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
     ss.trades++;
-    if (safeParseFloat(t.pnl) > 0) ss.wins++; else ss.losses++;
-    ss.totalPnl += safeParseFloat(t.pnl);
+    if (net > 0) ss.wins++; else ss.losses++;
+    ss.totalPnl += net;
     ss.winRate = ss.wins / ss.trades;
     ss.avgPnl = ss.totalPnl / ss.trades;
   }
 
-  // Equity curve (daily)
+  // Equity curve (daily, using net PnL)
   const dailyMap = new Map<string, { pnl: number; trades: number }>();
   for (const t of sortedClosed) {
     const date = t.closedAt?.split('T')[0] ?? 'unknown';
     const existing = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
-    existing.pnl += safeParseFloat(t.pnl);
+    existing.pnl += netPnlOf(t);
     existing.trades++;
     dailyMap.set(date, existing);
   }
@@ -205,7 +222,9 @@ export function computeCoreStats<T extends {
     wins: wins.length,
     losses: losses.length,
     winRate: closed.length > 0 ? wins.length / closed.length : 0,
-    totalPnl: roundCents(totalPnl),
+    totalPnl: roundCents(totalGrossPnl),
+    netPnl: totalNetPnl,
+    totalCommissions,
     avgWin: roundCents(wins.length > 0 ? grossWins / wins.length : 0),
     avgLoss: roundCents(losses.length > 0 ? (grossLosses / losses.length) * -1 : 0),
     maxDrawdown: roundCents(maxDrawdown),
@@ -222,13 +241,15 @@ export function computeCoreStats<T extends {
  */
 export function generateReportFromTrades(params: {
   trades: { pnl: string | null; status: string; trader: string; strategy: string;
+            quantity: number | null; legs: unknown[] | null;
             entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
   decisions: { path: string; decision: string }[];
   mtmSnapshots?: MtmSnapshot[];
   startingEquity?: number;
+  commissionSchedule?: CommissionSchedule;
 }): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
-  const { trades, decisions, mtmSnapshots, startingEquity = 100_000 } = params;
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, startingEquity);
+  const { trades, decisions, mtmSnapshots, startingEquity = 100_000, commissionSchedule } = params;
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, startingEquity, commissionSchedule);
 
   // Derive execution stats from decisions — count both live agent and cached intent paths
   const isClassified = (d: { path: string }) => d.path === 'agent' || d.path === 'intent';
@@ -236,14 +257,16 @@ export function generateReportFromTrades(params: {
   const agentCallsUsed = decisions.filter((d) => isClassified(d)).length;
   const skipped = decisions.filter((d) => d.decision === 'SKIP').length;
 
-  // Extended metrics
+  // Extended metrics (use net PnL from core summary)
+  const netPnlOf = (t: typeof sortedClosed[number]) =>
+    safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
   const sortedForMetrics = sortedClosed.map((t) => ({
-    pnl: safeParseFloat(t.pnl),
+    pnl: netPnlOf(t),
     openedAt: new Date(t.openedAt ?? 0),
     closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
   }));
   const extendedMetrics = computeExtendedMetrics({
-    sortedClosed: sortedForMetrics, equityCurve, totalPnl: core.totalPnl,
+    sortedClosed: sortedForMetrics, equityCurve, totalPnl: core.netPnl ?? core.totalPnl,
     maxDrawdown: core.maxDrawdown, startingEquity,
   });
 
@@ -281,7 +304,13 @@ export function printReport(report: BacktestReport): void {
   console.log(`  Total trades:        ${s.totalTrades}`);
   console.log(`  Wins / Losses:       ${s.wins} / ${s.losses}`);
   console.log(`  Win rate:            ${pctDisplay(s.winRate)}`);
-  console.log(`  Total P&L:           $${s.totalPnl.toFixed(2)}`);
+  if (s.totalCommissions && s.totalCommissions > 0) {
+    console.log(`  Gross P&L:           $${s.totalPnl.toFixed(2)}`);
+    console.log(`  Commissions:         -$${s.totalCommissions.toFixed(2)}`);
+    console.log(`  Net P&L:             $${(s.netPnl ?? s.totalPnl).toFixed(2)}`);
+  } else {
+    console.log(`  Total P&L:           $${s.totalPnl.toFixed(2)}`);
+  }
   console.log(`  Avg win:             $${s.avgWin.toFixed(2)}`);
   console.log(`  Avg loss:            $${s.avgLoss.toFixed(2)}`);
   console.log(`  Max drawdown:        $${s.maxDrawdown.toFixed(2)}`);

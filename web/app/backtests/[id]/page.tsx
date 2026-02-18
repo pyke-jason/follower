@@ -24,11 +24,12 @@ import { TradesTable } from './trades-table';
 import { AccuracyGrid } from '../../components/accuracy-grid';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
-import type { BacktestRunConfig } from '../../../../src/db/schema';
+import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 
 import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
 import { computeCoreStats } from '../../../../src/backtest/report';
+import { computeTradeCommission } from '../../../../src/lib/commission';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,7 +81,7 @@ export default async function BacktestDetailPage({
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
   const configStartingEquity = config.startingEquity ?? 100_000;
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, configStartingEquity, mtmSnapshots);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, configStartingEquity, mtmSnapshots, config.commissionSchedule);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -220,7 +221,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTable trades={closedTrades} runId={id} />;
+  const tradesContent = <TradesTable trades={closedTrades} runId={id} commissionSchedule={config.commissionSchedule} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -300,6 +301,9 @@ export default async function BacktestDetailPage({
           <Separator orientation="vertical" className="!h-4" />
           <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
           <span className="text-muted-foreground tabular-nums">${((config.startingEquity ?? 100_000) / 1000).toFixed(0)}k</span>
+          {config.commissionSchedule?.option?.perContract != null && (
+            <span className="text-muted-foreground text-xs">comm ${config.commissionSchedule.option.perContract}/ct</span>
+          )}
           {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
           {summary && (
             <>
@@ -310,11 +314,14 @@ export default async function BacktestDetailPage({
                 {(() => {
                   const unrealized = liveMetrics?.unrealizedPnl ?? 0;
                   const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
-                  const totalPnl = hasOpen ? summary.totalPnl + unrealized : summary.totalPnl;
+                  const hasComm = (summary.totalCommissions ?? 0) > 0;
+                  const displayPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
+                  const totalPnl = hasOpen ? displayPnl + unrealized : displayPnl;
                   return (
                     <span className={totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>
                       {formatCurrency(totalPnl)}
-                      {hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
+                      {hasComm && <span className="text-muted-foreground font-normal text-xs ml-1">(gross {formatCurrency(summary.totalPnl)} &minus; {formatCurrency(summary.totalCommissions!)} comm)</span>}
+                      {!hasComm && hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
                     </span>
                   );
                 })()}
@@ -394,6 +401,7 @@ type TradeRow = {
   closedAt: string | null;
   direction: string;
   quantity: number | null;
+  legs: unknown[] | null;
   symbol: string;
   openedAt: string | null;
 };
@@ -407,8 +415,9 @@ function computeFromTrades(
   decisions: { decision: { path: string; decision: string } }[],
   startingEquity = 100_000,
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
+  commissionSchedule?: CommissionSchedule,
 ) {
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, startingEquity);
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, startingEquity, commissionSchedule);
 
   // Execution stats from already-loaded decisions — no precomputed fallback
   const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;
@@ -417,10 +426,12 @@ function computeFromTrades(
 
   const summary = { ...core, totalMessages: 0, tradedMessages: 0, agentCallsUsed, agentTrades, skipped };
 
-  // --- Chart builders (detail-page-specific) ---
+  // --- Chart builders (detail-page-specific, using net PnL) ---
+  const netPnlOf = (t: TradeRow) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
+
   const tradeScatter: TradeScatterPoint[] = sortedClosed.map((t) => ({
     date: (t.closedAt ?? t.openedAt ?? '').split('T')[0],
-    pnl: safeParseFloat(t.pnl),
+    pnl: netPnlOf(t),
     strategy: t.strategy,
     direction: t.direction,
     quantity: t.quantity ?? 1,
@@ -433,7 +444,7 @@ function computeFromTrades(
     const windowSize = Math.min(20, Math.max(5, Math.floor(sortedClosed.length / 5)));
     for (let i = windowSize - 1; i < sortedClosed.length; i++) {
       const window = sortedClosed.slice(i - windowSize + 1, i + 1);
-      const windowWins = window.filter((t) => safeParseFloat(t.pnl) > 0).length;
+      const windowWins = window.filter((t) => netPnlOf(t) > 0).length;
       rollingWinRate.push({
         tradeNum: i + 1,
         date: (sortedClosed[i].closedAt ?? '').split('T')[0],
@@ -456,7 +467,7 @@ function computeFromTrades(
       group.push(t);
     }
     for (const [date, trades] of [...dateGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      for (const t of trades) cumByStrategy[t.strategy] += safeParseFloat(t.pnl);
+      for (const t of trades) cumByStrategy[t.strategy] += netPnlOf(t);
       const point: StrategyEquityPoint = { date };
       for (const s of strategies) point[s] = roundCents(cumByStrategy[s]);
       strategyEquity.push(point);
