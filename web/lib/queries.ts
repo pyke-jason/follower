@@ -955,3 +955,91 @@ export async function getEnrichedMessages(opts: {
     nextCursor: hasMore ? result[result.length - 1].message.timestamp : null,
   };
 }
+
+// ─── Backtest Accuracy (lazy, no eval run needed) ───
+
+export async function computeBacktestAccuracy(backtestRunId: string) {
+  const { compareLabelsVsIntents } = await import('./eval-helpers');
+
+  // 1. Get all message IDs that have a decision in this backtest run
+  const decisionRows = await db
+    .select({
+      messageId: schema.runDecisions.messageId,
+      decision: schema.runDecisions.decision,
+    })
+    .from(schema.runDecisions)
+    .where(eq(schema.runDecisions.backtestRunId, backtestRunId));
+
+  if (decisionRows.length === 0) return null;
+
+  const messageIds = decisionRows.map((d) => d.messageId);
+
+  // 2. Load reviewed labels for those messages
+  const CHUNK = 500;
+  const labelRows: (typeof schema.messageLabels.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageLabels)
+      .where(and(
+        inArray(schema.messageLabels.messageId, chunk),
+        eq(schema.messageLabels.reviewed, true),
+      ));
+    labelRows.push(...rows);
+  }
+
+  if (labelRows.length === 0) return null;
+
+  const labelMap = new Map(labelRows.map((l) => [l.messageId, l]));
+  const labeledMessageIds = [...labelMap.keys()];
+
+  // 3. Load latest intents for labeled messages
+  const intentRows: (typeof schema.messageIntents.$inferSelect)[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageIntents)
+      .where(inArray(schema.messageIntents.messageId, chunk));
+    intentRows.push(...rows);
+  }
+
+  // Keep highest version per message
+  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
+  for (const row of intentRows) {
+    const existing = intentMap.get(row.messageId);
+    if (!existing || row.version > existing.version) {
+      intentMap.set(row.messageId, row);
+    }
+  }
+
+  // 4. Load message text for failure reporting
+  const msgRows: { id: string; cleanText: string }[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select({ id: schema.messages.id, cleanText: schema.messages.cleanText })
+      .from(schema.messages)
+      .where(inArray(schema.messages.id, chunk));
+    msgRows.push(...rows);
+  }
+  const msgMap = new Map(msgRows.map((m) => [m.id, m.cleanText]));
+
+  // 5. Build pairs and compare
+  const pairs = labeledMessageIds
+    .filter((mid) => intentMap.has(mid))
+    .map((mid) => ({
+      label: labelMap.get(mid)!,
+      intent: intentMap.get(mid)!,
+      cleanText: msgMap.get(mid) ?? '',
+    }));
+
+  if (pairs.length === 0) return null;
+
+  return {
+    ...compareLabelsVsIntents(pairs),
+    totalMessages: decisionRows.length,
+    labeledMessages: labelRows.length,
+  };
+}
