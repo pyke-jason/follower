@@ -73,8 +73,6 @@ src/
 │   └── atr.ts                  # ATR-based position sizing (14-period, 2x stop)
 ├── reconciliation/
 │   └── index.ts                # ReconciliationScheduler, FillSweep, balance capture
-├── eval/
-│   └── run-eval.ts             # Accuracy benchmark (intents vs reviewed labels)
 ├── local-api/
 │   └── server.ts               # Hono API (backtest CRUD, logs, health)
 ├── lib/
@@ -82,7 +80,6 @@ src/
 │   ├── resilient.ts            # Retry with exponential backoff + error classification
 │   ├── secrets/                # Keychain + .env provider pattern
 │   ├── zod-financial.ts        # Price, quantity, percentage Zod schemas
-│   ├── position-reconstruction.ts  # OPEN/ADD/TRIM/CLOSE state machine
 │   ├── logger.ts               # Tagged, level-filtered logging
 │   ├── numbers.ts              # safeParseFloat, roundCents, pctDisplay
 │   ├── healthcheck.ts          # Healthchecks.io ping (60s interval)
@@ -170,7 +167,6 @@ npm run web              # Start Next.js dashboard on :3000
 npm run local-api        # Start Hono API on :4000
 npm run backtest         # Launch backtest (tsx src/backtest/launch.ts)
 npm run label            # Auto-label messages with Claude
-npm run eval             # Run accuracy benchmark
 npm run db:generate      # Generate Drizzle migrations
 npm run db:migrate       # Apply migrations
 npm run secrets:import   # Import .env keys to macOS Keychain

@@ -34,23 +34,12 @@ export const messages = sqliteTable('messages', {
 export const messageLabels = sqliteTable('message_labels', {
   id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:  text('message_id').references(() => messages.id).notNull(),
-  // Ground truth fields
-  isTrade:    integer('is_trade', { mode: 'boolean' }),
-  action:     text('action'),       // OPEN | CLOSE | ADD | TRIM | null
-  direction:  text('direction'),    // LONG | SHORT | null
-  strategy:   text('strategy'),     // STOCK | CALL | PUT | CDS | PDS | null
-  symbol:     text('symbol'),
-  price:      text('price'),        // as text, null = ambiguous/unknown
-  strikes:    text('strikes', { mode: 'json' }).$type<number[] | null>(),
-  quantity:   text('quantity'),
-  expiry:     text('expiry'),       // ISO date
-  // Metadata
+  signals:    text('signals', { mode: 'json' }).$type<Signal[]>().default([]),
   source:     text('source').notNull().default('manual'), // approved | manual
   reviewed:   integer('reviewed', { mode: 'boolean' }).default(false),
-  notes:         text('notes'),
-  exitPercent:   real('exit_percent'),     // 0.0 to 1.0 for TRIM actions
-  createdAt:     text('created_at').$defaultFn(() => new Date().toISOString()),
-  updatedAt:     text('updated_at'),
+  notes:      text('notes'),
+  createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
+  updatedAt:  text('updated_at'),
 }, (table) => [
   uniqueIndex('idx_labels_message_unique').on(table.messageId),
   index('idx_labels_reviewed').on(table.reviewed),
@@ -311,26 +300,6 @@ export type IntentStep = {
   durationMs?: number;
 };
 
-// ─── Eval Runs ──────────────────────────────────────
-
-export const evalRuns = sqliteTable('eval_runs', {
-  id:                  text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  ranAt:               text('ran_at').notNull(),
-  intentModel:         text('intent_model'),            // which intent model was evaluated
-  intentVersion:       integer('intent_version'),       // which intent version
-  totalLabels:         integer('total_labels').notNull(),
-  isTradeAccuracy:     real('is_trade_accuracy'),       // isTrade classification accuracy
-  actionAccuracy:      real('action_accuracy'),
-  directionAccuracy:   real('direction_accuracy'),
-  strategyAccuracy:    real('strategy_accuracy'),
-  symbolAccuracy:      real('symbol_accuracy'),
-  priceAccuracy:       real('price_accuracy'),
-  strikesAccuracy:     real('strikes_accuracy'),
-  overallAccuracy:     real('overall_accuracy'),
-  totalMislabelings:   integer('total_mislabelings'),
-  failuresJson:        text('failures_json', { mode: 'json' }),
-});
-
 // ─── Backtest Config/Summary Types ───────────────────
 
 export type BacktestRunConfig = {
@@ -443,4 +412,3 @@ export type RunDecision = typeof runDecisions.$inferSelect;
 export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;
 export type MessageIntent = typeof messageIntents.$inferSelect;
 export type NewMessageIntent = typeof messageIntents.$inferInsert;
-export type EvalRun = typeof evalRuns.$inferSelect;

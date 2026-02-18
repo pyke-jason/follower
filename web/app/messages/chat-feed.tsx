@@ -140,7 +140,7 @@ export function ChatFeed({
                 Beginning of messages
               </div>
             ) : null,
-        } : undefined}
+        } : {}}
       />
 
       {onLoadOlder && showScrollBtn && (

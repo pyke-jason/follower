@@ -5,7 +5,7 @@ import { useState, useCallback, useTransition, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { fetchMessages, fetchMessage, type MessageIntent } from './actions';
 import Link from 'next/link';
-import type { Message } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '../../../src/db/schema';
 
 const ChatFeed = dynamic(
   () => import('./chat-feed').then((m) => ({ default: m.ChatFeed })),
@@ -28,6 +28,8 @@ export function ChatPreview({
   title = 'Chat Context',
   viewAllHref,
   initialIntents,
+  initialLabels,
+  className,
 }: {
   messages: Message[];
   focusMessageId?: string;
@@ -35,11 +37,15 @@ export function ChatPreview({
   title?: string;
   viewAllHref?: string;
   initialIntents?: Record<string, MessageIntent>;
+  initialLabels?: Record<string, MessageLabel>;
+  /** Override height. Default: h-80 */
+  className?: string;
 }) {
   // initialMessages arrive ASC (oldest first) from getNearbyMessages.
   // ChatFeed expects DESC (newest first) — it reverses internally.
   const [messages, setMessages] = useState(() => [...initialMessages].reverse());
   const [intents, setIntents] = useState<Record<string, MessageIntent>>(initialIntents ?? {});
+  const [labels, setLabels] = useState<Record<string, MessageLabel>>(initialLabels ?? {});
   const [cursor, setCursor] = useState<string | null>(() => {
     if (initialMessages.length === 0) return null;
     // oldest message timestamp = cursor for loading older
@@ -71,6 +77,7 @@ export function ChatPreview({
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
       setIntents((prev) => ({ ...prev, ...result.intents }));
+      setLabels((prev) => ({ ...prev, ...result.labels }));
       setCursor(result.nextCursor);
     });
   }, [cursor, author]);
@@ -90,10 +97,11 @@ export function ChatPreview({
           </Link>
         )}
       </CardHeader>
-      <CardContent className="p-0 h-80 flex flex-col">
+      <CardContent className={`p-0 flex flex-col ${className ?? 'h-80'}`}>
         <ChatFeed
           messages={messages}
           intents={intents}
+          labels={labels}
           firstItemIndex={firstItemIndex}
           focusMessageId={focusMessageId}
           highlightMessageId={focusMessageId}

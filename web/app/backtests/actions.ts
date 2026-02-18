@@ -4,7 +4,7 @@ import { db, schema } from '@/lib/db';
 import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots } from '@/lib/queries';
+import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots, getMessagesByIds, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
 import type { BacktestRunConfig } from '../../../src/db/schema';
 
@@ -330,4 +330,30 @@ export async function invalidateIntentCache(formData: FormData) {
   }
 
   revalidatePath(`/backtests/${runId}`);
+}
+
+/** Fetch only the messages directly linked to a trade (open, close, add/trim children). */
+export async function fetchTradeLinkedMessages(tradeId: string) {
+  // Get the trade + any child trades (ADDs/TRIMs)
+  const [trades, children] = await Promise.all([
+    db.select().from(schema.trades).where(eq(schema.trades.id, tradeId)),
+    db.select().from(schema.trades).where(eq(schema.trades.parentTradeId, tradeId)),
+  ]);
+  const allTrades = [...trades, ...children];
+
+  // Collect unique message IDs
+  const msgIds = new Set<string>();
+  for (const t of allTrades) {
+    if (t.sourceMessageId) msgIds.add(t.sourceMessageId);
+    if (t.closeMessageId) msgIds.add(t.closeMessageId);
+  }
+  if (msgIds.size === 0) return { messages: [], intents: {}, labels: {} };
+
+  const ids = [...msgIds];
+  const [messages, intents, labels] = await Promise.all([
+    getMessagesByIds(ids),
+    getLatestIntents(ids),
+    getLabelsForMessages(ids),
+  ]);
+  return { messages, intents, labels };
 }

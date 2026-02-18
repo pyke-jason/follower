@@ -5,7 +5,6 @@ import { RunProgress } from './run-progress';
 
 import { AutoRefresh } from '../../components/auto-refresh';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { formatCurrency } from '@/lib/format';
@@ -21,7 +20,7 @@ import { StrategyEquityChart } from './strategy-equity';
 import { EnrichedChatPanel } from '../../components/enriched-chat-panel';
 import { DecisionScatter } from './decision-scatter';
 import { aggregateSkipReasons } from '../../../../src/lib/skip-reasons';
-import { TradeRow } from '../../components/trade-row';
+import { TradesTable } from './trades-table';
 import { AccuracyGrid } from '../../components/accuracy-grid';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
@@ -221,36 +220,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = closedTrades.length > 0 ? (
-    <Card className="py-0 gap-0 overflow-hidden">
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Symbol</TableHead>
-              <TableHead>Trader</TableHead>
-              <TableHead>Direction</TableHead>
-              <TableHead>Strategy</TableHead>
-              <TableHead className="text-right">Entry</TableHead>
-              <TableHead className="text-right">Exit</TableHead>
-              <TableHead className="text-right">P&L</TableHead>
-              <TableHead>Opened</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {closedTrades.map((t) => (
-              <TradeRow key={t.id} trade={t} runId={id} />
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  ) : (
-    <p className="text-sm text-muted-foreground text-center py-6">
-      No closed trades for this run.
-    </p>
-  );
+  const tradesContent = <TradesTable trades={closedTrades} runId={id} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.

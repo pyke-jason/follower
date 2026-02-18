@@ -72,28 +72,19 @@ export async function fetchMessage(id: string): Promise<Message | null> {
 
 // ─── Label Actions ──────────────────────────────────
 
-/** One-click approve: copy intent signals into a label, mark reviewed. */
-export async function approveIntent(messageId: string, intent: MessageIntent) {
-  const signals = (intent.signals ?? []) as Signal[];
-  const signal = signals[0];
-  const isTrade = intent.decision === 'EXECUTE' && signals.length > 0;
-
-  const label = {
-    isTrade,
-    action: signal?.action ?? null,
-    direction: signal?.direction ?? null,
-    strategy: signal?.strategy ?? null,
-    symbol: signal?.symbol ?? null,
-    price: signal?.limitPrice ?? null,
-    strikes: signal?.legs?.map((l) => parseFloat(l.strike)) ?? null,
-    expiry: signal?.legs?.[0]?.expiry ?? null,
-    exitPercent: signal?.exitPercent ?? null,
-    source: 'approved' as const,
+/** Save label signals for a message (upsert). */
+export async function saveLabel(
+  messageId: string,
+  signals: Signal[],
+  source: 'approved' | 'manual' = 'manual',
+) {
+  const data = {
+    signals,
+    source,
     reviewed: true,
     updatedAt: new Date().toISOString(),
   };
 
-  // Upsert: insert or update on conflict
   const existing = await db
     .select({ id: schema.messageLabels.id })
     .from(schema.messageLabels)
@@ -103,62 +94,18 @@ export async function approveIntent(messageId: string, intent: MessageIntent) {
   if (existing.length > 0) {
     await db
       .update(schema.messageLabels)
-      .set(label)
+      .set(data)
       .where(eq(schema.messageLabels.id, existing[0].id));
   } else {
     await db
       .insert(schema.messageLabels)
-      .values({ ...label, messageId });
+      .values({ ...data, messageId });
   }
 
   revalidatePath('/messages');
 }
 
-/** Save a manually-edited label for a message (upsert). */
-export async function saveIntentLabel(messageId: string, formData: FormData) {
-  const strikesRaw = (formData.get('strikes') as string)?.trim();
-  let strikes: number[] | null = null;
-  if (strikesRaw) {
-    strikes = strikesRaw.split(',').map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n));
-    if (strikes.length === 0) strikes = null;
-  }
-
-  const label = {
-    isTrade: formData.get('isTrade') === 'true',
-    action: (formData.get('action') as string) || null,
-    direction: (formData.get('direction') as string) || null,
-    strategy: (formData.get('strategy') as string) || null,
-    symbol: (formData.get('symbol') as string)?.toUpperCase() || null,
-    price: (formData.get('price') as string) || null,
-    strikes,
-    quantity: (formData.get('quantity') as string) || null,
-    expiry: (formData.get('expiry') as string) || null,
-    exitPercent: formData.has('exitPercent')
-      ? parseFloat(formData.get('exitPercent') as string) || null
-      : null,
-    notes: (formData.get('notes') as string) || null,
-    source: 'manual' as const,
-    reviewed: true,
-    updatedAt: new Date().toISOString(),
-  };
-
-  // Upsert
-  const existing = await db
-    .select({ id: schema.messageLabels.id })
-    .from(schema.messageLabels)
-    .where(eq(schema.messageLabels.messageId, messageId))
-    .limit(1);
-
-  if (existing.length > 0) {
-    await db
-      .update(schema.messageLabels)
-      .set(label)
-      .where(eq(schema.messageLabels.id, existing[0].id));
-  } else {
-    await db
-      .insert(schema.messageLabels)
-      .values({ ...label, messageId });
-  }
-
-  revalidatePath('/messages');
+/** One-click approve: store intent signals as reviewed label. */
+export async function approveIntent(messageId: string, intent: MessageIntent) {
+  await saveLabel(messageId, (intent.signals ?? []) as Signal[], 'approved');
 }

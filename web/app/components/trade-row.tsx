@@ -6,18 +6,25 @@ import { buildHref } from '@/lib/run-scope';
 import type { Trade } from '../../../src/db/schema';
 import { safeParseFloat } from '../../../src/lib/numbers';
 
-export function TradeRow({ trade, runId }: { trade: Trade; runId?: string }) {
+export function TradeRow({ trade, runId, onSelect }: { trade: Trade; runId?: string; onSelect?: () => void }) {
   const pnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const pnlBorder = pnl != null && pnl !== 0
     ? pnl > 0 ? 'border-l-2 border-l-profit/70' : 'border-l-2 border-l-loss/70'
     : '';
 
   return (
-    <TableRow className="hover:bg-accent/40 transition-colors">
+    <TableRow
+      className={`hover:bg-accent/40 transition-colors ${onSelect ? 'cursor-pointer' : ''}`}
+      onClick={onSelect}
+    >
       <TableCell>
-        <Link href={buildHref(`/trades/${trade.id}`, runId)} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
-          {trade.symbol}
-        </Link>
+        {onSelect ? (
+          <span className="text-foreground font-medium">{trade.symbol}</span>
+        ) : (
+          <Link href={buildHref(`/trades/${trade.id}`, runId)} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
+            {trade.symbol}
+          </Link>
+        )}
       </TableCell>
       <TableCell>
         <Link href={`/traders/${encodeURIComponent(trade.trader)}`} className="text-muted-foreground text-xs hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors">
