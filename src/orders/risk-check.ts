@@ -1,5 +1,7 @@
-import type { Trade } from '../db/schema.js';
+import type { Trade, TradeLeg } from '../db/schema.js';
+import type { AccountBalance } from '../broker/types.js';
 import { safeParseFloat } from '../lib/numbers.js';
+import { computeMarginRequirement } from '../backtest/margin-model.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -7,7 +9,7 @@ export type RiskCheckConfig = {
   maxOnSymbol: number;           // live: 5, backtest: 3
   maxTotalPositions: number;     // both: 20
   maxDrawdownPct: number;        // both: 5
-  maxNotionalMultiplier: number; // both: 2 (2x equity leverage cap)
+  maxNotionalMultiplier: number; // both: 2 (2x equity leverage cap) — used as fallback when no margin deps
 };
 
 export type RiskCheckDeps = {
@@ -16,6 +18,18 @@ export type RiskCheckDeps = {
   getStartingEquity: () => Promise<number | null>;
   getCurrentEquity: () => Promise<number>;
   getReconciliationAlertCount?: () => Promise<number>; // live only
+  /** Returns full account balance with buying power & margin. */
+  getAccountBalance?: () => Promise<AccountBalance>;
+  /** Returns current underlying mid price for a symbol. */
+  getUnderlyingPrice?: (symbol: string) => Promise<number>;
+};
+
+export type ProposedTrade = {
+  strategy: string;
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  quantity: number;
+  legs: TradeLeg[];
 };
 
 export type RiskCheckResult = {
@@ -30,6 +44,8 @@ export type RiskCheckResult = {
   reconciliationAlerts?: number;
   totalNotional: number;
   maxNotional: number;
+  marginRequired?: number;
+  availableBuyingPower?: number;
 };
 
 // ─── Implementation ─────────────────────────────────
@@ -38,6 +54,7 @@ export async function checkRiskLimits(
   input: { symbol: string; strategy: string; trader: string; action?: string },
   deps: RiskCheckDeps,
   config: RiskCheckConfig,
+  proposedTrade?: ProposedTrade,
 ): Promise<RiskCheckResult> {
   // Position-reducing trades always pass — closing/trimming should never be blocked
   // by the very exposure they're trying to reduce.
@@ -72,14 +89,42 @@ export async function checkRiskLimits(
     }
   }
 
-  // 3. Notional exposure (leverage cap)
+  // 3. Buying power check (margin-aware) or notional fallback
   const totalNotional = allOpen.reduce((sum, t) => {
     const multiplier = t.strategy !== 'STOCK' ? 100 : 1;
     return sum + Math.abs(safeParseFloat(t.entryPrice) * (t.quantity ?? 1) * multiplier);
   }, 0);
   const equity = await deps.getCurrentEquity();
   const maxNotional = equity * config.maxNotionalMultiplier;
-  const notionalBlocked = totalNotional > maxNotional;
+
+  let notionalBlocked = false;
+  let marginBlocked = false;
+  let marginRequired: number | undefined;
+  let availableBuyingPower: number | undefined;
+
+  if (deps.getAccountBalance && deps.getUnderlyingPrice && proposedTrade) {
+    // Margin-aware buying power check
+    const balance = await deps.getAccountBalance();
+    availableBuyingPower = balance.buyingPower;
+
+    const underlyingPrice = await deps.getUnderlyingPrice(input.symbol);
+    const req = computeMarginRequirement({
+      strategy: proposedTrade.strategy,
+      direction: proposedTrade.direction,
+      entryPrice: proposedTrade.entryPrice,
+      quantity: proposedTrade.quantity,
+      legs: proposedTrade.legs,
+      underlyingPrice,
+    });
+    marginRequired = req.initial;
+
+    if (req.initial > balance.buyingPower) {
+      marginBlocked = true;
+    }
+  } else {
+    // Fallback for live trading (no margin deps wired) — legacy notional cap
+    notionalBlocked = totalNotional > maxNotional;
+  }
 
   // 4. Position limit checks
   const symbolBlocked = openPositionsOnSymbol >= config.maxOnSymbol;
@@ -92,13 +137,14 @@ export async function checkRiskLimits(
 
   // 6. Result
   const allowed = !symbolBlocked && !totalBlocked && !drawdownBlocked
-    && !notionalBlocked && alertCount === 0;
+    && !notionalBlocked && !marginBlocked && alertCount === 0;
 
   let reason: string | undefined;
   if (drawdownBlocked) {
     reason = `Daily drawdown ${currentDrawdownPct}% >= ${config.maxDrawdownPct}%`;
+  } else if (marginBlocked) {
+    reason = `Insufficient buying power: need $${marginRequired!.toFixed(0)} initial margin but only $${availableBuyingPower!.toFixed(0)} available`;
   } else if (notionalBlocked) {
-    // Include top 3 positions for debugging
     const positions = allOpen
       .map(t => ({
         sym: t.symbol, strat: t.strategy, dir: t.direction,
@@ -131,5 +177,7 @@ export async function checkRiskLimits(
     reconciliationAlerts: alertCount > 0 ? alertCount : undefined,
     totalNotional,
     maxNotional,
+    marginRequired,
+    availableBuyingPower,
   };
 }

@@ -203,6 +203,15 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     },
     getStartingEquity: async () => startingEquity,
     getCurrentEquity: async () => (await broker.getAccountBalance()).equity,
+    getAccountBalance: async () => broker.getAccountBalance(),
+    getUnderlyingPrice: async (symbol: string) => {
+      try {
+        const quote = await broker.getQuote(symbol);
+        return (quote.bid + quote.ask) / 2;
+      } catch {
+        return 0;
+      }
+    },
   };
 
   // Map of working order IDs to their pending context for async fill recording.
@@ -373,6 +382,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           unrealizedPnl,
         });
         log.debug(`MTM ${lastMsgDay}: unrealized=$${unrealizedPnl.toFixed(2)}`);
+
+        // 3. Margin call check
+        const balance = await broker.getAccountBalance();
+        if (balance.maintenanceMargin != null && balance.equity < balance.maintenanceMargin) {
+          log.warn(`MARGIN CALL ${lastMsgDay}: equity $${balance.equity.toFixed(0)} < maintenance $${balance.maintenanceMargin.toFixed(0)}`);
+        }
       }
     }
 
