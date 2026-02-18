@@ -4,7 +4,7 @@ import { useState, useCallback, useTransition, useEffect } from 'react';
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
 import { fetchMessages, type MessageFilters, type MessageIntent } from './actions';
-import type { Message } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '../../../src/db/schema';
 
 const START_INDEX = 100_000;
 
@@ -12,15 +12,18 @@ export function ChatRoom({
   initialMessages,
   initialCursor,
   initialIntents,
+  initialLabels,
   authors,
 }: {
   initialMessages: Message[];
   initialCursor: string | null;
   initialIntents: Record<string, MessageIntent>;
+  initialLabels: Record<string, MessageLabel>;
   authors: string[];
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [intents, setIntents] = useState(initialIntents);
+  const [labels, setLabels] = useState(initialLabels);
   const [cursor, setCursor] = useState(initialCursor);
   const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX);
   const [filters, setFilters] = useState<MessageFilters>({});
@@ -49,6 +52,7 @@ export function ChatRoom({
         const result = await fetchMessages(newFilters);
         setMessages(result.messages);
         setIntents(result.intents);
+        setLabels(result.labels);
         setCursor(result.nextCursor);
       });
     },
@@ -70,6 +74,7 @@ export function ChatRoom({
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
       setIntents((prev) => ({ ...prev, ...result.intents }));
+      setLabels((prev) => ({ ...prev, ...result.labels }));
       setCursor(result.nextCursor);
     });
   }, [cursor, filters]);
@@ -84,6 +89,7 @@ export function ChatRoom({
       <ChatFeed
         messages={messages}
         intents={intents}
+        labels={labels}
         firstItemIndex={firstItemIndex}
         onLoadOlder={handleLoadOlder}
         isLoadingOlder={isLoadingOlder}

@@ -5,7 +5,13 @@ import { prefetchForAgent } from '../agent/prefetch.js';
 import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
 import { completeTask, failTask, recordStep } from './recorder.js';
 import type { Task, TaskContext } from '../db/schema.js';
-import { createClassificationTools } from '../agent/tool-factory.js';
+import {
+  getQuoteTool,
+  getOptionsChainTool,
+  flagForReviewTool,
+  submitDecisionTool,
+  getOpenPositionsTool,
+} from '../agent/tool-factory.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps } from '../pipeline/execute.js';
 import { liveService } from '../broker/tradestation.js';
@@ -135,10 +141,13 @@ async function processTask(task: Task): Promise<void> {
     }
 
     // Classification-only tools — no execution capabilities
-    const classificationTools = createClassificationTools({
-      broker: liveService,
-      getOpenPositions,
-    });
+    const classificationTools = [
+      getQuoteTool((s) => liveService.getQuote(s)),
+      getOptionsChainTool((s, e, t) => liveService.getOptionsChain(s, e, t)),
+      flagForReviewTool(),
+      submitDecisionTool(),
+      getOpenPositionsTool(getOpenPositions),
+    ];
 
     // Run classification agent
     const { steps, result, model } = await runAgent(context, classificationTools, undefined, prefetched);

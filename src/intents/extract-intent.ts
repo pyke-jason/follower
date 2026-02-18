@@ -1,13 +1,21 @@
 import { db, schema } from '../db/client.js';
 import { eq, and } from 'drizzle-orm';
-import type { TaskContext, Message, MessageIntent, IntentStep, TaskResult } from '../db/schema.js';
+import type { TaskContext, Message, MessageIntent, IntentStep } from '../db/schema.js';
+import type { TaskResult } from '../agent/schemas.js';
 import type { ToolDef } from '../agent/tool-factory.js';
+import {
+  getQuoteTool,
+  getOptionsChainTool,
+  flagForReviewTool,
+  submitDecisionTool,
+} from '../agent/tool-factory.js';
 import type { Quote, OptionsChain } from '../broker/types.js';
 import type { TrackedTrader } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { runAgentLoop } from '../agent/agent-loop.js';
-import { AgentDecisionSchema, FlagForReviewInput, GetQuoteInput, GetOptionsChainInput } from '../agent/schemas.js';
+import { FlagForReviewInput, SubmitDecisionInput } from '../agent/schemas.js';
 import { getRecentTraderMessages, getRecentChatMessages, formatTraderContext, formatChatContext } from './trader-context.js';
+import { formatTimestampForLLM } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
@@ -30,15 +38,15 @@ export type IntentResult = {
 };
 
 /**
- * System prompt for intent extraction.
- * Same classification logic as the trade agent, but references recent trader
- * messages instead of get_open_positions for position context.
+ * System prompt for intent extraction — pure signal parsing.
+ * Extracts structured trade signals from chat messages. Does NOT decide
+ * whether to trade — that responsibility belongs to the TradeAgent.
  */
-const INTENT_SYSTEM_PROMPT = `You are a trade signal classifier monitoring a live trading chat room.
+const INTENT_SYSTEM_PROMPT = `You are a trade signal parser monitoring a live trading chat room.
 
-You review incoming messages from tracked traders and extract structured trade signals.
-Position sizing, risk management, and order execution are handled deterministically by the
-system — you cannot and should not attempt to control them.
+Parse incoming messages from tracked traders and extract structured trade signals.
+You do not decide whether to trade. Position matching, risk management, and execution
+are handled by a separate system. Your job is purely to parse.
 
 ## Your Role
 You are the SOLE parser of trade signals. There is no regex fallback. You must:
@@ -56,15 +64,16 @@ You are the SOLE parser of trade signals. There is no regex fallback. You must:
 2. IDENTIFY: Stock trade or options trade? If options, what structure?
 3. VALIDATE: Use get_quote / get_options_chain to check current prices.
    If the market has moved >5% from the trader's stated price, flag for review.
-4. OUTPUT: Return your classification as a JSON block with signals.
+4. OUTPUT: Return your parsed signals as a JSON block.
+
+If the message is not a trade signal (noise, commentary, question), return
+\`{ "decision": "SKIP", "reasoning": "..." }\` with no signals.
 
 Do NOT include quantity — the system calculates position size.
-Do NOT attempt to place orders — you have no execution tools.
 
 ## Compound Messages
 Messages may contain multiple trade signals (e.g. "Exit TXN, Short TSLA").
-Return ALL signals in the \`signals\` array. Each signal is processed independently
-by the execution pipeline.
+Return ALL signals in the \`signals\` array.
 
 ## Strategy Knowledge
 - CDS (Call Debit Spread): Expires FRIDAY of current week unless stated.
@@ -115,8 +124,7 @@ Only flag_for_review when:
 
 ## Position Context
 You will be given the trader's recent messages. Use them to understand what positions
-the trader currently holds. If they previously opened a position and haven't closed it,
-assume it's still open. This is critical for correctly classifying CLOSE, ADD, and TRIM
+the trader currently holds. This is critical for correctly classifying CLOSE, ADD, and TRIM
 actions.
 
 ## Follow Trades
@@ -130,75 +138,29 @@ posted. This helps you resolve ambiguous details (strikes, expiry, strategy) by 
 the original trade call that this trader is following.
 
 ## Rules
-- Only classify trades for tracked traders in the whitelist.
+- Only parse trades for tracked traders in the whitelist.
 - Skip paper trades (tagged with "(paper)").
 - Inferring strikes/expiry from the options chain is NOT guessing — it's your job.
   Only use flag_for_review when the strategy type itself is truly ambiguous.
 - Always explain your reasoning. Your steps are audited.
-- If an exit arrives but the trader has no matching open position in their recent messages, skip.
 
-After using tools, respond with a JSON block:
-\`\`\`json
-{
-  "decision": "EXECUTE" | "SKIP" | "MANUAL_REVIEW",
-  "reasoning": "...",
-  "signals": [
-    {
-      "action": "OPEN" | "CLOSE" | "ADD" | "TRIM",
-      "symbol": "AAPL",
-      "direction": "LONG" | "SHORT",
-      "strategy": "STOCK" | "CALL" | "PUT" | "CDS" | "PDS",
-      "limitPrice": 150.25,
-      "exitPercent": 0.5,
-      "legs": [{ "strike": 150, "expiry": "2025-12-19", "optionType": "CALL", "action": "BUY" }]
-    }
-  ]
-}
-\`\`\`
+After using tools, call **submit_decision** with your parsed signals. For EXECUTE, include a signals array. For SKIP or MANUAL_REVIEW, omit signals.
 
 **IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
 
 /**
- * Create classification tools for intent extraction.
- * Same as the current tools MINUS `get_open_positions` — the agent gets
- * recent trader messages as prompt context instead, plus `get_recent_chat`
- * for resolving follow-trades.
+ * Create tools for intent extraction.
+ * Each tool gets a timestamp-pinned function so quotes/chains
+ * reflect market state at message time.
  */
 function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string): ToolDef[] {
   const msgTime = new Date(messageTimestamp);
+
   return [
-    {
-      name: 'get_quote',
-      description: 'Get current bid/ask/last for a stock or ETF.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Ticker symbol' },
-        },
-        required: ['symbol'],
-      },
-      execute: async (input) => {
-        const { symbol } = GetQuoteInput.parse(input);
-        return await deps.getQuote(symbol, msgTime);
-      },
-    },
-    {
-      name: 'get_options_chain',
-      description: 'Get options chain filtered by expiry and type. Returns strikes with bid/ask.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Underlying ticker' },
-          expiry: { type: 'string', description: 'ISO date, e.g. 2025-11-28' },
-          optionType: { type: 'string', enum: ['CALL', 'PUT'] },
-        },
-        required: ['symbol', 'expiry', 'optionType'],
-      },
-      execute: async (input) => {
-        const { symbol, expiry, optionType } = GetOptionsChainInput.parse(input);
-        return await deps.getOptionsChain(symbol, expiry, optionType, msgTime);
-      },
-    },
+    getQuoteTool((symbol) => deps.getQuote(symbol, msgTime)),
+    getOptionsChainTool((symbol, expiry, optionType) => deps.getOptionsChain(symbol, expiry, optionType, msgTime)),
+    flagForReviewTool(),
+    submitDecisionTool(),
     {
       name: 'get_recent_chat',
       description: 'Get recent chat room messages before this message. Use to resolve follow-trades: when a trader references another trader ("following Dave", "@spectre", "ty Hari") or posts a bare entry that might follow someone else\'s call. Optionally filter by author.',
@@ -216,30 +178,8 @@ function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string)
         return formatChatContext(messages);
       },
     },
-    {
-      name: 'flag_for_review',
-      description: 'Flag this message for manual human review. Use when uncertain about the trade.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          reason: { type: 'string', description: 'Why this needs human review' },
-          uncertainty: { type: 'string', description: 'What specifically is unclear' },
-        },
-        required: ['reason'],
-      },
-      execute: async (input) => {
-        const parsed = FlagForReviewInput.parse(input);
-        return { flagged: true, reason: parsed.reason, uncertainty: parsed.uncertainty };
-      },
-    },
   ];
 }
-
-const etFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
-  hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-});
 
 /**
  * Build a user prompt for intent extraction.
@@ -253,7 +193,7 @@ function buildIntentPrompt(
   quotes: Record<string, { bid: number; ask: number; last: number }>,
 ): string {
   const dateStr = context.messageTimestamp
-    ? etFormatter.format(new Date(context.messageTimestamp))
+    ? formatTimestampForLLM(context.messageTimestamp)
     : 'unknown';
 
   let prompt = `Review this trade message and decide what to do.
@@ -299,17 +239,6 @@ Direction Hint: ${context.directionHint}`;
   return prompt;
 }
 
-/** Parse JSON decision from agent text output. */
-function parseIntentResult(text: string): TaskResult | null {
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-  const candidate = jsonMatch ? jsonMatch[1] : text;
-  try {
-    const raw = JSON.parse(candidate);
-    const parsed = AgentDecisionSchema.safeParse(raw);
-    if (parsed.success) return parsed.data as TaskResult;
-  } catch { /* not valid JSON */ }
-  return null;
-}
 
 /**
  * Check if an intent already exists for this message+model+version.
@@ -390,8 +319,12 @@ export async function extractIntent(
     {
       systemPrompt: INTENT_SYSTEM_PROMPT,
       tools,
-      parseResult: parseIntentResult,
       onToolCall: (name, input) => {
+        if (name === 'submit_decision') {
+          const parsed = SubmitDecisionInput.safeParse(input);
+          if (parsed.success) return parsed.data satisfies TaskResult;
+          return null;
+        }
         if (name === 'flag_for_review') {
           const flagParsed = FlagForReviewInput.safeParse(input);
           return {

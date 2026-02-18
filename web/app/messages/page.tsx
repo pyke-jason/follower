@@ -1,4 +1,4 @@
-import { getMessages, getDistinctAuthors, getLatestIntents } from '@/lib/queries';
+import { getMessages, getDistinctAuthors, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
 import { ChatRoom } from './chat-room';
 import { AutoRefresh } from '../components/auto-refresh';
 
@@ -16,7 +16,11 @@ export default async function MessagesPage() {
     ? initialMessages[initialMessages.length - 1].timestamp
     : null;
 
-  const intents = await getLatestIntents(initialMessages.map((m) => m.id));
+  const ids = initialMessages.map((m) => m.id);
+  const [intents, labels] = await Promise.all([
+    getLatestIntents(ids),
+    getLabelsForMessages(ids),
+  ]);
 
   return (
     // -m-6 counteracts the parent p-6 for full-bleed chat layout
@@ -26,6 +30,7 @@ export default async function MessagesPage() {
         initialMessages={initialMessages}
         initialCursor={nextCursor}
         initialIntents={intents}
+        initialLabels={labels}
         authors={authors}
       />
     </div>

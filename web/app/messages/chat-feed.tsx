@@ -6,7 +6,7 @@ import { ChatBubble } from './chat-bubble';
 import { DateSeparator } from './date-separator';
 import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
-import type { Message } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '../../../src/db/schema';
 import type { MessageIntent } from './actions';
 
 type FeedItem =
@@ -43,6 +43,7 @@ export function ChatFeed({
   highlightMessageId,
   anchorMessageId,
   intents,
+  labels,
   renderItem,
 }: {
   messages: Message[];
@@ -55,6 +56,7 @@ export function ChatFeed({
   /** When set, scroll-to-bottom button scrolls here instead of absolute bottom. */
   anchorMessageId?: string;
   intents?: Record<string, MessageIntent>;
+  labels?: Record<string, MessageLabel>;
   renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -120,7 +122,7 @@ export function ChatFeed({
           }
           return (
             <div className={cn(isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20')}>
-              <ChatBubble message={item.message} intent={intents?.[item.message.id]} />
+              <ChatBubble message={item.message} intent={intents?.[item.message.id]} label={labels?.[item.message.id]} />
             </div>
           );
         }}

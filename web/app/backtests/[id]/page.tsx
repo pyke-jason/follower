@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getEnrichedMessages, getMtmSnapshots } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getEnrichedMessages, getMtmSnapshots, computeBacktestAccuracy } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -22,6 +22,7 @@ import { EnrichedChatPanel } from '../../components/enriched-chat-panel';
 import { DecisionScatter } from './decision-scatter';
 import { aggregateSkipReasons } from '../../../../src/lib/skip-reasons';
 import { TradeRow } from '../../components/trade-row';
+import { AccuracyGrid } from '../../components/accuracy-grid';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import type { BacktestRunConfig } from '../../../../src/db/schema';
@@ -43,17 +44,28 @@ export default async function BacktestDetailPage({
 
   const config = run.config as BacktestRunConfig;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
+  const liveMetrics = run.liveMetrics as LiveMetrics | null;
+  const lastProcessedTs = run.status !== 'COMPLETED'
+    ? liveMetrics?.lastProcessedMessageTs ?? null
+    : null;
 
-  const [decisions, allTrades, enrichedResult, mtmSnapshots] = await Promise.all([
+  // When processing is incomplete, narrow the messages query to show the frontier
+  // instead of loading from the very end of the date range (which may be all unprocessed).
+  const messagesEndDate = lastProcessedTs
+    ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString() // +1hr buffer
+    : config.endDate;
+
+  const [decisions, allTrades, enrichedResult, mtmSnapshots, accuracyResult] = await Promise.all([
     getRunDecisions(id),
     getTradesByBacktestRun(id, { includeOpen: true }),
     getEnrichedMessages({
       traders: config.traders,
       startDate: config.startDate,
-      endDate: config.endDate,
+      endDate: messagesEndDate,
       runId: id,
     }),
     getMtmSnapshots(id),
+    computeBacktestAccuracy(id),
   ]);
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
@@ -79,7 +91,6 @@ export default async function BacktestDetailPage({
     }),
     { input: 0, output: 0 },
   );
-  const liveMetrics = run.liveMetrics as LiveMetrics | null;
 
 
   // --- Performance Tab content ---
@@ -205,7 +216,7 @@ export default async function BacktestDetailPage({
       decisionSummary={decisionSummary}
       scatterChart={scatterChart}
       isRunning={isRunning}
-      lastProcessedTs={isRunning ? liveMetrics?.lastProcessedMessageTs ?? null : null}
+      lastProcessedTs={lastProcessedTs}
     />
   );
 
@@ -375,7 +386,21 @@ export default async function BacktestDetailPage({
         performance={performanceContent}
         messages={messagesContent}
         trades={tradesContent}
+        accuracy={
+          accuracyResult ? (
+            <AccuracyGrid
+              result={accuracyResult}
+              totalMessages={accuracyResult.totalMessages}
+              labeledMessages={accuracyResult.labeledMessages}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-6">
+              No reviewed labels overlap with this backtest&apos;s messages.
+            </p>
+          )
+        }
         hasMessages={enrichedResult.rows.length > 0}
+        hasAccuracy={accuracyResult != null}
       />
     </div>
 

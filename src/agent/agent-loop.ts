@@ -23,9 +23,7 @@ export type AgentRunResult = {
 export type AgentConfig = {
   systemPrompt: string;
   tools: ToolDef[];
-  /** Parse text blocks to extract a structured result. Return non-null to set result. */
-  parseResult?: (text: string) => unknown | null;
-  /** Intercept tool calls to capture results (e.g. submit_label, flag_for_review). Return non-null to set result. */
+  /** Intercept tool calls to capture results (e.g. submit_decision, flag_for_review). Return non-null to set result. */
   onToolCall?: (name: string, input: Record<string, unknown>, output: unknown) => unknown | null;
   maxTurns?: number;  // default 10
   maxTokens?: number; // default 2048
@@ -67,7 +65,7 @@ export async function runAgentLoop(
   provider: LLMProvider,
 ): Promise<AgentRunResult> {
   const {
-    systemPrompt, tools, parseResult, onToolCall,
+    systemPrompt, tools, onToolCall,
     maxTurns = parseInt(process.env.AGENT_MAX_TURNS ?? '10', 10),
     maxTokens = parseInt(process.env.AGENT_MAX_TOKENS ?? '2048', 10),
   } = config;
@@ -99,12 +97,8 @@ export async function runAgentLoop(
       usage.cacheReadInputTokens = (usage.cacheReadInputTokens ?? 0) + (response.usage.cacheReadInputTokens ?? 0);
     }
 
-    // Process text blocks
+    // Record text blocks as reasoning steps
     for (const text of response.textBlocks) {
-      if (parseResult) {
-        const parsed = parseResult(text);
-        if (parsed != null) result = parsed;
-      }
       steps.push({ reasoning: text, durationMs });
     }
 

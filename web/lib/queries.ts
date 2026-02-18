@@ -2,6 +2,7 @@ import { db, schema } from './db';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
+import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
 
 /** Matches isOpen from src/trades/filters.ts — includes PARTIAL status (trimmed positions). */
 const isOpenTrade = inArray(schema.trades.status, ['OPEN', 'PARTIAL']);
@@ -260,6 +261,25 @@ export async function getLatestIntents(messageIds: string[]) {
   return map;
 }
 
+export async function getLabelsForMessages(messageIds: string[]) {
+  if (messageIds.length === 0) return {};
+  const CHUNK = 500;
+  const all: (typeof schema.messageLabels.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageLabels)
+      .where(inArray(schema.messageLabels.messageId, chunk));
+    all.push(...rows);
+  }
+  const map: Record<string, typeof schema.messageLabels.$inferSelect> = {};
+  for (const row of all) {
+    map[row.messageId] = row;
+  }
+  return map;
+}
+
 export async function getPendingReviews(limit = 5, runId?: string) {
   return db
     .select()
@@ -300,7 +320,6 @@ export async function getBacktestRunById(id: string) {
 
 export async function getLabels(opts: {
   reviewed?: boolean;
-  labelSet?: string;
   strategy?: string;
   limit?: number;
   offset?: number;
@@ -308,9 +327,6 @@ export async function getLabels(opts: {
   const conditions: SQL[] = [];
   if (opts.reviewed !== undefined) {
     conditions.push(eq(schema.messageLabels.reviewed, opts.reviewed));
-  }
-  if (opts.labelSet) {
-    conditions.push(eq(schema.messageLabels.labelSet, opts.labelSet));
   }
   if (opts.strategy) {
     conditions.push(eq(schema.messageLabels.strategy, opts.strategy));
@@ -419,17 +435,6 @@ export async function getTradesByBacktestRun(backtestRunId: string, opts?: { inc
     .orderBy(desc(schema.trades.closedAt));
 }
 
-export async function getLabelWithMessage(labelId: string) {
-  const [result] = await db
-    .select({
-      label: schema.messageLabels,
-      message: schema.messages,
-    })
-    .from(schema.messageLabels)
-    .innerJoin(schema.messages, eq(schema.messageLabels.messageId, schema.messages.id))
-    .where(eq(schema.messageLabels.id, labelId));
-  return result ?? null;
-}
 
 // ─── Dashboard Queries ──────────────────────────────
 
@@ -937,17 +942,110 @@ export async function getEnrichedMessages(opts: {
   const hasMore = rows.length > pageSize;
   const result = hasMore ? rows.slice(0, pageSize) : rows;
 
-  // Normalize: trade/decision fields are all null when no join match
-  const enriched = result.map((r) => ({
-    message: r.message,
-    trade: r.trade?.id ? (r.trade as import('../../src/lib/enriched-message').TradeOutcome) : null,
-    decision: r.decision?.decision
-      ? (r.decision as import('../../src/lib/enriched-message').MessageDecision)
-      : null,
-  }));
+  // Normalize & deduplicate: LEFT JOIN on trades can produce multiple rows
+  // per message (compound messages with multiple trades). Keep first per message.
+  const seen = new Set<string>();
+  const enriched: EnrichedMessage[] = [];
+  for (const r of result) {
+    if (seen.has(r.message.id)) continue;
+    seen.add(r.message.id);
+    enriched.push({
+      message: r.message,
+      trade: r.trade?.id ? (r.trade as TradeOutcome) : null,
+      decision: r.decision?.decision ? (r.decision as MessageDecision) : null,
+    });
+  }
 
   return {
     rows: enriched,
     nextCursor: hasMore ? result[result.length - 1].message.timestamp : null,
+  };
+}
+
+// ─── Backtest Accuracy (lazy, no eval run needed) ───
+
+export async function computeBacktestAccuracy(backtestRunId: string) {
+  const { compareLabelsVsIntents } = await import('./eval-helpers');
+
+  // 1. Get all message IDs that have a decision in this backtest run
+  const decisionRows = await db
+    .select({
+      messageId: schema.runDecisions.messageId,
+      decision: schema.runDecisions.decision,
+    })
+    .from(schema.runDecisions)
+    .where(eq(schema.runDecisions.backtestRunId, backtestRunId));
+
+  if (decisionRows.length === 0) return null;
+
+  const messageIds = decisionRows.map((d) => d.messageId);
+
+  // 2. Load reviewed labels for those messages
+  const CHUNK = 500;
+  const labelRows: (typeof schema.messageLabels.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageLabels)
+      .where(and(
+        inArray(schema.messageLabels.messageId, chunk),
+        eq(schema.messageLabels.reviewed, true),
+      ));
+    labelRows.push(...rows);
+  }
+
+  if (labelRows.length === 0) return null;
+
+  const labelMap = new Map(labelRows.map((l) => [l.messageId, l]));
+  const labeledMessageIds = [...labelMap.keys()];
+
+  // 3. Load latest intents for labeled messages
+  const intentRows: (typeof schema.messageIntents.$inferSelect)[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageIntents)
+      .where(inArray(schema.messageIntents.messageId, chunk));
+    intentRows.push(...rows);
+  }
+
+  // Keep highest version per message
+  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
+  for (const row of intentRows) {
+    const existing = intentMap.get(row.messageId);
+    if (!existing || row.version > existing.version) {
+      intentMap.set(row.messageId, row);
+    }
+  }
+
+  // 4. Load message text for failure reporting
+  const msgRows: { id: string; cleanText: string }[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select({ id: schema.messages.id, cleanText: schema.messages.cleanText })
+      .from(schema.messages)
+      .where(inArray(schema.messages.id, chunk));
+    msgRows.push(...rows);
+  }
+  const msgMap = new Map(msgRows.map((m) => [m.id, m.cleanText]));
+
+  // 5. Build pairs and compare
+  const pairs = labeledMessageIds
+    .filter((mid) => intentMap.has(mid))
+    .map((mid) => ({
+      label: labelMap.get(mid)!,
+      intent: intentMap.get(mid)!,
+      cleanText: msgMap.get(mid) ?? '',
+    }));
+
+  if (pairs.length === 0) return null;
+
+  return {
+    ...compareLabelsVsIntents(pairs),
+    totalMessages: decisionRows.length,
+    labeledMessages: labelRows.length,
   };
 }

@@ -1,7 +1,11 @@
 'use server';
 
-import { getMessages, getMessageById, getLatestIntents } from '@/lib/queries';
-import type { Message } from '../../../src/db/schema';
+import { getMessages, getMessageById, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
+import { db, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { revalidatePath } from 'next/cache';
+import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Signal } from '../../../src/agent/schemas';
 
 export type MessageIntent = {
   id: string;
@@ -32,6 +36,7 @@ export async function fetchMessages(
 ): Promise<{
   messages: Message[];
   intents: Record<string, MessageIntent>;
+  labels: Record<string, MessageLabel>;
   nextCursor: string | null;
 }> {
   const rows = await getMessages({
@@ -52,11 +57,108 @@ export async function fetchMessages(
     ? messages[messages.length - 1].timestamp
     : null;
 
-  const intents = await getLatestIntents(messages.map((m) => m.id));
+  const ids = messages.map((m) => m.id);
+  const [intents, labels] = await Promise.all([
+    getLatestIntents(ids),
+    getLabelsForMessages(ids),
+  ]);
 
-  return { messages, intents, nextCursor };
+  return { messages, intents, labels, nextCursor };
 }
 
 export async function fetchMessage(id: string): Promise<Message | null> {
   return getMessageById(id);
+}
+
+// ─── Label Actions ──────────────────────────────────
+
+/** One-click approve: copy intent signals into a label, mark reviewed. */
+export async function approveIntent(messageId: string, intent: MessageIntent) {
+  const signals = (intent.signals ?? []) as Signal[];
+  const signal = signals[0];
+  const isTrade = intent.decision === 'EXECUTE' && signals.length > 0;
+
+  const label = {
+    isTrade,
+    action: signal?.action ?? null,
+    direction: signal?.direction ?? null,
+    strategy: signal?.strategy ?? null,
+    symbol: signal?.symbol ?? null,
+    price: signal?.limitPrice ?? null,
+    strikes: signal?.legs?.map((l) => parseFloat(l.strike)) ?? null,
+    expiry: signal?.legs?.[0]?.expiry ?? null,
+    exitPercent: signal?.exitPercent ?? null,
+    source: 'approved' as const,
+    reviewed: true,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Upsert: insert or update on conflict
+  const existing = await db
+    .select({ id: schema.messageLabels.id })
+    .from(schema.messageLabels)
+    .where(eq(schema.messageLabels.messageId, messageId))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(schema.messageLabels)
+      .set(label)
+      .where(eq(schema.messageLabels.id, existing[0].id));
+  } else {
+    await db
+      .insert(schema.messageLabels)
+      .values({ ...label, messageId });
+  }
+
+  revalidatePath('/messages');
+}
+
+/** Save a manually-edited label for a message (upsert). */
+export async function saveIntentLabel(messageId: string, formData: FormData) {
+  const strikesRaw = (formData.get('strikes') as string)?.trim();
+  let strikes: number[] | null = null;
+  if (strikesRaw) {
+    strikes = strikesRaw.split(',').map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n));
+    if (strikes.length === 0) strikes = null;
+  }
+
+  const label = {
+    isTrade: formData.get('isTrade') === 'true',
+    action: (formData.get('action') as string) || null,
+    direction: (formData.get('direction') as string) || null,
+    strategy: (formData.get('strategy') as string) || null,
+    symbol: (formData.get('symbol') as string)?.toUpperCase() || null,
+    price: (formData.get('price') as string) || null,
+    strikes,
+    quantity: (formData.get('quantity') as string) || null,
+    expiry: (formData.get('expiry') as string) || null,
+    exitPercent: formData.has('exitPercent')
+      ? parseFloat(formData.get('exitPercent') as string) || null
+      : null,
+    notes: (formData.get('notes') as string) || null,
+    source: 'manual' as const,
+    reviewed: true,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Upsert
+  const existing = await db
+    .select({ id: schema.messageLabels.id })
+    .from(schema.messageLabels)
+    .where(eq(schema.messageLabels.messageId, messageId))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(schema.messageLabels)
+      .set(label)
+      .where(eq(schema.messageLabels.id, existing[0].id));
+  } else {
+    await db
+      .insert(schema.messageLabels)
+      .values({ ...label, messageId });
+  }
+
+  revalidatePath('/messages');
 }

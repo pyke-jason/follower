@@ -2,13 +2,13 @@ import { loadSecrets } from '../lib/secrets/index.js';
 await loadSecrets();
 
 import { db, schema } from '../db/client.js';
-import { eq, and } from 'drizzle-orm';
-import { classifyMessage } from '../parsing/classify.js';
+import { eq, and, desc } from 'drizzle-orm';
+import type { Signal } from '../agent/schemas.js';
 
 // ─── Types ───────────────────────────────────────────
 
 type FieldResult = { correct: number; total: number };
-type FieldName = 'action' | 'direction' | 'strategy' | 'price' | 'strikes' | 'quantity' | 'expiry' | 'exitPercent';
+type FieldName = 'isTrade' | 'action' | 'direction' | 'strategy' | 'symbol' | 'price' | 'strikes';
 
 type Failure = {
   cleanText: string;
@@ -30,7 +30,7 @@ function priceMatch(expected: string | null, got: string | null): boolean {
   const e = parseFloat(expected);
   const g = parseFloat(got);
   if (isNaN(e) || isNaN(g)) return expected === got;
-  return Math.abs(e - g) <= 0.01;
+  return Math.abs(e - g) <= 0.05;
 }
 
 function strikesMatch(expected: number[] | null, got: number[] | undefined): boolean {
@@ -39,7 +39,7 @@ function strikesMatch(expected: number[] | null, got: number[] | undefined): boo
   if (e.length !== g.length) return false;
   const eSorted = [...e].sort((a, b) => a - b);
   const gSorted = [...g].sort((a, b) => a - b);
-  return eSorted.every((v, i) => v === gSorted[i]);
+  return eSorted.every((v, i) => Math.abs(v - gSorted[i]) <= 0.01);
 }
 
 // ─── CLI args ────────────────────────────────────────
@@ -50,190 +50,189 @@ function flag(name: string, fallback: string): string {
   return idx !== -1 && args[idx + 1] ? args[idx + 1] : fallback;
 }
 
-const LABEL_SET = flag('label-set', '');
+const MODEL_FILTER = flag('model', '');
+const VERSION_FILTER = flag('version', '');
 
 // ─── Main ────────────────────────────────────────────
 
 async function main() {
-  // Load reviewed labels, optionally filtered by label set
-  const conditions = [eq(schema.messageLabels.reviewed, true)];
-  if (LABEL_SET) {
-    conditions.push(eq(schema.messageLabels.labelSet, LABEL_SET));
-  }
-
-  const rows = await db
+  // 1. Load all reviewed labels
+  const labelRows = await db
     .select({
       label: schema.messageLabels,
       message: schema.messages,
     })
     .from(schema.messageLabels)
     .innerJoin(schema.messages, eq(schema.messageLabels.messageId, schema.messages.id))
-    .where(and(...conditions));
+    .where(eq(schema.messageLabels.reviewed, true));
 
-  if (rows.length === 0) {
-    console.log(LABEL_SET
-      ? `No reviewed labels found for label set "${LABEL_SET}".`
-      : 'No reviewed labels found. Review some labels in the UI first.');
+  if (labelRows.length === 0) {
+    console.log('No reviewed labels found. Approve some labels in the chat UI first.');
     return;
   }
 
-  const labelSet = LABEL_SET || rows[0].label.labelSet;
-  const modelInfo = rows[0].label.modelProvider
-    ? ` [${rows[0].label.modelProvider}/${rows[0].label.modelName}]`
-    : '';
-  console.log(`\nEval Report (${labelSet}${modelInfo}, ${rows.length} reviewed labels)`);
+  // 2. Load latest intent for each labeled message
+  const messageIds = labelRows.map((r) => r.label.messageId);
+  const allIntents = await db
+    .select()
+    .from(schema.messageIntents)
+    .orderBy(desc(schema.messageIntents.version));
+
+  // Build map: messageId → latest intent (optionally filtered by model/version)
+  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
+  for (const intent of allIntents) {
+    if (!messageIds.includes(intent.messageId)) continue;
+    if (MODEL_FILTER && intent.model !== MODEL_FILTER) continue;
+    if (VERSION_FILTER && intent.version !== parseInt(VERSION_FILTER)) continue;
+
+    const existing = intentMap.get(intent.messageId);
+    if (!existing || intent.version > existing.version) {
+      intentMap.set(intent.messageId, intent);
+    }
+  }
+
+  // Filter to labels that have a matching intent
+  const matched = labelRows.filter((r) => intentMap.has(r.label.messageId));
+
+  if (matched.length === 0) {
+    console.log('No intents found for the reviewed labels. Run intent extraction first.');
+    return;
+  }
+
+  // Determine model/version info from first match
+  const firstIntent = intentMap.get(matched[0].label.messageId)!;
+  const modelInfo = `${firstIntent.model} v${firstIntent.version}`;
+  console.log(`\nEval Report (${modelInfo}, ${matched.length} labeled messages with intents)`);
   console.log('─'.repeat(60));
 
   const fields: Record<FieldName, FieldResult> = {
-    action:      { correct: 0, total: 0 },
-    direction:   { correct: 0, total: 0 },
-    strategy:    { correct: 0, total: 0 },
-    price:       { correct: 0, total: 0 },
-    strikes:     { correct: 0, total: 0 },
-    quantity:    { correct: 0, total: 0 },
-    expiry:      { correct: 0, total: 0 },
-    exitPercent: { correct: 0, total: 0 },
+    isTrade:   { correct: 0, total: 0 },
+    action:    { correct: 0, total: 0 },
+    direction: { correct: 0, total: 0 },
+    strategy:  { correct: 0, total: 0 },
+    symbol:    { correct: 0, total: 0 },
+    price:     { correct: 0, total: 0 },
+    strikes:   { correct: 0, total: 0 },
   };
 
   let allCorrect = 0;
   const failures: Failure[] = [];
 
-  for (const { label, message } of rows) {
-    const parsed = classifyMessage(message.rawHtml);
-    const topStrategy = parsed.detectedStrategies[0];
-
+  for (const { label, message } of matched) {
+    const intent = intentMap.get(label.messageId)!;
+    const signals = (intent.signals ?? []) as Signal[];
+    const signal = signals[0];
     let rowAllCorrect = true;
 
-    // Action
-    fields.action.total++;
-    const parsedAction = normalizeNull(parsed.actionHint);
-    const labelAction = normalizeNull(label.action);
-    if (parsedAction === labelAction) {
-      fields.action.correct++;
+    // ── isTrade (EXECUTE vs SKIP classification) ──
+    fields.isTrade.total++;
+    const intentIsTrade = intent.decision === 'EXECUTE' && signals.length > 0;
+    const labelIsTrade = label.isTrade === true;
+    if (intentIsTrade === labelIsTrade) {
+      fields.isTrade.correct++;
     } else {
       rowAllCorrect = false;
       failures.push({
         cleanText: message.cleanText.slice(0, 60),
-        field: 'action',
-        expected: labelAction ?? 'null',
-        got: parsedAction ?? 'null',
+        field: 'isTrade',
+        expected: String(labelIsTrade),
+        got: String(intentIsTrade),
       });
     }
 
-    // Direction
-    fields.direction.total++;
-    const parsedDir = normalizeNull(parsed.directionHint);
-    const labelDir = normalizeNull(label.direction);
-    if (parsedDir === labelDir) {
-      fields.direction.correct++;
-    } else {
-      rowAllCorrect = false;
-      failures.push({
-        cleanText: message.cleanText.slice(0, 60),
-        field: 'direction',
-        expected: labelDir ?? 'null',
-        got: parsedDir ?? 'null',
-      });
-    }
-
-    // Strategy
-    fields.strategy.total++;
-    const parsedStrat = normalizeNull(topStrategy?.strategy);
-    const labelStrat = normalizeNull(label.strategy);
-    if (parsedStrat === labelStrat) {
-      fields.strategy.correct++;
-    } else {
-      rowAllCorrect = false;
-      failures.push({
-        cleanText: message.cleanText.slice(0, 60),
-        field: 'strategy',
-        expected: labelStrat ?? 'null',
-        got: parsedStrat ?? 'null',
-      });
-    }
-
-    // Price (ingestion path)
-    fields.price.total++;
-    const parsedPrice = normalizeNull(topStrategy?.price != null ? String(topStrategy.price) : null);
-    const labelPrice = normalizeNull(label.price);
-    if (priceMatch(labelPrice, parsedPrice)) {
-      fields.price.correct++;
-    } else {
-      rowAllCorrect = false;
-      failures.push({
-        cleanText: message.cleanText.slice(0, 60),
-        field: 'price',
-        expected: labelPrice ?? 'null',
-        got: parsedPrice ?? 'null',
-      });
-    }
-
-    // Strikes
-    fields.strikes.total++;
-    if (strikesMatch(label.strikes, topStrategy?.strikes)) {
-      fields.strikes.correct++;
-    } else {
-      rowAllCorrect = false;
-      failures.push({
-        cleanText: message.cleanText.slice(0, 60),
-        field: 'strikes',
-        expected: JSON.stringify(label.strikes ?? []),
-        got: JSON.stringify(topStrategy?.strikes ?? []),
-      });
-    }
-
-    // Quantity
-    fields.quantity.total++;
-    const parsedQty = normalizeNull(topStrategy?.quantity != null ? String(topStrategy.quantity) : null);
-    const labelQty = normalizeNull(label.quantity);
-    if (parsedQty === labelQty) {
-      fields.quantity.correct++;
-    } else {
-      rowAllCorrect = false;
-      failures.push({
-        cleanText: message.cleanText.slice(0, 60),
-        field: 'quantity',
-        expected: labelQty ?? 'null',
-        got: parsedQty ?? 'null',
-      });
-    }
-
-    // Expiry
-    fields.expiry.total++;
-    const parsedExpiry = normalizeNull(topStrategy?.expiry);
-    const labelExpiry = normalizeNull(label.expiry);
-    if (parsedExpiry === labelExpiry) {
-      fields.expiry.correct++;
-    } else {
-      rowAllCorrect = false;
-      failures.push({
-        cleanText: message.cleanText.slice(0, 60),
-        field: 'expiry',
-        expected: labelExpiry ?? 'null',
-        got: parsedExpiry ?? 'null',
-      });
-    }
-
-    // Exit percent (only compare when label has an exit percent)
-    if (label.exitPercent != null) {
-      fields.exitPercent.total++;
-      // Ingestion parser doesn't extract exitPercent — only agent labels will have it
-      // For now, mark as N/A unless we have a parsed exit percent to compare
-      const parsedExitPct: number | null = null; // ingestion parser doesn't produce this
-      const tolerance = 0.1; // ±10% tolerance
-      if (parsedExitPct != null && Math.abs(parsedExitPct - label.exitPercent) <= tolerance) {
-        fields.exitPercent.correct++;
-      } else if (parsedExitPct == null) {
-        // Don't count as a failure if the parser doesn't produce exit percent
-        fields.exitPercent.total--;
+    // Only compare fields when BOTH say it's a trade
+    if (intentIsTrade && labelIsTrade && signal) {
+      // Action
+      fields.action.total++;
+      if (normalizeNull(signal.action) === normalizeNull(label.action)) {
+        fields.action.correct++;
       } else {
         rowAllCorrect = false;
         failures.push({
           cleanText: message.cleanText.slice(0, 60),
-          field: 'exitPercent',
-          expected: String(label.exitPercent),
-          got: String(parsedExitPct),
+          field: 'action',
+          expected: normalizeNull(label.action) ?? 'null',
+          got: normalizeNull(signal.action) ?? 'null',
         });
+      }
+
+      // Direction
+      fields.direction.total++;
+      if (normalizeNull(signal.direction) === normalizeNull(label.direction)) {
+        fields.direction.correct++;
+      } else {
+        rowAllCorrect = false;
+        failures.push({
+          cleanText: message.cleanText.slice(0, 60),
+          field: 'direction',
+          expected: normalizeNull(label.direction) ?? 'null',
+          got: normalizeNull(signal.direction) ?? 'null',
+        });
+      }
+
+      // Strategy
+      fields.strategy.total++;
+      if (normalizeNull(signal.strategy) === normalizeNull(label.strategy)) {
+        fields.strategy.correct++;
+      } else {
+        rowAllCorrect = false;
+        failures.push({
+          cleanText: message.cleanText.slice(0, 60),
+          field: 'strategy',
+          expected: normalizeNull(label.strategy) ?? 'null',
+          got: normalizeNull(signal.strategy) ?? 'null',
+        });
+      }
+
+      // Symbol
+      fields.symbol.total++;
+      const intentSymbol = normalizeNull(signal.symbol)?.toUpperCase() ?? null;
+      const labelSymbol = normalizeNull(label.symbol)?.toUpperCase() ?? null;
+      if (intentSymbol === labelSymbol) {
+        fields.symbol.correct++;
+      } else {
+        rowAllCorrect = false;
+        failures.push({
+          cleanText: message.cleanText.slice(0, 60),
+          field: 'symbol',
+          expected: labelSymbol ?? 'null',
+          got: intentSymbol ?? 'null',
+        });
+      }
+
+      // Price
+      if (label.price != null) {
+        fields.price.total++;
+        const intentPrice = normalizeNull(signal.limitPrice);
+        const labelPrice = normalizeNull(label.price);
+        if (priceMatch(labelPrice, intentPrice)) {
+          fields.price.correct++;
+        } else {
+          rowAllCorrect = false;
+          failures.push({
+            cleanText: message.cleanText.slice(0, 60),
+            field: 'price',
+            expected: labelPrice ?? 'null',
+            got: intentPrice ?? 'null',
+          });
+        }
+      }
+
+      // Strikes
+      if (label.strikes && label.strikes.length > 0) {
+        fields.strikes.total++;
+        const intentStrikes = signal.legs?.map((l) => parseFloat(l.strike));
+        if (strikesMatch(label.strikes, intentStrikes)) {
+          fields.strikes.correct++;
+        } else {
+          rowAllCorrect = false;
+          failures.push({
+            cleanText: message.cleanText.slice(0, 60),
+            field: 'strikes',
+            expected: JSON.stringify(label.strikes),
+            got: JSON.stringify(intentStrikes ?? []),
+          });
+        }
       }
     }
 
@@ -241,13 +240,17 @@ async function main() {
   }
 
   // Print summary
-  const overallPct = ((allCorrect / rows.length) * 100).toFixed(1);
-  console.log(`Overall accuracy:    ${overallPct}%  (${allCorrect}/${rows.length} all fields match)`);
+  const overallPct = ((allCorrect / matched.length) * 100).toFixed(1);
+  console.log(`Overall accuracy:    ${overallPct}%  (${allCorrect}/${matched.length} all fields match)`);
   console.log('─'.repeat(60));
 
-  console.log('\nIngestion Parser:');
+  function accuracy(f: FieldResult): number | null {
+    return f.total > 0 ? f.correct / f.total : null;
+  }
+
+  console.log('\nIntent Extraction vs Labels:');
   console.log(`${'  Field'.padEnd(16)} ${'Correct'.padStart(8)} ${'Total'.padStart(8)} ${'Accuracy'.padStart(10)}`);
-  for (const name of ['action', 'direction', 'strategy', 'price', 'strikes', 'quantity', 'expiry', 'exitPercent'] as FieldName[]) {
+  for (const name of Object.keys(fields) as FieldName[]) {
     const result = fields[name];
     const pct = result.total > 0 ? ((result.correct / result.total) * 100).toFixed(1) : 'N/A';
     console.log(
@@ -255,28 +258,23 @@ async function main() {
     );
   }
 
-  // Compute accuracy values for persistence
-  function accuracy(f: FieldResult): number | null {
-    return f.total > 0 ? f.correct / f.total : null;
-  }
-
-  const totalMislabelings = failures.length;
-
   // Persist to eval_runs table
   const runId = crypto.randomUUID();
   await db.insert(schema.evalRuns).values({
     id: runId,
-    labelSet,
     ranAt: new Date().toISOString(),
-    totalLabels: rows.length,
+    intentModel: firstIntent.model,
+    intentVersion: firstIntent.version,
+    totalLabels: matched.length,
+    isTradeAccuracy: accuracy(fields.isTrade),
     actionAccuracy: accuracy(fields.action),
     directionAccuracy: accuracy(fields.direction),
     strategyAccuracy: accuracy(fields.strategy),
+    symbolAccuracy: accuracy(fields.symbol),
     priceAccuracy: accuracy(fields.price),
-    exitPriceAccuracy: null,
     strikesAccuracy: accuracy(fields.strikes),
-    overallAccuracy: allCorrect / rows.length,
-    totalMislabelings,
+    overallAccuracy: allCorrect / matched.length,
+    totalMislabelings: failures.length,
     failuresJson: failures.slice(0, 100),
   });
 

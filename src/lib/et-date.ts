@@ -138,3 +138,19 @@ export function dayBoundsUTC(day: string): { start: Date; end: Date } {
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
+
+// ── LLM-Friendly Formatting ─────────────────────────────────────────
+
+/** Shared ET formatter for human-readable timestamps in LLM prompts. */
+export const ET_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: ET_TZ,
+  weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+});
+
+/** Format ISO timestamp as "Tue, Sep 2, 2025, 10:32 AM ET" for the LLM. */
+export function formatTimestampForLLM(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return ET_FORMATTER.format(d);
+}

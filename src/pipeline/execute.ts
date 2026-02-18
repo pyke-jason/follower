@@ -6,7 +6,7 @@
  * The LLM has no control over this flow.
  */
 import type { BrokerService } from '../broker/interface.js';
-import type { OrderResult, WorkingOrderParams, AdjustmentRule } from '../broker/types.js';
+import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule } from '../broker/types.js';
 import type { OrderManager } from '../orders/order-manager.js';
 import type { Trade } from '../db/schema.js';
 import type { PositionSize } from '../position-sizing/index.js';
@@ -88,6 +88,33 @@ const ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; 
   PDS:   { stepAmount: 0.05, intervalSec: 5, cancelAfterSec: 60 },
 };
 
+// ─── Public helper ─────────────────────────────────
+
+/**
+ * Pure function: convert a Signal + quantity into OrderParams.
+ * Used by RuleBasedTradeAgent and internal pipeline executors.
+ */
+export function buildOrderFromSignal(signal: Signal, quantity: number): OrderParams {
+  // CLOSE/TRIM don't carry legs on the signal — the pipeline rebuilds
+  // them from the existing position.  Pass an empty legs array; the
+  // pipeline's executeClose / executeTrim will replace it.
+  const needsLegs = signal.action === 'OPEN' || signal.action === 'ADD';
+  const isStock = signal.strategy === 'STOCK';
+  const legs: OrderLeg[] = !needsLegs
+    ? []
+    : isStock
+      ? buildStockLegs(signal.direction, quantity)
+      : buildOptionLegs(signal, quantity);
+  return {
+    symbol: signal.symbol,
+    strategy: signal.strategy,
+    direction: signal.direction,
+    legs,
+    orderType: signal.limitPrice ? 'LIMIT' : 'MARKET',
+    limitPrice: signal.limitPrice,
+  };
+}
+
 // ─── Helpers ────────────────────────────────────────
 
 function buildStockLegs(direction: 'LONG' | 'SHORT', quantity: number): OrderLeg[] {
@@ -102,7 +129,7 @@ function buildStockLegs(direction: 'LONG' | 'SHORT', quantity: number): OrderLeg
 
 function buildOptionLegs(signal: Signal, quantity: number): OrderLeg[] {
   if (!signal.legs || signal.legs.length === 0) {
-    throw new Error(`Options signal for ${signal.symbol} missing legs`);
+    throw new Error(`Options signal for ${signal.symbol} (${signal.action} ${signal.strategy}) missing legs`);
   }
   return signal.legs.map(l => ({
     strike: l.strike,

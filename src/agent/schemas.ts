@@ -76,3 +76,9 @@ export const LabelResultSchema = z.object({
 });
 
 export type LabelResult = z.infer<typeof LabelResultSchema>;
+
+export type TaskResult = z.infer<typeof AgentDecisionSchema>;
+
+// --- submit_decision tool input (same shape as AgentDecisionSchema) ---
+
+export const SubmitDecisionInput = AgentDecisionSchema;
