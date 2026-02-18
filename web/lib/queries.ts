@@ -2,6 +2,7 @@ import { db, schema } from './db';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
+import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
 
 /** Matches isOpen from src/trades/filters.ts — includes PARTIAL status (trimmed positions). */
 const isOpenTrade = inArray(schema.trades.status, ['OPEN', 'PARTIAL']);
@@ -941,14 +942,19 @@ export async function getEnrichedMessages(opts: {
   const hasMore = rows.length > pageSize;
   const result = hasMore ? rows.slice(0, pageSize) : rows;
 
-  // Normalize: trade/decision fields are all null when no join match
-  const enriched = result.map((r) => ({
-    message: r.message,
-    trade: r.trade?.id ? (r.trade as import('../../src/lib/enriched-message').TradeOutcome) : null,
-    decision: r.decision?.decision
-      ? (r.decision as import('../../src/lib/enriched-message').MessageDecision)
-      : null,
-  }));
+  // Normalize & deduplicate: LEFT JOIN on trades can produce multiple rows
+  // per message (compound messages with multiple trades). Keep first per message.
+  const seen = new Set<string>();
+  const enriched: EnrichedMessage[] = [];
+  for (const r of result) {
+    if (seen.has(r.message.id)) continue;
+    seen.add(r.message.id);
+    enriched.push({
+      message: r.message,
+      trade: r.trade?.id ? (r.trade as TradeOutcome) : null,
+      decision: r.decision?.decision ? (r.decision as MessageDecision) : null,
+    });
+  }
 
   return {
     rows: enriched,

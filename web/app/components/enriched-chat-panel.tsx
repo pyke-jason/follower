@@ -73,11 +73,11 @@ export function EnrichedChatPanel({
 
   // Find the last message at or before the processing cursor (for scroll anchoring)
   const anchorMessageId = useMemo(() => {
-    if (!isRunning || !lastProcessedTs) return undefined;
+    if (!lastProcessedTs) return undefined;
     // Messages are in DESC order; find the first one whose timestamp <= cutoff
     const found = visibleMessages.find((m) => m.message.timestamp <= lastProcessedTs);
     return found?.message.id;
-  }, [isRunning, lastProcessedTs, visibleMessages]);
+  }, [lastProcessedTs, visibleMessages]);
 
   // Server-side filter change: reload messages with new role filter
   const handleFilterChange = useCallback(
@@ -123,7 +123,7 @@ export function EnrichedChatPanel({
     (message: Message, isHighlighted: boolean) => {
       const enriched = enrichmentMap.get(message.id);
       if (!enriched) return null;
-      const isPending = !!(isRunning && lastProcessedTs && message.timestamp > lastProcessedTs);
+      const isPending = !!(lastProcessedTs && message.timestamp > lastProcessedTs);
       return (
         <EnrichedChatBubble
           enriched={enriched}

@@ -44,6 +44,16 @@ export default async function BacktestDetailPage({
 
   const config = run.config as BacktestRunConfig;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
+  const liveMetrics = run.liveMetrics as LiveMetrics | null;
+  const lastProcessedTs = run.status !== 'COMPLETED'
+    ? liveMetrics?.lastProcessedMessageTs ?? null
+    : null;
+
+  // When processing is incomplete, narrow the messages query to show the frontier
+  // instead of loading from the very end of the date range (which may be all unprocessed).
+  const messagesEndDate = lastProcessedTs
+    ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString() // +1hr buffer
+    : config.endDate;
 
   const [decisions, allTrades, enrichedResult, mtmSnapshots, accuracyResult] = await Promise.all([
     getRunDecisions(id),
@@ -51,7 +61,7 @@ export default async function BacktestDetailPage({
     getEnrichedMessages({
       traders: config.traders,
       startDate: config.startDate,
-      endDate: config.endDate,
+      endDate: messagesEndDate,
       runId: id,
     }),
     getMtmSnapshots(id),
@@ -81,7 +91,6 @@ export default async function BacktestDetailPage({
     }),
     { input: 0, output: 0 },
   );
-  const liveMetrics = run.liveMetrics as LiveMetrics | null;
 
 
   // --- Performance Tab content ---
@@ -207,7 +216,7 @@ export default async function BacktestDetailPage({
       decisionSummary={decisionSummary}
       scatterChart={scatterChart}
       isRunning={isRunning}
-      lastProcessedTs={isRunning ? liveMetrics?.lastProcessedMessageTs ?? null : null}
+      lastProcessedTs={lastProcessedTs}
     />
   );
 
