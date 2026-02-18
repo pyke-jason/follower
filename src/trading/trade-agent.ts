@@ -57,6 +57,7 @@ export type RuleBasedTradeAgentConfig = {
   skipOpts: SkipCheckOpts;
   riskDeps: RiskCheckDeps;
   riskConfig: RiskCheckConfig;
+  disableRiskLimits?: boolean;
   calculateSize: (input: {
     trader: string;
     symbol: string;
@@ -86,7 +87,7 @@ export class RuleBasedTradeAgent implements TradeAgent {
     }
 
     // 2. Risk checks (for position-increasing actions)
-    if (signal.action === 'OPEN' || signal.action === 'ADD') {
+    if (!this.config.disableRiskLimits && (signal.action === 'OPEN' || signal.action === 'ADD')) {
       const risk = await checkRiskLimits(
         { symbol: signal.symbol, strategy: signal.strategy, trader, action: signal.action },
         this.config.riskDeps,

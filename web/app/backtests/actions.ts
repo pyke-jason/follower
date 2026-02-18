@@ -4,9 +4,9 @@ import { db, schema } from '@/lib/db';
 import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots } from '@/lib/queries';
+import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots, getMessagesByIds, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
-import type { BacktestRunConfig } from '../../../src/db/schema';
+import type { BacktestRunConfig, CommissionSchedule } from '../../../src/db/schema';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 
@@ -25,6 +25,17 @@ export async function startBacktest(formData: FormData) {
   const maxDrawdownPct = formData.get('maxDrawdownPct') ? Number(formData.get('maxDrawdownPct')) : undefined;
   const maxAgentCalls = formData.get('maxAgentCalls') ? Number(formData.get('maxAgentCalls')) : undefined;
   const startingEquity = formData.get('startingEquity') ? Number(formData.get('startingEquity')) : undefined;
+  const commOptionPerContract = formData.get('commissionOptionPerContract') ? Number(formData.get('commissionOptionPerContract')) : undefined;
+  const commStockPerShare = formData.get('commissionStockPerShare') ? Number(formData.get('commissionStockPerShare')) : undefined;
+
+  // Build commission schedule if any values provided
+  const commissionSchedule: CommissionSchedule | undefined =
+    (commOptionPerContract != null || commStockPerShare != null)
+      ? {
+          ...(commOptionPerContract != null ? { option: { perContract: commOptionPerContract } } : {}),
+          ...(commStockPerShare != null ? { stock: { perShare: commStockPerShare } } : {}),
+        }
+      : undefined;
 
   if (!startDate || !endDate || !tradersRaw) {
     throw new Error('Missing required fields');
@@ -49,6 +60,7 @@ export async function startBacktest(formData: FormData) {
     ...(maxDrawdownPct != null ? { maxDrawdownPct } : {}),
     ...(maxAgentCalls != null ? { maxAgentCalls } : {}),
     ...(startingEquity != null ? { startingEquity } : {}),
+    ...(commissionSchedule ? { commissionSchedule } : {}),
   };
 
   // Clear cached intents for matching messages if requested
@@ -99,6 +111,7 @@ export async function startBacktest(formData: FormData) {
       ...(maxDrawdownPct != null ? { maxDrawdownPct } : {}),
       ...(maxAgentCalls != null ? { maxAgentCalls } : {}),
       ...(startingEquity != null ? { startingEquity } : {}),
+      ...(commissionSchedule ? { commissionSchedule } : {}),
       logLevel,
     }),
   });
@@ -155,18 +168,27 @@ export async function cancelBacktestRun(formData: FormData) {
       path: d.decision.path,
       decision: d.decision.decision,
     }));
+    const [cancelledRun] = await db
+      .select({ config: schema.backtestRuns.config })
+      .from(schema.backtestRuns)
+      .where(eq(schema.backtestRuns.id, runId));
+    const cancelledConfig = cancelledRun?.config as BacktestRunConfig | undefined;
+
     const report = generateReportFromTrades({
       trades: trades.map((t) => ({
         pnl: t.pnl,
         status: t.status,
         trader: t.trader,
         strategy: t.strategy,
+        quantity: t.quantity,
+        legs: t.legs as unknown[] | null,
         entryPrice: t.entryPrice,
         openedAt: t.openedAt,
         closedAt: t.closedAt,
       })),
       decisions,
       mtmSnapshots,
+      commissionSchedule: cancelledConfig?.commissionSchedule,
     });
     await db.update(schema.backtestRuns)
       .set({
@@ -330,4 +352,30 @@ export async function invalidateIntentCache(formData: FormData) {
   }
 
   revalidatePath(`/backtests/${runId}`);
+}
+
+/** Fetch only the messages directly linked to a trade (open, close, add/trim children). */
+export async function fetchTradeLinkedMessages(tradeId: string) {
+  // Get the trade + any child trades (ADDs/TRIMs)
+  const [trades, children] = await Promise.all([
+    db.select().from(schema.trades).where(eq(schema.trades.id, tradeId)),
+    db.select().from(schema.trades).where(eq(schema.trades.parentTradeId, tradeId)),
+  ]);
+  const allTrades = [...trades, ...children];
+
+  // Collect unique message IDs
+  const msgIds = new Set<string>();
+  for (const t of allTrades) {
+    if (t.sourceMessageId) msgIds.add(t.sourceMessageId);
+    if (t.closeMessageId) msgIds.add(t.closeMessageId);
+  }
+  if (msgIds.size === 0) return { messages: [], intents: {}, labels: {} };
+
+  const ids = [...msgIds];
+  const [messages, intents, labels] = await Promise.all([
+    getMessagesByIds(ids),
+    getLatestIntents(ids),
+    getLabelsForMessages(ids),
+  ]);
+  return { messages, intents, labels };
 }

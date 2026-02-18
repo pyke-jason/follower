@@ -237,6 +237,19 @@ export async function getMessageById(id: string) {
   return msg ?? null;
 }
 
+export async function getMessagesByIds(ids: string[]) {
+  if (ids.length === 0) return [];
+  const CHUNK = 500;
+  const all: (typeof schema.messages.$inferSelect)[] = [];
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const rows = await db.select().from(schema.messages).where(inArray(schema.messages.id, chunk));
+    all.push(...rows);
+  }
+  // Sort ASC by timestamp
+  return all.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
 export async function getLatestIntents(messageIds: string[]) {
   if (messageIds.length === 0) return {};
   // Fetch all intents for these messages, dedupe to latest version per message in JS
@@ -320,16 +333,12 @@ export async function getBacktestRunById(id: string) {
 
 export async function getLabels(opts: {
   reviewed?: boolean;
-  strategy?: string;
   limit?: number;
   offset?: number;
 } = {}) {
   const conditions: SQL[] = [];
   if (opts.reviewed !== undefined) {
     conditions.push(eq(schema.messageLabels.reviewed, opts.reviewed));
-  }
-  if (opts.strategy) {
-    conditions.push(eq(schema.messageLabels.strategy, opts.strategy));
   }
 
   const query = db
@@ -347,48 +356,6 @@ export async function getLabels(opts: {
     return query.where(and(...conditions));
   }
   return query;
-}
-
-export async function getLabelStats() {
-  const [totals] = await db
-    .select({
-      total: count(),
-      reviewed: sql<number>`SUM(CASE WHEN ${schema.messageLabels.reviewed} = 1 THEN 1 ELSE 0 END)`,
-      unreviewed: sql<number>`SUM(CASE WHEN ${schema.messageLabels.reviewed} = 0 OR ${schema.messageLabels.reviewed} IS NULL THEN 1 ELSE 0 END)`,
-    })
-    .from(schema.messageLabels);
-
-  const byStrategy = await db
-    .select({
-      strategy: schema.messageLabels.strategy,
-      count: count(),
-    })
-    .from(schema.messageLabels)
-    .groupBy(schema.messageLabels.strategy);
-
-  const bySource = await db
-    .select({
-      source: schema.messageLabels.source,
-      count: count(),
-    })
-    .from(schema.messageLabels)
-    .groupBy(schema.messageLabels.source);
-
-  return {
-    total: totals?.total ?? 0,
-    reviewed: totals?.reviewed ?? 0,
-    unreviewed: totals?.unreviewed ?? 0,
-    byStrategy: Object.fromEntries(byStrategy.map((r) => [r.strategy ?? 'null', r.count])),
-    bySource: Object.fromEntries(bySource.map((r) => [r.source, r.count])),
-  };
-}
-
-export async function getEvalRuns(opts: { limit?: number } = {}) {
-  return db
-    .select()
-    .from(schema.evalRuns)
-    .orderBy(asc(schema.evalRuns.ranAt))
-    .limit(opts.limit ?? 50);
 }
 
 // ─── Run Decision Queries ────────────────────────────
@@ -962,10 +929,65 @@ export async function getEnrichedMessages(opts: {
   };
 }
 
-// ─── Backtest Accuracy (lazy, no eval run needed) ───
+// ─── Accuracy Queries (lazy, no eval run needed) ────
+
+export async function computeGlobalAccuracy() {
+  const { compareLabelsVsIntents } = await import('../../src/lib/eval');
+
+  const CHUNK = 500;
+
+  const labelRows = await db
+    .select()
+    .from(schema.messageLabels)
+    .where(eq(schema.messageLabels.reviewed, true));
+
+  if (labelRows.length === 0) return null;
+
+  const labelMap = new Map(labelRows.map((l) => [l.messageId, l]));
+  const labeledMessageIds = [...labelMap.keys()];
+
+  const intentRows: (typeof schema.messageIntents.$inferSelect)[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageIntents)
+      .where(inArray(schema.messageIntents.messageId, chunk));
+    intentRows.push(...rows);
+  }
+
+  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
+  for (const row of intentRows) {
+    const existing = intentMap.get(row.messageId);
+    if (!existing || row.version > existing.version) intentMap.set(row.messageId, row);
+  }
+
+  const msgRows: { id: string; cleanText: string }[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select({ id: schema.messages.id, cleanText: schema.messages.cleanText })
+      .from(schema.messages)
+      .where(inArray(schema.messages.id, chunk));
+    msgRows.push(...rows);
+  }
+  const msgMap = new Map(msgRows.map((m) => [m.id, m.cleanText]));
+
+  const pairs = labeledMessageIds
+    .filter((mid) => intentMap.has(mid))
+    .map((mid) => ({
+      label: labelMap.get(mid)!,
+      intent: intentMap.get(mid)!,
+      cleanText: msgMap.get(mid) ?? '',
+    }));
+
+  if (pairs.length === 0) return null;
+
+  return compareLabelsVsIntents(pairs);
+}
 
 export async function computeBacktestAccuracy(backtestRunId: string) {
-  const { compareLabelsVsIntents } = await import('./eval-helpers');
+  const { compareLabelsVsIntents } = await import('../../src/lib/eval');
 
   // 1. Get all message IDs that have a decision in this backtest run
   const decisionRows = await db

@@ -1,7 +1,10 @@
+'use client';
+
+import { forwardRef, useCallback } from 'react';
+import { TableVirtuoso } from 'react-virtuoso';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { AccuracyResult, FieldName } from '@/lib/eval-helpers';
+import type { AccuracyResult, Failure, FieldName } from '../../../src/lib/eval';
 
 const FIELD_LABELS: Record<FieldName, string> = {
   isTrade: 'Is Trade',
@@ -25,16 +28,33 @@ function colorClass(v: number | null): string {
   return 'text-red-600';
 }
 
+const thClass =
+  'text-muted-foreground h-9 px-4 text-left align-middle text-[11px] font-medium uppercase tracking-wider whitespace-nowrap';
+const trClass = 'border-b transition-colors';
+
+const virtuosoComponents = {
+  Table: ({ style, ...props }: React.ComponentProps<'table'> & { style?: React.CSSProperties }) => (
+    <table style={{ ...style, tableLayout: 'fixed' }} className="w-full caption-bottom text-sm" {...props} />
+  ),
+  TableHead: forwardRef<HTMLTableSectionElement, React.ComponentProps<'thead'>>(
+    (props, ref) => <thead ref={ref} className="[&_tr]:border-b bg-card sticky top-0 z-10" {...props} />,
+  ),
+  TableBody: forwardRef<HTMLTableSectionElement, React.ComponentProps<'tbody'>>(
+    (props, ref) => <tbody ref={ref} className="[&_tr:last-child]:border-0" {...props} />,
+  ),
+  TableRow: ({ style, ...props }: React.ComponentProps<'tr'> & { style?: React.CSSProperties }) => (
+    <tr style={style} className={trClass} {...props} />
+  ),
+};
+
 export function AccuracyGrid({
   result,
   totalMessages,
   labeledMessages,
-  maxFailures = 20,
 }: {
   result: AccuracyResult;
   totalMessages?: number;
   labeledMessages?: number;
-  maxFailures?: number;
 }) {
   return (
     <div className="space-y-4">
@@ -86,41 +106,41 @@ export function AccuracyGrid({
         })}
       </div>
 
-      {/* Failures table */}
+      {/* Failures table — virtualized */}
       {result.failures.length > 0 && (
-        <Card className="py-0 gap-0 overflow-hidden">
-          <CardHeader className="border-b py-3 px-4">
+        <Card className="py-0 gap-0 overflow-hidden flex flex-col" style={{ height: Math.min(result.failures.length * 36 + 52, 500) }}>
+          <CardHeader className="border-b py-3 px-4 shrink-0">
             <CardTitle className="text-sm">
               Mismatches
-              {result.failures.length > maxFailures && (
-                <span className="text-muted-foreground font-normal"> (showing {maxFailures} of {result.failures.length})</span>
-              )}
+              <span className="text-muted-foreground font-normal"> ({result.failures.length})</span>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[40%]">Message</TableHead>
-                  <TableHead>Field</TableHead>
-                  <TableHead>Expected</TableHead>
-                  <TableHead>Got</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {result.failures.slice(0, maxFailures).map((f, i) => (
-                  <TableRow key={i}>
-                    <td className="px-4 py-2 text-xs text-muted-foreground truncate max-w-[300px]">
-                      {f.cleanText}
-                    </td>
-                    <td className="px-4 py-2 text-xs font-medium">{f.field}</td>
-                    <td className="px-4 py-2 text-xs font-mono">{f.expected}</td>
-                    <td className="px-4 py-2 text-xs font-mono text-red-600">{f.got}</td>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
+          <div className="flex-1 min-h-0">
+            <TableVirtuoso
+              style={{ height: '100%' }}
+              data={result.failures}
+              overscan={200}
+              components={virtuosoComponents}
+              fixedHeaderContent={() => (
+                <tr className={trClass + ' bg-card'}>
+                  <th className={thClass} style={{ width: '40%' }}>Message</th>
+                  <th className={thClass} style={{ width: 100 }}>Field</th>
+                  <th className={thClass} style={{ width: 120 }}>Expected</th>
+                  <th className={thClass} style={{ width: 120 }}>Got</th>
+                </tr>
+              )}
+              itemContent={useCallback((_index: number, f: Failure) => (
+                <>
+                  <td className="px-4 py-2 text-xs text-muted-foreground truncate max-w-[300px]">
+                    {f.cleanText}
+                  </td>
+                  <td className="px-4 py-2 text-xs font-medium">{f.field}</td>
+                  <td className="px-4 py-2 text-xs font-mono">{f.expected}</td>
+                  <td className="px-4 py-2 text-xs font-mono text-red-600">{f.got}</td>
+                </>
+              ), [])}
+            />
+          </div>
         </Card>
       )}
     </div>

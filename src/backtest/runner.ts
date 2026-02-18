@@ -182,14 +182,12 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   const getOpenPositions = async (filters: { symbol?: string; trader?: string } = {}) =>
     broker.getOpenTrades(filters);
 
-  const riskConfig: RiskCheckConfig = config.disableRiskLimits
-    ? { maxOnSymbol: 999, maxTotalPositions: 999, maxDrawdownPct: 100, maxNotionalMultiplier: 100 }
-    : {
-        maxOnSymbol: config.maxOnSymbol ?? 3,
-        maxTotalPositions: config.maxTotalPositions ?? 20,
-        maxDrawdownPct: config.maxDrawdownPct ?? 5,
-        maxNotionalMultiplier: config.maxNotionalMultiplier ?? 2,
-      };
+  const riskConfig: RiskCheckConfig = {
+    maxOnSymbol: config.maxOnSymbol ?? 3,
+    maxTotalPositions: config.maxTotalPositions ?? 20,
+    maxDrawdownPct: config.maxDrawdownPct ?? 5,
+    maxNotionalMultiplier: config.maxNotionalMultiplier ?? 2,
+  };
 
   const riskDeps: RiskCheckDeps = {
     getOpenTrades: getOpenPositions,
@@ -267,6 +265,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
     },
     riskDeps,
     riskConfig,
+    disableRiskLimits: config.disableRiskLimits,
     calculateSize: (input) => sizingService.calculateSize(input),
   });
 
@@ -468,7 +467,7 @@ async function runBacktestInner(config: BacktestConfig, runId?: string): Promise
   const allDecisions = await db.select().from(schema.runDecisions).where(eq(schema.runDecisions.backtestRunId, runId));
   const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
 
-  const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots: mtmRows });
+  const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots: mtmRows, startingEquity, commissionSchedule: config.commissionSchedule });
   const report: BacktestReport = {
     config,
     ...reportData,
