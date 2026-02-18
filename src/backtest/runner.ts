@@ -55,7 +55,7 @@ const log = createLogger('Backtest');
  * Loads messages, initializes sim components, and replays chronologically.
  * When runId is provided, persists all results to the DB.
  */
-export async function runBacktest(config: BacktestConfig, runId?: string): Promise<BacktestReport> {
+export async function runBacktest(config: BacktestConfig, runId: string): Promise<BacktestReport> {
   const startTime = Date.now();
 
   // Mark run as RUNNING
@@ -108,7 +108,7 @@ export async function runBacktest(config: BacktestConfig, runId?: string): Promi
   }
 }
 
-async function runBacktestInner(config: BacktestConfig, runId?: string): Promise<BacktestReport> {
+async function runBacktestInner(config: BacktestConfig, runId: string): Promise<BacktestReport> {
   if (!runId) throw new Error('runId is required for backtest');
 
   log.info(`Loading messages for ${config.traders.join(', ')}...`);
