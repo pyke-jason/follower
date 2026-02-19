@@ -135,6 +135,8 @@ export type TimeAwareStubConfig = {
   equityHalfSpread?: number;
   /** Option bid-ask half-spread (default: 0.10). */
   optionHalfSpread?: number;
+  /** Number of evenly-spaced ticks to emit from getTicksInRange (default: 0 = empty). */
+  ticksPerRange?: number;
 };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -185,7 +187,22 @@ export function makeTimeAwareStub(config: TimeAwareStubConfig): BacktestPricePro
       ({ symbol: 'SPY', expiry: '2026-03-20', optionType: 'CALL', strikes: [] }) as OptionsChain,
     getBars: async () => [] as Bar[],
     getPriceSnapshot: () => ({}),
-    getTicksInRange: async () => [] as QuoteTick[],
+    getTicksInRange: async (symbol: string, from: Date, to: Date) => {
+      const n = config.ticksPerRange ?? 0;
+      if (n === 0) return [] as QuoteTick[];
+      const priceFn = config.underlyings[symbol];
+      if (!priceFn) return [] as QuoteTick[];
+      const fromMs = from.getTime();
+      const toMs = to.getTime();
+      const step = n <= 1 ? 0 : (toMs - fromMs) / (n - 1);
+      const ticks: QuoteTick[] = [];
+      for (let i = 0; i < n; i++) {
+        const t = new Date(fromMs + Math.round(step * i));
+        const p = priceFn(t);
+        ticks.push({ symbol, bid: p - eqHS, ask: p + eqHS, timestamp: t });
+      }
+      return ticks;
+    },
     prefetch: async () => {},
   };
 }
