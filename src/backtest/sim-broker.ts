@@ -8,10 +8,11 @@ import { and, eq, sql } from 'drizzle-orm';
 import { isOpen, isClosed, forRun } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
-import type { Trade } from '../db/schema.js';
+import type { Trade, TradeLeg } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { formatOccSymbol } from './occ-symbology.js';
+import { computeMarginRequirement } from './margin-model.js';
 
 const log = createLogger('SimBroker');
 
@@ -504,25 +505,84 @@ export class SimBroker implements BrokerService {
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
+    const now = this.clock.now();
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
     const [realizedRow] = await db
       .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
       .from(schema.trades)
       .where(and(isClosed, forRun(this.backtestRunId)));
     const realizedPnl = roundCents(realizedRow?.total ?? 0);
 
-    const unrealizedPnl = await this.getUnrealizedPnl();
+    // Cash = startingEquity + realized PnL from closed positions + cash effects from open positions.
+    // Closed positions: opening cash effect reversed at close, PnL realized into cash,
+    // so their net contribution = realizedPnl.
+    let cash = this.startingEquity + realizedPnl;
+    let totalMaintenanceMargin = 0;
+    let unrealizedPnl = 0;
+    let totalMarketValue = 0;
 
-    const equity = this.startingEquity + realizedPnl + unrealizedPnl;
+    for (const t of openTrades) {
+      const legs = this.parseLegs(t.legs);
+      const entry = safeParseFloat(t.entryPrice);
+      const qty = t.quantity ?? 1;
+      const dir = t.direction as 'LONG' | 'SHORT';
+
+      // Current underlying price for margin computation
+      let underlyingPrice: number;
+      try {
+        const quote = await this.marketData.getQuote(t.symbol, now);
+        underlyingPrice = (quote.bid + quote.ask) / 2;
+      } catch {
+        underlyingPrice = entry;
+      }
+
+      const marginReq = computeMarginRequirement({
+        strategy: t.strategy, direction: dir, entryPrice: entry,
+        quantity: qty, legs, underlyingPrice,
+      });
+
+      // Cash effect from opening this position (debit is negative, credit is positive)
+      cash += marginReq.cashEffect;
+
+      // Maintenance margin at current mark
+      totalMaintenanceMargin += marginReq.maintenance;
+
+      // Unrealized PnL + market value
+      const mark = await this.getMarkPrice(t, now);
+      if (mark != null) {
+        unrealizedPnl += computeTradePnl({
+          entryPrice: entry, exitPrice: mark, direction: dir,
+          strategy: t.strategy, quantity: qty,
+        });
+        const contractMult = t.strategy === 'STOCK' ? 1 : 100;
+        totalMarketValue += mark * qty * contractMult;
+      }
+    }
+
+    unrealizedPnl = roundCents(unrealizedPnl);
+    const equity = cash + totalMarketValue;
+    const buyingPower = Math.max(0, equity - totalMaintenanceMargin);
+
     return {
       accountId: 'SIM',
-      cashBalance: this.startingEquity + realizedPnl,
-      buyingPower: equity,
-      equity,
-      marketValue: roundCents(unrealizedPnl),
+      cashBalance: roundCents(cash),
+      buyingPower: roundCents(buyingPower),
+      equity: roundCents(equity),
+      marketValue: roundCents(totalMarketValue),
       unrealizedPnl,
       realizedPnl,
-      timestamp: this.clock.now().toISOString(),
+      timestamp: now.toISOString(),
+      maintenanceMargin: roundCents(totalMaintenanceMargin),
     };
+  }
+
+  /** Parse stored legs from a trade row. */
+  private parseLegs(raw: unknown): TradeLeg[] {
+    if (Array.isArray(raw)) return raw as TradeLeg[];
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) as TradeLeg[]; } catch { return []; }
+    }
+    return [];
   }
 
   async getBars(params: GetBarsParams): Promise<Bar[]> {

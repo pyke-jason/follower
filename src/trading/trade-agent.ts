@@ -6,7 +6,7 @@
  * logic so the runner doesn't call them directly.
  */
 import type { Signal } from '../agent/schemas.js';
-import type { Trade } from '../db/schema.js';
+import type { Trade, TradeLeg } from '../db/schema.js';
 import type { AccountBalance, Quote, OrderParams } from '../broker/types.js';
 import { buildOrderFromSignal } from '../pipeline/execute.js';
 import type { PositionSize } from '../position-sizing/index.js';
@@ -15,7 +15,7 @@ import type { SkipCheckOpts } from '../agent/deterministic-skips.js';
 import type { PrefetchedData } from '../agent/prefetch.js';
 import type { TaskContext } from '../db/schema.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
-import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
+import type { RiskCheckConfig, RiskCheckDeps, ProposedTrade } from '../orders/risk-check.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('TradeAgent');
@@ -86,19 +86,8 @@ export class RuleBasedTradeAgent implements TradeAgent {
       return [{ type: 'NO_OP', reasoning: `[deterministic] ${skip.reason}` }];
     }
 
-    // 2. Risk checks (for position-increasing actions)
-    if (!this.config.disableRiskLimits && (signal.action === 'OPEN' || signal.action === 'ADD')) {
-      const risk = await checkRiskLimits(
-        { symbol: signal.symbol, strategy: signal.strategy, trader, action: signal.action },
-        this.config.riskDeps,
-        this.config.riskConfig,
-      );
-      if (!risk.allowed) {
-        return [{ type: 'NO_OP', reasoning: `Risk blocked: ${risk.reason}` }];
-      }
-    }
-
-    // 3. Position sizing (for OPEN/ADD)
+    // 2. Position sizing (for OPEN/ADD) — done before risk check so we can
+    //    compute margin requirements for the proposed trade.
     let quantity = 1;
     if (signal.action === 'OPEN' || signal.action === 'ADD') {
       const size = await this.config.calculateSize({
@@ -111,6 +100,36 @@ export class RuleBasedTradeAgent implements TradeAgent {
         return [{ type: 'NO_OP', reasoning: `Position sizer returned qty=${size.quantity}` }];
       }
       quantity = size.quantity;
+    }
+
+    // 3. Risk checks (for position-increasing actions)
+    if (!this.config.disableRiskLimits && (signal.action === 'OPEN' || signal.action === 'ADD')) {
+      // Build proposed trade so risk check can compute margin requirement
+      const order = buildOrderFromSignal(signal, quantity);
+      const proposedTrade: ProposedTrade = {
+        strategy: signal.strategy,
+        direction: signal.direction,
+        entryPrice: signal.limitPrice ?? 0,
+        quantity,
+        legs: order.legs.map(l => ({
+          symbol: signal.symbol,
+          strike: l.strike,
+          expiry: l.expiry,
+          type: l.type,
+          action: l.action,
+          quantity: l.quantity,
+        })) as TradeLeg[],
+      };
+
+      const risk = await checkRiskLimits(
+        { symbol: signal.symbol, strategy: signal.strategy, trader, action: signal.action },
+        this.config.riskDeps,
+        this.config.riskConfig,
+        proposedTrade,
+      );
+      if (!risk.allowed) {
+        return [{ type: 'NO_OP', reasoning: `Risk blocked: ${risk.reason}` }];
+      }
     }
 
     // 4. Build order from signal

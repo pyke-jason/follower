@@ -83,6 +83,8 @@ export type AccountBalance = {
   unrealizedPnl: number;
   realizedPnl: number;
   timestamp: string;
+  /** Total maintenance margin across all open positions (sim only). */
+  maintenanceMargin?: number;
 };
 
 export type AdjustmentRule = {
