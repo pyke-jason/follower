@@ -38,7 +38,8 @@ export function parseOccSymbol(symbol: string): OccOptionParts | null {
   const year = 2000 + parseInt(dateStr.slice(0, 2), 10);
   const month = parseInt(dateStr.slice(2, 4), 10) - 1;
   const day = parseInt(dateStr.slice(4, 6), 10);
-  const expiration = new Date(Date.UTC(year, month, day));
+  // 20:00 UTC = 4:00 PM ET (EDT) — OCC equity option settlement time
+  const expiration = new Date(Date.UTC(year, month, day, 20));
 
   const strike = parseInt(strikeStr, 10) / 1000;
 

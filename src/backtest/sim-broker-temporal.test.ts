@@ -65,7 +65,7 @@ const {
 // Fixed time references — options expiry is 2026-06-19, giving ~168 days from T0.
 const T0 = new Date('2026-01-02T10:00:00Z');
 const EXPIRY = '2026-06-19';
-const EXPIRY_DATE = new Date('2026-06-19T00:00:00Z'); // UTC midnight = OCC expiry date
+const EXPIRY_DATE = new Date('2026-06-19T20:00:00Z'); // 4 PM ET (EDT) = OCC settlement
 
 /** Build N evenly-spaced timestamps between `from` and `to` (inclusive of both). */
 function spacedTimestamps(from: Date, to: Date, n: number): Date[] {
