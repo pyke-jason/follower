@@ -220,7 +220,7 @@ describe('computeTradePnl properties', () => {
     fc.assert(
       fc.property(arbPrice, arbDirection, arbStrategy, arbQuantity, (price, direction, strategy, quantity) => {
         const pnl = computeTradePnl({ entryPrice: price, exitPrice: price, direction, strategy, quantity });
-        expect(pnl).toBeCloseTo(0);
+        expect(Object.is(pnl, 0)).toBe(true); // must be +0, never -0
       }),
     );
   });
