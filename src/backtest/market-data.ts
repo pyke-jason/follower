@@ -66,9 +66,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
             day,
             refreshCache: this.refreshCache,
           });
-        } catch {
-          log.warn(`[prefetch] Failed: ${syms.join(',')} ${day}`);
-          for (const sym of syms) this.dayTicks.set(`${sym}:${day}`, []);
+        } catch (err) {
+          log.warn(`[prefetch] Failed: ${syms.join(',')} ${day} — ${err instanceof Error ? err.message : err}`);
+          // Do NOT cache failure as empty array — next call should retry
           return;
         }
 
@@ -184,8 +184,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       let high = -Infinity;
       let low = Infinity;
       for (const t of dayTicks) {
-        if (t.ask > high) high = t.ask;
-        if (t.bid < low) low = t.bid;
+        const mid = (t.bid + t.ask) / 2;
+        if (mid > high) high = mid;
+        if (mid < low) low = mid;
       }
 
       bars.push({
@@ -368,10 +369,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         day,
         refreshCache: this.refreshCache,
       });
-    } catch {
-      log.warn(`[loadDay] Failed: ${symbol} ${day}`);
-      this.dayTicks.set(key, []);
-      return [];
+    } catch (err) {
+      // Do NOT cache failure as empty array — next call should retry
+      throw new Error(`[loadDay] Failed to load ${symbol} ${day}: ${err instanceof Error ? err.message : err}`);
     }
 
     // Filter to this symbol (loadQuoteTapeForDay may return only this symbol, but be safe)

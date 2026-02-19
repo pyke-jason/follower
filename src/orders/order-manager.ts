@@ -10,6 +10,8 @@ export type OrderManagerConfig = {
   clock: () => Date;
   onFill?: (order: WorkingOrder) => void;
   onCancel?: (order: WorkingOrder) => void;
+  /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
+  manualTick?: boolean;
 };
 
 export class OrderManager {
@@ -17,6 +19,7 @@ export class OrderManager {
   private clock: () => Date;
   private onFill?: (order: WorkingOrder) => void;
   private onCancel?: (order: WorkingOrder) => void;
+  private manualTick: boolean;
   private workingOrders = new Map<string, WorkingOrder>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -25,6 +28,7 @@ export class OrderManager {
     this.clock = config.clock;
     this.onFill = config.onFill;
     this.onCancel = config.onCancel;
+    this.manualTick = config.manualTick ?? false;
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
@@ -144,7 +148,7 @@ export class OrderManager {
   }
 
   private startTimerIfNeeded(): void {
-    if (this.timer || this.workingOrders.size === 0) return;
+    if (this.manualTick || this.timer || this.workingOrders.size === 0) return;
     this.timer = setInterval(() => this.tick(this.clock()), 1000);
   }
 

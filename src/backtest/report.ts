@@ -43,10 +43,10 @@ function computeExtendedMetrics(params: {
     ? roundCents((meanDailyPnl / dailyStdDev) * Math.sqrt(252))
     : 0;
 
-  // Sortino: same but downside deviation only
-  const negativePnls = dailyPnls.filter((v) => v < 0);
-  const downsideVariance = negativePnls.length > 1
-    ? negativePnls.reduce((s, v) => s + v ** 2, 0) / negativePnls.length
+  // Sortino: same but downside deviation only (sum negative squared over ALL observations)
+  const hasNegative = dailyPnls.some((v) => v < 0);
+  const downsideVariance = hasNegative && dailyPnls.length > 1
+    ? dailyPnls.reduce((s, v) => s + (v < 0 ? v ** 2 : 0), 0) / dailyPnls.length
     : 0;
   const downsideDev = Math.sqrt(downsideVariance);
   const sortinoRatio = downsideDev > 0
@@ -141,7 +141,7 @@ export function computeCoreStats<T extends {
   const netPnlOf = (t: T) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
 
   const wins = closed.filter((t) => netPnlOf(t) > 0);
-  const losses = closed.filter((t) => netPnlOf(t) <= 0);
+  const losses = closed.filter((t) => netPnlOf(t) < 0);
 
   const totalGrossPnl = closed.reduce((sum, t) => sum + safeParseFloat(t.pnl), 0);
   const closedCommissions = closed.reduce((sum, t) => sum + computeTradeCommission(t, commissionSchedule), 0);
@@ -171,7 +171,7 @@ export function computeCoreStats<T extends {
     const net = netPnlOf(t);
     const ts = byTrader[t.trader] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 };
     ts.trades++;
-    if (net > 0) ts.wins++; else ts.losses++;
+    if (net > 0) ts.wins++; else if (net < 0) ts.losses++;
     ts.totalPnl += net;
     ts.winRate = ts.wins / ts.trades;
   }
@@ -182,13 +182,14 @@ export function computeCoreStats<T extends {
     const net = netPnlOf(t);
     const ss = byStrategy[t.strategy] ??= { trades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
     ss.trades++;
-    if (net > 0) ss.wins++; else ss.losses++;
+    if (net > 0) ss.wins++; else if (net < 0) ss.losses++;
     ss.totalPnl += net;
     ss.winRate = ss.wins / ss.trades;
     ss.avgPnl = ss.totalPnl / ss.trades;
   }
 
   // Equity curve (daily, using net PnL)
+  // Merge realized trade days AND unrealized-only MTM days so the curve has no gaps.
   const dailyMap = new Map<string, { pnl: number; trades: number }>();
   for (const t of sortedClosed) {
     const date = t.closedAt?.split('T')[0] ?? 'unknown';
@@ -199,7 +200,13 @@ export function computeCoreStats<T extends {
   }
   const mtmByDate = new Map<string, number>();
   if (mtmSnapshots) {
-    for (const snap of mtmSnapshots) mtmByDate.set(snap.date, snap.unrealizedPnl);
+    for (const snap of mtmSnapshots) {
+      mtmByDate.set(snap.date, snap.unrealizedPnl);
+      // Ensure MTM-only days appear in the equity curve (0 realized PnL)
+      if (!dailyMap.has(snap.date)) {
+        dailyMap.set(snap.date, { pnl: 0, trades: 0 });
+      }
+    }
   }
   const equityCurve: EquityPoint[] = [];
   let cumPnl = 0;
@@ -260,11 +267,13 @@ export function generateReportFromTrades(params: {
   // Extended metrics (use net PnL from core summary)
   const netPnlOf = (t: typeof sortedClosed[number]) =>
     safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
-  const sortedForMetrics = sortedClosed.map((t) => ({
-    pnl: netPnlOf(t),
-    openedAt: new Date(t.openedAt ?? 0),
-    closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
-  }));
+  const sortedForMetrics = sortedClosed
+    .filter((t) => t.openedAt != null)
+    .map((t) => ({
+      pnl: netPnlOf(t),
+      openedAt: new Date(t.openedAt!),
+      closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
+    }));
   const extendedMetrics = computeExtendedMetrics({
     sortedClosed: sortedForMetrics, equityCurve, totalPnl: core.netPnl ?? core.totalPnl,
     maxDrawdown: core.maxDrawdown, startingEquity,

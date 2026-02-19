@@ -213,6 +213,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const orderManager = new OrderManager({
     broker,
     clock: () => clock.now(),
+    manualTick: true,
     onFill: async (order) => {
       const pending = pendingIntents.get(order.orderId);
       if (!pending) return;
@@ -489,11 +490,10 @@ async function backfillDecisionPnl(runId: string): Promise<void> {
   await db.run(sql`
     UPDATE run_decisions
     SET pnl = (
-      SELECT t.pnl FROM trades t
+      SELECT CAST(SUM(CAST(t.pnl AS REAL)) AS TEXT) FROM trades t
       WHERE t.source_message_id = run_decisions.message_id
         AND t.backtest_run_id = ${runId}
         AND t.pnl IS NOT NULL
-      LIMIT 1
     )
     WHERE backtest_run_id = ${runId}
       AND decision = 'EXECUTE'
