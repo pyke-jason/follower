@@ -23,6 +23,7 @@ vi.mock('../db/client.js', async () => {
   return { db, schema, sqliteClient: client };
 });
 
+import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/client.js';
 import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
@@ -491,6 +492,140 @@ describe('temporal: expiry convergence', () => {
       ),
       { numRuns: 50 },
     );
+  });
+});
+
+// ── 4b. Post-expiry: OTM marks go to zero, ITM to intrinsic ─────────
+
+describe('temporal: post-expiry value', () => {
+  test('OTM CALL mark = 0 after expiry', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.double({ min: 100, max: 249, noNaN: true, noDefaultInfinity: true }),
+        async (underlyingPrice) => {
+          await resetDb();
+          const strike = 250;
+          const tradeId = await insertOpenOptionTrade({
+            direction: 'LONG',
+            strategy: 'CALL',
+            entryPrice: 5,
+            quantity: 1,
+            legs: [{ strike, expiry: EXPIRY, type: 'CALL', action: 'BUY', quantity: 1 }],
+          });
+
+          // 1 day after expiry
+          const postExpiry = new Date(EXPIRY_DATE.getTime() + MS_PER_DAY);
+          const md = makeTimeAwareStub({
+            underlyings: { SPY: constantPrice(underlyingPrice) },
+            optionHalfSpread: 0,
+          });
+          const clock = new SimClock(postExpiry);
+          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint');
+
+          const marks = await broker.markToMarket();
+          expect(marks.get(tradeId)!).toBeCloseTo(0, 2);
+        },
+      ),
+      { numRuns: 50 },
+    );
+  });
+
+  test('OTM PUT mark = 0 after expiry', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.double({ min: 251, max: 500, noNaN: true, noDefaultInfinity: true }),
+        async (underlyingPrice) => {
+          await resetDb();
+          const strike = 250;
+          const tradeId = await insertOpenOptionTrade({
+            direction: 'LONG',
+            strategy: 'PUT',
+            entryPrice: 5,
+            quantity: 1,
+            legs: [{ strike, expiry: EXPIRY, type: 'PUT', action: 'BUY', quantity: 1 }],
+          });
+
+          const postExpiry = new Date(EXPIRY_DATE.getTime() + MS_PER_DAY);
+          const md = makeTimeAwareStub({
+            underlyings: { SPY: constantPrice(underlyingPrice) },
+            optionHalfSpread: 0,
+          });
+          const clock = new SimClock(postExpiry);
+          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint');
+
+          const marks = await broker.markToMarket();
+          expect(marks.get(tradeId)!).toBeCloseTo(0, 2);
+        },
+      ),
+      { numRuns: 50 },
+    );
+  });
+
+  test('ITM CALL mark = intrinsic (zero time value) after expiry', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.double({ min: 260, max: 400, noNaN: true, noDefaultInfinity: true }),
+        async (underlyingPrice) => {
+          await resetDb();
+          const strike = 250;
+          const tradeId = await insertOpenOptionTrade({
+            direction: 'LONG',
+            strategy: 'CALL',
+            entryPrice: 5,
+            quantity: 1,
+            legs: [{ strike, expiry: EXPIRY, type: 'CALL', action: 'BUY', quantity: 1 }],
+          });
+
+          const postExpiry = new Date(EXPIRY_DATE.getTime() + MS_PER_DAY);
+          const md = makeTimeAwareStub({
+            underlyings: { SPY: constantPrice(underlyingPrice) },
+            optionHalfSpread: 0,
+          });
+          const clock = new SimClock(postExpiry);
+          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint');
+
+          const marks = await broker.markToMarket();
+          expect(marks.get(tradeId)!).toBeCloseTo(underlyingPrice - strike, 2);
+        },
+      ),
+      { numRuns: 50 },
+    );
+  });
+
+  test('sweepExpired settles at 20:00 UTC (4 PM ET) on expiry date', async () => {
+    await resetDb();
+    const underlyingPrice = 270; // ITM
+    const strike = 250;
+
+    const tradeId = await insertOpenOptionTrade({
+      direction: 'LONG',
+      strategy: 'CALL',
+      entryPrice: 5,
+      quantity: 1,
+      legs: [{ strike, expiry: EXPIRY, type: 'CALL', action: 'BUY', quantity: 1 }],
+    });
+
+    // sweepExpired passes leg.expiry + 'T20:00:00Z' to getQuote.
+    // Verify the closed trade timestamp reflects 20:00 UTC, not midnight.
+    const md = makeTimeAwareStub({
+      underlyings: { SPY: constantPrice(underlyingPrice) },
+      optionHalfSpread: 0,
+    });
+    const clock = new SimClock(new Date(EXPIRY + 'T20:00:00Z'));
+    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint');
+
+    const closedCount = await broker.sweepExpired(EXPIRY);
+    expect(closedCount).toBe(1);
+
+    // Verify the exit timestamp on the closed trade
+    const [closedTrade] = await db.select().from(schema.trades).where(
+      eq(schema.trades.id, tradeId),
+    );
+    expect(closedTrade.closedAt).toBe('2026-06-19T20:00:00.000Z');
+
+    // Verify settlement at intrinsic
+    const exitPrice = parseFloat(closedTrade.exitPrice!);
+    expect(exitPrice).toBeCloseTo(underlyingPrice - strike, 2);
   });
 });
 
