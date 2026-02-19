@@ -427,7 +427,10 @@ export class SimBroker implements BrokerService {
         netIntrinsic += leg.action === 'BUY' ? intrinsic : -intrinsic;
       }
 
-      const exitPrice = Math.max(0, netIntrinsic);
+      // Use abs: netIntrinsic is signed (positive for debit/long positions,
+      // negative for credit/short positions). Exit price is always the
+      // absolute cost to settle the spread at expiry.
+      const exitPrice = Math.abs(netIntrinsic);
       const expiryTimestamp = new Date(currentDate + 'T20:00:00Z');
       await this.closePositionAtPrice(t.id, exitPrice, expiryTimestamp.toISOString());
 

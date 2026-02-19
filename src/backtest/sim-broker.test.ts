@@ -287,6 +287,18 @@ describe('computeTradePnl properties', () => {
     );
   });
 
+  test('NaN inputs throw instead of silently returning 0', () => {
+    expect(() =>
+      computeTradePnl({ entryPrice: NaN, exitPrice: 100, direction: 'LONG', strategy: 'STOCK', quantity: 1 }),
+    ).toThrow('NaN');
+    expect(() =>
+      computeTradePnl({ entryPrice: 100, exitPrice: NaN, direction: 'LONG', strategy: 'STOCK', quantity: 1 }),
+    ).toThrow('NaN');
+    expect(() =>
+      computeTradePnl({ entryPrice: 100, exitPrice: 100, direction: 'LONG', strategy: 'STOCK', quantity: NaN }),
+    ).toThrow('NaN');
+  });
+
   test('options multiply by 100, stock by 1', () => {
     fc.assert(
       fc.property(arbPrice, arbPrice, arbDirection, arbQuantity, (entry, exit, direction, quantity) => {

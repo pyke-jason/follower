@@ -957,12 +957,12 @@ describe('sweepExpired invariants', () => {
     expect(Number(row.exitPrice)).toBe(0);
   });
 
-  test('credit spread (net short): negative intrinsic clamps to $0 exit', async () => {
+  test('credit spread (net short): exit at absolute net intrinsic (loss)', async () => {
     await resetDb();
     // Bear call credit spread: sell 200C, buy 210C — SPY at 205
     // SELL 200C: intrinsic = -max(0, 205-200) = -5
     // BUY 210C: intrinsic = max(0, 205-210) = 0
-    // Net = -5, clamped to max(0, -5) = 0
+    // Net = -5, exitPrice = abs(-5) = 5 (costs $5 to settle)
     const tradeId = await insertOpenOptionTrade({
       direction: 'SHORT',
       strategy: 'CDS',
@@ -978,8 +978,50 @@ describe('sweepExpired invariants', () => {
     await broker.sweepExpired('2026-03-20');
 
     const [row] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
-    // Net intrinsic is negative → clamped to 0
-    expect(Number(row.exitPrice)).toBe(0);
+    // Sold for $3, costs $5 to settle → PnL = (5-3)*(-1)*100 = -$200 loss
+    expect(Number(row.exitPrice)).toBe(5);
+    expect(Number(row.pnl)).toBeCloseTo(-200, 1);
+  });
+
+  test('credit spread: exit price = absolute net intrinsic (never zero-clamped)', async () => {
+    // Property: when short leg goes ITM, exit price should be the true
+    // settlement cost (abs of net intrinsic), not clamped to $0.
+    // The OLD buggy code used Math.max(0, net) which turned losses into $0.
+    await fc.assert(
+      fc.asyncProperty(
+        fc.double({ min: 201, max: 300, noNaN: true, noDefaultInfinity: true }), // underlying above short strike
+        fc.double({ min: 0.5, max: 10, noNaN: true, noDefaultInfinity: true }),   // entry credit
+        async (underlyingPrice, entryCredit) => {
+          await resetDb();
+          const tradeId = await insertOpenOptionTrade({
+            direction: 'SHORT',
+            strategy: 'CDS',
+            entryPrice: entryCredit,
+            quantity: 1,
+            legs: [
+              { strike: 200, expiry: '2026-03-20', type: 'CALL', action: 'SELL', quantity: 1 },
+              { strike: 210, expiry: '2026-03-20', type: 'CALL', action: 'BUY', quantity: 1 },
+            ],
+          });
+
+          const broker = makeBroker({ SPY: underlyingPrice });
+          await broker.sweepExpired('2026-03-20');
+
+          const [row] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
+
+          // Net intrinsic for credit spread where short leg is ITM:
+          // SELL 200C: -max(0, underlying-200), BUY 210C: max(0, underlying-210)
+          const shortIntrinsic = Math.max(0, underlyingPrice - 200);
+          const longIntrinsic = Math.max(0, underlyingPrice - 210);
+          const netIntrinsic = longIntrinsic - shortIntrinsic; // negative when short side is breached
+          const expectedExit = Math.abs(netIntrinsic);
+
+          expect(Number(row.exitPrice)).toBeCloseTo(expectedExit, 1);
+          expect(Number(row.exitPrice)).toBeGreaterThan(0);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 
   test('iron condor: net intrinsic computed from all 4 legs', async () => {
@@ -1016,7 +1058,7 @@ describe('sweepExpired invariants', () => {
     // Buy 420C: max(0, 415-420) = 0
     // Sell 390P: -max(0, 390-415) = 0
     // Buy 380P: max(0, 380-415) = 0
-    // Net = -5, clamped to max(0, -5) = 0
+    // Net = -5, exitPrice = abs(-5) = 5 (costs $5 to settle)
     const tradeId = await insertOpenOptionTrade({
       direction: 'SHORT',
       strategy: 'IRON_CONDOR',
@@ -1034,7 +1076,9 @@ describe('sweepExpired invariants', () => {
     await broker.sweepExpired('2026-03-20');
 
     const [row] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
-    expect(Number(row.exitPrice)).toBe(0); // net negative → clamped
+    // Sold for $4, costs $5 to settle → PnL = (5-4)*(-1)*100 = -$100 loss
+    expect(Number(row.exitPrice)).toBe(5);
+    expect(Number(row.pnl)).toBeCloseTo(-100, 1);
   });
 });
 
