@@ -218,7 +218,7 @@ export class SimBroker implements BrokerService {
 
   async placeOrder(params: OrderParams): Promise<OrderResult> {
     const orderId = `SIM-${++this.orderCounter}`;
-    const legCount = params.legs.length || 1;
+    const legCount = params.legs.length;
 
     log.debug(`placeOrder: ${params.orderType} ${params.symbol} legs=${legCount} limit=${params.limitPrice ?? 'MKT'}`);
 
@@ -273,7 +273,7 @@ export class SimBroker implements BrokerService {
       bid: quote.bid,
       ask: quote.ask,
       isBuy: isBuyOrder(params),
-      legCount: params.legs.length || 1,
+      legCount: params.legs.length,
     });
     const roundedFill = roundCents(fillPrice);
 
@@ -479,7 +479,7 @@ export class SimBroker implements BrokerService {
     return closedCount;
   }
 
-  /** Force-close all open positions at current mark prices. */
+  /** Force-close all open positions at current mark prices. Throws if any position has no mark. */
   async forceCloseAll(at: Date): Promise<number> {
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
     let totalPnl = 0;
@@ -487,10 +487,9 @@ export class SimBroker implements BrokerService {
     for (const t of openTrades) {
       const mark = await this.getMarkPrice(t, at);
       if (mark == null) {
-        log.warn(`forceCloseAll: no mark for ${t.id} (${t.symbol} ${t.strategy}), using entry price`);
+        throw new Error(`forceCloseAll: no mark for trade ${t.id} (${t.symbol} ${t.strategy})`);
       }
-      const exitPrice = mark ?? safeParseFloat(t.entryPrice);
-      const { pnl } = await this.closePositionAtPrice(t.id, exitPrice, at.toISOString());
+      const { pnl } = await this.closePositionAtPrice(t.id, mark, at.toISOString());
       totalPnl += pnl;
     }
 
