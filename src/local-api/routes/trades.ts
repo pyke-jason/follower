@@ -9,6 +9,7 @@ app.post('/force-exit', async (c) => {
     strategy: string;
     direction: 'LONG' | 'SHORT';
     legs: Array<{
+      symbol: string;
       type: 'CALL' | 'PUT' | 'STOCK';
       action: 'BUY' | 'SELL';
       quantity: number;

@@ -5,6 +5,8 @@
  * else that needs direction-aware PnL from entry/exit prices.
  */
 
+import { contractMultiplier } from './trade.js';
+
 export function computeTradePnl(params: {
   entryPrice: number;
   exitPrice: number;
@@ -14,8 +16,8 @@ export function computeTradePnl(params: {
 }): number {
   const diff = params.exitPrice - params.entryPrice;
   const multiplier = params.direction === 'LONG' ? 1 : -1;
-  const contractMultiplier = params.strategy === 'STOCK' ? 1 : 100;
-  const raw = Math.round(diff * multiplier * params.quantity * contractMultiplier * 100) / 100;
+  const mult = contractMultiplier(params.strategy);
+  const raw = Math.round(diff * multiplier * params.quantity * mult * 100) / 100;
   if (Number.isNaN(raw)) {
     throw new Error(
       `computeTradePnl produced NaN (entry=${params.entryPrice}, exit=${params.exitPrice}, dir=${params.direction}, qty=${params.quantity})`,

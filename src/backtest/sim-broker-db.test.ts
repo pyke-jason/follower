@@ -98,15 +98,16 @@ describe('getAccountBalance invariants', () => {
     );
   });
 
-  test('equity = cashBalance + unrealizedPnl (always)', async () => {
+  test('equity = startingEquity + realizedPnl + unrealizedPnl (always)', async () => {
+    const startingEquity = 100_000;
     await fc.assert(
       fc.asyncProperty(arbEntryPrice, arbMarkPrice, arbDirection, arbQuantity, async (entry, mark, direction, quantity) => {
         await resetDb();
         await insertOpenTrade({ direction, strategy: 'STOCK', entryPrice: entry, quantity });
 
-        const broker = makeBroker(mark);
+        const broker = makeBroker(mark, startingEquity);
         const bal = await broker.getAccountBalance();
-        expect(bal.equity).toBeCloseTo(bal.cashBalance + bal.unrealizedPnl, 1);
+        expect(bal.equity).toBeCloseTo(startingEquity + bal.realizedPnl + bal.unrealizedPnl, 1);
       }),
       { numRuns: 200 },
     );
@@ -1102,6 +1103,168 @@ describe('equity conservation', () => {
         },
       ),
       { numRuns: 200 },
+    );
+  });
+});
+
+// ── 11. Margin-aware getAccountBalance ───────────────────────────────
+
+describe('margin-aware getAccountBalance', () => {
+  test('buyingPower >= 0 always', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEntryPrice, arbMarkPrice, arbDirection, arbQuantity, async (entry, mark, direction, quantity) => {
+        await resetDb();
+        await insertOpenTrade({ direction, strategy: 'STOCK', entryPrice: entry, quantity });
+
+        const broker = makeBroker(mark);
+        const bal = await broker.getAccountBalance();
+        expect(bal.buyingPower).toBeGreaterThanOrEqual(0);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  test('maintenanceMargin >= 0 always', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEntryPrice, arbMarkPrice, arbDirection, arbQuantity, async (entry, mark, direction, quantity) => {
+        await resetDb();
+        await insertOpenTrade({ direction, strategy: 'STOCK', entryPrice: entry, quantity });
+
+        const broker = makeBroker(mark);
+        const bal = await broker.getAccountBalance();
+        expect(bal.maintenanceMargin).toBeGreaterThanOrEqual(0);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  test('buyingPower <= equity', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEntryPrice, arbMarkPrice, arbDirection, arbQuantity, async (entry, mark, direction, quantity) => {
+        await resetDb();
+        await insertOpenTrade({ direction, strategy: 'STOCK', entryPrice: entry, quantity });
+
+        const broker = makeBroker(mark);
+        const bal = await broker.getAccountBalance();
+        expect(bal.buyingPower).toBeLessThanOrEqual(bal.equity + 0.01);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  test('no open positions: buyingPower = equity = startingEquity', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEquity, async (startingEquity) => {
+        await resetDb();
+        const broker = makeBroker(100, startingEquity);
+        const bal = await broker.getAccountBalance();
+        expect(bal.buyingPower).toBeCloseTo(startingEquity);
+        expect(bal.maintenanceMargin).toBeCloseTo(0);
+      }),
+    );
+  });
+
+  test('LONG STOCK: cashBalance < startingEquity (cash paid to buy)', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEntryPrice, arbQuantity, async (entry, quantity) => {
+        await resetDb();
+        const startingEquity = 100_000;
+        await insertOpenTrade({ direction: 'LONG', strategy: 'STOCK', entryPrice: entry, quantity });
+
+        const broker = makeBroker(entry, startingEquity);
+        const bal = await broker.getAccountBalance();
+        // Cash = startingEquity + cashEffect(-entry*qty)
+        expect(bal.cashBalance).toBeCloseTo(startingEquity - entry * quantity, 1);
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  test('SHORT STOCK: cashBalance > startingEquity (cash received from sale)', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEntryPrice, arbQuantity, async (entry, quantity) => {
+        await resetDb();
+        const startingEquity = 100_000;
+        await insertOpenTrade({ direction: 'SHORT', strategy: 'STOCK', entryPrice: entry, quantity });
+
+        const broker = makeBroker(entry, startingEquity);
+        const bal = await broker.getAccountBalance();
+        // Cash = startingEquity + cashEffect(+entry*qty)
+        expect(bal.cashBalance).toBeCloseTo(startingEquity + entry * quantity, 1);
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  test('STOCK maintenance margin reduces buying power', async () => {
+    await resetDb();
+    const startingEquity = 100_000;
+    // Buy SPY at $400, 10 shares — maintenance = 25% × $400 × 10 = $1,000
+    await insertOpenTrade({ direction: 'LONG', strategy: 'STOCK', entryPrice: 400, quantity: 10 });
+
+    const broker = makeBroker(400, startingEquity);
+    const bal = await broker.getAccountBalance();
+    expect(bal.maintenanceMargin).toBeCloseTo(1000, 0);
+    // equity = cash + marketValue = (100000 - 4000) + 4000 = 100000
+    expect(bal.equity).toBeCloseTo(100000, 0);
+    // buyingPower = equity - maintenance = 100000 - 1000 = 99000
+    expect(bal.buyingPower).toBeCloseTo(99000, 0);
+  });
+
+  test('option trade: cashBalance reflects premium debit/credit', async () => {
+    await resetDb();
+    const startingEquity = 100_000;
+    // Buy 1 CALL at $5 premium: cashEffect = -$500
+    await insertOpenOptionTrade({
+      direction: 'LONG', strategy: 'CALL', entryPrice: 5, quantity: 1,
+      legs: [{ strike: 200, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity: 1 }],
+    });
+
+    const broker = makeBroker({ SPY: 195 }, startingEquity);
+    const bal = await broker.getAccountBalance();
+    // Cash = 100000 - 500 = 99500
+    expect(bal.cashBalance).toBeCloseTo(99500, 0);
+    // LONG option: maintenance = 0
+    expect(bal.maintenanceMargin).toBeCloseTo(0, 0);
+  });
+
+  test('credit spread: cash increases, maintenance = max loss', async () => {
+    await resetDb();
+    const startingEquity = 100_000;
+    // Sell 5-wide CDS for $2 credit (1 contract): cashEffect = +$200, maintenance = $500
+    await insertOpenOptionTrade({
+      direction: 'SHORT', strategy: 'CDS', entryPrice: 2, quantity: 1,
+      legs: [
+        { strike: 200, expiry: '2027-06-20', type: 'CALL', action: 'SELL', quantity: 1 },
+        { strike: 205, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity: 1 },
+      ],
+    });
+
+    const broker = makeBroker({ SPY: 195 }, startingEquity);
+    const bal = await broker.getAccountBalance();
+    // Cash = 100000 + 200 = 100200
+    expect(bal.cashBalance).toBeCloseTo(100200, 0);
+    // Maintenance = spread width × qty × 100 = 5 × 1 × 100 = 500
+    expect(bal.maintenanceMargin).toBeCloseTo(500, 0);
+  });
+
+  test('after all positions closed: maintenanceMargin = 0, buyingPower = max(0, equity)', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbEquity, arbEntryPrice, arbMarkPrice, arbDirection, arbQuantity,
+        async (startingEquity, entry, exit, direction, quantity) => {
+          await resetDb();
+          const tradeId = await insertOpenTrade({ direction, strategy: 'STOCK', entryPrice: entry, quantity });
+
+          const broker = makeBroker(exit, startingEquity);
+          await broker.closePositionAtPrice(tradeId, exit, new Date().toISOString());
+
+          const bal = await broker.getAccountBalance();
+          expect(bal.maintenanceMargin).toBeCloseTo(0);
+          // buyingPower = max(0, equity) — can't be negative
+          expect(bal.buyingPower).toBeCloseTo(Math.max(0, bal.equity), 1);
+        },
+      ),
+      { numRuns: 100 },
     );
   });
 });

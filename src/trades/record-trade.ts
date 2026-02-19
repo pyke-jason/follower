@@ -9,6 +9,7 @@ import { isOpen, forRun, forSymbol, forTrader } from './filters.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
+import { tradeQty } from '../lib/trade.js';
 
 const log = createLogger('RecordTrade');
 
@@ -111,7 +112,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   if (action === 'CLOSE') {
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
-    const qty = existing.quantity ?? 1;
+    const qty = tradeQty(existing.quantity);
     const pnl = computeTradePnl({
       entryPrice: entry, exitPrice: exit,
       direction: existing.direction as 'LONG' | 'SHORT',
@@ -137,7 +138,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   if (action === 'ADD') {
     const addQty = quantity ?? 1;
     const addPrice = entryPrice ?? 0;
-    const existingQty = existing.quantity ?? 1;
+    const existingQty = tradeQty(existing.quantity);
     const existingPrice = safeParseFloat(existing.entryPrice);
 
     const totalQty = existingQty + addQty;
@@ -158,7 +159,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
   // ── TRIM: partial close — create child trade, update parent ──
   if (action === 'TRIM') {
-    const existingQty = existing.quantity ?? 1;
+    const existingQty = tradeQty(existing.quantity);
     let trimQty = closeQuantity ?? (exitPercent
       ? Math.max(1, Math.floor(existingQty * exitPercent))
       : Math.max(1, Math.floor(existingQty * 0.5)));

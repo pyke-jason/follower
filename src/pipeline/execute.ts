@@ -15,12 +15,15 @@ import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade
 export type { RecordTradeResult };
 import type { Signal } from '../agent/schemas.js';
 import { createLogger } from '../lib/logger.js';
+import { tradeQty } from '../lib/trade.js';
+import { formatOccSymbol } from '../backtest/occ-symbology.js';
 
 const log = createLogger('Pipeline');
 
 // ─── Types ──────────────────────────────────────────
 
 export type OrderLeg = {
+  symbol: string;
   strike: number;
   expiry: string;
   type: 'CALL' | 'PUT' | 'STOCK';
@@ -103,7 +106,7 @@ export function buildOrderFromSignal(signal: Signal, quantity: number): OrderPar
   const legs: OrderLeg[] = !needsLegs
     ? []
     : isStock
-      ? buildStockLegs(signal.direction, quantity)
+      ? buildStockLegs(signal.symbol, signal.direction, quantity)
       : buildOptionLegs(signal, quantity);
   return {
     symbol: signal.symbol,
@@ -117,8 +120,9 @@ export function buildOrderFromSignal(signal: Signal, quantity: number): OrderPar
 
 // ─── Helpers ────────────────────────────────────────
 
-function buildStockLegs(direction: 'LONG' | 'SHORT', quantity: number): OrderLeg[] {
+function buildStockLegs(underlying: string, direction: 'LONG' | 'SHORT', quantity: number): OrderLeg[] {
   return [{
+    symbol: underlying,
     strike: 0,
     expiry: '',
     type: 'STOCK' as const,
@@ -132,6 +136,12 @@ function buildOptionLegs(signal: Signal, quantity: number): OrderLeg[] {
     throw new Error(`Options signal for ${signal.symbol} (${signal.action} ${signal.strategy}) missing legs`);
   }
   return signal.legs.map(l => ({
+    symbol: formatOccSymbol({
+      underlying: signal.symbol,
+      expiration: l.expiry,
+      type: l.optionType,
+      strike: l.strike,
+    }),
     strike: l.strike,
     expiry: l.expiry,
     type: l.optionType as 'CALL' | 'PUT',
@@ -219,7 +229,7 @@ async function executeOpen(
 
   // 3. Build order
   const legs = signal.strategy === 'STOCK'
-    ? buildStockLegs(signal.direction, size.quantity)
+    ? buildStockLegs(signal.symbol, signal.direction, size.quantity)
     : buildOptionLegs(signal, size.quantity);
   const params = buildOrderParams(signal, legs, signal.limitPrice);
 
@@ -271,7 +281,7 @@ async function executeClose(
   }
 
   // 2. Use current remaining quantity (accounts for prior TRIMs)
-  const quantity = existing.quantity ?? 1;
+  const quantity = tradeQty(existing.quantity);
 
   // 3. Risk check (always passes for CLOSE)
   await deps.checkRiskLimits({
@@ -284,7 +294,7 @@ async function executeClose(
   // 4. Build order — reverse direction from existing position
   const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
   const legs = existing.strategy === 'STOCK'
-    ? buildStockLegs(existing.direction as 'LONG' | 'SHORT', quantity)
+    ? buildStockLegs(existing.symbol, existing.direction as 'LONG' | 'SHORT', quantity)
     : existingLegs.map(l => ({ ...l, quantity, action: l.action === 'BUY' ? 'SELL' as const : 'BUY' as const }));
 
   // Reverse direction for close order
@@ -294,6 +304,7 @@ async function executeClose(
     legs,
     signal.limitPrice,
   );
+  params.isClosing = true;
 
   // 5. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
@@ -367,7 +378,7 @@ async function executeAdd(
 
   // 4. Build order
   const legs = signal.strategy === 'STOCK'
-    ? buildStockLegs(signal.direction, size.quantity)
+    ? buildStockLegs(signal.symbol, signal.direction, size.quantity)
     : buildOptionLegs(signal, size.quantity);
   const params = buildOrderParams(signal, legs, signal.limitPrice);
 
@@ -419,7 +430,7 @@ async function executeTrim(
   }
 
   // 2. Compute trim quantity from current remaining qty
-  const currentQty = existing.quantity ?? 1;
+  const currentQty = tradeQty(existing.quantity);
   const exitPct = signal.exitPercent ?? 0.5;
   const trimQty = Math.max(1, Math.min(currentQty, Math.floor(currentQty * exitPct)));
 
@@ -434,7 +445,7 @@ async function executeTrim(
   // 4. Build order — reverse direction for the trim
   const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
   const legs = existing.strategy === 'STOCK'
-    ? buildStockLegs(existing.direction as 'LONG' | 'SHORT', trimQty)
+    ? buildStockLegs(existing.symbol, existing.direction as 'LONG' | 'SHORT', trimQty)
     : existingLegs.map(l => ({ ...l, quantity: trimQty, action: l.action === 'BUY' ? 'SELL' as const : 'BUY' as const }));
 
   const closeDirection: 'LONG' | 'SHORT' = existing.direction === 'LONG' ? 'SHORT' : 'LONG';
@@ -443,6 +454,7 @@ async function executeTrim(
     legs,
     signal.limitPrice,
   );
+  params.isClosing = true;
 
   // 5. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({

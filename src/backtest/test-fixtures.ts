@@ -45,22 +45,24 @@ export function makeQuote(bid: number, ask: number, symbol = 'SPY'): Quote {
 }
 
 export function makeStockBuyOrder(overrides: Partial<OrderParams> = {}): OrderParams {
+  const sym = overrides.symbol ?? 'SPY';
   return {
-    symbol: 'SPY',
+    symbol: sym,
     strategy: 'STOCK',
     direction: 'LONG',
-    legs: [{ strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
+    legs: [{ symbol: sym, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
     orderType: 'MARKET',
     ...overrides,
   };
 }
 
 export function makeStockSellOrder(overrides: Partial<OrderParams> = {}): OrderParams {
+  const sym = overrides.symbol ?? 'SPY';
   return {
-    symbol: 'SPY',
+    symbol: sym,
     strategy: 'STOCK',
     direction: 'SHORT',
-    legs: [{ strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'SELL', quantity: 1 }],
+    legs: [{ symbol: sym, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'SELL', quantity: 1 }],
     orderType: 'MARKET',
     ...overrides,
   };

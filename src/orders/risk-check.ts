@@ -1,5 +1,6 @@
 import type { Trade } from '../db/schema.js';
 import { safeParseFloat } from '../lib/numbers.js';
+import { contractMultiplier, tradeQty } from '../lib/trade.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -74,8 +75,7 @@ export async function checkRiskLimits(
 
   // 3. Notional exposure (leverage cap)
   const totalNotional = allOpen.reduce((sum, t) => {
-    const multiplier = t.strategy !== 'STOCK' ? 100 : 1;
-    return sum + Math.abs(safeParseFloat(t.entryPrice) * (t.quantity ?? 1) * multiplier);
+    return sum + Math.abs(safeParseFloat(t.entryPrice) * tradeQty(t.quantity) * contractMultiplier(t.strategy));
   }, 0);
   const equity = await deps.getCurrentEquity();
   const maxNotional = equity * config.maxNotionalMultiplier;
@@ -102,8 +102,8 @@ export async function checkRiskLimits(
     const positions = allOpen
       .map(t => ({
         sym: t.symbol, strat: t.strategy, dir: t.direction,
-        qty: t.quantity ?? 1, entry: safeParseFloat(t.entryPrice),
-        notional: Math.abs(safeParseFloat(t.entryPrice) * (t.quantity ?? 1) * (t.strategy !== 'STOCK' ? 100 : 1)),
+        qty: tradeQty(t.quantity), entry: safeParseFloat(t.entryPrice),
+        notional: Math.abs(safeParseFloat(t.entryPrice) * tradeQty(t.quantity) * contractMultiplier(t.strategy)),
       }))
       .sort((a, b) => b.notional - a.notional)
       .slice(0, 3);

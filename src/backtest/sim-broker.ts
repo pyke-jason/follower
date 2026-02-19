@@ -8,11 +8,13 @@ import { and, eq, sql } from 'drizzle-orm';
 import { isOpen, isClosed, forRun } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
-import type { Trade } from '../db/schema.js';
+import type { Trade, TradeLeg } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { formatOccSymbol } from './occ-symbology.js';
 import { parseLegs, parseDirection } from '../db/parse.js';
+import { computeMarginRequirement } from './margin-model.js';
+import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
 
 const log = createLogger('SimBroker');
 
@@ -212,7 +214,7 @@ export class SimBroker implements BrokerService {
       symbol,
       side,
       price: roundedFill,
-      quantity: entry.params.legs[0]?.quantity ?? 1,
+      quantity: tradeQty(entry.params.legs[0]?.quantity),
       timestamp,
     };
   }
@@ -224,6 +226,40 @@ export class SimBroker implements BrokerService {
     log.debug(`placeOrder: ${params.orderType} ${params.symbol} legs=${legCount} limit=${params.limitPrice ?? 'MKT'}`);
 
     const isOptions = this.hasOptionLegs(params);
+
+    // ── Broker-level buying power gate (always enforced) ──
+    if (!params.isClosing && params.legs.length > 0) {
+      let underlyingPrice: number;
+      try {
+        const quote = await this.marketData.getQuote(params.symbol, this.clock.now());
+        underlyingPrice = (quote.bid + quote.ask) / 2;
+      } catch {
+        underlyingPrice = params.limitPrice ?? 0;
+      }
+
+      const estimatedPrice = params.limitPrice ?? underlyingPrice;
+      const legs = params.legs.map(l => ({
+        symbol: params.symbol, strike: l.strike, expiry: l.expiry,
+        type: l.type, action: l.action, quantity: l.quantity,
+      })) as TradeLeg[];
+
+      const marginReq = computeMarginRequirement({
+        strategy: params.strategy,
+        direction: params.direction,
+        entryPrice: estimatedPrice,
+        quantity: tradeQty(params.legs[0]?.quantity),
+        legs,
+        underlyingPrice,
+      });
+
+      if (marginReq.initial > 0) {
+        const balance = await this.getAccountBalance();
+        if (marginReq.initial > balance.buyingPower) {
+          log.debug(`  REJECTED: insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})`);
+          return { orderId, status: 'REJECTED', message: `Insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})` };
+        }
+      }
+    }
 
     if (params.orderType === 'LIMIT') {
       if (params.limitPrice == null) {
@@ -377,7 +413,7 @@ export class SimBroker implements BrokerService {
       exitPrice,
       direction: parseDirection(trade.direction, trade.id),
       strategy: trade.strategy,
-      quantity: trade.quantity ?? 1,
+      quantity: tradeQty(trade.quantity),
     });
 
     await db.update(schema.trades)
@@ -399,14 +435,20 @@ export class SimBroker implements BrokerService {
 
     let total = 0;
     for (const row of openTrades) {
-      const quote = await this.getTradeQuote(row, time);
+      let quote: Quote;
+      try {
+        quote = await this.getTradeQuote(row, time);
+      } catch {
+        log.warn(`getUnrealizedPnl: no quote for ${row.id} (${row.symbol} ${row.strategy})`);
+        continue;
+      }
       const mark = (quote.bid + quote.ask) / 2;
       total += computeTradePnl({
         entryPrice: safeParseFloat(row.entryPrice),
         exitPrice: mark,
         direction: parseDirection(row.direction, row.id),
         strategy: row.strategy,
-        quantity: row.quantity ?? 1,
+        quantity: tradeQty(row.quantity),
       });
     }
     return roundCents(total);
@@ -501,7 +543,7 @@ export class SimBroker implements BrokerService {
     const positions: BrokerPosition[] = [];
     for (const row of openTrades) {
       const entryPrice = safeParseFloat(row.entryPrice);
-      const quantity = row.quantity ?? 1;
+      const quantity = tradeQty(row.quantity);
       const direction = parseDirection(row.direction, row.id);
       const strategy = row.strategy;
 
@@ -510,8 +552,7 @@ export class SimBroker implements BrokerService {
       const unrealizedPnl = computeTradePnl({
         entryPrice, exitPrice: currentPrice, direction, strategy, quantity,
       });
-      const contractMultiplier = strategy === 'STOCK' ? 1 : 100;
-      const marketValue = roundCents(currentPrice * quantity * contractMultiplier);
+      const marketValue = roundCents(currentPrice * quantity * contractMultiplier(strategy));
 
       positions.push({
         symbol: row.symbol,
@@ -519,31 +560,91 @@ export class SimBroker implements BrokerService {
         averageCost: entryPrice,
         marketValue,
         unrealizedPnl,
-        assetType: strategy === 'STOCK' ? 'EQ' : 'OP',
+        assetType: assetType(strategy),
       });
     }
     return positions;
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
+    const now = this.clock.now();
     const [realizedRow] = await db
       .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
       .from(schema.trades)
       .where(and(isClosed, forRun(this.backtestRunId)));
     const realizedPnl = roundCents(realizedRow?.total ?? 0);
 
-    const unrealizedPnl = await this.getUnrealizedPnl();
+    // Single pass over open trades: cash effects, margin, unrealized PnL, market value.
+    const openTrades = await db.select().from(schema.trades)
+      .where(and(isOpen, forRun(this.backtestRunId)));
 
-    const equity = this.startingEquity + realizedPnl + unrealizedPnl;
+    let cash = this.startingEquity + realizedPnl;
+    let totalMaintenanceMargin = 0;
+    let unrealizedPnl = 0;
+    let totalMarketValue = 0;
+
+    for (const t of openTrades) {
+      const legs = parseLegs(t.legs, t.id)
+      const entry = safeParseFloat(t.entryPrice);
+      const qty = tradeQty(t.quantity);
+      const dir = parseDirection(t.direction, t.id);
+      const contractMult = contractMultiplier(t.strategy);
+
+      // Fetch mark — only getTradeQuote can legitimately fail (missing market data)
+      let tradeQuote: Quote | null = null;
+      try {
+        tradeQuote = await this.getTradeQuote(t, now);
+      } catch {
+        log.warn(`getAccountBalance: no quote for ${t.id} (${t.symbol} ${t.strategy})`);
+      }
+
+      // Underlying price for margin calc: for STOCK it's the mark, for options fetch equity quote
+      let underlyingPrice = entry; // fallback
+      if (tradeQuote != null) {
+        if (t.strategy === 'STOCK') {
+          underlyingPrice = (tradeQuote.bid + tradeQuote.ask) / 2;
+        } else {
+          try {
+            const eq = await this.marketData.getQuote(t.symbol, now);
+            underlyingPrice = (eq.bid + eq.ask) / 2;
+          } catch {
+            // Options underlying quote failed — use entry as fallback for margin
+          }
+        }
+      }
+
+      const marginReq = computeMarginRequirement({
+        strategy: t.strategy, direction: dir, entryPrice: entry,
+        quantity: qty, legs, underlyingPrice,
+      });
+
+      cash += marginReq.cashEffect;
+      totalMaintenanceMargin += marginReq.maintenance;
+
+      if (tradeQuote != null) {
+        const mark = (tradeQuote.bid + tradeQuote.ask) / 2;
+        unrealizedPnl += computeTradePnl({
+          entryPrice: entry, exitPrice: mark, direction: dir,
+          strategy: t.strategy, quantity: qty,
+        });
+        totalMarketValue += (dir === 'LONG' ? 1 : -1) * mark * qty * contractMult;
+      }
+    }
+
+    unrealizedPnl = roundCents(unrealizedPnl);
+    const equity = roundCents(cash + totalMarketValue);
+    const buyingPower = Math.max(0, roundCents(equity - totalMaintenanceMargin));
+
     return {
       accountId: 'SIM',
-      cashBalance: this.startingEquity + realizedPnl,
-      buyingPower: equity,
+      cashBalance: roundCents(cash),
+      buyingPower,
       equity,
-      marketValue: roundCents(unrealizedPnl),
+      marketValue: roundCents(totalMarketValue),
       unrealizedPnl,
       realizedPnl,
-      timestamp: this.clock.now().toISOString(),
+      timestamp: now.toISOString(),
+      maintenanceMargin: roundCents(totalMaintenanceMargin),
     };
   }
 

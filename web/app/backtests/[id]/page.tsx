@@ -30,6 +30,7 @@ import type { LiveMetrics } from '../../../../src/backtest/types';
 import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
 import { computeCoreStats } from '../../../../src/backtest/report';
 import { computeTradeCommission } from '../../../../src/lib/commission';
+import { tradeQty } from '../../../../src/lib/trade';
 
 export const dynamic = 'force-dynamic';
 
@@ -434,7 +435,7 @@ function computeFromTrades(
     pnl: netPnlOf(t),
     strategy: t.strategy,
     direction: t.direction,
-    quantity: t.quantity ?? 1,
+    quantity: tradeQty(t.quantity),
     symbol: t.symbol,
     trader: t.trader,
   }));

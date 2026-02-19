@@ -6,6 +6,7 @@ import type { ReconciliationAlertType } from '../db/schema.js';
 import { sendDiscordAlert } from './notify.js';
 import { isOpen, notBacktest } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
+import { tradeQty } from '../lib/trade.js';
 
 const log = createLogger('Recon');
 
@@ -138,7 +139,7 @@ export async function runReconciliation(broker: BrokerService): Promise<Reconcil
     const brokerPos = brokerBySymbol.get(symbol);
     if (!brokerPos) continue;
 
-    const dbTotalQty = trades.reduce((sum, t) => sum + (t.quantity ?? 1), 0);
+    const dbTotalQty = trades.reduce((sum, t) => sum + tradeQty(t.quantity), 0);
     const brokerTotalQty = brokerPos.reduce((sum, p) => sum + Math.abs(p.quantity), 0);
 
     if (dbTotalQty !== brokerTotalQty) {

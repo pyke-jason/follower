@@ -15,6 +15,7 @@
 
 import type { CommissionSchedule } from '../db/schema.js';
 import { roundCents } from './numbers.js';
+import { tradeQty } from './trade.js';
 
 type CommissionableTrade = {
   strategy: string;
@@ -27,7 +28,7 @@ function computeOneSideCommission(
   schedule: CommissionSchedule | undefined,
 ): number {
   if (!schedule) return 0;
-  const qty = trade.quantity ?? 1;
+  const qty = tradeQty(trade.quantity);
 
   if (trade.strategy === 'STOCK') {
     const perShare = schedule.stock?.perShare ?? 0;

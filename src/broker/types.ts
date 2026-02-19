@@ -83,6 +83,8 @@ export type AccountBalance = {
   unrealizedPnl: number;
   realizedPnl: number;
   timestamp: string;
+  /** Total maintenance margin across all open positions (sim only). */
+  maintenanceMargin?: number;
 };
 
 export type AdjustmentRule = {
@@ -119,6 +121,7 @@ export type OrderParams = {
   strategy: string;
   direction: 'LONG' | 'SHORT';
   legs: Array<{
+    symbol: string;
     strike: number;
     expiry: string;
     type: 'CALL' | 'PUT' | 'STOCK';
@@ -127,4 +130,6 @@ export type OrderParams = {
   }>;
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
+  /** Signals a position-reducing order — broker skips buying power gate. */
+  isClosing?: boolean;
 };

@@ -115,7 +115,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const startDate = new Date(config.startDate);
   const endDate = new Date(config.endDate);
   log.info(`Date range: ${config.startDate.split('T')[0]} to ${config.endDate.split('T')[0]}`);
-
+ 
   // Load messages
   const allMessages = await loadHistoricalMessages({
     startDate,
@@ -374,6 +374,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           unrealizedPnl,
         });
         log.debug(`MTM ${lastMsgDay}: unrealized=$${unrealizedPnl.toFixed(2)}`);
+
+        // 3. Margin call check
+        const balance = await broker.getAccountBalance();
+        if (balance.maintenanceMargin != null && balance.equity < balance.maintenanceMargin) {
+          log.warn(`MARGIN CALL ${lastMsgDay}: equity $${balance.equity.toFixed(0)} < maintenance $${balance.maintenanceMargin.toFixed(0)}`);
+        }
       }
     }
 

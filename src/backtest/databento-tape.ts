@@ -13,6 +13,26 @@ const log = createLogger('QuoteTape');
 
 const CACHE_DIR = '.cache/databento';
 
+/**
+ * Async line iterator over a Node Readable stream.
+ * Captures readline 'error' events (which bypass the for-await loop) and
+ * re-throws them after iteration ends so callers/withRetry can handle them.
+ */
+async function* readLines(reader: Readable): AsyncGenerator<string> {
+  const rl = createInterface({ input: reader, terminal: false });
+  let streamError: Error | null = null;
+  rl.on('error', (err) => { streamError = err as Error; rl.close(); });
+  try {
+    for await (const line of rl) {
+      yield line;
+    }
+  } finally {
+    rl.close();
+    reader.destroy();
+  }
+  if (streamError) throw streamError;
+}
+
 /** Hard limit on bytes read from a single Databento streaming response. */
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -362,13 +382,10 @@ export async function loadQuoteTapeForDay(params: {
   let noQuote = 0;
   let outsideMktHrs = 0;
   const reader = Readable.from(res.body as any);
-  const rl = createInterface({ input: reader, terminal: false });
 
-  for await (const line of rl) {
+  for await (const line of readLines(reader)) {
     bytesRead += Buffer.byteLength(line) + 1;
     if (bytesRead > MAX_RESPONSE_BYTES) {
-      rl.close();
-      reader.destroy();
       throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for ${uncachedSymbols.join(',')} on ${params.day} (${bytesRead} bytes)`);
     }
     const trimmed = line.trim();
@@ -570,13 +587,10 @@ async function loadParentSymbology(params: {
   let sampleNoQuote: unknown = null;  // capture first null-price record for diagnostics
 
   const reader = Readable.from(res.body as any);
-  const rl = createInterface({ input: reader, terminal: false });
 
-  for await (const line of rl) {
+  for await (const line of readLines(reader)) {
     bytesRead += Buffer.byteLength(line) + 1;
     if (bytesRead > MAX_RESPONSE_BYTES) {
-      rl.close();
-      reader.destroy();
       throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for parent ${parentSymbol} on ${params.day} (${bytesRead} bytes)`);
     }
     const trimmed = line.trim();
@@ -746,9 +760,8 @@ async function fetchDefinitionSnapshot(
   const seenSymbols = new Set<string>();
 
   const reader = Readable.from(res.body as any);
-  const rl = createInterface({ input: reader, terminal: false });
 
-  for await (const line of rl) {
+  for await (const line of readLines(reader)) {
     bytesRead += Buffer.byteLength(line) + 1;
     // No byte limit for definitions — we stream and only keep lightweight metadata.
     // SPY.OPT is ~19MB raw but yields ~10K small ChainDefinition objects.
@@ -901,13 +914,10 @@ export async function loadSpecificContracts(params: {
   let noQuote = 0;
 
   const reader = Readable.from(res.body as any);
-  const rl = createInterface({ input: reader, terminal: false });
 
-  for await (const line of rl) {
+  for await (const line of readLines(reader)) {
     bytesRead += Buffer.byteLength(line) + 1;
     if (bytesRead > MAX_RESPONSE_BYTES) {
-      rl.close();
-      reader.destroy();
       throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for specific contracts on ${params.day} (${bytesRead} bytes)`);
     }
     const trimmed = line.trim();
@@ -1201,14 +1211,11 @@ export async function fetchTickWindow(params: {
 
   const ticks: QuoteTick[] = [];
   const reader = Readable.from(res.body as any);
-  const rl = createInterface({ input: reader, terminal: false });
 
   let bytesRead = 0;
-  for await (const line of rl) {
+  for await (const line of readLines(reader)) {
     bytesRead += Buffer.byteLength(line) + 1;
     if (bytesRead > MAX_RESPONSE_BYTES) {
-      rl.close();
-      reader.destroy();
       throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for tick window ${params.symbols.join(',')} (${bytesRead} bytes)`);
     }
     const trimmed = line.trim();

@@ -12,7 +12,7 @@ export const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
 export const LegActionSchema = z.enum(['BUY', 'SELL']);
 
 export const TradeLegSchema = z.object({
-  symbol: z.string().optional(),          // older rows may omit
+  symbol: z.string(),
   strike: z.number(),
   expiry: z.string(),
   type: LegTypeSchema,
@@ -21,22 +21,15 @@ export const TradeLegSchema = z.object({
   fillPrice: z.number().optional(),
 });
 
-export type ParsedTradeLeg = z.infer<typeof TradeLegSchema>;
+export type TradeLeg = z.infer<typeof TradeLegSchema>;
 
 /**
  * Parse the `legs` column from a trade row.
  * Accepts raw JSON (already parsed by Drizzle) or a JSON string.
  * Throws with a descriptive message on invalid data.
  */
-export function parseLegs(raw: unknown, tradeId?: string): ParsedTradeLeg[] {
-  const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const result = z.array(TradeLegSchema).safeParse(arr);
-  if (!result.success) {
-    const ctx = tradeId ? ` (trade ${tradeId})` : '';
-    throw new Error(`Invalid legs data${ctx}: ${result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-  }
-  return result.data;
-}
+export function parseLegs(raw: unknown, tradeId?: string): TradeLeg[] {
+  return z.array(TradeLegSchema).parse(raw);}
 
 /**
  * Parse the `direction` column from a trade row.

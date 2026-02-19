@@ -4,21 +4,26 @@
  * Uses fast-check to generate random inputs and assert invariants
  * ("properties") that must hold for ALL inputs — not just hand-picked examples.
  *
- * Focuses on the pure / DB-free surface:
+ * Focuses on fill mechanics:
  *   - computeModelFillPrice (pure function)
  *   - placeOrder (MARKET + LIMIT), processQuoteTick, order lifecycle
  *   - computeTradePnl (pure function used by SimBroker)
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeAll } from 'vitest';
 import fc from 'fast-check';
 
-// Mock the DB module before any sim-broker imports (top-level import opens SQLite file)
-vi.mock('../db/client.js', () => ({
-  db: {},
-  schema: { trades: {} },
-}));
+// In-memory SQLite — placeOrder's buying power gate needs a real DB.
+vi.mock('../db/client.js', async () => {
+  const { createClient } = await import('@libsql/client');
+  const { drizzle } = await import('drizzle-orm/libsql');
+  const schema = await import('../db/schema.js');
+  const client = createClient({ url: ':memory:' });
+  const db = drizzle(client, { schema });
+  return { db, schema, sqliteClient: client };
+});
 
+import { db } from '../db/client.js';
 import { computeModelFillPrice, SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
@@ -38,7 +43,12 @@ import {
   makeStockBuyOrder,
   makeStockSellOrder,
   stubMarketDataFromQuote,
+  CREATE_TRADES_SQL,
 } from './test-fixtures.js';
+
+beforeAll(async () => {
+  await db.run(CREATE_TRADES_SQL);
+});
 
 // ── 1. computeModelFillPrice ─────────────────────────────────────────
 

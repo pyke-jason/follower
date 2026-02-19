@@ -101,6 +101,19 @@ export function isMarketHours(d: Date): boolean {
   return minutes >= MARKET_OPEN_MINUTE && minutes <= marketCloseMinute(d);
 }
 
+/**
+ * Walk backward from a YYYY-MM-DD day key to find the previous trading day.
+ * Returns the day key, or null if none found within maxCalendarDays.
+ */
+export function getPreviousTradingDayKey(dayKey: string, maxCalendarDays = 10): string | null {
+  let d = parseDateKey(dayKey); // noon UTC — safe for ET day math
+  for (let i = 0; i < maxCalendarDays; i++) {
+    d = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+    if (isTradingDay(d)) return toDateKeyET(d);
+  }
+  return null;
+}
+
 /** Parse a YYYY-MM-DD string to a Date (noon UTC to avoid DST ambiguity). */
 export function parseDateKey(day: string): Date {
   return new Date(`${day}T12:00:00Z`);

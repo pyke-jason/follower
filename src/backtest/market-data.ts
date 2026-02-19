@@ -2,6 +2,7 @@ import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js
 import { loadQuoteTapeForDay, loadChainDefinitions, loadSpecificContracts, toDateKey, getFetchMeta } from './databento-tape.js';
 import type { QuoteTick } from './databento-tape.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
+import { getPreviousTradingDayKey, parseDateKey } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('MarketData');
@@ -112,33 +113,77 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     return result;
   }
 
+  /** Max previous trading days to search for a stale quote when current day has no tick yet. */
+  private static readonly MAX_STALE_DAYS = 5;
+
   async getQuote(symbol: string, at: Date): Promise<Quote> {
     const ticks = await this.loadDay(symbol, at);
     const tick = this.findLastTickBefore(ticks, at);
 
-    if (!tick) {
-      const day = toDateKey(at);
-      const meta = getFetchMeta(symbol, day);
-      const fetchCtx = meta
-        ? `Fetch: status=${meta.status} bytes=${meta.bytes} records=${meta.records}${meta.requestId ? ` req=${meta.requestId}` : ''}`
-        : 'No fetch metadata found — check QuoteTape logs above.';
-      throw new Error(
-        `[MarketData] No Databento data for "${symbol}" at or before ${at.toISOString()}.\n` +
-        `  Day has ${ticks.length} ticks${ticks.length > 0 ? ` (first: ${ticks[0].timestamp.toISOString()})` : ''}. ${fetchCtx}`,
-      );
+    if (tick) {
+      const mid = (tick.bid + tick.ask) / 2;
+      this.latestQuotes.set(symbol, mid);
+      return {
+        symbol,
+        bid: tick.bid,
+        ask: tick.ask,
+        last: mid,
+        volume: 0,
+        timestamp: tick.timestamp.toISOString(),
+      };
     }
 
-    const mid = (tick.bid + tick.ask) / 2;
-    this.latestQuotes.set(symbol, mid);
+    // Fallback: walk back previous trading days for the last known quote.
+    // Handles illiquid options that haven't traded yet in the current session.
+    const currentDayKey = toDateKey(at);
+    let prevDayKey = getPreviousTradingDayKey(currentDayKey);
 
-    return {
-      symbol,
-      bid: tick.bid,
-      ask: tick.ask,
-      last: mid,
-      volume: 0, // tick-level volume not available from quote data
-      timestamp: tick.timestamp.toISOString(),
-    };
+    for (let i = 0; i < DatabentoMarketDataProvider.MAX_STALE_DAYS && prevDayKey; i++) {
+      const prevDate = parseDateKey(prevDayKey);
+      let prevTicks: QuoteTick[];
+      try {
+        prevTicks = await this.loadDay(symbol, prevDate);
+      } catch {
+        prevDayKey = getPreviousTradingDayKey(prevDayKey);
+        continue;
+      }
+
+      if (prevTicks.length > 0) {
+        const lastTick = prevTicks[prevTicks.length - 1];
+        const mid = (lastTick.bid + lastTick.ask) / 2;
+        this.latestQuotes.set(symbol, mid);
+
+        log.warn(
+          `Stale quote for "${symbol}" at ${at.toISOString()}: ` +
+          `using ${prevDayKey} tick from ${lastTick.timestamp.toISOString()} ` +
+          `(${currentDayKey} has ${ticks.length} ticks` +
+          `${ticks.length > 0 ? `, first at ${ticks[0].timestamp.toISOString()}` : ''})`,
+        );
+
+        return {
+          symbol,
+          bid: lastTick.bid,
+          ask: lastTick.ask,
+          last: mid,
+          volume: 0,
+          timestamp: lastTick.timestamp.toISOString(),
+        };
+      }
+
+      prevDayKey = getPreviousTradingDayKey(prevDayKey);
+    }
+
+    // No data within lookback — throw with diagnostics
+    const day = toDateKey(at);
+    const meta = getFetchMeta(symbol, day);
+    const fetchCtx = meta
+      ? `Fetch: status=${meta.status} bytes=${meta.bytes} records=${meta.records}${meta.requestId ? ` req=${meta.requestId}` : ''}`
+      : 'No fetch metadata found — check QuoteTape logs above.';
+    throw new Error(
+      `[MarketData] No Databento data for "${symbol}" at or before ${at.toISOString()} ` +
+      `(checked ${DatabentoMarketDataProvider.MAX_STALE_DAYS} previous trading days).\n` +
+      `  Day has ${ticks.length} ticks${ticks.length > 0 ? ` (first: ${ticks[0].timestamp.toISOString()})` : ''}. ${fetchCtx}`,
+    );
   }
 
   async getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]> {

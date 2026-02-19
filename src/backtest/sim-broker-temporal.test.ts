@@ -45,6 +45,7 @@ import {
   CREATE_TRADES_SQL,
   type PriceFn,
 } from './test-fixtures.js';
+import { formatOccSymbol } from './occ-symbology.js';
 
 // ── DB setup ─────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ function expectedTimeValue(baseTV: number, at: Date, expiryDate: Date): number {
 // ── 1. Equity identity holds at every timestamp ──────────────────────
 
 describe('temporal: equity identity', () => {
-  test('equity = cashBalance + unrealizedPnl at every time step (STOCK)', async () => {
+  test('equity = startingEquity + realizedPnl + unrealizedPnl at every time step (STOCK)', async () => {
     await fc.assert(
       fc.asyncProperty(
         arbEquity,
@@ -107,9 +108,7 @@ describe('temporal: equity identity', () => {
           for (const t of timestamps) {
             clock.advance(t);
             const bal = await broker.getAccountBalance();
-            expect(bal.equity).toBeCloseTo(bal.cashBalance + bal.unrealizedPnl, 1);
-            // No closed trades yet, so cashBalance = startingEquity
-            expect(bal.cashBalance).toBeCloseTo(startingEquity, 1);
+            expect(bal.equity).toBeCloseTo(startingEquity + bal.realizedPnl + bal.unrealizedPnl, 1);
           }
         },
       ),
@@ -117,7 +116,7 @@ describe('temporal: equity identity', () => {
     );
   });
 
-  test('equity = cashBalance + unrealizedPnl at every time step (CALL option)', async () => {
+  test('equity = startingEquity + realizedPnl + unrealizedPnl at every time step (CALL option)', async () => {
     await fc.assert(
       fc.asyncProperty(
         arbEquity,
@@ -143,7 +142,7 @@ describe('temporal: equity identity', () => {
           for (const t of timestamps) {
             clock.advance(t);
             const bal = await broker.getAccountBalance();
-            expect(bal.equity).toBeCloseTo(bal.cashBalance + bal.unrealizedPnl, 1);
+            expect(bal.equity).toBeCloseTo(startingEquity + bal.realizedPnl + bal.unrealizedPnl, 1);
           }
         },
       ),
@@ -151,7 +150,7 @@ describe('temporal: equity identity', () => {
     );
   });
 
-  test('equity = cashBalance + unrealizedPnl at every time step (CDS spread)', async () => {
+  test('equity = startingEquity + realizedPnl + unrealizedPnl at every time step (CDS spread)', async () => {
     await fc.assert(
       fc.asyncProperty(
         arbEquity,
@@ -179,7 +178,7 @@ describe('temporal: equity identity', () => {
           for (const t of timestamps) {
             clock.advance(t);
             const bal = await broker.getAccountBalance();
-            expect(bal.equity).toBeCloseTo(bal.cashBalance + bal.unrealizedPnl, 1);
+            expect(bal.equity).toBeCloseTo(startingEquity + bal.realizedPnl + bal.unrealizedPnl, 1);
           }
         },
       ),
@@ -829,7 +828,7 @@ describe('temporal: advanceTo option fills', () => {
             symbol: 'SPY',
             strategy: 'CALL',
             direction: 'LONG',
-            legs: [{ strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
+            legs: [{ symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }), strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
             orderType: 'LIMIT',
             limitPrice: limit,
           });
@@ -877,7 +876,7 @@ describe('temporal: advanceTo option fills', () => {
       symbol: 'SPY',
       strategy: 'CALL',
       direction: 'LONG',
-      legs: [{ strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
+      legs: [{ symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }), strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
       orderType: 'LIMIT',
       limitPrice: limit,
     });
@@ -913,7 +912,7 @@ describe('temporal: advanceTo option fills', () => {
       symbol: 'SPY',
       strategy: 'CALL',
       direction: 'LONG',
-      legs: [{ strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
+      legs: [{ symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }), strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
       orderType: 'LIMIT',
       limitPrice: limit,
     });
@@ -1081,14 +1080,10 @@ describe('temporal: mixed portfolio equity identity', () => {
             clock.advance(t);
             const bal = await broker.getAccountBalance();
 
-            // Core identity: equity = cash + unrealized
-            expect(bal.equity).toBeCloseTo(bal.cashBalance + bal.unrealizedPnl, 1);
-
-            // Cash = startingEquity + realized (realized doesn't change over time)
-            expect(bal.cashBalance).toBeCloseTo(startingEquity + bal.realizedPnl, 1);
+            // Realized PnL doesn't change over time (only closed trades contribute)
             expect(bal.realizedPnl).toBeCloseTo(expectedRealized, 1);
 
-            // Equity = startingEquity + realized + unrealized
+            // Core identity: equity = startingEquity + realized + unrealized
             expect(bal.equity).toBeCloseTo(startingEquity + bal.realizedPnl + bal.unrealizedPnl, 1);
           }
         },
@@ -1145,9 +1140,8 @@ describe('temporal: mixed portfolio equity identity', () => {
             const bal = await broker.getAccountBalance();
 
             // Core identities
-            expect(bal.equity).toBeCloseTo(bal.cashBalance + bal.unrealizedPnl, 1);
-            expect(bal.cashBalance).toBeCloseTo(startingEquity + bal.realizedPnl, 1);
             expect(bal.realizedPnl).toBeCloseTo(closedPnl, 1);
+            expect(bal.equity).toBeCloseTo(startingEquity + bal.realizedPnl + bal.unrealizedPnl, 1);
           }
         },
       ),
