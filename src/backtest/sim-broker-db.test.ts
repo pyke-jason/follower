@@ -28,6 +28,7 @@ import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { roundCents } from '../lib/numbers.js';
+import { parseOccSymbol } from './occ-symbology.js';
 import type { Quote, OptionsChain, Bar } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
@@ -179,21 +180,40 @@ async function insertOpenOptionTrade(params: {
   return id;
 }
 
-/** Market data stub with configurable per-symbol prices. */
+/**
+ * Market data stub with configurable per-symbol prices.
+ * Handles both equity symbols (direct lookup) and OCC option symbols
+ * (parses strike/type from the 21-char OCC format and synthesises a
+ * quote based on intrinsic value + small time premium).
+ */
 function stubMarketData(prices: Record<string, number> | number): BacktestPriceProvider {
   const priceMap = typeof prices === 'number' ? { SPY: prices } : prices;
+
+  function makeOptionQuote(symbol: string, underlyingPrice: number): Quote {
+    const occ = parseOccSymbol(symbol);
+    if (!occ) throw new Error(`Invalid OCC symbol: ${symbol}`);
+    const intrinsic = occ.type === 'CALL'
+      ? Math.max(0, underlyingPrice - occ.strike)
+      : Math.max(0, occ.strike - underlyingPrice);
+    // Synthetic price: intrinsic + small time value
+    const mid = intrinsic + 0.50;
+    return { symbol, bid: mid - 0.10, ask: mid + 0.10, last: mid, volume: 100, timestamp: new Date().toISOString() };
+  }
+
   return {
     getQuote: async (symbol: string) => {
+      // Direct equity lookup first
       const p = priceMap[symbol];
-      if (p == null) throw new Error(`No quote for ${symbol}`);
-      return {
-        symbol,
-        bid: p - 0.05,
-        ask: p + 0.05,
-        last: p,
-        volume: 1000,
-        timestamp: new Date().toISOString(),
-      };
+      if (p != null) {
+        return { symbol, bid: p - 0.05, ask: p + 0.05, last: p, volume: 1000, timestamp: new Date().toISOString() };
+      }
+      // OCC option symbol — derive from underlying
+      const occ = parseOccSymbol(symbol);
+      if (occ) {
+        const underlying = priceMap[occ.underlying];
+        if (underlying != null) return makeOptionQuote(symbol, underlying);
+      }
+      throw new Error(`No quote for ${symbol}`);
     },
     getOptionsChain: async () =>
       ({ symbol: 'SPY', expiry: '2026-03-20', optionType: 'CALL', strikes: [] }) as OptionsChain,
@@ -592,6 +612,33 @@ describe('getUnrealizedPnl invariants', () => {
     const unrealized = await broker.getUnrealizedPnl();
     expect(unrealized).toBeCloseTo(0);
   });
+
+  test('option unrealizedPnl uses OCC requote (100x multiplier)', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbMarkPrice, arbQuantity, async (underlyingPrice, quantity) => {
+        await resetDb();
+        const strike = 200;
+        const entry = 5;
+        await insertOpenOptionTrade({
+          direction: 'LONG',
+          strategy: 'CALL',
+          entryPrice: entry,
+          quantity,
+          legs: [{ strike, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity }],
+        });
+
+        // Mark via OCC: mid = intrinsic + 0.50
+        const intrinsic = Math.max(0, underlyingPrice - strike);
+        const mark = intrinsic + 0.50;
+        const expected = computeTradePnl({ entryPrice: entry, exitPrice: mark, direction: 'LONG', strategy: 'CALL', quantity });
+
+        const broker = makeBroker({ SPY: underlyingPrice });
+        const actual = await broker.getUnrealizedPnl();
+        expect(actual).toBeCloseTo(expected, 1);
+      }),
+      { numRuns: 100 },
+    );
+  });
 });
 
 // ── 6. markToMarket ──────────────────────────────────────────────────
@@ -653,6 +700,60 @@ describe('markToMarket invariants', () => {
     const broker = makeBroker({ SPY: 200 });
     const marks = await broker.markToMarket();
     expect(marks.size).toBe(1);
+  });
+
+  test('option trades are marked via OCC requote (not underlying price)', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbMarkPrice, async (underlyingPrice) => {
+        await resetDb();
+        const strike = 200;
+        const id = await insertOpenOptionTrade({
+          direction: 'LONG',
+          strategy: 'CALL',
+          entryPrice: 5,
+          quantity: 1,
+          legs: [{ strike, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity: 1 }],
+        });
+
+        const broker = makeBroker({ SPY: underlyingPrice });
+        const marks = await broker.markToMarket();
+        expect(marks.size).toBe(1);
+
+        // getOptionSpreadQuote normalises to positive bid/ask.
+        // Our stub: single BUY leg → bid = intrinsic + 0.40, ask = intrinsic + 0.60
+        // mid = intrinsic + 0.50
+        const intrinsic = Math.max(0, underlyingPrice - strike);
+        const expectedMid = intrinsic + 0.50;
+        expect(marks.get(id)).toBeCloseTo(expectedMid, 2);
+      }),
+      { numRuns: 50 },
+    );
+  });
+
+  test('multi-leg spread marked via net OCC requote', async () => {
+    await resetDb();
+    // Bull call spread: BUY 200C + SELL 210C, SPY at 205
+    const id = await insertOpenOptionTrade({
+      direction: 'LONG',
+      strategy: 'CDS',
+      entryPrice: 3,
+      quantity: 1,
+      legs: [
+        { strike: 200, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity: 1 },
+        { strike: 210, expiry: '2027-06-20', type: 'CALL', action: 'SELL', quantity: 1 },
+      ],
+    });
+
+    const broker = makeBroker({ SPY: 205 });
+    const marks = await broker.markToMarket();
+    expect(marks.size).toBe(1);
+
+    // BUY 200C: intrinsic=5, mid=5.50, bid=5.40, ask=5.60
+    // SELL 210C: intrinsic=0, mid=0.50, bid=0.40, ask=0.60
+    // Net: bid = 5.40 - 0.60 = 4.80, ask = 5.60 - 0.40 = 5.20
+    // getOptionSpreadQuote normalises: absBid=4.80, absAsk=5.20 → mid = 5.00
+    const mark = marks.get(id)!;
+    expect(mark).toBeCloseTo(5.0, 1);
   });
 });
 
@@ -1017,23 +1118,28 @@ describe('getPositions invariants', () => {
     );
   });
 
-  test('marketValue uses 100x multiplier for options (falls back to entryPrice when no OCC quotes)', async () => {
+  test('marketValue = requoted spread mid * quantity * 100 for options', async () => {
     await fc.assert(
-      fc.asyncProperty(arbEntryPrice, arbQuantity, async (entry, quantity) => {
+      fc.asyncProperty(arbMarkPrice, arbQuantity, async (underlyingPrice, quantity) => {
         await resetDb();
+        const strike = 200;
         await insertOpenOptionTrade({
           direction: 'LONG',
           strategy: 'CALL',
-          entryPrice: entry,
+          entryPrice: 5,
           quantity,
-          legs: [{ strike: 200, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity }],
+          legs: [{ strike, expiry: '2027-06-20', type: 'CALL', action: 'BUY', quantity }],
         });
 
-        // Our stub doesn't serve OCC quotes, so getMarkPrice returns null
-        // and getPositions falls back to entryPrice as currentPrice
-        const broker = makeBroker(100);
+        // getPositions re-quotes via getOptionSpreadQuote → getQuote(OCC)
+        // Our stub returns intrinsic + 0.50 ± 0.10, so mid = intrinsic + 0.50
+        const intrinsic = Math.max(0, underlyingPrice - strike);
+        const expectedMid = intrinsic + 0.50;
+        const expectedMarketValue = roundCents(expectedMid * quantity * 100);
+
+        const broker = makeBroker({ SPY: underlyingPrice });
         const [pos] = await broker.getPositions();
-        expect(pos.marketValue).toBeCloseTo(roundCents(entry * quantity * 100), 1);
+        expect(pos.marketValue).toBeCloseTo(expectedMarketValue, 1);
       }),
       { numRuns: 100 },
     );
