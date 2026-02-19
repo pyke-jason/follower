@@ -260,11 +260,13 @@ export function generateReportFromTrades(params: {
   // Extended metrics (use net PnL from core summary)
   const netPnlOf = (t: typeof sortedClosed[number]) =>
     safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
-  const sortedForMetrics = sortedClosed.map((t) => ({
-    pnl: netPnlOf(t),
-    openedAt: new Date(t.openedAt ?? 0),
-    closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
-  }));
+  const sortedForMetrics = sortedClosed
+    .filter((t) => t.openedAt != null)
+    .map((t) => ({
+      pnl: netPnlOf(t),
+      openedAt: new Date(t.openedAt!),
+      closedAt: t.closedAt ? new Date(t.closedAt) : undefined,
+    }));
   const extendedMetrics = computeExtendedMetrics({
     sortedClosed: sortedForMetrics, equityCurve, totalPnl: core.netPnl ?? core.totalPnl,
     maxDrawdown: core.maxDrawdown, startingEquity,

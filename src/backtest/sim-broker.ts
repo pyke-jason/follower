@@ -12,6 +12,7 @@ import type { Trade } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { formatOccSymbol } from './occ-symbology.js';
+import { parseLegs, parseDirection } from '../db/parse.js';
 
 const log = createLogger('SimBroker');
 
@@ -334,40 +335,18 @@ export class SimBroker implements BrokerService {
       return this.marketData.getQuote(row.symbol, at);
     }
 
-    // Parse stored legs and build minimal OrderParams for getOptionSpreadQuote
-    const storedLegs = (typeof row.legs === 'string' ? JSON.parse(row.legs) : row.legs) as Array<{
-      strike: number; expiry: string; type: string; action: string; quantity?: number;
-    }>;
+    const legs = parseLegs(row.legs);
     const params: OrderParams = {
       symbol: row.symbol,
       strategy: row.strategy,
       direction: 'LONG', // direction doesn't affect spread quote computation
-      legs: storedLegs.map(l => ({
-        strike: l.strike,
-        expiry: l.expiry,
-        type: l.type as 'CALL' | 'PUT' | 'STOCK',
-        action: l.action as 'BUY' | 'SELL',
-        quantity: l.quantity ?? 1,
-      })),
+      legs,
       orderType: 'MARKET',
     };
     return this.getOptionSpreadQuote(params, at);
   }
 
   // ─── Shared internals ────────────────────────────────────
-
-  /** Get mark price (mid) for a trade at a given time. Returns null on data failure. */
-  private async getMarkPrice(
-    row: { symbol: string; strategy: string; legs: unknown },
-    at: Date,
-  ): Promise<number | null> {
-    try {
-      const quote = await this.getTradeQuote(row, at);
-      return (quote.bid + quote.ask) / 2;
-    } catch {
-      return null;
-    }
-  }
 
   /** Build a map of trade ID -> current mark price for all open positions. */
   async markToMarket(at?: Date): Promise<Map<string, number>> {
@@ -376,8 +355,14 @@ export class SimBroker implements BrokerService {
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
 
     for (const t of openTrades) {
-      const mark = await this.getMarkPrice(t, time);
-      if (mark != null) markPrices.set(t.id, mark);
+      try {
+        const quote = await this.getTradeQuote(t, time);
+        markPrices.set(t.id, (quote.bid + quote.ask) / 2);
+      } catch {
+        // markToMarket is advisory (used for MTM snapshots in equity curve).
+        // Missing mark for one trade should not crash the entire backtest.
+        log.warn(`markToMarket: no quote for ${t.id} (${t.symbol} ${t.strategy})`);
+      }
     }
     return markPrices;
   }
@@ -390,7 +375,7 @@ export class SimBroker implements BrokerService {
     const pnl = computeTradePnl({
       entryPrice: safeParseFloat(trade.entryPrice),
       exitPrice,
-      direction: trade.direction as 'LONG' | 'SHORT',
+      direction: parseDirection(trade.direction, trade.id),
       strategy: trade.strategy,
       quantity: trade.quantity ?? 1,
     });
@@ -414,12 +399,12 @@ export class SimBroker implements BrokerService {
 
     let total = 0;
     for (const row of openTrades) {
-      const mark = await this.getMarkPrice(row, time);
-      if (mark == null) continue;
+      const quote = await this.getTradeQuote(row, time);
+      const mark = (quote.bid + quote.ask) / 2;
       total += computeTradePnl({
         entryPrice: safeParseFloat(row.entryPrice),
         exitPrice: mark,
-        direction: row.direction as 'LONG' | 'SHORT',
+        direction: parseDirection(row.direction, row.id),
         strategy: row.strategy,
         quantity: row.quantity ?? 1,
       });
@@ -437,7 +422,7 @@ export class SimBroker implements BrokerService {
 
     for (const t of openTrades) {
       if (t.strategy === 'STOCK') continue;
-      const legs = Array.isArray(t.legs) ? t.legs as { symbol: string; strike: number; expiry: string; type: string; action: string; quantity: number; fillPrice: number }[] : [];
+      const legs = parseLegs(t.legs, t.id);
       if (legs.length === 0) continue;
 
       const hasExpiredLeg = legs.some((leg) => leg.expiry <= currentDate);
@@ -449,14 +434,9 @@ export class SimBroker implements BrokerService {
         if (leg.expiry > currentDate) continue;
         if (leg.type === 'STOCK') continue;
 
-        let underlyingPrice: number;
-        try {
-          const expiryDate = new Date(leg.expiry + 'T20:00:00Z');
-          const quote = await this.marketData.getQuote(t.symbol, expiryDate);
-          underlyingPrice = (quote.bid + quote.ask) / 2;
-        } catch {
-          underlyingPrice = leg.type === 'CALL' ? 0 : Infinity;
-        }
+        const expiryDate = new Date(leg.expiry + 'T20:00:00Z');
+        const quote = await this.marketData.getQuote(t.symbol, expiryDate);
+        const underlyingPrice = (quote.bid + quote.ask) / 2;
 
         const intrinsic = leg.type === 'CALL'
           ? Math.max(0, underlyingPrice - leg.strike)
@@ -485,10 +465,8 @@ export class SimBroker implements BrokerService {
     let totalPnl = 0;
 
     for (const t of openTrades) {
-      const mark = await this.getMarkPrice(t, at);
-      if (mark == null) {
-        throw new Error(`forceCloseAll: no mark for trade ${t.id} (${t.symbol} ${t.strategy})`);
-      }
+      const quote = await this.getTradeQuote(t, at);
+      const mark = (quote.bid + quote.ask) / 2;
       const { pnl } = await this.closePositionAtPrice(t.id, mark, at.toISOString());
       totalPnl += pnl;
     }
@@ -524,10 +502,11 @@ export class SimBroker implements BrokerService {
     for (const row of openTrades) {
       const entryPrice = safeParseFloat(row.entryPrice);
       const quantity = row.quantity ?? 1;
-      const direction = row.direction as 'LONG' | 'SHORT';
+      const direction = parseDirection(row.direction, row.id);
       const strategy = row.strategy;
 
-      const currentPrice = await this.getMarkPrice(row, this.clock.now()) ?? entryPrice;
+      const tradeQuote = await this.getTradeQuote(row, this.clock.now());
+      const currentPrice = (tradeQuote.bid + tradeQuote.ask) / 2;
       const unrealizedPnl = computeTradePnl({
         entryPrice, exitPrice: currentPrice, direction, strategy, quantity,
       });
