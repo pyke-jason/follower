@@ -28,215 +28,36 @@ import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { roundCents } from '../lib/numbers.js';
-import { parseOccSymbol } from './occ-symbology.js';
-import type { Quote, OptionsChain, Bar } from '../broker/types.js';
-import type { BacktestPriceProvider } from './market-data.js';
-import type { QuoteTick } from './databento-tape.js';
+
+import {
+  arbDirection,
+  arbEntryPrice,
+  arbMarkPrice,
+  arbQuantity,
+  arbEquity,
+  stubMarketData,
+  makeDbHelpers,
+  CREATE_TRADES_SQL,
+} from './test-fixtures.js';
 
 // ── DB setup ─────────────────────────────────────────────────────────
 
-const CREATE_TRADES = sql`
-  CREATE TABLE IF NOT EXISTS trades (
-    id TEXT PRIMARY KEY,
-    task_id TEXT,
-    source_message_id TEXT,
-    trader TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    strategy TEXT NOT NULL,
-    legs TEXT NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'OPEN',
-    entry_price TEXT,
-    exit_price TEXT,
-    quantity INTEGER DEFAULT 1,
-    pnl TEXT,
-    opened_at TEXT,
-    closed_at TEXT,
-    close_message_id TEXT,
-    is_backtest INTEGER DEFAULT 0,
-    backtest_run_id TEXT,
-    metadata TEXT DEFAULT '{}',
-    parent_trade_id TEXT,
-    exit_percent REAL,
-    avg_entry_price TEXT,
-    broker_fill_price TEXT,
-    broker_fill_qty INTEGER,
-    broker_commission TEXT,
-    broker_fill_time TEXT,
-    broker_leg_fills TEXT
-  )
-`;
-
 beforeAll(async () => {
-  await db.run(CREATE_TRADES);
+  await db.run(CREATE_TRADES_SQL);
 });
-
-async function resetDb() {
-  await db.run(sql`DELETE FROM trades`);
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
 
 const RUN_ID = 'test-run';
 
-async function insertOpenTrade(params: {
-  symbol?: string;
-  direction: 'LONG' | 'SHORT';
-  strategy: string;
-  entryPrice: number;
-  quantity: number;
-  legs?: unknown[];
-  trader?: string;
-  runId?: string;
-}) {
-  const id = crypto.randomUUID();
-  const symbol = params.symbol ?? 'SPY';
-  await db.insert(schema.trades).values({
-    id,
-    trader: params.trader ?? 'test-trader',
-    symbol,
-    direction: params.direction,
-    strategy: params.strategy,
-    legs: params.legs ?? [
-      { symbol, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: params.quantity },
-    ],
-    status: 'OPEN',
-    entryPrice: String(params.entryPrice),
-    quantity: params.quantity,
-    isBacktest: true,
-    backtestRunId: params.runId ?? RUN_ID,
-    openedAt: new Date().toISOString(),
-  });
-  return id;
-}
-
-async function insertClosedTrade(params: {
-  symbol?: string;
-  direction: 'LONG' | 'SHORT';
-  strategy: string;
-  entryPrice: number;
-  exitPrice: number;
-  quantity: number;
-  pnl: number;
-  runId?: string;
-}) {
-  const id = crypto.randomUUID();
-  const symbol = params.symbol ?? 'SPY';
-  await db.insert(schema.trades).values({
-    id,
-    trader: 'test-trader',
-    symbol,
-    direction: params.direction,
-    strategy: params.strategy,
-    legs: [
-      { symbol, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: params.quantity },
-    ],
-    status: 'CLOSED',
-    entryPrice: String(params.entryPrice),
-    exitPrice: String(params.exitPrice),
-    quantity: params.quantity,
-    pnl: String(params.pnl),
-    isBacktest: true,
-    backtestRunId: params.runId ?? RUN_ID,
-    openedAt: new Date().toISOString(),
-    closedAt: new Date().toISOString(),
-  });
-  return id;
-}
-
-/** Insert an open option trade with specific legs. */
-async function insertOpenOptionTrade(params: {
-  symbol?: string;
-  direction: 'LONG' | 'SHORT';
-  strategy: string;
-  entryPrice: number;
-  quantity: number;
-  legs: Array<{
-    symbol?: string;
-    strike: number;
-    expiry: string;
-    type: 'CALL' | 'PUT' | 'STOCK';
-    action: 'BUY' | 'SELL';
-    quantity: number;
-    fillPrice?: number;
-  }>;
-}) {
-  const id = crypto.randomUUID();
-  const symbol = params.symbol ?? 'SPY';
-  await db.insert(schema.trades).values({
-    id,
-    trader: 'test-trader',
-    symbol,
-    direction: params.direction,
-    strategy: params.strategy,
-    legs: params.legs.map(l => ({ ...l, symbol: l.symbol ?? symbol })),
-    status: 'OPEN',
-    entryPrice: String(params.entryPrice),
-    quantity: params.quantity,
-    isBacktest: true,
-    backtestRunId: RUN_ID,
-    openedAt: new Date().toISOString(),
-  });
-  return id;
-}
-
-/**
- * Market data stub with configurable per-symbol prices.
- * Handles both equity symbols (direct lookup) and OCC option symbols
- * (parses strike/type from the 21-char OCC format and synthesises a
- * quote based on intrinsic value + small time premium).
- */
-function stubMarketData(prices: Record<string, number> | number): BacktestPriceProvider {
-  const priceMap = typeof prices === 'number' ? { SPY: prices } : prices;
-
-  function makeOptionQuote(symbol: string, underlyingPrice: number): Quote {
-    const occ = parseOccSymbol(symbol);
-    if (!occ) throw new Error(`Invalid OCC symbol: ${symbol}`);
-    const intrinsic = occ.type === 'CALL'
-      ? Math.max(0, underlyingPrice - occ.strike)
-      : Math.max(0, occ.strike - underlyingPrice);
-    // Synthetic price: intrinsic + small time value
-    const mid = intrinsic + 0.50;
-    return { symbol, bid: mid - 0.10, ask: mid + 0.10, last: mid, volume: 100, timestamp: new Date().toISOString() };
-  }
-
-  return {
-    getQuote: async (symbol: string) => {
-      // Direct equity lookup first
-      const p = priceMap[symbol];
-      if (p != null) {
-        return { symbol, bid: p - 0.05, ask: p + 0.05, last: p, volume: 1000, timestamp: new Date().toISOString() };
-      }
-      // OCC option symbol — derive from underlying
-      const occ = parseOccSymbol(symbol);
-      if (occ) {
-        const underlying = priceMap[occ.underlying];
-        if (underlying != null) return makeOptionQuote(symbol, underlying);
-      }
-      throw new Error(`No quote for ${symbol}`);
-    },
-    getOptionsChain: async () =>
-      ({ symbol: 'SPY', expiry: '2026-03-20', optionType: 'CALL', strikes: [] }) as OptionsChain,
-    getBars: async () => [] as Bar[],
-    getPriceSnapshot: () => ({}),
-    getTicksInRange: async () => [] as QuoteTick[],
-    prefetch: async () => {},
-  };
-}
+const {
+  resetDb,
+  insertOpenTrade,
+  insertClosedTrade,
+  insertOpenOptionTrade,
+} = makeDbHelpers(db, schema, RUN_ID);
 
 function makeBroker(prices: Record<string, number> | number, startingEquity = 100_000) {
   return new SimBroker(stubMarketData(prices), new SimClock(), RUN_ID, 'midpoint', startingEquity);
 }
-
-// ── Arbitraries ──────────────────────────────────────────────────────
-
-const arbDirection: fc.Arbitrary<'LONG' | 'SHORT'> = fc.constantFrom('LONG', 'SHORT');
-const arbEntryPrice = fc.double({ min: 1, max: 500, noNaN: true, noDefaultInfinity: true });
-const arbMarkPrice = fc.double({ min: 1, max: 500, noNaN: true, noDefaultInfinity: true });
-const arbQuantity = fc.integer({ min: 1, max: 50 });
-const arbEquity = fc.double({ min: 10_000, max: 1_000_000, noNaN: true, noDefaultInfinity: true });
-const arbSymbol = fc.constantFrom('SPY', 'QQQ', 'AAPL', 'TSLA', 'NVDA');
-const arbTrader = fc.constantFrom('alice', 'bob', 'charlie');
 
 // ── 1. getAccountBalance ─────────────────────────────────────────────
 

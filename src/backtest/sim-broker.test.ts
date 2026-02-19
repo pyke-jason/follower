@@ -23,71 +23,22 @@ import { computeModelFillPrice, SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { roundCents } from '../lib/numbers.js';
-import type { Quote, OrderParams, OptionsChain, Bar } from '../broker/types.js';
-import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
-import type { FillModel } from './types.js';
 
-// ── Arbitraries ──────────────────────────────────────────────────────
-
-const arbFillModel: fc.Arbitrary<FillModel> = fc.constantFrom('orats', 'midpoint', 'natural');
-
-/** Bid/ask pair where bid <= ask and both > 0, realistic price range. */
-const arbSpread = fc
-  .record({
-    bid: fc.double({ min: 0.01, max: 500, noNaN: true, noDefaultInfinity: true }),
-    ask: fc.double({ min: 0.01, max: 500, noNaN: true, noDefaultInfinity: true }),
-  })
-  .filter((q) => q.ask >= q.bid);
-
-const arbIsBuy = fc.boolean();
-const arbLegCount = fc.integer({ min: 1, max: 4 });
-
-const arbDirection: fc.Arbitrary<'LONG' | 'SHORT'> = fc.constantFrom('LONG', 'SHORT');
-const arbStrategy = fc.constantFrom('STOCK', 'CALL_SPREAD', 'PUT_SPREAD', 'IRON_CONDOR');
-const arbQuantity = fc.integer({ min: 1, max: 100 });
-const arbPrice = fc.double({ min: 0.01, max: 5000, noNaN: true, noDefaultInfinity: true });
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/** Minimal mock of BacktestPriceProvider that returns a fixed quote. */
-function stubMarketData(quote: Quote): BacktestPriceProvider {
-  return {
-    getQuote: async () => quote,
-    getOptionsChain: async () =>
-      ({ symbol: 'SPY', expiry: '2026-03-20', optionType: 'CALL', strikes: [] }) as OptionsChain,
-    getBars: async () => [] as Bar[],
-    getPriceSnapshot: () => ({}),
-    getTicksInRange: async () => [] as QuoteTick[],
-    prefetch: async () => {},
-  };
-}
-
-function makeQuote(bid: number, ask: number): Quote {
-  return { symbol: 'SPY', bid, ask, last: (bid + ask) / 2, volume: 1000, timestamp: new Date().toISOString() };
-}
-
-function makeStockBuyOrder(overrides: Partial<OrderParams> = {}): OrderParams {
-  return {
-    symbol: 'SPY',
-    strategy: 'STOCK',
-    direction: 'LONG',
-    legs: [{ strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
-    orderType: 'MARKET',
-    ...overrides,
-  };
-}
-
-function makeStockSellOrder(overrides: Partial<OrderParams> = {}): OrderParams {
-  return {
-    symbol: 'SPY',
-    strategy: 'STOCK',
-    direction: 'SHORT',
-    legs: [{ strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'SELL', quantity: 1 }],
-    orderType: 'MARKET',
-    ...overrides,
-  };
-}
+import {
+  arbFillModel,
+  arbSpread,
+  arbIsBuy,
+  arbLegCount,
+  arbDirection,
+  arbStrategy,
+  arbQuantity,
+  arbPrice,
+  makeQuote,
+  makeStockBuyOrder,
+  makeStockSellOrder,
+  stubMarketDataFromQuote,
+} from './test-fixtures.js';
 
 // ── 1. computeModelFillPrice ─────────────────────────────────────────
 
@@ -330,7 +281,7 @@ describe('SimBroker.placeOrder properties', () => {
     fc.assert(
       fc.asyncProperty(arbFillModel, arbSpread, async (model, spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', model);
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', model);
         const result = await broker.placeOrder(makeStockBuyOrder());
         expect(result.status).toBe('FILLED');
         expect(result.filledPrice).toBeGreaterThan(0);
@@ -344,7 +295,7 @@ describe('SimBroker.placeOrder properties', () => {
     fc.assert(
       fc.asyncProperty(arbFillModel, arbSpread, async (model, spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', model);
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', model);
         const result = await broker.placeOrder(makeStockBuyOrder());
         expect(result.filledPrice).toBe(roundCents(result.filledPrice!));
       }),
@@ -356,7 +307,7 @@ describe('SimBroker.placeOrder properties', () => {
     fc.assert(
       fc.asyncProperty(arbFillModel, arbSpread, async (model, spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', model);
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', model);
         const result = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT' }));
         expect(result.status).toBe('REJECTED');
       }),
@@ -368,7 +319,7 @@ describe('SimBroker.placeOrder properties', () => {
       fc.asyncProperty(arbFillModel, arbSpread, async (model, spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
         const limitPrice = spread.ask;
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', model);
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', model);
         const result = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
         expect(result.status).toBe('FILLED');
         expect(result.filledPrice).toBe(roundCents(limitPrice));
@@ -381,7 +332,7 @@ describe('SimBroker.placeOrder properties', () => {
       fc.asyncProperty(arbSpread.filter((s) => s.bid > 0.02), async (spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
         const limitPrice = spread.bid - 0.01;
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
         const result = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
         expect(result.status).toBe('OPEN');
       }),
@@ -392,7 +343,7 @@ describe('SimBroker.placeOrder properties', () => {
     fc.assert(
       fc.asyncProperty(fc.integer({ min: 2, max: 20 }), async (n) => {
         const quote = makeQuote(100, 101);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'midpoint');
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'midpoint');
         const ids = new Set<string>();
         for (let i = 0; i < n; i++) {
           const result = await broker.placeOrder(makeStockBuyOrder());
@@ -411,7 +362,7 @@ describe('SimBroker order lifecycle properties', () => {
     fc.assert(
       fc.asyncProperty(arbSpread.filter((s) => s.bid > 0.02), async (spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
         const limit = spread.bid - 0.01;
         const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice: limit }));
         expect(order.status).toBe('OPEN');
@@ -425,7 +376,7 @@ describe('SimBroker order lifecycle properties', () => {
   test('cancelling unknown orderId returns REJECTED', () => {
     fc.assert(
       fc.asyncProperty(fc.string(), async (randomId) => {
-        const broker = new SimBroker(stubMarketData(makeQuote(100, 101)), new SimClock(), 'test-run', 'orats');
+        const broker = new SimBroker(stubMarketDataFromQuote(makeQuote(100, 101)), new SimClock(), 'test-run', 'orats');
         const result = await broker.cancelOrder(randomId);
         expect(result.status).toBe('REJECTED');
       }),
@@ -439,7 +390,7 @@ describe('SimBroker order lifecycle properties', () => {
         fc.double({ min: 0.01, max: 0.99, noNaN: true, noDefaultInfinity: true }),
         async (spread, offset) => {
           const quote = makeQuote(spread.bid, spread.ask);
-          const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
           const limit = spread.bid - 1;
           const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice: limit }));
           expect(order.status).toBe('OPEN');
@@ -458,7 +409,7 @@ describe('SimBroker order lifecycle properties', () => {
         fc.string(),
         fc.double({ min: 1, max: 100, noNaN: true, noDefaultInfinity: true }),
         async (randomId, price) => {
-          const broker = new SimBroker(stubMarketData(makeQuote(100, 101)), new SimClock(), 'test-run', 'orats');
+          const broker = new SimBroker(stubMarketDataFromQuote(makeQuote(100, 101)), new SimClock(), 'test-run', 'orats');
           const result = await broker.modifyOrder(randomId, price);
           expect(result.status).toBe('REJECTED');
         },
@@ -477,7 +428,7 @@ describe('processQuoteTick properties', () => {
         arbSpread,
         async (orderSpread, tickSpread) => {
           const quote = makeQuote(orderSpread.bid, orderSpread.ask);
-          const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
           const limitPrice = orderSpread.bid - 0.01;
           const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
           if (order.status !== 'OPEN') return;
@@ -504,7 +455,7 @@ describe('processQuoteTick properties', () => {
         arbSpread,
         async (orderSpread, tickSpread) => {
           const quote = makeQuote(orderSpread.bid, orderSpread.ask);
-          const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
           const limitPrice = orderSpread.ask + 0.01;
           const order = await broker.placeOrder(makeStockSellOrder({ orderType: 'LIMIT', limitPrice }));
           if (order.status !== 'OPEN') return;
@@ -531,7 +482,7 @@ describe('processQuoteTick properties', () => {
         fc.array(arbSpread, { minLength: 2, maxLength: 20 }),
         async (orderSpread, ticks) => {
           const quote = makeQuote(orderSpread.bid, orderSpread.ask);
-          const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
           const limitPrice = orderSpread.bid - 0.01;
           const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
           if (order.status !== 'OPEN') return;
@@ -552,7 +503,7 @@ describe('processQuoteTick properties', () => {
     fc.assert(
       fc.asyncProperty(arbSpread.filter((s) => s.bid > 5), async (spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
         const limitPrice = spread.bid - 1;
         const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
         if (order.status !== 'OPEN') return;
@@ -569,7 +520,7 @@ describe('processQuoteTick properties', () => {
     fc.assert(
       fc.asyncProperty(arbSpread.filter((s) => s.bid > 0.02), async (spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
-        const broker = new SimBroker(stubMarketData(quote), new SimClock(), 'test-run', 'orats');
+        const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
         const limitPrice = spread.bid - 0.01;
         await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
 
