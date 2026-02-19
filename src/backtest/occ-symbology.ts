@@ -99,11 +99,12 @@ export function buildOccSymbols(params: {
   priceHigh: number;
 }): string[] {
   const interval = strikeInterval((params.priceLow + params.priceHigh) / 2);
-  const start = Math.floor(params.priceLow / interval) * interval;
-  const end = Math.ceil(params.priceHigh / interval) * interval;
+  const startStep = Math.floor(params.priceLow / interval);
+  const endStep = Math.ceil(params.priceHigh / interval);
 
   const symbols: string[] = [];
-  for (let strike = start; strike <= end; strike += interval) {
+  for (let step = startStep; step <= endStep; step++) {
+    const strike = step * interval;
     if (strike <= 0) continue;
     symbols.push(formatOccSymbol({
       underlying: params.underlying,

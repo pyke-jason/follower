@@ -184,8 +184,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       let high = -Infinity;
       let low = Infinity;
       for (const t of dayTicks) {
-        if (t.ask > high) high = t.ask;
-        if (t.bid < low) low = t.bid;
+        const mid = (t.bid + t.ask) / 2;
+        if (mid > high) high = mid;
+        if (mid < low) low = mid;
       }
 
       bars.push({
