@@ -43,10 +43,10 @@ function computeExtendedMetrics(params: {
     ? roundCents((meanDailyPnl / dailyStdDev) * Math.sqrt(252))
     : 0;
 
-  // Sortino: same but downside deviation only
-  const negativePnls = dailyPnls.filter((v) => v < 0);
-  const downsideVariance = negativePnls.length > 1
-    ? negativePnls.reduce((s, v) => s + v ** 2, 0) / negativePnls.length
+  // Sortino: same but downside deviation only (sum negative squared over ALL observations)
+  const hasNegative = dailyPnls.some((v) => v < 0);
+  const downsideVariance = hasNegative && dailyPnls.length > 1
+    ? dailyPnls.reduce((s, v) => s + (v < 0 ? v ** 2 : 0), 0) / dailyPnls.length
     : 0;
   const downsideDev = Math.sqrt(downsideVariance);
   const sortinoRatio = downsideDev > 0

@@ -44,6 +44,20 @@ function getOratsFillPct(legCount: number): number {
   return ORATS_FILL_PCT[Math.min(Math.max(legCount, 1), 4)] ?? 0.75;
 }
 
+/** Direction of an order from the first leg's action — single derivation point. */
+function isBuyOrder(params: OrderParams): boolean {
+  return params.legs[0]?.action === 'BUY';
+}
+
+/**
+ * LIMIT order fill check — single source of truth.
+ * BUY fills when limit >= ask (buyer lifts the ask).
+ * SELL fills when limit <= bid (seller hits the bid).
+ */
+function shouldFillLimit(isBuy: boolean, limitPrice: number, bid: number, ask: number): boolean {
+  return isBuy ? limitPrice >= ask : limitPrice <= bid;
+}
+
 export type FillPriceParams = {
   fillModel: FillModel;
   bid: number;
@@ -179,6 +193,29 @@ export class SimBroker implements BrokerService {
     return params.legs.some(l => l.type !== 'STOCK');
   }
 
+  /**
+   * Fill a working order: update status, remove from map, emit event.
+   * Shared by processQuoteTick and advanceTo to eliminate duplicated fill logic.
+   */
+  private fillWorkingOrder(orderId: string, entry: WorkingEntry, symbol: string, timestamp: Date): SimFillEvent {
+    const roundedFill = roundCents(entry.currentLimitPrice);
+    entry.status = 'FILLED';
+    entry.filledPrice = roundedFill;
+    this.workingOrders.delete(orderId);
+
+    const side = isBuyOrder(entry.params) ? 'BUY' : 'SELL';
+    log.debug(`Fill: ${orderId} ${side} ${symbol} @ $${roundedFill}`);
+
+    return {
+      orderId,
+      symbol,
+      side,
+      price: roundedFill,
+      quantity: entry.params.legs[0]?.quantity ?? 1,
+      timestamp,
+    };
+  }
+
   async placeOrder(params: OrderParams): Promise<OrderResult> {
     const orderId = `SIM-${++this.orderCounter}`;
     const legCount = params.legs.length || 1;
@@ -204,12 +241,7 @@ export class SimBroker implements BrokerService {
         return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
       }
 
-      const isBuy = params.legs[0]?.action === 'BUY';
-      const withinSpread = isBuy
-        ? params.limitPrice >= quote.bid
-        : params.limitPrice <= quote.ask;
-
-      if (withinSpread) {
+      if (shouldFillLimit(isBuyOrder(params), params.limitPrice, quote.bid, quote.ask)) {
         const filledPrice = roundCents(params.limitPrice);
         log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
         return { orderId, status: 'FILLED', filledPrice, fillTimestamp: this.clock.now().toISOString() };
@@ -236,7 +268,13 @@ export class SimBroker implements BrokerService {
       log.debug(`  MARKET rejected: no market data for ${params.symbol}`);
       return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
     }
-    const fillPrice = this.computeFillPrice(params, quote);
+    const fillPrice = computeModelFillPrice({
+      fillModel: this.fillModel,
+      bid: quote.bid,
+      ask: quote.ask,
+      isBuy: isBuyOrder(params),
+      legCount: params.legs.length || 1,
+    });
     const roundedFill = roundCents(fillPrice);
 
     log.debug(`  MARKET filled @ $${roundedFill} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)} model=${this.fillModel}${isOptions ? ' [options]' : ''})`);
@@ -443,13 +481,16 @@ export class SimBroker implements BrokerService {
 
   /** Force-close all open positions at current mark prices. */
   async forceCloseAll(at: Date): Promise<number> {
-    const markPrices = await this.markToMarket(at);
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
     let totalPnl = 0;
 
     for (const t of openTrades) {
-      const mark = markPrices.get(t.id) ?? safeParseFloat(t.entryPrice);
-      const { pnl } = await this.closePositionAtPrice(t.id, mark, at.toISOString());
+      const mark = await this.getMarkPrice(t, at);
+      if (mark == null) {
+        log.warn(`forceCloseAll: no mark for ${t.id} (${t.symbol} ${t.strategy}), using entry price`);
+      }
+      const exitPrice = mark ?? safeParseFloat(t.entryPrice);
+      const { pnl } = await this.closePositionAtPrice(t.id, exitPrice, at.toISOString());
       totalPnl += pnl;
     }
 
@@ -534,8 +575,7 @@ export class SimBroker implements BrokerService {
 
   /**
    * Process a quote tick against all working orders for the given symbol.
-   * Fills BUY limit orders when limitPrice >= ask, SELL when limitPrice <= bid.
-   * Fills at the limit price (standard LIMIT order behavior).
+   * Uses shouldFillLimit (BUY: limit >= ask, SELL: limit <= bid).
    */
   processQuoteTick(tick: QuoteTick): SimFillEvent[] {
     const fills: SimFillEvent[] = [];
@@ -543,33 +583,9 @@ export class SimBroker implements BrokerService {
     for (const [orderId, entry] of this.workingOrders) {
       if (entry.status !== 'OPEN') continue;
       if (entry.params.symbol !== tick.symbol) continue;
+      if (!shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, tick.bid, tick.ask)) continue;
 
-      const isBuy = entry.params.legs[0]?.action === 'BUY';
-
-      // BUY fills when limit >= ask; SELL fills when limit <= bid
-      const shouldFill = isBuy
-        ? entry.currentLimitPrice >= tick.ask
-        : entry.currentLimitPrice <= tick.bid;
-
-      if (!shouldFill) continue;
-
-      // Fill at limit price (standard LIMIT order behavior)
-      const roundedFill = roundCents(entry.currentLimitPrice);
-      entry.status = 'FILLED';
-      entry.filledPrice = roundedFill;
-      this.workingOrders.delete(orderId);
-
-      const side = isBuy ? 'BUY' : 'SELL';
-      log.debug(`Tick fill: ${orderId} ${side} ${tick.symbol} @ $${roundedFill} (bid=${tick.bid} ask=${tick.ask})`);
-
-      fills.push({
-        orderId,
-        symbol: tick.symbol,
-        side,
-        price: roundedFill,
-        quantity: entry.params.legs[0]?.quantity ?? 1,
-        timestamp: tick.timestamp,
-      });
+      fills.push(this.fillWorkingOrder(orderId, entry, tick.symbol, tick.timestamp));
     }
 
     return fills;
@@ -629,28 +645,8 @@ export class SimBroker implements BrokerService {
 
       try {
         const quote = await this.getOptionSpreadQuote(entry.params, time);
-        const isBuy = entry.params.legs[0]?.action === 'BUY';
-        const shouldFill = isBuy
-          ? entry.currentLimitPrice >= quote.bid
-          : entry.currentLimitPrice <= quote.ask;
-
-        if (shouldFill) {
-          const roundedFill = roundCents(entry.currentLimitPrice);
-          entry.status = 'FILLED';
-          entry.filledPrice = roundedFill;
-          this.workingOrders.delete(orderId);
-
-          const side = isBuy ? 'BUY' : 'SELL';
-          log.debug(`Option fill: ${orderId} ${side} ${entry.params.symbol} @ $${roundedFill} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)})`);
-
-          allFills.push({
-            orderId,
-            symbol: entry.params.symbol,
-            side,
-            price: roundedFill,
-            quantity: entry.params.legs[0]?.quantity ?? 1,
-            timestamp: time,
-          });
+        if (shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, quote.bid, quote.ask)) {
+          allFills.push(this.fillWorkingOrder(orderId, entry, entry.params.symbol, time));
         }
       } catch {
         // No option market data at this time — leave order working
@@ -661,13 +657,4 @@ export class SimBroker implements BrokerService {
     return allFills;
   }
 
-  private computeFillPrice(params: OrderParams, quote: Quote): number {
-    const isBuy = params.legs[0]?.action === 'BUY';
-    const legCount = params.legs.length || 1;
-    const price = computeModelFillPrice({ fillModel: this.fillModel, bid: quote.bid, ask: quote.ask, isBuy, legCount });
-
-    // Quote is already normalized to positive bid/ask by getOptionSpreadQuote,
-    // but guard with abs for safety
-    return Math.abs(price);
-  }
 }

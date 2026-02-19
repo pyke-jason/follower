@@ -327,6 +327,37 @@ describe('SimBroker.placeOrder properties', () => {
     );
   });
 
+  test('LIMIT BUY between bid and ask queues as OPEN (does not fill at midspread)', () => {
+    fc.assert(
+      fc.asyncProperty(
+        arbSpread.filter((s) => s.ask - s.bid > 0.02),
+        async (spread) => {
+          const quote = makeQuote(spread.bid, spread.ask);
+          // Limit at midpoint — above bid but below ask
+          const limitPrice = (spread.bid + spread.ask) / 2;
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
+          const result = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
+          expect(result.status).toBe('OPEN');
+        },
+      ),
+    );
+  });
+
+  test('LIMIT SELL between bid and ask queues as OPEN (does not fill at midspread)', () => {
+    fc.assert(
+      fc.asyncProperty(
+        arbSpread.filter((s) => s.ask - s.bid > 0.02),
+        async (spread) => {
+          const quote = makeQuote(spread.bid, spread.ask);
+          const limitPrice = (spread.bid + spread.ask) / 2;
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats');
+          const result = await broker.placeOrder(makeStockSellOrder({ orderType: 'LIMIT', limitPrice }));
+          expect(result.status).toBe('OPEN');
+        },
+      ),
+    );
+  });
+
   test('LIMIT BUY below bid queues as OPEN', () => {
     fc.assert(
       fc.asyncProperty(arbSpread.filter((s) => s.bid > 0.02), async (spread) => {
