@@ -135,14 +135,15 @@ export function computeMarginRequirement(params: MarginParams): MarginRequiremen
     // ── Vertical spreads ─────────────────────────────
     case 'CDS':
     case 'PDS': {
-      const width = getSpreadWidth(legs);
+      const width = getSpreadWidth(legs); 
       if (direction === 'LONG') {
         const debit = entryPrice * quantity * contractMult;
         return { initial: debit, maintenance: 0, cashEffect: -debit };
       }
       const credit = entryPrice * quantity * contractMult;
-      const maxLoss = width * quantity * contractMult;
-      return { initial: maxLoss, maintenance: maxLoss, cashEffect: credit };
+      // Reg-T net margin: spread width minus credit received (the actual capital at risk)
+      const netMargin = Math.max(0, (width - entryPrice) * quantity * contractMult);
+      return { initial: netMargin, maintenance: netMargin, cashEffect: credit };
     }
 
     default: {

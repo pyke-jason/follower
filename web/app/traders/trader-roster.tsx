@@ -43,6 +43,7 @@ import {
   toggleEnabled,
   setStrategies,
   setNotes,
+  setRiskPercent,
   bulkAdd,
   bulkRemove,
   bulkToggleStrategy,
@@ -80,7 +81,8 @@ type OptAction =
       names: string[];
       strategy: string;
       enable: boolean;
-    };
+    }
+  | { type: 'riskPercent'; name: string; riskPercent: number | null };
 
 export function TraderRoster({
   traders,
@@ -145,6 +147,21 @@ export function TraderRoster({
               : current.filter((s) => s !== action.strategy);
             return { ...t, strategies };
           });
+        case 'riskPercent':
+          return state.map((t) =>
+            t.name === action.name
+              ? {
+                  ...t,
+                  positionSizingConfig: action.riskPercent != null
+                    ? {
+                        strategy: 'atr' as const,
+                        riskPercent: action.riskPercent,
+                        atrMultiplier: t.positionSizingConfig?.atrMultiplier ?? 2.0,
+                      }
+                    : null,
+                }
+              : t,
+          );
       }
     },
   );
@@ -254,6 +271,16 @@ export function TraderRoster({
       startTransition(async () => {
         addOptimistic({ type: 'strategies', name, strategies });
         await setStrategies(name, strategies);
+      });
+    },
+    [addOptimistic, startTransition],
+  );
+
+  const doRiskPercentChange = useCallback(
+    (name: string, riskPercent: number | null) => {
+      startTransition(async () => {
+        addOptimistic({ type: 'riskPercent', name, riskPercent });
+        await setRiskPercent(name, riskPercent);
       });
     },
     [addOptimistic, startTransition],
@@ -447,6 +474,7 @@ export function TraderRoster({
                 <TableHead className="w-[140px]">Name</TableHead>
                 <TableHead className="w-[70px]">Active</TableHead>
                 <TableHead>Strategies</TableHead>
+                <TableHead className="w-[70px]">Risk %</TableHead>
                 <TableHead>Notes</TableHead>
                 <TableHead className="w-[44px]" />
               </TableRow>
@@ -461,6 +489,7 @@ export function TraderRoster({
                   onToggle={doToggle}
                   onRemove={doRemove}
                   onStrategiesChange={doStrategiesChange}
+                  onRiskPercentChange={doRiskPercentChange}
                 />
               ))}
             </TableBody>
@@ -480,6 +509,7 @@ const TraderRow = memo(function TraderRow({
   onToggle,
   onRemove,
   onStrategiesChange,
+  onRiskPercentChange,
 }: {
   trader: TrackedTrader;
   isSelected: boolean;
@@ -487,6 +517,7 @@ const TraderRow = memo(function TraderRow({
   onToggle: (name: string, enabled: boolean) => void;
   onRemove: (name: string) => void;
   onStrategiesChange: (name: string, strategies: string[]) => void;
+  onRiskPercentChange: (name: string, riskPercent: number | null) => void;
 }) {
   const strategies = (trader.strategies as string[]) || [];
 
@@ -551,6 +582,13 @@ const TraderRow = memo(function TraderRow({
         </ToggleGroup>
       </TableCell>
       <TableCell>
+        <RiskPercentCell
+          name={trader.name}
+          riskPercent={trader.positionSizingConfig?.riskPercent ?? null}
+          onChange={onRiskPercentChange}
+        />
+      </TableCell>
+      <TableCell>
         <NotesCell name={trader.name} notes={trader.notes} />
       </TableCell>
       <TableCell>
@@ -567,6 +605,64 @@ const TraderRow = memo(function TraderRow({
     </TableRow>
   );
 });
+
+/* ── Inline risk % cell ─────────────────────────────── */
+
+const DEFAULT_RISK_PCT = 5.0; // matches buildPositionSizer default of 0.05
+
+function RiskPercentCell({
+  name,
+  riskPercent,
+  onChange,
+}: {
+  name: string;
+  riskPercent: number | null;
+  onChange: (name: string, riskPercent: number | null) => void;
+}) {
+  const displayVal = riskPercent != null ? (riskPercent * 100).toFixed(1) : '';
+  const [value, setValue] = useState(displayVal);
+  const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    setValue(riskPercent != null ? (riskPercent * 100).toFixed(1) : '');
+  }, [riskPercent]);
+
+  function save() {
+    const trimmed = value.trim();
+    if (trimmed === displayVal) return;
+    if (trimmed === '') {
+      onChange(name, null);
+    } else {
+      const parsed = parseFloat(trimmed);
+      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
+        onChange(name, parsed / 100);
+      } else {
+        setValue(displayVal); // revert invalid input
+      }
+    }
+  }
+
+  return (
+    <input
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+        if (e.key === 'Escape') {
+          setValue(displayVal);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      autoComplete="off"
+      placeholder={String(DEFAULT_RISK_PCT)}
+      className="text-xs bg-transparent text-muted-foreground outline-none w-full max-w-[50px] border-b border-transparent focus:border-ring focus:text-foreground placeholder:text-muted-foreground/40 transition-colors font-mono tabular-nums text-right"
+    />
+  );
+}
 
 /* ── Inline notes cell ───────────────────────────────── */
 

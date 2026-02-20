@@ -12,6 +12,7 @@
 
 import { describe, test, expect, vi, beforeAll } from 'vitest';
 import fc from 'fast-check';
+import { sql } from 'drizzle-orm';
 
 // In-memory SQLite — placeOrder's buying power gate needs a real DB.
 vi.mock('../db/client.js', async () => {
@@ -479,7 +480,8 @@ describe('processQuoteTick properties', () => {
 
           if (limitPrice >= tickSpread.ask) {
             expect(fills.length).toBe(1);
-            expect(fills[0].price).toBe(roundCents(limitPrice));
+            // Price improvement: fill at min(limit, ask)
+            expect(fills[0].price).toBe(roundCents(Math.min(limitPrice, tickSpread.ask)));
           } else {
             expect(fills.length).toBe(0);
           }
@@ -506,7 +508,8 @@ describe('processQuoteTick properties', () => {
 
           if (limitPrice <= tickSpread.bid) {
             expect(fills.length).toBe(1);
-            expect(fills[0].price).toBe(roundCents(limitPrice));
+            // Price improvement: fill at max(limit, bid)
+            expect(fills[0].price).toBe(roundCents(Math.max(limitPrice, tickSpread.bid)));
           } else {
             expect(fills.length).toBe(0);
           }
@@ -540,7 +543,7 @@ describe('processQuoteTick properties', () => {
     );
   });
 
-  test('filled price always equals the limit price (not tick price)', () => {
+  test('filled price gets price improvement (min of limit and ask for buys)', () => {
     fc.assert(
       fc.asyncProperty(arbSpread.filter((s) => s.bid > 5), async (spread) => {
         const quote = makeQuote(spread.bid, spread.ask);
@@ -552,7 +555,8 @@ describe('processQuoteTick properties', () => {
         const tick: QuoteTick = { symbol: 'SPY', bid: 0.01, ask: 0.01, timestamp: new Date() };
         const fills = broker.processQuoteTick(tick);
         expect(fills.length).toBe(1);
-        expect(fills[0].price).toBe(roundCents(limitPrice));
+        // Price improvement: fill at min(limit, ask) — here ask=0.01 < limit
+        expect(fills[0].price).toBe(roundCents(Math.min(limitPrice, 0.01)));
       }),
     );
   });
@@ -569,6 +573,42 @@ describe('processQuoteTick properties', () => {
         const fills = broker.processQuoteTick(tick);
         expect(fills.length).toBe(0);
       }),
+    );
+  });
+});
+
+// ── 6. Working order margin encumbrance ──────────────────────────────
+
+describe('working order margin encumbrance', () => {
+  test('placing a limit order reduces available buying power by its margin', () => {
+    fc.assert(
+      fc.asyncProperty(
+        arbSpread.filter((s) => s.ask - s.bid > 0.10 && s.ask < 200),
+        async (spread) => {
+          await db.run(sql`DELETE FROM trades`);
+
+          const quote = makeQuote(spread.bid, spread.ask);
+          const runId = `enc-${Date.now()}-${Math.random()}`;
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), runId, 'orats');
+
+          const bpBefore = (await broker.getAccountBalance()).buyingPower;
+
+          // Place a BUY LIMIT below the ask — queues without filling
+          const limitPrice = roundCents(spread.bid + (spread.ask - spread.bid) * 0.3);
+          const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
+          if (order.status !== 'OPEN') return; // skip if it filled immediately
+
+          const bpAfter = (await broker.getAccountBalance()).buyingPower;
+
+          // STOCK LONG margin = 50% of entry price × qty × 1 (contractMult=1)
+          // Working order encumbers initial margin at the limit price.
+          // Allow $0.02 tolerance for cumulative roundCents in getAccountBalance.
+          const expectedEncumbrance = 0.50 * limitPrice;
+          const actualEncumbrance = bpBefore - bpAfter;
+          expect(Math.abs(actualEncumbrance - expectedEncumbrance)).toBeLessThan(0.02);
+        },
+      ),
+      { numRuns: 200 },
     );
   });
 });

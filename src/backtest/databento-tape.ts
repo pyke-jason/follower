@@ -34,7 +34,7 @@ async function* readLines(reader: Readable): AsyncGenerator<string> {
 }
 
 /** Hard limit on bytes read from a single Databento streaming response. */
-const MAX_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 /** Per-symbol-day fetch metadata for downstream error enrichment. */
 type FetchMeta = {

@@ -192,7 +192,22 @@ export function makeTimeAwareStub(config: TimeAwareStubConfig): BacktestPricePro
     getTicksInRange: async (symbol: string, from: Date, to: Date) => {
       const n = config.ticksPerRange ?? 0;
       if (n === 0) return [] as QuoteTick[];
-      const priceFn = config.underlyings[symbol];
+
+      // Direct underlying lookup
+      let priceFn = config.underlyings[symbol];
+      let hs = eqHS;
+
+      // OCC symbols: derive timestamps from the underlying's price function.
+      // advanceTo only uses OCC tick timestamps (actual prices come from
+      // getOptionSpreadQuote), so the tick bid/ask values don't matter.
+      if (!priceFn) {
+        const occ = parseOccSymbol(symbol);
+        if (occ) {
+          priceFn = config.underlyings[occ.underlying];
+          hs = opHS;
+        }
+      }
+
       if (!priceFn) return [] as QuoteTick[];
       const fromMs = from.getTime();
       const toMs = to.getTime();
@@ -201,7 +216,7 @@ export function makeTimeAwareStub(config: TimeAwareStubConfig): BacktestPricePro
       for (let i = 0; i < n; i++) {
         const t = new Date(fromMs + Math.round(step * i));
         const p = priceFn(t);
-        ticks.push({ symbol, bid: p - eqHS, ask: p + eqHS, timestamp: t });
+        ticks.push({ symbol, bid: p - hs, ask: p + hs, timestamp: t });
       }
       return ticks;
     },
@@ -214,6 +229,29 @@ export function makeTimeAwareStub(config: TimeAwareStubConfig): BacktestPricePro
 /** Constant price regardless of time. */
 export function constantPrice(price: number): PriceFn {
   return () => price;
+}
+
+/** V-shaped dip: starts at startPrice, dips to dipPrice at midpoint, recovers to startPrice. */
+export function vShapedPrice(
+  startPrice: number,
+  dipPrice: number,
+  startTime: Date,
+  endTime: Date,
+): PriceFn {
+  const startMs = startTime.getTime();
+  const midMs = (startTime.getTime() + endTime.getTime()) / 2;
+  const endMs = endTime.getTime();
+  return (at: Date) => {
+    const ms = at.getTime();
+    if (ms <= midMs) {
+      // First half: drop from startPrice to dipPrice
+      const t = (ms - startMs) / (midMs - startMs);
+      return startPrice + (dipPrice - startPrice) * t;
+    }
+    // Second half: recover from dipPrice to startPrice
+    const t = (ms - midMs) / (endMs - midMs);
+    return dipPrice + (startPrice - dipPrice) * t;
+  };
 }
 
 /** Linear interpolation from startPrice at startTime to endPrice at endTime. */

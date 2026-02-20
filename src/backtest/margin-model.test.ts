@@ -188,8 +188,10 @@ describe('computeMarginRequirement CALL/PUT', () => {
           strategy: 'CALL', direction: 'SHORT', entryPrice: premium,
           quantity: qty, legs: [makeLeg({ type: 'CALL', strike })], underlyingPrice: underlying,
         });
-        // Naked margin is always >= 10% of underlying + premium (per contract × qty × 100)
-        const minMargin = (0.10 * underlying + premium) * qty * 100;
+        // Naked margin is always >= max(FINRA floor, 10% rule)
+        const finraFloor = (0.50 + premium) * qty * 100;
+        const rule10 = (0.10 * underlying + premium) * qty * 100;
+        const minMargin = Math.max(finraFloor, rule10);
         expect(result.initial).toBeGreaterThanOrEqual(minMargin - 0.01);
         expect(result.maintenance).toBeCloseTo(result.initial, 4);
         expect(result.cashEffect).toBeCloseTo(premium * qty * 100, 2);
@@ -204,8 +206,10 @@ describe('computeMarginRequirement CALL/PUT', () => {
           strategy: 'PUT', direction: 'SHORT', entryPrice: premium,
           quantity: qty, legs: [makeLeg({ type: 'PUT', strike })], underlyingPrice: underlying,
         });
-        // Naked put: min is max(..., 10% strike + premium)
-        const minMargin = (0.10 * strike + premium) * qty * 100;
+        // Naked put: min is max(FINRA floor, 10% strike + premium)
+        const finraFloor = (0.50 + premium) * qty * 100;
+        const rule10 = (0.10 * strike + premium) * qty * 100;
+        const minMargin = Math.max(finraFloor, rule10);
         expect(result.initial).toBeGreaterThanOrEqual(minMargin - 0.01);
         expect(result.maintenance).toBeCloseTo(result.initial, 4);
         expect(result.cashEffect).toBeCloseTo(premium * qty * 100, 2);
@@ -236,7 +240,7 @@ describe('computeMarginRequirement CDS/PDS (vertical spreads)', () => {
     );
   });
 
-  test('SHORT credit spread: initial = max loss = spread width × qty × 100', () => {
+  test('SHORT credit spread: initial = net margin = (width − premium) × qty × 100', () => {
     fc.assert(
       fc.property(
         arbPremium, arbQuantity, arbStrike, arbStrike, arbUnderlyingPrice,
@@ -248,7 +252,8 @@ describe('computeMarginRequirement CDS/PDS (vertical spreads)', () => {
             strategy, direction: 'SHORT', entryPrice: premium,
             quantity: qty, legs, underlyingPrice: underlying,
           });
-          expect(result.initial).toBeCloseTo(width * qty * 100, 2);
+          const expectedMargin = Math.max(0, (width - premium)) * qty * 100;
+          expect(result.initial).toBeCloseTo(expectedMargin, 2);
           expect(result.maintenance).toBeCloseTo(result.initial, 4);
           expect(result.cashEffect).toBeCloseTo(premium * qty * 100, 2);
         },
@@ -256,9 +261,7 @@ describe('computeMarginRequirement CDS/PDS (vertical spreads)', () => {
     );
   });
 
-  test('credit spread margin >= net debit (risk can never exceed width)', () => {
-    // For a $5-wide spread sold for $2 credit, initial margin = $500, not $200.
-    // This ensures we can cover max loss.
+  test('credit spread margin = net risk (width − credit), floored at 0', () => {
     fc.assert(
       fc.property(arbPremium, arbQuantity, (premium, qty) => {
         const legs = makeSpreadLegs(100, 105, 'CALL');
@@ -266,7 +269,7 @@ describe('computeMarginRequirement CDS/PDS (vertical spreads)', () => {
           strategy: 'CDS', direction: 'SHORT', entryPrice: premium,
           quantity: qty, legs, underlyingPrice: 100,
         });
-        expect(result.initial).toBeCloseTo(5 * qty * 100, 2);
+        expect(result.initial).toBeCloseTo(Math.max(0, (5 - premium)) * qty * 100, 2);
       }),
     );
   });
@@ -387,13 +390,13 @@ describe('computeMarginRequirement concrete examples', () => {
     expect(result.cashEffect).toBeCloseTo(-45000, 0);
   });
 
-  test('sell 5-wide CDS for $2 credit (1 contract): margin = $500, cash = +$200', () => {
+  test('sell 5-wide CDS for $2 credit (1 contract): margin = $300, cash = +$200', () => {
     const result = computeMarginRequirement({
       strategy: 'CDS', direction: 'SHORT', entryPrice: 2,
       quantity: 1, legs: makeSpreadLegs(200, 205, 'CALL'), underlyingPrice: 200,
     });
-    expect(result.initial).toBeCloseTo(500, 0);
-    expect(result.maintenance).toBeCloseTo(500, 0);
+    expect(result.initial).toBeCloseTo(300, 0);
+    expect(result.maintenance).toBeCloseTo(300, 0);
     expect(result.cashEffect).toBeCloseTo(200, 0);
   });
 

@@ -33,9 +33,12 @@ export interface BacktestPriceProvider extends MarketDataProvider {
 export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   /** "SYMBOL:YYYY-MM-DD" -> sorted ticks (in-memory cache on top of disk cache) */
   private dayTicks = new Map<string, QuoteTick[]>();
-  /** "SYMBOL:YYYY-MM-DD" -> all option ticks from parent symbology fetch */
   /** symbol -> most recent mid price (for getPriceSnapshot) */
   private latestQuotes = new Map<string, number>();
+  /** "SYMBOL:YYYY-MM-DD" -> aggregated daily bar (immutable past days only) */
+  private barCache = new Map<string, Bar>();
+  /** "SYMBOL:EXPIRY:TYPE:TIMESTAMP_MS" -> assembled chain snapshot */
+  private chainCache = new Map<string, OptionsChain>();
 
   constructor(
     private apiKey: string,
@@ -199,6 +202,17 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       const d = new Date(at.getTime() - offset * 24 * 60 * 60 * 1000);
       const dayKey = toDateKey(d);
 
+      // Past (completed) days: use bar cache to skip tick re-aggregation
+      if (dayKey < atDay) {
+        const barCacheKey = `${symbol}:${dayKey}`;
+        const cachedBar = this.barCache.get(barCacheKey);
+        if (cachedBar) {
+          bars.push(cachedBar);
+          daysLoaded++;
+          continue;
+        }
+      }
+
       let ticks: QuoteTick[];
       try {
         ticks = await this.loadDay(symbol, d);
@@ -223,31 +237,41 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
       if (dayTicks.length === 0) continue;
 
-      // Aggregate minute ticks into one daily bar
-      const firstMid = (dayTicks[0].bid + dayTicks[0].ask) / 2;
-      const lastMid = (dayTicks[dayTicks.length - 1].bid + dayTicks[dayTicks.length - 1].ask) / 2;
-      let high = -Infinity;
-      let low = Infinity;
-      for (const t of dayTicks) {
-        const mid = (t.bid + t.ask) / 2;
-        if (mid > high) high = mid;
-        if (mid < low) low = mid;
-      }
+      // Aggregate minute ticks into one daily bar.
+      // Use ask for highs and bid for lows so OHLCV-sourced ticks (bid=low, ask=high)
+      // produce correct daily ranges instead of compressed mid-price ranges.
+      const bar = this.aggregateBar(dayTicks);
+      bars.push(bar);
 
-      bars.push({
-        timestamp: dayTicks[0].timestamp.toISOString(),
-        open: firstMid,
-        high,
-        low,
-        close: lastMid,
-        volume: dayTicks.length * 1000, // approximate
-      });
+      // Cache completed past days (immutable — won't change)
+      if (dayKey < atDay) {
+        this.barCache.set(`${symbol}:${dayKey}`, bar);
+      }
     }
 
     log.debug(`${symbol} bars: ${daysLoaded} days loaded (${totalTicks.toLocaleString()} ticks) → ${bars.length} bars`);
 
     // Return last barsBack bars
     return bars.slice(-barsBack);
+  }
+
+  private aggregateBar(dayTicks: QuoteTick[]): Bar {
+    const firstMid = (dayTicks[0].bid + dayTicks[0].ask) / 2;
+    const lastMid = (dayTicks[dayTicks.length - 1].bid + dayTicks[dayTicks.length - 1].ask) / 2;
+    let high = -Infinity;
+    let low = Infinity;
+    for (const t of dayTicks) {
+      if (t.ask > high) high = t.ask;
+      if (t.bid < low) low = t.bid;
+    }
+    return {
+      timestamp: dayTicks[0].timestamp.toISOString(),
+      open: firstMid,
+      high,
+      low,
+      close: lastMid,
+      volume: dayTicks.length * 1000, // approximate
+    };
   }
 
   async getOptionsChain(
@@ -257,6 +281,11 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     at: Date,
   ): Promise<OptionsChain> {
     const day = toDateKey(at);
+
+    // Return cached snapshot if same symbol/expiry/type/timestamp
+    const chainKey = `${symbol}:${expiry}:${optionType}:${at.getTime()}`;
+    const cachedChain = this.chainCache.get(chainKey);
+    if (cachedChain) return cachedChain;
 
     // Get underlying price for strike filtering
     let underlyingPrice: number;
@@ -288,24 +317,40 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       `${optionType} ${expiry} strikes ${strikeLow.toFixed(0)}-${strikeHigh.toFixed(0)}`,
     );
 
-    // Phase 2: Fetch prices for constructed symbols
-    const ticks = await loadSpecificContracts({
-      apiKey: this.apiKey,
-      dataset: this.optionsDataset,
-      symbols: candidateSymbols,
-      day,
-      refreshCache: this.refreshCache,
-    });
+    // Phase 2: Fetch prices for constructed symbols.
+    // Check in-memory cache first to avoid redundant disk I/O on repeat calls.
+    const allTicks: QuoteTick[] = [];
+    const uncachedSymbols: string[] = [];
+    for (const sym of candidateSymbols) {
+      const cached = this.dayTicks.get(`${sym}:${day}`);
+      if (cached) {
+        allTicks.push(...cached);
+      } else {
+        uncachedSymbols.push(sym);
+      }
+    }
 
-    // Cache individual OCC symbol ticks so getQuote(occSymbol) works later
-    // (e.g., when SimBroker prices option spread legs during execution)
-    this.cacheOccTicks(ticks, day);
+    if (uncachedSymbols.length > 0) {
+      const freshTicks = await loadSpecificContracts({
+        apiKey: this.apiKey,
+        dataset: this.optionsDataset,
+        symbols: uncachedSymbols,
+        day,
+        refreshCache: this.refreshCache,
+      });
+      allTicks.push(...freshTicks);
+
+      // Cache individual OCC symbol ticks so getQuote(occSymbol) works later
+      this.cacheOccTicks(freshTicks, day);
+    }
 
     // Build latest tick per strike at or before `at`
-    const strikes = this.buildStrikesFromTicks(ticks, at);
+    const strikes = this.buildStrikesFromTicks(allTicks, at);
 
     if (strikes.length > 0) {
-      return { symbol, expiry, optionType, strikes };
+      const chain: OptionsChain = { symbol, expiry, optionType, strikes };
+      this.chainCache.set(chainKey, chain);
+      return chain;
     }
 
     // Fallback: constructed symbols returned nothing — wrong expiry?
@@ -322,7 +367,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const callPutFilter = optionType === 'CALL' ? 'C' as const : 'P' as const;
     const expiries = new Set(definitions.filter(d => d.callPut === callPutFilter).map(d => d.expiry));
     log.debug(`${symbol} available ${optionType} expiries: ${[...expiries].sort().slice(0, 10).join(', ')}`);
-    return { symbol, expiry, optionType, strikes: [] };
+    const emptyChain: OptionsChain = { symbol, expiry, optionType, strikes: [] };
+    // Don't cache empty results — may resolve on retry with different timestamp
+    return emptyChain;
   }
 
   /**

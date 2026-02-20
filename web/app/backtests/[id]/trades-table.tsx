@@ -53,7 +53,7 @@ export function TradesTable({ trades, runId, commissionSchedule }: { trades: Tra
   if (trades.length === 0) {
     return (
       <p className="text-sm text-muted-foreground text-center py-6">
-        No closed trades for this run.
+        No trades for this run.
       </p>
     );
   }
@@ -97,9 +97,13 @@ export function TradesTable({ trades, runId, commissionSchedule }: { trades: Tra
             <span className="text-sm font-medium">{selectedTrade.symbol}</span>
             <Badge label={selectedTrade.direction} />
             <Badge label={selectedTrade.strategy} />
-            <span className={`text-sm font-semibold tabular-nums ml-auto ${pnlColor(selectedTrade.pnl)}`}>
-              {formatCurrency(selectedTrade.pnl)}
-            </span>
+            {selectedTrade.status === 'OPEN' ? (
+              <span className="ml-auto"><Badge label="OPEN" /></span>
+            ) : (
+              <span className={`text-sm font-semibold tabular-nums ml-auto ${pnlColor(selectedTrade.pnl)}`}>
+                {formatCurrency(selectedTrade.pnl)}
+              </span>
+            )}
             <button
               onClick={() => setSelectedTrade(null)}
               className="text-muted-foreground hover:text-foreground transition-colors ml-1"

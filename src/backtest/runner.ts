@@ -157,10 +157,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const startingEquity = config.startingEquity ?? 100_000;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
 
-  const sizer = buildPositionSizer(
-    null, // default ATR config: 5% risk, 2x ATR, 14 period
-    (symbol, barsBack) => broker.getBars({ symbol, interval: '1', barsBack }),
-  );
+  const fetchBars = (symbol: string, barsBack: number) =>
+    broker.getBars({ symbol, interval: '1', barsBack });
 
   const MAX_CONTRACTS: Record<string, number> = {
     CALL: 20, PUT: 20, CDS: 20, PDS: 20,
@@ -168,6 +166,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
   const sizingService = {
     async calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }) {
+      const traderConfig = await getTrader(input.trader);
+      const sizer = buildPositionSizer(traderConfig?.positionSizingConfig, fetchBars);
       const balance = await broker.getAccountBalance();
       return sizer.calculateSize({
         symbol: input.symbol,

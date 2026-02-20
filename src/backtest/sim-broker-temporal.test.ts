@@ -41,6 +41,7 @@ import {
   makeStockBuyOrder,
   constantPrice,
   linearPrice,
+  vShapedPrice,
   makeDbHelpers,
   CREATE_TRADES_SQL,
   type PriceFn,
@@ -844,7 +845,9 @@ describe('temporal: advanceTo option fills', () => {
             clock.advance(t);
             const fills = await broker.advanceTo(t);
             if (fills.length > 0) {
-              expect(fills[0].price).toBe(roundCents(limit));
+              // Price improvement: fill at min(limit, ask) — fill <= limit
+              expect(fills[0].price).toBeLessThanOrEqual(roundCents(limit));
+              expect(fills[0].price).toBeGreaterThan(0);
               filled = true;
               break;
             }
@@ -966,7 +969,8 @@ describe('temporal: advanceTo equity fills', () => {
 
           // Price crosses 100 at some point between T0 and t1 → should fill
           expect(fills.length).toBe(1);
-          expect(fills[0].price).toBe(roundCents(limit));
+          // Price improvement: fill at min(limit, ask) — fill <= limit
+          expect(fills[0].price).toBeLessThanOrEqual(roundCents(limit));
         },
       ),
       { numRuns: 30 },
@@ -1147,6 +1151,123 @@ describe('temporal: mixed portfolio equity identity', () => {
       ),
       { numRuns: 50 },
     );
+  });
+});
+
+// ── 9b. advanceTo: intraday option fills via price swing ──────────────
+
+describe('temporal: advanceTo intraday option fills', () => {
+  test('option LIMIT BUY fills during intraday underlying dip within advanceTo window', async () => {
+    await resetDb();
+
+    const startPrice = 300;
+    const dipPrice = 240; // sharp intraday dip
+    const strike = 280;
+
+    // T0 to T0+1day: V-shaped underlying dip (300 → 240 → 300)
+    const windowEnd = new Date(T0.getTime() + MS_PER_DAY);
+    const priceFn = vShapedPrice(startPrice, dipPrice, T0, windowEnd);
+
+    // Compute option mid at T0 (no dip yet): intrinsic=20, + timeValue
+    const intrinsicAtStart = Math.max(0, startPrice - strike); // = 20
+    const baseTV = 2.0;
+    const dteT0 = (EXPIRY_DATE.getTime() - T0.getTime()) / MS_PER_DAY;
+    const tvT0 = baseTV * Math.sqrt(dteT0 / 365);
+    const midAtStart = intrinsicAtStart + tvT0;
+    const bidAtStart = midAtStart - 0.10;
+
+    // Compute option mid at the dip trough: intrinsic=0 (240 < 280), + timeValue
+    const midAtDip = 0 + tvT0; // intrinsic = 0 at dip
+    const bidAtDip = midAtDip - 0.10;
+
+    // Set limit between dip bid and start bid — only reachable during the dip
+    const limit = roundCents((bidAtDip + bidAtStart) / 2);
+    fc.pre(limit < bidAtStart - 0.01);
+    fc.pre(limit > bidAtDip + 0.01);
+
+    const md = makeTimeAwareStub({
+      underlyings: { SPY: priceFn },
+      baseTimeValue: baseTV,
+      ticksPerRange: 20, // 20 evenly-spaced ticks across the window
+    });
+    const clock = new SimClock(T0);
+    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint');
+
+    // Initialize lastAdvanceTime so the next advanceTo gets a proper tick range
+    await broker.advanceTo(T0);
+
+    // Place limit buy — should queue (limit < bidAtStart)
+    const order = await broker.placeOrder({
+      symbol: 'SPY',
+      strategy: 'CALL',
+      direction: 'LONG',
+      legs: [{
+        symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }),
+        strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1,
+      }],
+      orderType: 'LIMIT',
+      limitPrice: limit,
+    });
+    expect(order.status).toBe('OPEN');
+
+    // advanceTo spans T0 → windowEnd — fill should happen during the dip
+    clock.advance(windowEnd);
+    const fills = await broker.advanceTo(windowEnd);
+
+    expect(fills.length).toBe(1);
+    // Price improvement: fill at min(limit, ask) — should be <= limit
+    expect(fills[0].price).toBeLessThanOrEqual(roundCents(limit));
+    expect(fills[0].price).toBeGreaterThan(0);
+  });
+
+  test('option LIMIT BUY stays open when intraday dip is not deep enough', async () => {
+    await resetDb();
+
+    const startPrice = 300;
+    const dipPrice = 290; // shallow dip
+    const strike = 280;
+
+    const windowEnd = new Date(T0.getTime() + MS_PER_DAY);
+    const priceFn = vShapedPrice(startPrice, dipPrice, T0, windowEnd);
+
+    // Compute option mid at dip: intrinsic = max(0, 290-280) = 10, + TV
+    const baseTV = 2.0;
+    const dteT0 = (EXPIRY_DATE.getTime() - T0.getTime()) / MS_PER_DAY;
+    const tvT0 = baseTV * Math.sqrt(dteT0 / 365);
+    const midAtDip = 10 + tvT0;
+    const bidAtDip = midAtDip - 0.10;
+
+    // Set limit well below the dip bid — should never fill
+    const limit = roundCents(bidAtDip - 5);
+    fc.pre(limit > 0);
+
+    const md = makeTimeAwareStub({
+      underlyings: { SPY: priceFn },
+      baseTimeValue: baseTV,
+      ticksPerRange: 20,
+    });
+    const clock = new SimClock(T0);
+    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint');
+
+    await broker.advanceTo(T0);
+
+    const order = await broker.placeOrder({
+      symbol: 'SPY',
+      strategy: 'CALL',
+      direction: 'LONG',
+      legs: [{
+        symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }),
+        strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1,
+      }],
+      orderType: 'LIMIT',
+      limitPrice: limit,
+    });
+
+    if (order.status !== 'OPEN') return;
+
+    clock.advance(windowEnd);
+    const fills = await broker.advanceTo(windowEnd);
+    expect(fills.length).toBe(0);
   });
 });
 

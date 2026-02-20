@@ -1228,10 +1228,10 @@ describe('margin-aware getAccountBalance', () => {
     expect(bal.maintenanceMargin).toBeCloseTo(0, 0);
   });
 
-  test('credit spread: cash increases, maintenance = max loss', async () => {
+  test('credit spread: cash increases, maintenance = net margin (width − credit)', async () => {
     await resetDb();
     const startingEquity = 100_000;
-    // Sell 5-wide CDS for $2 credit (1 contract): cashEffect = +$200, maintenance = $500
+    // Sell 5-wide CDS for $2 credit (1 contract): cashEffect = +$200, margin = $300
     await insertOpenOptionTrade({
       direction: 'SHORT', strategy: 'CDS', entryPrice: 2, quantity: 1,
       legs: [
@@ -1244,8 +1244,8 @@ describe('margin-aware getAccountBalance', () => {
     const bal = await broker.getAccountBalance();
     // Cash = 100000 + 200 = 100200
     expect(bal.cashBalance).toBeCloseTo(100200, 0);
-    // Maintenance = spread width × qty × 100 = 5 × 1 × 100 = 500
-    expect(bal.maintenanceMargin).toBeCloseTo(500, 0);
+    // Maintenance = (width − credit) × qty × 100 = (5 − 2) × 1 × 100 = 300
+    expect(bal.maintenanceMargin).toBeCloseTo(300, 0);
   });
 
   test('after all positions closed: maintenanceMargin = 0, buyingPower = max(0, equity)', async () => {

@@ -57,6 +57,35 @@ export async function setNotes(name: string, notes: string | null) {
   refresh();
 }
 
+export async function setRiskPercent(name: string, riskPercent: number | null) {
+  if (!name) return;
+  if (riskPercent == null) {
+    await db
+      .update(schema.trackedTraders)
+      .set({ positionSizingConfig: null })
+      .where(eq(schema.trackedTraders.name, name));
+  } else {
+    // Read existing config to preserve ATR params if previously set
+    const [trader] = await db
+      .select({ positionSizingConfig: schema.trackedTraders.positionSizingConfig })
+      .from(schema.trackedTraders)
+      .where(eq(schema.trackedTraders.name, name));
+    const existing = trader?.positionSizingConfig;
+    await db
+      .update(schema.trackedTraders)
+      .set({
+        positionSizingConfig: {
+          strategy: 'atr' as const,
+          riskPercent,
+          atrMultiplier: existing?.atrMultiplier ?? 2.0,
+          atrPeriod: existing?.atrPeriod ?? 14,
+        },
+      })
+      .where(eq(schema.trackedTraders.name, name));
+  }
+  refresh();
+}
+
 export async function bulkAdd(names: string[]) {
   const valid = names.map((n) => n.trim()).filter(Boolean);
   if (!valid.length) return;

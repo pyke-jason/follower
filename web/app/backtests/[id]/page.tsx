@@ -222,7 +222,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTable trades={closedTrades} runId={id} commissionSchedule={config.commissionSchedule} />;
+  const tradesContent = <TradesTable trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.

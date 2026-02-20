@@ -77,15 +77,36 @@ Return ALL signals in the \`signals\` array.
 
 ## Strategy Knowledge
 - CDS (Call Debit Spread): Expires FRIDAY of current week unless stated.
-  "LONG AAPL CDS 172.5/177.5" → Buy 172.5C, Sell 177.5C, this Friday.
+  "LONG AAPL CDS 172.5/177.5" → direction: LONG, Buy 172.5C, Sell 177.5C, this Friday.
 - PDS (Put Debit Spread): Same expiry convention.
-  "SHORT SPOT PDS 570/565" → Buy 570P, Sell 565P, this Friday.
+  "SHORT SPOT PDS 570/565" → direction: LONG, Buy 570P, Sell 565P, this Friday.
 - Naked call: 1 leg, optionType CALL, action BUY
 - Naked put: 1 leg, optionType PUT, action BUY
 - CDS: 2 legs, both CALL, one BUY (lower strike) one SELL (higher strike)
 - PDS: 2 legs, both PUT, one BUY (higher strike) one SELL (lower strike)
 - When a message has both Long+Short badges → likely a time spread or calendar,
   NOT contradictory. Flag for review.
+
+## Direction Field — CRITICAL
+The \`direction\` field on a signal means whether you are BUYING (LONG) or SELLING (SHORT)
+the option or spread. It does NOT represent the trader's directional view on the stock.
+
+Traders say "Short [ticker]" to mean they are BEARISH. But they express that bearish view
+by BUYING puts or put debit spreads. Conversely, "Long [ticker]" means bullish, expressed
+by BUYING calls or call debit spreads. Examples:
+
+- "Short ALGN pds" → bearish, BUYING a put debit spread → direction: LONG, strategy: PDS
+- "Short NVDA using puts" → bearish, BUYING puts → direction: LONG, strategy: PUT
+- "Long AAPL cds" → bullish, BUYING a call debit spread → direction: LONG, strategy: CDS
+- "Long TSLA calls" → bullish, BUYING calls → direction: LONG, strategy: CALL
+- "Short SPY" (stock) → selling stock → direction: SHORT, strategy: STOCK
+- "Long SPY" (stock) → buying stock → direction: LONG, strategy: STOCK
+- "Sold AAPL 180 calls" → SELLING calls → direction: SHORT, strategy: CALL
+
+Rule: for debit strategies (buying options/spreads), direction is always LONG.
+Direction is SHORT only when the trader is genuinely SELLING (writing) options for credit,
+or short-selling stock. Do NOT copy the Direction Hint blindly — it reflects the trader's
+stock view, not the signal direction for options/spreads.
 
 ## Inferring Missing Strikes
 Traders often post terse messages like "Short ALGN pds" or "Long AAPL cds" without

@@ -47,9 +47,10 @@ function getOratsFillPct(legCount: number): number {
   return ORATS_FILL_PCT[Math.min(Math.max(legCount, 1), 4)] ?? 0.75;
 }
 
-/** Direction of an order from the first leg's action — single derivation point. */
+/** Direction of an order — uses explicit direction rather than first leg's action,
+ *  which is fragile for multi-leg strategies where leg ordering isn't guaranteed. */
 function isBuyOrder(params: OrderParams): boolean {
-  return params.legs[0]?.action === 'BUY';
+  return params.direction === 'LONG';
 }
 
 /**
@@ -790,6 +791,22 @@ export class SimBroker implements BrokerService {
           } catch {
             // Incomplete spread quote at this timestamp — leave order working
           }
+        }
+      }
+
+      // Fallback: re-quote any still-open option orders at the target time.
+      // This covers cases where no OCC tick data is available (e.g. synthetic pricing).
+      for (const orderId of optionOrderIds) {
+        const entry = this.workingOrders.get(orderId);
+        if (!entry || entry.status !== 'OPEN') continue;
+
+        try {
+          const quote = await this.getOptionSpreadQuote(entry.params, time);
+          if (shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, quote.bid, quote.ask)) {
+            allFills.push(this.fillWorkingOrder(orderId, entry, entry.params.symbol, time, quote.bid, quote.ask));
+          }
+        } catch {
+          // No spread quote at target time — leave order working
         }
       }
     }
