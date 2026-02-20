@@ -199,14 +199,21 @@ export class SimBroker implements BrokerService {
   /**
    * Fill a working order: update status, remove from map, emit event.
    * Shared by processQuoteTick and advanceTo to eliminate duplicated fill logic.
+   *
+   * Price improvement: fills at the better of the limit price or the market
+   * price at fill time (BUY: min(limit, ask), SELL: max(limit, bid)).
    */
-  private fillWorkingOrder(orderId: string, entry: WorkingEntry, symbol: string, timestamp: Date): SimFillEvent {
-    const roundedFill = roundCents(entry.currentLimitPrice);
+  private fillWorkingOrder(orderId: string, entry: WorkingEntry, symbol: string, timestamp: Date, marketBid: number, marketAsk: number): SimFillEvent {
+    const isBuy = isBuyOrder(entry.params);
+    const improved = isBuy
+      ? Math.min(entry.currentLimitPrice, marketAsk)
+      : Math.max(entry.currentLimitPrice, marketBid);
+    const roundedFill = roundCents(improved);
     entry.status = 'FILLED';
     entry.filledPrice = roundedFill;
     this.workingOrders.delete(orderId);
 
-    const side = isBuyOrder(entry.params) ? 'BUY' : 'SELL';
+    const side = isBuy ? 'BUY' : 'SELL';
     log.debug(`Fill: ${orderId} ${side} ${symbol} @ $${roundedFill}`);
 
     return {
@@ -238,10 +245,7 @@ export class SimBroker implements BrokerService {
       }
 
       const estimatedPrice = params.limitPrice ?? underlyingPrice;
-      const legs = params.legs.map(l => ({
-        symbol: params.symbol, strike: l.strike, expiry: l.expiry,
-        type: l.type, action: l.action, quantity: l.quantity,
-      })) as TradeLeg[];
+      const legs: TradeLeg[] = params.legs;
 
       const marginReq = computeMarginRequirement({
         strategy: params.strategy,
@@ -279,7 +283,12 @@ export class SimBroker implements BrokerService {
       }
 
       if (shouldFillLimit(isBuyOrder(params), params.limitPrice, quote.bid, quote.ask)) {
-        const filledPrice = roundCents(params.limitPrice);
+        // Price improvement: fill at the better of limit or market
+        const isBuy = isBuyOrder(params);
+        const improved = isBuy
+          ? Math.min(params.limitPrice, quote.ask)
+          : Math.max(params.limitPrice, quote.bid);
+        const filledPrice = roundCents(improved);
         log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
         return { orderId, status: 'FILLED', filledPrice, fillTimestamp: this.clock.now().toISOString() };
       }
@@ -631,9 +640,34 @@ export class SimBroker implements BrokerService {
       }
     }
 
+    // Encumber buying power for unfilled working orders (prevents over-leveraging)
+    let workingOrderMargin = 0;
+    for (const [, entry] of this.workingOrders) {
+      if (entry.status !== 'OPEN') continue;
+      if (entry.params.isClosing) continue; // closing orders don't require new margin
+
+      let woUnderlyingPrice = entry.currentLimitPrice;
+      if (entry.params.strategy !== 'STOCK') {
+        try {
+          const uq = await this.marketData.getQuote(entry.params.symbol, now);
+          woUnderlyingPrice = (uq.bid + uq.ask) / 2;
+        } catch { /* use limit price as fallback */ }
+      }
+
+      const woMargin = computeMarginRequirement({
+        strategy: entry.params.strategy,
+        direction: entry.params.direction,
+        entryPrice: entry.currentLimitPrice,
+        quantity: tradeQty(entry.params.legs[0]?.quantity),
+        legs: entry.params.legs,
+        underlyingPrice: woUnderlyingPrice,
+      });
+      workingOrderMargin += woMargin.initial;
+    }
+
     unrealizedPnl = roundCents(unrealizedPnl);
     const equity = roundCents(cash + totalMarketValue);
-    const buyingPower = Math.max(0, roundCents(equity - totalMaintenanceMargin));
+    const buyingPower = Math.max(0, roundCents(equity - totalMaintenanceMargin - workingOrderMargin));
 
     return {
       accountId: 'SIM',
@@ -664,7 +698,7 @@ export class SimBroker implements BrokerService {
       if (entry.params.symbol !== tick.symbol) continue;
       if (!shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, tick.bid, tick.ask)) continue;
 
-      fills.push(this.fillWorkingOrder(orderId, entry, tick.symbol, tick.timestamp));
+      fills.push(this.fillWorkingOrder(orderId, entry, tick.symbol, tick.timestamp, tick.bid, tick.ask));
     }
 
     return fills;
@@ -717,18 +751,46 @@ export class SimBroker implements BrokerService {
       }
     }
 
-    // Process option working orders via re-quote at target time
-    for (const orderId of optionOrderIds) {
-      const entry = this.workingOrders.get(orderId);
-      if (!entry || entry.status !== 'OPEN') continue;
-
-      try {
-        const quote = await this.getOptionSpreadQuote(entry.params, time);
-        if (shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, quote.bid, quote.ask)) {
-          allFills.push(this.fillWorkingOrder(orderId, entry, entry.params.symbol, time));
+    // Process option working orders via OCC leg tick replay
+    if (optionOrderIds.length > 0) {
+      // Collect all unique OCC symbols across all option working orders
+      const occSymbols = new Set<string>();
+      for (const orderId of optionOrderIds) {
+        const entry = this.workingOrders.get(orderId);
+        if (!entry || entry.status !== 'OPEN') continue;
+        for (const leg of entry.params.legs) {
+          if (leg.type !== 'STOCK') occSymbols.add(leg.symbol);
         }
-      } catch {
-        // No option market data at this time — leave order working
+      }
+
+      // Get ticks in range for all OCC leg symbols and collect unique timestamps
+      const timestamps = new Set<number>();
+      for (const occSym of occSymbols) {
+        try {
+          const ticks = await this.marketData.getTicksInRange(occSym, from, time);
+          for (const tick of ticks) timestamps.add(tick.timestamp.getTime());
+        } catch {
+          // No tick data for this leg — continue with others
+        }
+      }
+
+      // At each timestamp, re-quote all open option orders and check fills
+      const sortedTimestamps = [...timestamps].sort((a, b) => a - b);
+      for (const ts of sortedTimestamps) {
+        const tickTime = new Date(ts);
+        for (const orderId of optionOrderIds) {
+          const entry = this.workingOrders.get(orderId);
+          if (!entry || entry.status !== 'OPEN') continue;
+
+          try {
+            const quote = await this.getOptionSpreadQuote(entry.params, tickTime);
+            if (shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, quote.bid, quote.ask)) {
+              allFills.push(this.fillWorkingOrder(orderId, entry, entry.params.symbol, tickTime, quote.bid, quote.ask));
+            }
+          } catch {
+            // Incomplete spread quote at this timestamp — leave order working
+          }
+        }
       }
     }
 

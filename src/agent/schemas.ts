@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { zPrice, zPct01 } from '../lib/zod-financial.js';
+import {
+  DirectionSchema, LegActionSchema, StrategySchema,
+  LabelStrategySchema, TradeActionSchema,
+} from '../lib/enums.js';
 
 // --- Tool input schemas (classification tools) ---
 
@@ -29,14 +33,14 @@ const SignalLegSchema = z.object({
   strike: zPrice,
   expiry: z.string().min(1),
   optionType: z.enum(['CALL', 'PUT']),
-  action: z.enum(['BUY', 'SELL']),
+  action: LegActionSchema,
 });
 
 export const SignalSchema = z.object({
-  action: z.enum(['OPEN', 'CLOSE', 'ADD', 'TRIM']),
+  action: TradeActionSchema,
   symbol: z.string().min(1),
-  direction: z.enum(['LONG', 'SHORT']),
-  strategy: z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS']),
+  direction: DirectionSchema,
+  strategy: StrategySchema,
   limitPrice: zPrice.optional(),
   exitPercent: zPct01.optional(),     // for TRIM: 0.5 = half
   legs: z.array(SignalLegSchema).optional(),
@@ -62,9 +66,9 @@ export const AgentDecisionSchema = z.object({
 
 export const LabelResultSchema = z.object({
   isTrade: z.boolean(),
-  action: z.enum(['OPEN', 'CLOSE', 'ADD', 'TRIM']).nullable().optional(),
-  direction: z.enum(['LONG', 'SHORT']).nullable().optional(),
-  strategy: z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS']).nullable().optional(),
+  action: TradeActionSchema.nullable().optional(),
+  direction: DirectionSchema.nullable().optional(),
+  strategy: LabelStrategySchema.nullable().optional(),
   symbol: z.string().nullable().optional(),
   price: z.string().nullable().optional(),
   strikes: z.array(z.number()).nullable().optional(),

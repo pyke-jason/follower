@@ -1,7 +1,9 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
+import { LegTypeSchema, LegActionSchema } from '../lib/enums.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
 
@@ -362,15 +364,17 @@ export type DetectedStrategy = {
   quantity?: number;
 };
 
-export type TradeLeg = {
-  symbol: string;
-  strike: number;
-  expiry: string;
-  type: 'CALL' | 'PUT' | 'STOCK';
-  action: 'BUY' | 'SELL';
-  quantity: number;
-  fillPrice?: number;
-};
+export const TradeLegSchema = z.object({
+  symbol: z.string(),
+  strike: z.number().nonnegative(),  // 0 for STOCK legs, positive for options
+  expiry: z.string(),
+  type: LegTypeSchema,
+  action: LegActionSchema,
+  quantity: z.number().int().positive().default(1),
+  fillPrice: z.number().nonnegative().optional(),
+});
+
+export type TradeLeg = z.infer<typeof TradeLegSchema>;
 
 export type TaskContext = {
   messageId?: string;

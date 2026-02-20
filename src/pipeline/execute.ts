@@ -6,13 +6,14 @@
  * The LLM has no control over this flow.
  */
 import type { BrokerService } from '../broker/interface.js';
-import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule } from '../broker/types.js';
+import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule, OrderLeg } from '../broker/types.js';
 import type { OrderManager } from '../orders/order-manager.js';
 import type { Trade } from '../db/schema.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
 export type { RecordTradeResult };
+export type { OrderLeg };
 import type { Signal } from '../agent/schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
@@ -21,15 +22,6 @@ import { formatOccSymbol } from '../backtest/occ-symbology.js';
 const log = createLogger('Pipeline');
 
 // ─── Types ──────────────────────────────────────────
-
-export type OrderLeg = {
-  symbol: string;
-  strike: number;
-  expiry: string;
-  type: 'CALL' | 'PUT' | 'STOCK';
-  action: 'BUY' | 'SELL';
-  quantity: number;
-};
 
 export type PendingOrderContext = {
   action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM';

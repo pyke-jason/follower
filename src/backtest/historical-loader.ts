@@ -4,11 +4,12 @@ import { db, schema } from '../db/client.js';
 import { createLogger } from '../lib/logger.js';
 import type { HistoricalMessage } from './types.js';
 import { safeParseFloat } from '../lib/numbers.js';
+import { DirectionSchema } from '../lib/enums.js';
 
 const log = createLogger('HistoricalLoader');
 
 const ActionHintEnum = z.enum(['OPEN', 'CLOSE']).nullable();
-const DirectionHintEnum = z.enum(['LONG', 'SHORT']).nullable();
+const DirectionHintEnum = DirectionSchema.nullable();
 
 /**
  * Load historical messages from the local database.

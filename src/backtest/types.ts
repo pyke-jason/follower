@@ -2,25 +2,6 @@ import type { DetectedStrategy, BacktestRunConfig } from '../db/schema.js';
 
 export type FillModel = 'orats' | 'midpoint' | 'natural';
 
-export type SimLeg = {
-  symbol: string;
-  strike: number;
-  expiry: string;
-  type: 'CALL' | 'PUT' | 'STOCK';
-  action: 'BUY' | 'SELL';
-  quantity: number;
-  fillPrice: number;
-};
-
-export type SimFill = {
-  orderId: string;
-  symbol: string;
-  side: 'BUY' | 'SELL';
-  price: number;
-  quantity: number;
-  timestamp: Date;
-};
-
 export type HistoricalMessage = {
   id: string;
   author: string;

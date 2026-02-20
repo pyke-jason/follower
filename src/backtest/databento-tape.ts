@@ -69,7 +69,7 @@ const px = zCoercePrice.optional();
 
 const DatabentoRecord = z.object({
   symbol: z.string().optional(),
-  hd: z.object({ symbol: z.string().optional(), ts_event: z.string().optional() }).optional(),
+  hd: z.object({ symbol: z.string().optional(), ts_event: z.string().nullish() }).optional(),
   high: px,
   low: px,
   bid_px_00: px,
@@ -77,7 +77,8 @@ const DatabentoRecord = z.object({
   bid_px: px,
   ask_px: px,
   levels: z.array(z.object({ bid_px: px, ask_px: px })).optional(),
-  ts_event: z.string().optional(),
+  ts_event: z.string().nullish(),
+  ts_recv: z.string().optional(),
 }).strip();
 
 export type QuoteTick = {
@@ -535,7 +536,7 @@ async function loadParentSymbology(params: {
       { day: params.day, symbols: [parentSymbol] },
     );
 
-    const costData = z.number().finite().nonnegative().parse(await costRes.json());
+    const costData = z.number().nonnegative().parse(await costRes.json());
     const costUsd = costData / 100;
     log.info(`Parent fetch ${parentSymbol} ${params.day}: estimated cost $${costUsd.toFixed(2)}`);
   } catch (err) {
@@ -1050,7 +1051,7 @@ export async function loadQuoteTape(config: QuoteTapeConfig): Promise<QuoteTick[
       { symbols: Array.from(allUncachedSymbols) },
     );
 
-    const costData = z.number().finite().nonnegative().parse(await costRes.json());
+    const costData = z.number().nonnegative().parse(await costRes.json());
     const boundingCostUsd = costData / 100;
 
     // Count weekdays in the bounding range to scale proportionally
@@ -1264,7 +1265,7 @@ function parseTick(record: z.infer<typeof DatabentoRecord>): QuoteTick | null {
 
   if (bid == null || ask == null || !Number.isFinite(bid) || !Number.isFinite(ask)) return null;
 
-  const ts = record.ts_event ?? record.hd?.ts_event;
+  const ts = record.ts_event ?? record.hd?.ts_event ?? record.ts_recv;
   if (!ts) return null;
   const timestamp = new Date(ts);
   if (isNaN(timestamp.getTime())) return null;

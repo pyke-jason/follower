@@ -51,7 +51,8 @@ export function getSpreadWidth(legs: TradeLeg[]): number {
 
 /**
  * Naked call margin per contract (Reg T):
- *   max(20% × underlying − OTM amount + premium, 10% × underlying + premium)
+ *   max(20% × underlying − OTM amount + premium, 10% × underlying + premium,
+ *       $0.50 + premium)  ← FINRA Rule 4210 floor ($50/contract in per-share terms)
  */
 function nakedCallMarginPerContract(
   underlyingPrice: number,
@@ -61,12 +62,14 @@ function nakedCallMarginPerContract(
   const otm = Math.max(0, strike - underlyingPrice);
   const a = 0.20 * underlyingPrice - otm + premium;
   const b = 0.10 * underlyingPrice + premium;
-  return Math.max(a, b);
+  const finraMin = 0.50 + premium; // $50/contract + premium (per-share basis)
+  return Math.max(a, b, finraMin);
 }
 
 /**
  * Naked put margin per contract (Reg T):
- *   max(20% × underlying − OTM amount + premium, 10% × strike + premium)
+ *   max(20% × underlying − OTM amount + premium, 10% × strike + premium,
+ *       $0.50 + premium)  ← FINRA Rule 4210 floor ($50/contract in per-share terms)
  */
 function nakedPutMarginPerContract(
   underlyingPrice: number,
@@ -76,7 +79,8 @@ function nakedPutMarginPerContract(
   const otm = Math.max(0, underlyingPrice - strike);
   const a = 0.20 * underlyingPrice - otm + premium;
   const b = 0.10 * strike + premium;
-  return Math.max(a, b);
+  const finraMin = 0.50 + premium; // $50/contract + premium (per-share basis)
+  return Math.max(a, b, finraMin);
 }
 
 // ─── Main ───────────────────────────────────────────

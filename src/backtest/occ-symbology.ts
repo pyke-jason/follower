@@ -76,11 +76,12 @@ export function formatOccSymbol(option: {
   return `${underlying}${dateStr}${optionType}${strikeStr}`;
 }
 
-/** Pick a strike interval based on underlying price. */
+/** Pick a strike interval based on underlying price.
+ *  Uses $1 increments for stocks up to $200 because exchanges list
+ *  $1 strikes near ATM (not just $2.50). */
 function strikeInterval(price: number): number {
   if (price < 25) return 0.5;
-  if (price < 50) return 1;
-  if (price < 200) return 2.5;
+  if (price < 200) return 1;
   if (price < 500) return 5;
   return 10;
 }

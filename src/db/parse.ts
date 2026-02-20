@@ -6,22 +6,9 @@
  */
 
 import { z } from 'zod';
-
-export const DirectionSchema = z.enum(['LONG', 'SHORT']);
-export const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
-export const LegActionSchema = z.enum(['BUY', 'SELL']);
-
-export const TradeLegSchema = z.object({
-  symbol: z.string(),
-  strike: z.number(),
-  expiry: z.string(),
-  type: LegTypeSchema,
-  action: LegActionSchema,
-  quantity: z.number().default(1),
-  fillPrice: z.number().optional(),
-});
-
-export type TradeLeg = z.infer<typeof TradeLegSchema>;
+import { TradeLegSchema } from './schema.js';
+import type { TradeLeg } from './schema.js';
+import { DirectionSchema } from '../lib/enums.js';
 
 /**
  * Parse the `legs` column from a trade row.
@@ -29,7 +16,14 @@ export type TradeLeg = z.infer<typeof TradeLegSchema>;
  * Throws with a descriptive message on invalid data.
  */
 export function parseLegs(raw: unknown, tradeId?: string): TradeLeg[] {
-  return z.array(TradeLegSchema).parse(raw);}
+  try {
+    return z.array(TradeLegSchema).parse(raw);
+  } catch (err) {
+    const ctx = tradeId ? ` (trade ${tradeId})` : '';
+    const detail = err instanceof z.ZodError ? err.message : String(err);
+    throw new Error(`Invalid legs data${ctx}: ${detail}`);
+  }
+}
 
 /**
  * Parse the `direction` column from a trade row.

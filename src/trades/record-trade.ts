@@ -10,6 +10,7 @@ import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
+import type { TradeLeg } from '../db/schema.js';
 
 const log = createLogger('RecordTrade');
 
@@ -24,7 +25,7 @@ export type RecordTradeInput = {
   quantity?: number;
   closeQuantity?: number;
   exitPercent?: number;
-  legs?: any[];
+  legs?: TradeLeg[];
   openedAt?: string;       // ISO string
   closedAt?: string;       // ISO string
   sourceMessageId?: string;

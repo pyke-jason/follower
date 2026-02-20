@@ -1,3 +1,8 @@
+import type { TradeLeg } from '../db/schema.js';
+
+/** A leg before fill — same shape as TradeLeg without fillPrice. */
+export type OrderLeg = Omit<TradeLeg, 'fillPrice'>;
+
 export type Bar = {
   timestamp: string;
   open: number;
@@ -120,14 +125,7 @@ export type OrderParams = {
   symbol: string;
   strategy: string;
   direction: 'LONG' | 'SHORT';
-  legs: Array<{
-    symbol: string;
-    strike: number;
-    expiry: string;
-    type: 'CALL' | 'PUT' | 'STOCK';
-    action: 'BUY' | 'SELL';
-    quantity: number;
-  }>;
+  legs: OrderLeg[];
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
   /** Signals a position-reducing order — broker skips buying power gate. */
