@@ -147,6 +147,7 @@ export async function getMessages(opts: {
   startDate?: string;
   endDate?: string;
   signalsOnly?: boolean;
+  labelFilter?: 'labeled' | 'unlabeled';
 } = {}) {
   const conditions: SQL[] = [];
 
@@ -182,6 +183,45 @@ export async function getMessages(opts: {
         sql`json_array_length(${schema.messages.badges}) > 0`,
       )!
     );
+  }
+
+  // Label-based filtering requires a JOIN with message_labels
+  if (opts.labelFilter === 'labeled') {
+    conditions.push(isNotNull(schema.messageLabels.id));
+    conditions.push(eq(schema.messageLabels.reviewed, true));
+
+    const query = db
+      .select({ messages: schema.messages })
+      .from(schema.messages)
+      .innerJoin(schema.messageLabels, eq(schema.messages.id, schema.messageLabels.messageId))
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+
+    const rows = conditions.length > 0
+      ? await query.where(and(...conditions))
+      : await query;
+    return rows.map((r) => r.messages);
+  }
+
+  if (opts.labelFilter === 'unlabeled') {
+    const query = db
+      .select({ messages: schema.messages })
+      .from(schema.messages)
+      .leftJoin(schema.messageLabels, eq(schema.messages.id, schema.messageLabels.messageId))
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+
+    conditions.push(
+      or(
+        isNull(schema.messageLabels.id),
+        eq(schema.messageLabels.reviewed, false),
+      )!,
+    );
+
+    const rows = await query.where(and(...conditions));
+    return rows.map((r) => r.messages);
   }
 
   const query = db
@@ -225,6 +265,23 @@ export async function getTaskById(id: string) {
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id));
   return task ?? null;
+}
+
+/** Get messages that reference any of the given symbols (via JSON symbols column). */
+export async function getMessagesBySymbols(symbols: string[], limit = 200) {
+  if (symbols.length === 0) return [];
+
+  // SQLite JSON: check if any symbol appears in the json array
+  const symbolConditions = symbols.map(
+    (s) => sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${s})`,
+  );
+
+  return db
+    .select()
+    .from(schema.messages)
+    .where(or(...symbolConditions)!)
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(limit);
 }
 
 export async function getMessageById(id: string) {

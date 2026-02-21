@@ -3,10 +3,18 @@
 import { useState, useCallback, useTransition, useEffect } from 'react';
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
-import { fetchMessages, type MessageFilters, type MessageIntent } from './actions';
+import { RelatedMessagesPanel } from './related-messages-panel';
+import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageIntent } from './actions';
 import type { Message, MessageLabel } from '../../../src/db/schema';
 
 const START_INDEX = 100_000;
+
+type RelatedContext = {
+  messages: Message[];
+  intents: Record<string, MessageIntent>;
+  labels: Record<string, MessageLabel>;
+  sourceSymbols: string[];
+};
 
 export function ChatRoom({
   initialMessages,
@@ -29,6 +37,11 @@ export function ChatRoom({
   const [filters, setFilters] = useState<MessageFilters>({});
   const [isLoadingOlder, startLoadingTransition] = useTransition();
 
+  // Split layout: selected message + related messages
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [relatedContext, setRelatedContext] = useState<RelatedContext | null>(null);
+  const [isLoadingRelated, startRelatedTransition] = useTransition();
+
   // Sync filters to URL search params
   useEffect(() => {
     const params = new URLSearchParams();
@@ -36,6 +49,7 @@ export function ChatRoom({
     if (filters.startDate) params.set('start', filters.startDate);
     if (filters.endDate) params.set('end', filters.endDate);
     if (filters.signalsOnly) params.set('signals', '1');
+    if (filters.labelFilter) params.set('label', filters.labelFilter);
 
     const search = params.toString();
     const url = search ? `${window.location.pathname}?${search}` : window.location.pathname;
@@ -79,6 +93,22 @@ export function ChatRoom({
     });
   }, [cursor, filters]);
 
+  // Handle message click → load related messages
+  const handleMessageClick = useCallback((message: Message) => {
+    if (selectedMessage?.id === message.id) {
+      setSelectedMessage(null);
+      setRelatedContext(null);
+      return;
+    }
+    setSelectedMessage(message);
+    setRelatedContext(null);
+
+    startRelatedTransition(async () => {
+      const result = await fetchRelatedMessages(message.id);
+      setRelatedContext(result);
+    });
+  }, [selectedMessage?.id]);
+
   return (
     <div className="flex flex-col h-full">
       <ChatFilters
@@ -86,15 +116,29 @@ export function ChatRoom({
         filters={filters}
         onFilterChange={handleFilterChange}
       />
-      <ChatFeed
-        messages={messages}
-        intents={intents}
-        labels={labels}
-        firstItemIndex={firstItemIndex}
-        onLoadOlder={handleLoadOlder}
-        isLoadingOlder={isLoadingOlder}
-        hasMore={cursor !== null}
-      />
+      <div className="flex flex-1 min-h-0 gap-0">
+        <div className="flex-1 min-w-0 flex flex-col">
+          <ChatFeed
+            messages={messages}
+            intents={intents}
+            labels={labels}
+            firstItemIndex={firstItemIndex}
+            onLoadOlder={handleLoadOlder}
+            isLoadingOlder={isLoadingOlder}
+            hasMore={cursor !== null}
+            selectedMessageId={selectedMessage?.id}
+            onMessageClick={handleMessageClick}
+          />
+        </div>
+        {selectedMessage && (
+          <RelatedMessagesPanel
+            sourceMessage={selectedMessage}
+            context={relatedContext}
+            isLoading={isLoadingRelated}
+            onClose={() => { setSelectedMessage(null); setRelatedContext(null); }}
+          />
+        )}
+      </div>
     </div>
   );
 }

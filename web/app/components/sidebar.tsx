@@ -10,7 +10,6 @@ import {
   MessageSquare,
   ListTodo,
   FlaskConical,
-  BarChart3,
   Settings,
   ShieldAlert,
 } from 'lucide-react';
@@ -37,7 +36,6 @@ const navLinks = [
   { href: '/messages', label: 'Messages', icon: MessageSquare },
   { href: '/tasks', label: 'Tasks', icon: ListTodo },
   { href: '/backtests', label: 'Backtests', icon: FlaskConical },
-  { href: '/eval', label: 'Eval', icon: BarChart3 },
   { href: '/reconciliation', label: 'Reconciliation', icon: ShieldAlert },
 ];
 
