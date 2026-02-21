@@ -1045,7 +1045,7 @@ describe('getOpenTrades invariants', () => {
           const trades = await broker.getOpenTrades();
           expect(trades.length).toBe(openCount);
           for (const t of trades) {
-            expect(['OPEN', 'PARTIAL']).toContain(t.status);
+            expect(t.status).toBe('OPEN');
           }
         },
       ),

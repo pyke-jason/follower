@@ -6,7 +6,7 @@ export type ModelProvider = 'anthropic' | 'xai';
 
 export type ModelIdentity = {
   provider: ModelProvider;
-  model: string; // e.g. 'claude-sonnet-4-5-20250929', 'grok-4-1-fast-reasoning'
+  model: string; // e.g. 'claude-sonnet-4-6', 'grok-4-1-fast-reasoning'
 };
 
 // ─── Normalized types ────────────────────────────────
@@ -71,7 +71,7 @@ export interface LLMProvider {
 
 export const DEFAULT_TRADE_MODEL: ModelIdentity = {
   provider: 'anthropic',
-  model: 'claude-sonnet-4-5-20250929',
+  model: 'claude-sonnet-4-6',
 };
 
 export const DEFAULT_LABEL_MODEL: ModelIdentity = {

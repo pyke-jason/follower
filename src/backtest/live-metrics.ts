@@ -6,6 +6,9 @@ export function buildLiveMetrics(params: {
   unrealizedPnl: number | null;
   openPositionCount: number;
   lastProcessedMessageTs: string | null;
+  phase: 'EXTRACTING' | 'REPLAYING';
+  extractedMessages: number;
+  totalExtractMessages: number;
 }): LiveMetrics {
   const apiStats = getApiStats();
   return {
@@ -15,5 +18,8 @@ export function buildLiveMetrics(params: {
     databentoApiBytesRead: apiStats.bytesRead,
     updatedAt: new Date().toISOString(),
     lastProcessedMessageTs: params.lastProcessedMessageTs,
+    phase: params.phase,
+    extractedMessages: params.extractedMessages,
+    totalExtractMessages: params.totalExtractMessages,
   };
 }

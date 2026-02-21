@@ -354,20 +354,22 @@ export async function invalidateIntentCache(formData: FormData) {
   revalidatePath(`/backtests/${runId}`);
 }
 
-/** Fetch only the messages directly linked to a trade (open, close, add/trim children). */
+/** Fetch only the messages directly linked to a trade (via trade_events). */
 export async function fetchTradeLinkedMessages(tradeId: string) {
-  // Get the trade + any child trades (ADDs/TRIMs)
-  const [trades, children] = await Promise.all([
+  // Get the trade + all events to find linked message IDs
+  const [trades, events] = await Promise.all([
     db.select().from(schema.trades).where(eq(schema.trades.id, tradeId)),
-    db.select().from(schema.trades).where(eq(schema.trades.parentTradeId, tradeId)),
+    db.select().from(schema.tradeEvents).where(eq(schema.tradeEvents.tradeId, tradeId)),
   ]);
-  const allTrades = [...trades, ...children];
 
-  // Collect unique message IDs
+  // Collect unique message IDs from trade row + events
   const msgIds = new Set<string>();
-  for (const t of allTrades) {
+  for (const t of trades) {
     if (t.sourceMessageId) msgIds.add(t.sourceMessageId);
     if (t.closeMessageId) msgIds.add(t.closeMessageId);
+  }
+  for (const e of events) {
+    if (e.messageId) msgIds.add(e.messageId);
   }
   if (msgIds.size === 0) return { messages: [], intents: {}, labels: {} };
 

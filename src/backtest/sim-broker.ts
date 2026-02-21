@@ -5,7 +5,7 @@ import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
-import { isOpen, isClosed, forRun } from '../trades/filters.js';
+import { isOpen, isClosed, forRun, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
 import type { Trade, TradeLeg } from '../db/schema.js';
@@ -421,6 +421,7 @@ export class SimBroker implements BrokerService {
 
     const result = await recordTrade({
       action: 'CLOSE',
+      tradeId,
       symbol: trade.symbol,
       trader: trade.trader,
       exitPrice,
@@ -531,11 +532,12 @@ export class SimBroker implements BrokerService {
     return row?.count ?? 0;
   }
 
-  /** Get all open trade rows for this run, optionally filtered by trader/symbol. */
-  async getOpenTrades(filters?: { trader?: string; symbol?: string }): Promise<Trade[]> {
+  /** Get all open trade rows for this run, optionally filtered by trader/symbol/strategy. */
+  async getOpenTrades(filters?: PositionFilters): Promise<Trade[]> {
     const conditions = [isOpen, forRun(this.backtestRunId)];
-    if (filters?.trader) conditions.push(eq(schema.trades.trader, filters.trader));
-    if (filters?.symbol) conditions.push(eq(schema.trades.symbol, filters.symbol));
+    if (filters?.trader) conditions.push(forTrader(filters.trader));
+    if (filters?.symbol) conditions.push(forSymbol(filters.symbol));
+    if (filters?.strategy) conditions.push(forStrategy(filters.strategy));
     return db.select().from(schema.trades).where(and(...conditions));
   }
 

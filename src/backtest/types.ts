@@ -113,8 +113,13 @@ export type LiveMetrics = {
   databentoApiFetches: number;
   databentoApiBytesRead: number;
   updatedAt: string;
-  /** ISO timestamp of the last message processed in Phase 2. Used by the UI to grey out unprocessed messages. */
-  lastProcessedMessageTs?: string | null;
+  /** ISO timestamp of the last message processed in Phase 2. null during extraction phase. */
+  lastProcessedMessageTs: string | null;
+  /** Which phase the runner is currently in. */
+  phase: 'EXTRACTING' | 'REPLAYING';
+  /** Phase 1 extraction progress. 0 during replay phase. */
+  extractedMessages: number;
+  totalExtractMessages: number;
 };
 
 

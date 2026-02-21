@@ -81,9 +81,8 @@ export function formatOccSymbol(option: {
  *  $1 strikes near ATM (not just $2.50). */
 function strikeInterval(price: number): number {
   if (price < 25) return 0.5;
-  if (price < 200) return 1;
-  if (price < 500) return 5;
-  return 10;
+  if (price < 200) return 0.5;
+  return 5;
 }
 
 /**

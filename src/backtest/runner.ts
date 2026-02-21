@@ -17,7 +17,7 @@ import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
-import { isClosed, forRun } from '../trades/filters.js';
+import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
 import type { TaskContext } from '../db/schema.js';
@@ -179,7 +179,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     },
   };
 
-  const getOpenPositions = async (filters: { symbol?: string; trader?: string } = {}) =>
+  const getOpenPositions = async (filters: PositionFilters = {}) =>
     broker.getOpenTrades(filters);
 
   const riskConfig: RiskCheckConfig = {
@@ -310,10 +310,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     agentProvider,
     intentDeps,
     {
-      concurrency: config.intentConcurrency ?? 5,
       version: INTENT_VERSION,
       onProgress: (progress) => {
-        // Update live metrics during Phase 1 so the UI shows progress
+        // Update live metrics during Phase 1 so the UI shows extraction progress
         if (progress.processed % 5 === 0 || progress.processed === progress.total) {
           db.update(schema.backtestRuns)
             .set({
@@ -321,6 +320,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
                 unrealizedPnl: null,
                 openPositionCount: 0,
                 lastProcessedMessageTs: null,
+                phase: 'EXTRACTING',
+                extractedMessages: progress.processed,
+                totalExtractMessages: progress.total,
               }),
             })
             .where(eq(schema.backtestRuns.id, runId))
@@ -428,6 +430,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           unrealizedPnl: lastMtmValue,
           openPositionCount: lastOpenCount,
           lastProcessedMessageTs: msg.timestamp.toISOString(),
+          phase: 'REPLAYING',
+          extractedMessages: 0,
+          totalExtractMessages: 0,
         }),
       })
       .where(eq(schema.backtestRuns.id, runId));

@@ -79,7 +79,6 @@ const COLORS: Record<string, string> = {
   EXECUTE: SAGE,
   SKIP: FADED,
   MANUAL_REVIEW: AMBER,
-  PARTIAL: AMBER,
 
   // Pipeline steps
   classify: DUSTY_BLUE,

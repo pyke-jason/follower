@@ -6,7 +6,7 @@
  */
 import { db, schema } from '../db/client.js';
 import { eq, and } from 'drizzle-orm';
-import { isOpen, forRun, forSymbol, forTrader } from './filters.js';
+import { isOpen, forRun, forSymbol, forTrader, forStrategy } from './filters.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
@@ -21,6 +21,9 @@ export type RecordTradeInput = {
   trader: string;
   direction?: 'LONG' | 'SHORT';
   strategy?: string;
+  /** When the caller already knows which trade to target (from a prior lookup),
+   *  pass the ID here to skip the redundant scope-filter query. */
+  tradeId?: string;
   entryPrice?: number;
   exitPrice?: number;
   quantity?: number;
@@ -97,11 +100,13 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     }
   }
 
-  // Build scoped filter for finding existing positions
+  // Build scoped filter for finding existing positions.
+  // Strategy filter prevents matching e.g. a STOCK position when the signal is for PDS.
   const scopeFilters = [
     isOpen,
     forSymbol(symbol),
     forTrader(trader),
+    ...(strategy ? [forStrategy(strategy)] : []),
     ...(backtestRunId ? [forRun(backtestRunId)] : [eq(schema.trades.isBacktest, false)]),
   ];
 
@@ -147,7 +152,11 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   }
 
   // ── Find existing open position for CLOSE/ADD/TRIM/LEG_OFF ──
-  const [existing] = await db.select().from(schema.trades).where(and(...scopeFilters)).limit(1);
+  // Fast path: caller already identified the trade (pipeline does its own lookup).
+  // Fallback: scope-filter query for callers that only know symbol/trader/strategy.
+  const [existing] = input.tradeId
+    ? await db.select().from(schema.trades).where(eq(schema.trades.id, input.tradeId))
+    : await db.select().from(schema.trades).where(and(...scopeFilters)).limit(1);
   if (!existing) {
     log.debug(`${action}: no open position for ${symbol}/${trader}${backtestRunId ? ` run=${backtestRunId.slice(0, 8)}` : ''}`);
     return null;
@@ -158,11 +167,14 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
     const qty = tradeQty(existing.quantity);
-    const pnl = computeTradePnl({
+    const closePnl = computeTradePnl({
       entryPrice: entry, exitPrice: exit,
       direction: existing.direction as 'LONG' | 'SHORT',
       strategy: existing.strategy, quantity: qty,
     });
+    // Total PnL includes any realized PnL accumulated from prior TRIMs
+    const priorRealized = safeParseFloat(existing.realizedPnl);
+    const totalPnl = roundCents(closePnl + priorRealized);
     const ts = closedAt ?? now;
 
     await emitEvent({
@@ -180,14 +192,15 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       .set({
         status: 'CLOSED',
         exitPrice: String(exit),
-        pnl: String(pnl),
+        pnl: String(totalPnl),
         closedAt: ts,
         closeMessageId: closeMessageId ?? null,
+        ...(metadata ? { metadata: { ...(existing.metadata as Record<string, unknown> ?? {}), ...metadata } } : {}),
       })
       .where(eq(schema.trades.id, existing.id));
 
     const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
-    log.debug(`CLOSE: ${existing.symbol} exit=$${exit} PnL=$${pnl} [${existing.id.slice(0, 8)}]`);
+    log.debug(`CLOSE: ${existing.symbol} exit=$${exit} closePnl=$${closePnl} realizedPnl=$${priorRealized} totalPnl=$${totalPnl} [${existing.id.slice(0, 8)}]`);
     return { tradeId: existing.id, action: 'CLOSE', trade };
   }
 
@@ -226,7 +239,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     return { tradeId: existing.id, action: 'ADD', trade };
   }
 
-  // ── TRIM: partial close — create child trade, update parent ──
+  // ── TRIM: partial close — update position in place, accumulate realizedPnl ──
   if (action === 'TRIM') {
     const existingQty = tradeQty(existing.quantity);
     let trimQty = closeQuantity ?? (exitPercent
@@ -241,7 +254,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
-    const pnl = computeTradePnl({
+    const trimPnl = computeTradePnl({
       entryPrice: entry, exitPrice: exit,
       direction: existing.direction as 'LONG' | 'SHORT',
       strategy: existing.strategy, quantity: trimQty,
@@ -256,48 +269,40 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       strategy: existing.strategy,
       direction: existing.direction,
       messageId: closeMessageId,
-      metadata: { exitPercent: exitPercent ?? (existingQty > 0 ? trimQty / existingQty : null) },
+      metadata: { exitPercent: exitPercent ?? (existingQty > 0 ? trimQty / existingQty : null), trimPnl },
       timestamp: ts,
     });
 
-    // Create closed child trade
-    const childId = crypto.randomUUID();
-    await db.insert(schema.trades).values({
-      id: childId,
-      taskId: taskId ?? null,
-      sourceMessageId: sourceMessageId ?? existing.sourceMessageId,
-      trader,
-      symbol,
-      direction: existing.direction,
-      strategy: existing.strategy,
-      legs: existing.legs,
-      status: 'CLOSED',
-      entryPrice: existing.entryPrice,
-      exitPrice: String(exit),
-      exitPercent: existingQty > 0 ? trimQty / existingQty : null,
-      quantity: trimQty,
-      pnl: String(pnl),
-      openedAt: existing.openedAt,
-      closedAt: ts,
-      closeMessageId: closeMessageId ?? null,
-      parentTradeId: existing.id,
-      isBacktest: existing.isBacktest,
-      backtestRunId: existing.backtestRunId,
-      metadata: metadata ?? {},
-    });
-
-    // Update parent: reduce quantity, change status
+    // Accumulate realized PnL from this trim
+    const priorRealized = safeParseFloat(existing.realizedPnl);
+    const newRealized = roundCents(priorRealized + trimPnl);
     const remainingQty = existingQty - trimQty;
-    await db.update(schema.trades)
-      .set({
-        quantity: Math.max(0, remainingQty),
-        status: remainingQty <= 0 ? 'CLOSED' : 'PARTIAL',
-      })
-      .where(eq(schema.trades.id, existing.id));
 
-    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, childId));
-    log.debug(`TRIM: ${symbol} -${trimQty}/${existingQty} @$${exit} PnL=$${pnl} remaining=${remainingQty} [${existing.id.slice(0, 8)}]`);
-    return { tradeId: childId, action: 'TRIM', trade };
+    if (remainingQty <= 0) {
+      // 100% trim = effectively a close
+      await db.update(schema.trades)
+        .set({
+          quantity: 0,
+          status: 'CLOSED',
+          realizedPnl: String(newRealized),
+          pnl: String(newRealized),
+          exitPrice: String(exit),
+          closedAt: ts,
+          closeMessageId: closeMessageId ?? null,
+        })
+        .where(eq(schema.trades.id, existing.id));
+    } else {
+      await db.update(schema.trades)
+        .set({
+          quantity: remainingQty,
+          realizedPnl: String(newRealized),
+        })
+        .where(eq(schema.trades.id, existing.id));
+    }
+
+    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+    log.debug(`TRIM: ${symbol} -${trimQty}/${existingQty} @$${exit} trimPnl=$${trimPnl} realizedPnl=$${newRealized} remaining=${remainingQty} [${existing.id.slice(0, 8)}]`);
+    return { tradeId: existing.id, action: 'TRIM', trade };
   }
 
   // ── LEG_OFF: close one leg of a spread, mutate position in place ──

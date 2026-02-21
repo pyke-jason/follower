@@ -1,6 +1,7 @@
 import type { BrokerService } from '../broker/interface.js';
 import type { Quote } from '../broker/types.js';
 import type { Trade, TrackedTrader } from '../db/schema.js';
+import type { PositionFilters } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('Prefetch');
@@ -29,7 +30,7 @@ export type PrefetchedData = {
 
 export type PrefetchDeps = {
   broker: BrokerService;
-  getOpenPositions: (filters: { symbol?: string; trader?: string }) => Promise<Trade[]>;
+  getOpenPositions: (filters: PositionFilters) => Promise<Trade[]>;
   getTraderConfig: (name: string) => Promise<TrackedTrader | undefined>;
 };
 

@@ -6,7 +6,7 @@ import { InfoChip } from '../../components/info-chip';
 import { formatCurrency } from '@/lib/format';
 import { estimateLlmCost } from '../../../../src/lib/llm-cost';
 import type { LiveMetrics } from '../../../../src/backtest/types';
-import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers } from 'lucide-react';
+import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain } from 'lucide-react';
 
 interface RunProgressProps {
   processedMessages: number;
@@ -36,6 +36,7 @@ export function RunProgress({
   completedAt,
 }: RunProgressProps) {
   const isActive = status === 'RUNNING' || status === 'PENDING';
+  const isExtracting = isActive && liveMetrics?.phase === 'EXTRACTING';
 
   // Elapsed timer based on actual run startedAt
   const startMs = startedAt ? new Date(startedAt).getTime() : null;
@@ -55,7 +56,18 @@ export function RunProgress({
     return () => clearInterval(timer);
   }, [startMs, isActive]);
 
-  const pct = totalMessages > 0 ? Math.round((processedMessages / totalMessages) * 100) : 0;
+  // During extraction phase, show extraction progress; otherwise show replay progress
+  const progressLabel = isExtracting
+    ? `Extracting intents... ${liveMetrics.extractedMessages.toLocaleString()}/${liveMetrics.totalExtractMessages.toLocaleString()}`
+    : `${processedMessages.toLocaleString()}/${totalMessages.toLocaleString()} messages`;
+
+  const pct = isExtracting
+    ? liveMetrics.totalExtractMessages > 0
+      ? Math.round((liveMetrics.extractedMessages / liveMetrics.totalExtractMessages) * 100)
+      : 0
+    : totalMessages > 0
+      ? Math.round((processedMessages / totalMessages) * 100)
+      : 0;
 
   const llmCost = estimateLlmCost(agentModel, {
     inputTokens: llmTokens.input,
@@ -71,11 +83,14 @@ export function RunProgress({
       <div className="flex items-center justify-between text-xs">
         <span className="font-medium text-foreground">Progress</span>
         <span className="text-muted-foreground tabular-nums">
-          {processedMessages.toLocaleString()}/{totalMessages.toLocaleString()} messages
+          {progressLabel}
         </span>
       </div>
       <Progress value={pct} className="h-2" />
       <div className="flex items-center gap-2 flex-wrap">
+        {isExtracting && (
+          <InfoChip label="Extracting intents" icon={Brain} />
+        )}
         {liveMetrics?.unrealizedPnl != null && (
           <InfoChip
             label={`${formatCurrency(liveMetrics.unrealizedPnl)} unrealized`}

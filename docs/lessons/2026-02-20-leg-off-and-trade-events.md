@@ -23,4 +23,4 @@ Watch out:
   targetStrategy is passed through metadata from pipeline to record-trade. If metadata shape changes, both files break together.
   PnL is only computed at final CLOSE against the adjusted entry price. No intermediate PnL for the leg-off itself.
   recordTrade() is the single write path for all trade mutations. closePositionAtPrice() delegates to it.
-  drizzle-kit push has CJS/ESM issues. Apply migrations with sqlite3 data.db < drizzle/NNNN_name.sql.
+  drizzle-kit push has CJS/ESM issues. Apply migrations with: sqlite3 data/trade-follower.db < drizzle/NNNN_name.sql (NOT data.db at root — the app DB is data/trade-follower.db).

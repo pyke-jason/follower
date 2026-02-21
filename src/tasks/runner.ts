@@ -21,7 +21,7 @@ import { sendSystemAlert } from '../lib/alert.js';
 import { checkRiskLimits, type RiskCheckConfig, type RiskCheckDeps } from '../orders/risk-check.js';
 import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
-import { isOpen, isClosed, notBacktest, forSymbol, forTrader } from '../trades/filters.js';
+import { isOpen, isClosed, notBacktest, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { recordTrade } from '../trades/record-trade.js';
 
 const riskConfig: RiskCheckConfig = {
@@ -31,10 +31,11 @@ const riskConfig: RiskCheckConfig = {
   maxNotionalMultiplier: 2,
 };
 
-const getOpenPositions = async (filters: { symbol?: string; trader?: string } = {}) => {
+const getOpenPositions = async (filters: PositionFilters = {}) => {
   const conditions = [isOpen, notBacktest];
   if (filters.symbol) conditions.push(forSymbol(filters.symbol));
   if (filters.trader) conditions.push(forTrader(filters.trader));
+  if (filters.strategy) conditions.push(forStrategy(filters.strategy));
   return db.select().from(schema.trades).where(and(...conditions));
 };
 

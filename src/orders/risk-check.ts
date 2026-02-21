@@ -1,4 +1,5 @@
 import type { Trade } from '../db/schema.js';
+import type { PositionFilters } from '../trades/filters.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { contractMultiplier, tradeQty } from '../lib/trade.js';
 
@@ -12,7 +13,7 @@ export type RiskCheckConfig = {
 };
 
 export type RiskCheckDeps = {
-  getOpenTrades: (filters?: { symbol?: string; trader?: string }) => Promise<Trade[]>;
+  getOpenTrades: (filters?: PositionFilters) => Promise<Trade[]>;
   getDailyClosedPnl: () => Promise<number>;
   getStartingEquity: () => Promise<number | null>;
   getCurrentEquity: () => Promise<number>;

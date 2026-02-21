@@ -18,7 +18,7 @@ import type { BacktestRunConfig } from '../../../../src/db/schema';
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: [
-    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-4-6',
     'claude-haiku-4-5-20251001',
     'claude-opus-4-6',
   ],

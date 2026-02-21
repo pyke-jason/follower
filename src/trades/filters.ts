@@ -4,14 +4,17 @@
  *
  *   db.select().from(trades).where(and(isOpen, forRun(runId), forSymbol('AAPL')))
  */
-import { eq, inArray } from 'drizzle-orm';
-import { schema } from '../db/client.js';
+import { eq } from 'drizzle-orm';
+import { trades } from '../db/schema.js';
 
-export const isOpen = inArray(schema.trades.status, ['OPEN', 'PARTIAL']);
-export const isClosed = eq(schema.trades.status, 'CLOSED');
-export const notBacktest = eq(schema.trades.isBacktest, false);
+export const isOpen = eq(trades.status, 'OPEN');
+export const isClosed = eq(trades.status, 'CLOSED');
+export const notBacktest = eq(trades.isBacktest, false);
 
-export const forRun = (runId: string) => eq(schema.trades.backtestRunId, runId);
-export const forSymbol = (sym: string) => eq(schema.trades.symbol, sym);
-export const forTrader = (trader: string) => eq(schema.trades.trader, trader);
-export const forTask = (taskId: string) => eq(schema.trades.taskId, taskId);
+export const forRun = (runId: string) => eq(trades.backtestRunId, runId);
+export const forSymbol = (sym: string) => eq(trades.symbol, sym);
+export const forTrader = (trader: string) => eq(trades.trader, trader);
+export const forStrategy = (strategy: string) => eq(trades.strategy, strategy);
+export const forTask = (taskId: string) => eq(trades.taskId, taskId);
+
+export type PositionFilters = { symbol?: string; trader?: string; strategy?: string };

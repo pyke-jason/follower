@@ -1,5 +1,6 @@
 import type { Quote, OptionsChain } from '../broker/types.js';
 import type { Trade } from '../db/schema.js';
+import type { PositionFilters } from '../trades/filters.js';
 import {
   GetQuoteInput,
   GetOptionsChainInput,
@@ -129,7 +130,7 @@ export function submitDecisionTool(): ToolDef {
 }
 
 export function getOpenPositionsTool(
-  getOpenPositions: (filters: { symbol?: string; trader?: string }) => Promise<Trade[]>,
+  getOpenPositions: (filters: PositionFilters) => Promise<Trade[]>,
 ): ToolDef {
   return {
     name: 'get_open_positions',

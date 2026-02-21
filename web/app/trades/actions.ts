@@ -1,6 +1,7 @@
 'use server';
 
 import { db, schema } from '@/lib/db';
+import { TradeLeg } from '@db/schema';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
@@ -17,58 +18,29 @@ export async function forceExitTrade(formData: FormData) {
 
   if (!trade || trade.status !== 'OPEN') return;
 
-  try {
-    const legs = (trade.legs as any[]) || [];
+  const legs = trade.legs;
+  const closingLegs = legs.map((leg: TradeLeg) => ({
+    ...leg,
+    action: leg.action === 'BUY' ? 'SELL' : 'BUY',
+  }));
 
-    // Build closing legs (reverse each leg's action)
-    const closingLegs = legs.map((leg: any) => ({
-      ...leg,
-      action: leg.action === 'BUY' ? 'SELL' : 'BUY',
-    }));
+  // The API route handles both the broker order AND the recordTrade call
+  // (emits trade_events, updates trades row through the canonical write path).
+  const res = await fetch(`${LOCAL_API_URL}/trades/force-exit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tradeId: trade.id,
+      symbol: trade.symbol,
+      trader: trade.trader,
+      strategy: trade.strategy,
+      direction: trade.direction,
+      legs: closingLegs,
+    }),
+  });
 
-    const res = await fetch(`${LOCAL_API_URL}/trades/force-exit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: trade.symbol,
-        strategy: trade.strategy,
-        direction: trade.direction,
-        legs: closingLegs,
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Local API error: ${res.status} ${await res.text()}`);
-    }
-
-    const result = await res.json() as { orderId: string; status: string; filledPrice: number | null };
-
-    await db
-      .update(schema.trades)
-      .set({
-        status: 'CLOSED',
-        exitPrice: result.filledPrice != null ? String(result.filledPrice) : null,
-        closedAt: new Date().toISOString(),
-        metadata: {
-          ...(trade.metadata as any),
-          forceExitOrderId: result.orderId,
-          forceExitStatus: result.status,
-        },
-      })
-      .where(eq(schema.trades.id, tradeId));
-  } catch (err) {
-    // If broker call fails, still mark as closed with error metadata
-    await db
-      .update(schema.trades)
-      .set({
-        status: 'CLOSED',
-        closedAt: new Date().toISOString(),
-        metadata: {
-          ...(trade.metadata as any),
-          forceExitError: err instanceof Error ? err.message : String(err),
-        },
-      })
-      .where(eq(schema.trades.id, tradeId));
+  if (!res.ok) {
+    throw new Error(`Force exit failed: ${res.status} ${await res.text()}`);
   }
 
   revalidatePath('/trades/open');

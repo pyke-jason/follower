@@ -25,8 +25,8 @@ type ModelPricing = {
 };
 
 const PRICING: Record<string, ModelPricing> = {
-  // Anthropic Claude Sonnet 4.5
-  'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
+  // Anthropic Claude Sonnet 4.6
+  'claude-sonnet-4-6': { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
   // Anthropic Claude Haiku 3.5
   'claude-haiku-4-5-20251001': { input: 0.80, output: 4.00, cacheWrite: 1.00, cacheRead: 0.08 },
   // xAI Grok 4.1 Fast
@@ -36,6 +36,28 @@ const PRICING: Record<string, ModelPricing> = {
 
 // Conservative fallback — assumes Sonnet-class pricing
 const DEFAULT_PRICING: ModelPricing = { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 };
+
+// ─── Rate limits ────────────────────────────────────
+
+export type ModelRateLimits = {
+  /** Max API requests per minute (from provider docs / console). */
+  rpm: number;
+};
+
+const RATE_LIMITS: Record<string, ModelRateLimits> = {
+  // Anthropic — Tier 1 (shared across the Sonnet 4.x and Haiku families)
+  'claude-sonnet-4-6': { rpm: 50 },
+  'claude-haiku-4-5-20251001': { rpm: 50 },
+  // xAI — from console (480 RPM on current plan)
+  'grok-4-1-fast-reasoning': { rpm: 480 },
+  'grok-4-1-fast-non-reasoning': { rpm: 480 },
+};
+
+const DEFAULT_RATE_LIMITS: ModelRateLimits = { rpm: 50 };
+
+export function getModelRateLimits(model: string): ModelRateLimits {
+  return RATE_LIMITS[model] ?? DEFAULT_RATE_LIMITS;
+}
 
 /**
  * Estimate LLM cost in USD from model name and token usage.

@@ -99,7 +99,7 @@ export const trades = sqliteTable('trades', {
   direction:       text('direction').notNull(),    // LONG | SHORT
   strategy:        text('strategy').notNull(),     // CDS, PDS, CALL, PUT, STOCK
   legs:            text('legs', { mode: 'json' }).$type<TradeLeg[]>().notNull(),
-  status:          text('status').notNull().default('OPEN'), // OPEN | CLOSED | CANCELLED | PARTIAL
+  status:          text('status').notNull().default('OPEN'), // OPEN | CLOSED | CANCELLED
   entryPrice:      text('entry_price'),
   exitPrice:       text('exit_price'),
   quantity:        integer('quantity').default(1),
@@ -110,20 +110,18 @@ export const trades = sqliteTable('trades', {
   isBacktest:      integer('is_backtest', { mode: 'boolean' }).default(false),
   backtestRunId:   text('backtest_run_id').references(() => backtestRuns.id),
   metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().default({}),
-  parentTradeId:   text('parent_trade_id').references((): any => trades.id),
-  exitPercent:     real('exit_percent'),
   avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
   brokerFillQty:   integer('broker_fill_qty'),
   brokerCommission: text('broker_commission'),
   brokerFillTime:  text('broker_fill_time'),
   brokerLegFills:  text('broker_leg_fills', { mode: 'json' }).$type<import('../broker/types.js').LegFill[] | null>(),
+  realizedPnl:     text('realized_pnl'),  // accumulated PnL from partial exits (TRIMs)
 }, (table) => [
   index('idx_trades_trader').on(table.trader),
   index('idx_trades_symbol').on(table.symbol),
   index('idx_trades_status').on(table.status),
   index('idx_trades_backtest_run').on(table.backtestRunId),
-  index('idx_trades_parent').on(table.parentTradeId),
 ]);
 
 // ─── Trade Events (append-only action log) ──────────
@@ -339,7 +337,7 @@ export type BacktestRunConfig = {
   traders: string[];
   useQuoteTape: boolean;
   agentProvider?: string;  // 'anthropic' | 'xai'
-  agentModel?: string;     // e.g. 'claude-sonnet-4-5-20250929'
+  agentModel?: string;     // e.g. 'claude-sonnet-4-6'
   fillModel?: 'orats' | 'midpoint' | 'natural';
   name?: string;           // human label for the run
   refreshQuoteCache?: boolean;
@@ -351,7 +349,6 @@ export type BacktestRunConfig = {
   maxDrawdownPct?: number;
   maxNotionalMultiplier?: number;
   disableRiskLimits?: boolean;
-  intentConcurrency?: number;  // Phase 1 parallel intent extraction workers (default: 5)
   commissionSchedule?: CommissionSchedule;
 };
 

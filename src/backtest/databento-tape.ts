@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { zCoercePrice, formatZodError } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
 import { toDateKeyET, dayBoundsUTC, isTradingDay, isMarketHours, marketOpenUTC, parseDateKey } from '../lib/et-date.js';
+import type { Bar } from '../broker/types.js';
 import { parseOccSymbol } from './occ-symbology.js';
 
 const log = createLogger('QuoteTape');
@@ -70,8 +71,11 @@ const px = zCoercePrice.optional();
 const DatabentoRecord = z.object({
   symbol: z.string().optional(),
   hd: z.object({ symbol: z.string().optional(), ts_event: z.string().nullish() }).optional(),
+  open: px,
   high: px,
   low: px,
+  close: px,
+  volume: z.coerce.number().optional(),
   bid_px_00: px,
   ask_px_00: px,
   bid_px: px,
@@ -478,6 +482,163 @@ export async function loadQuoteTapeForDay(params: {
 
   allTicks.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   return allTicks;
+}
+
+// ── Daily bar cache (ohlcv-1d) ──────────────────────────────────────
+
+async function readBarCache(path: string): Promise<Bar | null> {
+  try {
+    const data = await readFile(path, 'utf-8');
+    const raw = JSON.parse(data);
+    if (!raw || typeof raw !== 'object' || !raw.timestamp) return null;
+    return raw as Bar;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBarCache(path: string, bar: Bar): Promise<void> {
+  await mkdir(CACHE_DIR, { recursive: true });
+  await writeFile(path, JSON.stringify(bar));
+}
+
+/**
+ * Fetch daily OHLCV bars for a symbol across multiple trading days in a SINGLE
+ * Databento API call using the ohlcv-1d schema. Returns one Bar per trading day.
+ *
+ * Cache is per-symbol-per-day (same getDayCachePath with schema='ohlcv-1d'),
+ * so repeated calls only fetch uncached days.
+ *
+ * Cost: ~1 row per trading day vs ~390 rows/day for ohlcv-1m.
+ */
+export async function loadDailyBars(params: {
+  apiKey: string;
+  dataset: string;
+  symbol: string;
+  days: string[];        // YYYY-MM-DD trading days, any order
+  refreshCache?: boolean;
+}): Promise<Bar[]> {
+  const schema = 'ohlcv-1d';
+  const sortedDays = [...params.days].sort();
+
+  // Check per-day cache
+  const bars: Map<string, Bar> = new Map();
+  const uncachedDays: string[] = [];
+
+  for (const day of sortedDays) {
+    const cachePath = getDayCachePath({ dataset: params.dataset, schema, symbol: params.symbol, day });
+    if (params.refreshCache) await unlink(cachePath).catch(() => {});
+    const cached = await readBarCache(cachePath);
+    if (cached) {
+      bars.set(day, cached);
+    } else {
+      uncachedDays.push(day);
+    }
+  }
+
+  if (uncachedDays.length === 0) {
+    return sortedDays.map((d) => bars.get(d)!).filter(Boolean);
+  }
+
+  // Single API call spanning the full uncached range
+  const rangeStart = dayRangeUTC(uncachedDays[0]).start;
+  const rangeEnd = dayRangeUTC(uncachedDays[uncachedDays.length - 1]).end;
+  const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
+
+  const fetchParams = new URLSearchParams({
+    dataset: params.dataset,
+    schema,
+    encoding: 'json',
+    pretty_px: 'true',
+    pretty_ts: 'true',
+    map_symbols: 'true',
+    symbols: params.symbol,
+    start: rangeStart.toISOString(),
+    end: rangeEnd.toISOString(),
+  });
+
+  const fetchStart = Date.now();
+  const { res, retries } = await fetchWithRetry(
+    'https://hist.databento.com/v0/timeseries.get_range',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: fetchParams.toString(),
+    },
+    { day: `${uncachedDays[0]}..${uncachedDays[uncachedDays.length - 1]}`, symbols: [params.symbol] },
+  );
+
+  const httpStatus = res.status;
+  const requestId = res.headers.get('x-request-id') ?? undefined;
+  if (!res.body) throw new Error('Response body is null');
+
+  // Parse response — one record per trading day
+  let bytesRead = 0;
+  let records = 0;
+  const reader = Readable.from(res.body as any);
+
+  for await (const line of readLines(reader)) {
+    bytesRead += Buffer.byteLength(line) + 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let raw: unknown;
+    try { raw = JSON.parse(trimmed); } catch { continue; }
+    records++;
+
+    const recordResult = DatabentoRecord.safeParse(raw);
+    if (!recordResult.success) continue;
+    const rec = recordResult.data;
+
+    const ts = rec.ts_event ?? rec.hd?.ts_event ?? rec.ts_recv;
+    if (!ts) continue;
+    const timestamp = new Date(ts);
+    if (isNaN(timestamp.getTime())) continue;
+
+    const dayKey = toDateKeyET(timestamp);
+    if (rec.open == null || rec.high == null || rec.low == null || rec.close == null) continue;
+
+    bars.set(dayKey, {
+      timestamp: timestamp.toISOString(),
+      open: rec.open,
+      high: rec.high,
+      low: rec.low,
+      close: rec.close,
+      volume: rec.volume ?? 0,
+    });
+  }
+
+  const durMs = Date.now() - fetchStart;
+  const parts: string[] = [
+    `daily-bars ${params.symbol}`,
+    `range=${uncachedDays[0]}..${uncachedDays[uncachedDays.length - 1]}`,
+    `status=${httpStatus}`,
+    `bytes=${bytesRead}`,
+    `records=${records}`,
+    `bars=${bars.size}`,
+  ];
+  if (retries) parts.push(`retries=${retries}`);
+  if (requestId) parts.push(`req=${requestId}`);
+  parts.push(`dur=${durMs}ms`);
+  log.info(parts.join(' '));
+
+  _apiStats.fetches++;
+  _apiStats.bytesRead += bytesRead;
+  _apiStats.records += records;
+
+  // Cache each day's bar
+  for (const day of uncachedDays) {
+    const bar = bars.get(day);
+    if (bar) {
+      const cachePath = getDayCachePath({ dataset: params.dataset, schema, symbol: params.symbol, day });
+      await writeBarCache(cachePath, bar);
+    }
+  }
+
+  return sortedDays.map((d) => bars.get(d)!).filter(Boolean);
 }
 
 /**

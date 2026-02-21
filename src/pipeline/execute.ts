@@ -12,10 +12,12 @@ import type { Trade } from '../db/schema.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
+import type { PositionFilters } from '../trades/filters.js';
 export type { RecordTradeResult };
 export type { OrderLeg };
 import type { Signal } from '../agent/schemas.js';
 import { createLogger } from '../lib/logger.js';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
 import { formatOccSymbol } from '../backtest/occ-symbology.js';
 
@@ -39,7 +41,7 @@ export type PendingOrderContext = {
 export type PipelineDeps = {
   broker: BrokerService;
   orderManager?: OrderManager;
-  getOpenPositions: (filters: { symbol?: string; trader?: string }) => Promise<Trade[]>;
+  getOpenPositions: (filters: PositionFilters) => Promise<Trade[]>;
   calculatePositionSize: (input: {
     trader: string;
     symbol: string;
@@ -265,11 +267,11 @@ async function executeClose(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
-  // 1. Find existing position
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader });
+  // 1. Find existing position (strategy filter prevents matching e.g. STOCK when signal says PDS)
+  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
   const existing = positions[0];
   if (!existing) {
-    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader}` };
+    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
 
   // 2. Use current remaining quantity (accounts for prior TRIMs)
@@ -301,6 +303,7 @@ async function executeClose(
   // 5. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
     action: 'CLOSE',
+    tradeId: existing.id,
     symbol: signal.symbol,
     trader,
     direction: existing.direction as 'LONG' | 'SHORT',
@@ -340,7 +343,7 @@ async function executeAdd(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   // 1. Verify position exists; if not, fall through to OPEN
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader });
+  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
   if (positions.length === 0) {
     log.debug(`ADD: no existing position for ${signal.symbol}/${trader}, falling through to OPEN`);
     return executeOpen(signal, trader, deps, opts);
@@ -375,8 +378,10 @@ async function executeAdd(
   const params = buildOrderParams(signal, legs, signal.limitPrice);
 
   // 5. Place and record
+  const existing = positions[0];
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
     action: 'ADD',
+    tradeId: existing.id,
     symbol: signal.symbol,
     trader,
     direction: signal.direction,
@@ -415,10 +420,10 @@ async function executeTrim(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   // 1. Find existing position
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader });
+  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
   const existing = positions[0];
   if (!existing) {
-    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader}` };
+    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
 
   // 2. Compute trim quantity from current remaining qty
@@ -451,6 +456,7 @@ async function executeTrim(
   // 5. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
     action: 'TRIM',
+    tradeId: existing.id,
     symbol: signal.symbol,
     trader,
     direction: existing.direction as 'LONG' | 'SHORT',
@@ -490,11 +496,11 @@ async function executeLegOff(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
-  // 1. Find existing position
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader });
+  // 1. Find existing position (use signal.strategy — the pre-mutation strategy)
+  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
   const existing = positions[0];
   if (!existing) {
-    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader}` };
+    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
 
   // 2. Identify the leg to close (the SELL leg in CDS→CALL or PDS→PUT)
@@ -525,6 +531,7 @@ async function executeLegOff(
   // 4. Place order and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
     action: 'LEG_OFF',
+    tradeId: existing.id,
     symbol: signal.symbol,
     trader,
     direction: existing.direction as 'LONG' | 'SHORT',
@@ -601,6 +608,10 @@ export async function executeSignals(
       const result = await executeSignal(signal, trader, deps, opts);
       results.push(result);
     } catch (err) {
+      // Infrastructure errors (DB down, missing table) are not recoverable
+      // per-signal — re-throw so the caller (runner) sees the real problem
+      // instead of silently producing zero trades.
+      if (err instanceof DrizzleQueryError) throw err;
       const reason = err instanceof Error ? err.message : String(err);
       log.warn(`Signal ${signal.action} ${signal.symbol} failed: ${reason}`);
       results.push({ signal, executed: false, reason });

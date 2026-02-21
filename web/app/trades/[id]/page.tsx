@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getTradeById, getTradeSteps, getMessageById, getPartialExits, getParentTrade, getNearbyMessages } from '@/lib/queries';
+import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { ChatPreview } from '../../messages/chat-preview';
 import { FillQuality } from './fill-quality';
-import { PartialExitTree } from './partial-exit-tree';
+import { EventTimeline } from './event-timeline';
 import type { TradeLeg } from '../../../../src/db/schema';
 
 export const dynamic = 'force-dynamic';
@@ -28,11 +28,10 @@ export default async function TradeDetailPage({
   const trade = await getTradeById(id);
   if (!trade) notFound();
 
-  const [steps, sourceMessage, childTrades, parentTrade] = await Promise.all([
+  const [steps, sourceMessage, tradeEvents] = await Promise.all([
     trade.taskId ? getTradeSteps(trade.taskId) : Promise.resolve([]),
     trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
-    getPartialExits(trade.id),
-    trade.parentTradeId ? getParentTrade(trade.id) : Promise.resolve(null),
+    getTradeEvents(trade.id),
   ]);
 
   const nearbyMessages = sourceMessage
@@ -79,6 +78,13 @@ export default async function TradeDetailPage({
               <StatItem label="Quantity">
                 <p className="text-foreground tabular-nums font-medium">{trade.quantity}</p>
               </StatItem>
+              {trade.realizedPnl && trade.status === 'OPEN' && (
+                <StatItem label="Realized P&L (trims)">
+                  <p className={`tabular-nums font-medium ${pnlColor(trade.realizedPnl)}`}>
+                    {formatCurrency(trade.realizedPnl)}
+                  </p>
+                </StatItem>
+              )}
               <StatItem label="Opened">
                 <p className="text-foreground">{formatDate(trade.openedAt)}</p>
               </StatItem>
@@ -103,13 +109,10 @@ export default async function TradeDetailPage({
           {/* Fill Quality */}
           <FillQuality trade={trade} />
 
-          {/* Partial Exits */}
-          <PartialExitTree
-            trade={trade}
-            parentTrade={parentTrade}
-            childTrades={childTrades}
-            runId={runId}
-          />
+          {/* Event Timeline */}
+          {tradeEvents.length > 1 && (
+            <EventTimeline events={tradeEvents} />
+          )}
         </div>
 
         {/* ── Right Column (sticky) ────────────────────── */}

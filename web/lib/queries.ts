@@ -2,11 +2,8 @@ import { db, schema } from './db';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
+import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
-
-/** Matches isOpen from src/trades/filters.ts — includes PARTIAL status (trimmed positions). */
-const isOpenTrade = inArray(schema.trades.status, ['OPEN', 'PARTIAL']);
-const isClosedTrade = eq(schema.trades.status, 'CLOSED');
 
 /** Scoping helper: when runId is set, show that backtest's data. Otherwise, live only. */
 function tradeScope(runId?: string): SQL {
@@ -25,7 +22,7 @@ export async function getStats(runId?: string) {
   const [openTradesResult] = await db
     .select({ count: count() })
     .from(schema.trades)
-    .where(and(isOpenTrade, tradeScope(runId)));
+    .where(and(isOpen, tradeScope(runId)));
 
   const [todayPnlResult] = await db
     .select({
@@ -33,7 +30,7 @@ export async function getStats(runId?: string) {
     })
     .from(schema.trades)
     .where(runId
-      ? and(isClosedTrade, tradeScope(runId))
+      ? and(isClosed, tradeScope(runId))
       : and(isNull(schema.trades.backtestRunId), sql`closed_at >= date('now')`)
     );
 
@@ -53,7 +50,7 @@ export async function getOpenTrades(limit = 50, runId?: string) {
   return db
     .select()
     .from(schema.trades)
-    .where(and(isOpenTrade, tradeScope(runId)))
+    .where(and(isOpen, tradeScope(runId)))
     .orderBy(desc(schema.trades.openedAt))
     .limit(limit);
 }
@@ -66,10 +63,10 @@ export async function getClosedTrades(opts: {
   offset?: number;
   runId?: string;
 } = {}) {
-  const conditions = [isClosedTrade, tradeScope(opts.runId)];
-  if (opts.trader) conditions.push(eq(schema.trades.trader, opts.trader));
-  if (opts.symbol) conditions.push(eq(schema.trades.symbol, opts.symbol));
-  if (opts.strategy) conditions.push(eq(schema.trades.strategy, opts.strategy));
+  const conditions = [isClosed, tradeScope(opts.runId)];
+  if (opts.trader) conditions.push(forTrader(opts.trader));
+  if (opts.symbol) conditions.push(forSymbol(opts.symbol));
+  if (opts.strategy) conditions.push(forStrategy(opts.strategy));
 
   return db
     .select()
@@ -393,7 +390,7 @@ export async function getMtmSnapshots(backtestRunId: string) {
 export async function getTradesByBacktestRun(backtestRunId: string, opts?: { includeOpen?: boolean }) {
   const conditions = [eq(schema.trades.backtestRunId, backtestRunId)];
   if (!opts?.includeOpen) {
-    conditions.push(isClosedTrade);
+    conditions.push(isClosed);
   }
   return db
     .select()
@@ -422,7 +419,7 @@ export async function getTraderPnlSummary(runId?: string) {
       wins: sql<number>`SUM(CASE WHEN CAST(${schema.trades.pnl} AS REAL) > 0 THEN 1 ELSE 0 END)`,
     })
     .from(schema.trades)
-    .where(and(isClosedTrade, tradeScope(runId)))
+    .where(and(isClosed, tradeScope(runId)))
     .groupBy(schema.trades.trader)
     .orderBy(sql`SUM(CAST(${schema.trades.pnl} AS REAL)) DESC`);
 }
@@ -459,10 +456,10 @@ export async function getTradeHistorySummary(opts: {
   strategy?: string;
   runId?: string;
 } = {}) {
-  const conditions = [isClosedTrade, tradeScope(opts.runId)];
-  if (opts.trader) conditions.push(eq(schema.trades.trader, opts.trader));
-  if (opts.symbol) conditions.push(eq(schema.trades.symbol, opts.symbol));
-  if (opts.strategy) conditions.push(eq(schema.trades.strategy, opts.strategy));
+  const conditions = [isClosed, tradeScope(opts.runId)];
+  if (opts.trader) conditions.push(forTrader(opts.trader));
+  if (opts.symbol) conditions.push(forSymbol(opts.symbol));
+  if (opts.strategy) conditions.push(forStrategy(opts.strategy));
 
   const [result] = await db
     .select({
@@ -544,13 +541,13 @@ export async function getRiskSnapshot() {
       count: count(),
     })
     .from(schema.trades)
-    .where(and(isOpenTrade, isNull(schema.trades.backtestRunId)))
+    .where(and(isOpen, isNull(schema.trades.backtestRunId)))
     .groupBy(schema.trades.symbol);
 
   const [totalOpen] = await db
     .select({ count: count() })
     .from(schema.trades)
-    .where(and(isOpenTrade, isNull(schema.trades.backtestRunId)));
+    .where(and(isOpen, isNull(schema.trades.backtestRunId)));
 
   const [unresolvedAlerts] = await db
     .select({ count: count() })
@@ -754,7 +751,7 @@ export async function getDistinctExperimentTags() {
 
 export async function getTraderEquityCurve(trader: string, runId?: string) {
   const conditions = [
-    isClosedTrade,
+    isClosed,
     eq(schema.trades.trader, trader),
     tradeScope(runId),
   ];
@@ -781,7 +778,7 @@ export async function getTraderEquityCurve(trader: string, runId?: string) {
 
 export async function getTraderStrategyBreakdown(trader: string, runId?: string) {
   const conditions = [
-    isClosedTrade,
+    isClosed,
     eq(schema.trades.trader, trader),
     tradeScope(runId),
   ];
@@ -807,27 +804,14 @@ export async function getTraderDetail(name: string) {
   return trader ?? null;
 }
 
-// ─── Partial Exits ──────────────────────────────────
+// ─── Trade Events ───────────────────────────────────
 
-export async function getPartialExits(parentTradeId: string) {
+export async function getTradeEvents(tradeId: string) {
   return db
     .select()
-    .from(schema.trades)
-    .where(eq(schema.trades.parentTradeId, parentTradeId))
-    .orderBy(asc(schema.trades.closedAt));
-}
-
-export async function getParentTrade(tradeId: string) {
-  const [trade] = await db
-    .select()
-    .from(schema.trades)
-    .where(eq(schema.trades.id, tradeId));
-  if (!trade?.parentTradeId) return null;
-  const [parent] = await db
-    .select()
-    .from(schema.trades)
-    .where(eq(schema.trades.id, trade.parentTradeId));
-  return parent ?? null;
+    .from(schema.tradeEvents)
+    .where(eq(schema.tradeEvents.tradeId, tradeId))
+    .orderBy(asc(schema.tradeEvents.timestamp));
 }
 
 // ─── Enriched Messages (trade-overlay chat feed) ────

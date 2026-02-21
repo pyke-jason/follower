@@ -155,6 +155,10 @@ export async function runAgentLoop(
       }
     }
 
+    // If we got a terminal result (submit_decision / flag_for_review), stop — no need
+    // for another round-trip just to get an end_turn text block.
+    if (result != null) break;
+
     // Push tool results in provider-native format
     const formattedResults = provider.formatToolResults(toolResults);
     if (Array.isArray(formattedResults)) {

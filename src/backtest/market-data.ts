@@ -1,5 +1,5 @@
 import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js';
-import { loadQuoteTapeForDay, loadChainDefinitions, loadSpecificContracts, toDateKey, getFetchMeta } from './databento-tape.js';
+import { loadQuoteTapeForDay, loadDailyBars, loadChainDefinitions, loadSpecificContracts, toDateKey, getFetchMeta } from './databento-tape.js';
 import type { QuoteTick } from './databento-tape.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
 import { getPreviousTradingDayKey, parseDateKey } from '../lib/et-date.js';
@@ -36,7 +36,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   /** symbol -> most recent mid price (for getPriceSnapshot) */
   private latestQuotes = new Map<string, number>();
   /** "SYMBOL:YYYY-MM-DD" -> aggregated daily bar (immutable past days only) */
-  private barCache = new Map<string, Bar>();
   /** "SYMBOL:EXPIRY:TYPE:TIMESTAMP_MS" -> assembled chain snapshot */
   private chainCache = new Map<string, OptionsChain>();
 
@@ -190,88 +189,28 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   }
 
   async getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]> {
-    // Walk backwards to collect enough trading days
-    const calendarDays = Math.ceil(barsBack * 1.5) + 5; // padding for weekends/holidays
-    const bars: Bar[] = [];
-
     const atDay = toDateKey(at);
-    let daysLoaded = 0;
-    let totalTicks = 0;
 
-    for (let offset = calendarDays; offset >= 0; offset--) {
-      const d = new Date(at.getTime() - offset * 24 * 60 * 60 * 1000);
-      const dayKey = toDateKey(d);
-
-      // Past (completed) days: use bar cache to skip tick re-aggregation
-      if (dayKey < atDay) {
-        const barCacheKey = `${symbol}:${dayKey}`;
-        const cachedBar = this.barCache.get(barCacheKey);
-        if (cachedBar) {
-          bars.push(cachedBar);
-          daysLoaded++;
-          continue;
-        }
-      }
-
-      let ticks: QuoteTick[];
-      try {
-        ticks = await this.loadDay(symbol, d);
-      } catch {
-        continue; // skip days with no data
-      }
-
-      daysLoaded++;
-      totalTicks += ticks.length;
-      if (ticks.length === 0) continue;
-
-      let dayTicks: QuoteTick[];
-      if (dayKey === atDay) {
-        // Current day: only ticks at or before `at` (no look-ahead)
-        const idx = this.findLastTickBeforeIndex(ticks, at);
-        if (idx < 0) continue;
-        dayTicks = ticks.slice(0, idx + 1);
-      } else {
-        // Past day: all ticks are fair game
-        dayTicks = ticks;
-      }
-
-      if (dayTicks.length === 0) continue;
-
-      // Aggregate minute ticks into one daily bar.
-      // Use ask for highs and bid for lows so OHLCV-sourced ticks (bid=low, ask=high)
-      // produce correct daily ranges instead of compressed mid-price ranges.
-      const bar = this.aggregateBar(dayTicks);
-      bars.push(bar);
-
-      // Cache completed past days (immutable — won't change)
-      if (dayKey < atDay) {
-        this.barCache.set(`${symbol}:${dayKey}`, bar);
-      }
+    // Build list of trading days (oldest → newest), skipping weekends/holidays
+    const tradingDays: string[] = [];
+    let dayKey: string | null = atDay;
+    const needed = barsBack + 1; // +1 for current day
+    for (let i = 0; i < needed && dayKey; i++) {
+      tradingDays.unshift(dayKey);
+      dayKey = getPreviousTradingDayKey(dayKey);
     }
 
-    log.debug(`${symbol} bars: ${daysLoaded} days loaded (${totalTicks.toLocaleString()} ticks) → ${bars.length} bars`);
+    // Single API call via ohlcv-1d — ~15 rows instead of ~6,000 via ohlcv-1m
+    const bars = await loadDailyBars({
+      apiKey: this.apiKey,
+      dataset: this.dataset,
+      symbol,
+      days: tradingDays,
+      refreshCache: this.refreshCache,
+    });
 
-    // Return last barsBack bars
+    log.debug(`${symbol} bars: ${bars.length} daily bars for ${tradingDays.length} trading days`);
     return bars.slice(-barsBack);
-  }
-
-  private aggregateBar(dayTicks: QuoteTick[]): Bar {
-    const firstMid = (dayTicks[0].bid + dayTicks[0].ask) / 2;
-    const lastMid = (dayTicks[dayTicks.length - 1].bid + dayTicks[dayTicks.length - 1].ask) / 2;
-    let high = -Infinity;
-    let low = Infinity;
-    for (const t of dayTicks) {
-      if (t.ask > high) high = t.ask;
-      if (t.bid < low) low = t.bid;
-    }
-    return {
-      timestamp: dayTicks[0].timestamp.toISOString(),
-      open: firstMid,
-      high,
-      low,
-      close: lastMid,
-      volume: dayTicks.length * 1000, // approximate
-    };
   }
 
   async getOptionsChain(
