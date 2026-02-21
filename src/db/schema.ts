@@ -126,6 +126,28 @@ export const trades = sqliteTable('trades', {
   index('idx_trades_parent').on(table.parentTradeId),
 ]);
 
+// ─── Trade Events (append-only action log) ──────────
+
+export const tradeEvents = sqliteTable('trade_events', {
+  id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  tradeId:    text('trade_id').references(() => trades.id).notNull(),
+  action:     text('action').notNull(),         // OPEN | CLOSE | ADD | TRIM | LEG_OFF
+  price:      text('price'),                    // fill price for this action
+  quantity:   integer('quantity'),               // contracts/shares involved
+  legs:       text('legs', { mode: 'json' }).$type<TradeLeg[]>().default([]),
+  strategy:   text('strategy'),                 // strategy at time of event
+  direction:  text('direction'),                // direction at time of event
+  messageId:  text('message_id'),               // source message that triggered this
+  metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>().default({}),
+  timestamp:  text('timestamp').notNull(),       // ISO 8601 — when the action happened
+  createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_trade_events_trade').on(table.tradeId),
+  index('idx_trade_events_timestamp').on(table.timestamp),
+]);
+
+export type TradeEvent = typeof tradeEvents.$inferSelect;
+
 // ─── Backtest Runs ───────────────────────────────────
 
 export const backtestRuns = sqliteTable('backtest_runs', {

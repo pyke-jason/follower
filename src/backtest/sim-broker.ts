@@ -15,6 +15,7 @@ import { formatOccSymbol } from './occ-symbology.js';
 import { parseLegs, parseDirection } from '../db/parse.js';
 import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
+import { recordTrade } from '../trades/record-trade.js';
 
 const log = createLogger('SimBroker');
 
@@ -418,23 +419,19 @@ export class SimBroker implements BrokerService {
     const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
     if (!trade) throw new Error(`Trade ${tradeId} not found`);
 
-    const pnl = computeTradePnl({
-      entryPrice: safeParseFloat(trade.entryPrice),
+    const result = await recordTrade({
+      action: 'CLOSE',
+      symbol: trade.symbol,
+      trader: trade.trader,
       exitPrice,
-      direction: parseDirection(trade.direction, trade.id),
-      strategy: trade.strategy,
-      quantity: tradeQty(trade.quantity),
+      closedAt,
+      backtestRunId: this.backtestRunId,
+      isBacktest: true,
     });
 
-    await db.update(schema.trades)
-      .set({
-        status: 'CLOSED',
-        exitPrice: String(exitPrice),
-        pnl: String(pnl),
-        closedAt,
-      })
-      .where(eq(schema.trades.id, tradeId));
+    if (!result) throw new Error(`recordTrade CLOSE failed for trade ${tradeId}`);
 
+    const pnl = safeParseFloat(result.trade.pnl);
     return { pnl };
   }
 

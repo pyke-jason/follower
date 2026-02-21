@@ -29,5 +29,5 @@ export type Strategy = z.infer<typeof StrategySchema>;
 export const LabelStrategySchema = z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS']);
 export type LabelStrategy = z.infer<typeof LabelStrategySchema>;
 
-export const TradeActionSchema = z.enum(['OPEN', 'CLOSE', 'ADD', 'TRIM']);
+export const TradeActionSchema = z.enum(['OPEN', 'CLOSE', 'ADD', 'TRIM', 'LEG_OFF']);
 export type TradeAction = z.infer<typeof TradeActionSchema>;

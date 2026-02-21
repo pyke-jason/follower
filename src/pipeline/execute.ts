@@ -24,7 +24,7 @@ const log = createLogger('Pipeline');
 // ─── Types ──────────────────────────────────────────
 
 export type PendingOrderContext = {
-  action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM';
+  action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
   symbol: string;
   direction: 'LONG' | 'SHORT';
   strategy: string;
@@ -484,6 +484,87 @@ async function executeTrim(
   return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
 }
 
+async function executeLegOff(
+  signal: Signal,
+  trader: string,
+  deps: PipelineDeps,
+  opts: PipelineOpts,
+): Promise<PipelineResult> {
+  // 1. Find existing position
+  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader });
+  const existing = positions[0];
+  if (!existing) {
+    return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader}` };
+  }
+
+  // 2. Identify the leg to close (the SELL leg in CDS→CALL or PDS→PUT)
+  const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
+  const targetStrategy = signal.targetStrategy!;
+
+  const legToClose = existingLegs.find(l => l.action === 'SELL');
+  if (!legToClose) {
+    return { signal, executed: false, reason: `No SELL leg found to close on ${existing.strategy}` };
+  }
+  const legToKeep = existingLegs.find(l => l.action === 'BUY');
+
+  // 3. Build order — buy back the sold leg (reverse it)
+  const quantity = tradeQty(existing.quantity);
+  const closingLegs: OrderLeg[] = [{
+    ...legToClose,
+    quantity,
+    action: 'BUY' as const,
+  }];
+
+  const params = buildOrderParams(
+    { ...signal, direction: 'LONG' as const, strategy: existing.strategy as Signal['strategy'] },
+    closingLegs,
+    signal.limitPrice,
+  );
+  params.isClosing = true;
+
+  // 4. Place order and record
+  const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
+    action: 'LEG_OFF',
+    symbol: signal.symbol,
+    trader,
+    direction: existing.direction as 'LONG' | 'SHORT',
+    strategy: existing.strategy,
+    exitPrice: filledPrice,
+    quantity,
+    legs: existingLegs,
+    closedAt: filledAt?.toISOString(),
+    sourceMessageId: existing.sourceMessageId ?? undefined,
+    closeMessageId: opts.messageId,
+    taskId: opts.taskId,
+    backtestRunId: opts.backtestRunId,
+    isBacktest: opts.isBacktest ?? false,
+    metadata: {
+      targetStrategy,
+      closedLeg: legToClose,
+      keptLeg: legToKeep,
+    },
+  });
+
+  let tradeId: string | undefined;
+  const result = await placeOrder(deps, params, async (orderResult) => {
+    const recorded = await deps.recordTrade(
+      buildRecordInput(orderResult.filledPrice ?? signal.limitPrice ?? 0,
+        orderResult.fillTimestamp ? new Date(orderResult.fillTimestamp) : undefined),
+    );
+    if (recorded) tradeId = recorded.tradeId;
+  }, {
+    action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    strategy: existing.strategy, quantity, legs: closingLegs, messageId: opts.messageId,
+    recordFill: async (fp, fa) => deps.recordTrade(buildRecordInput(fp, fa)),
+  });
+
+  log.debug(`LEG_OFF ${existing.strategy}→${targetStrategy} ${signal.symbol} qty=${quantity} → ${result.status}`);
+  if (result.status === 'REJECTED') {
+    return { signal, executed: false, reason: result.message ?? 'Order rejected' };
+  }
+  return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
+}
+
 // ─── Public API ─────────────────────────────────────
 
 /** Execute a single signal through the deterministic pipeline. */
@@ -494,10 +575,11 @@ export async function executeSignal(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   switch (signal.action) {
-    case 'OPEN':  return executeOpen(signal, trader, deps, opts);
-    case 'CLOSE': return executeClose(signal, trader, deps, opts);
-    case 'ADD':   return executeAdd(signal, trader, deps, opts);
-    case 'TRIM':  return executeTrim(signal, trader, deps, opts);
+    case 'OPEN':    return executeOpen(signal, trader, deps, opts);
+    case 'CLOSE':   return executeClose(signal, trader, deps, opts);
+    case 'ADD':     return executeAdd(signal, trader, deps, opts);
+    case 'TRIM':    return executeTrim(signal, trader, deps, opts);
+    case 'LEG_OFF': return executeLegOff(signal, trader, deps, opts);
     default:
       return { signal, executed: false, reason: `Unknown action: ${(signal as any).action}` };
   }

@@ -142,6 +142,13 @@ Only flag_for_review when:
 - **TRIM**: Partial exit ("Exit RKLB 1/2", "trim 80% of AEO").
   Include exitPercent: 0.5 for half, 0.8 for 80%, etc.
   Do NOT include legs for TRIM — the system uses the existing position's legs.
+- **LEG_OFF**: Close one leg of a spread, keeping the other. The trader bought back the short
+  side of a spread and is holding the remaining long options.
+  Examples: "Exit Long UNH cds took small profit hold straight calls" → LEG_OFF, targetStrategy: CALL
+  "Bought back the short puts on AAPL PDS, holding long puts" → LEG_OFF, targetStrategy: PUT
+  Only applies to spreads (CDS, PDS). Include \`targetStrategy\` field (CALL or PUT) — the strategy
+  after removing the closed leg. Do NOT include legs — the system identifies the leg to close
+  from the existing position.
 
 ## Position Context
 You will be given the trader's recent messages. Use them to understand what positions
@@ -167,7 +174,7 @@ the original trade call that this trader is following.
 
 After using tools, call **submit_decision** with your parsed signals. For EXECUTE, include a signals array. For SKIP or MANUAL_REVIEW, omit signals.
 
-**IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
+**IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE, TRIM, and LEG_OFF, do NOT include \`legs\` — the system uses the existing position's legs automatically. For LEG_OFF, include \`targetStrategy\` (CALL or PUT).`;
 
 /**
  * Create tools for intent extraction.
