@@ -272,7 +272,7 @@ export function linearPrice(
 
 // ── DB helpers (parameterised on db/schema from vi.mock) ─────────────
 
-/** SQL to create the trades table for in-memory test databases. */
+/** SQL to create the trades + trade_events tables for in-memory test databases. */
 export const CREATE_TRADES_SQL = sql`
   CREATE TABLE IF NOT EXISTS trades (
     id TEXT PRIMARY KEY,
@@ -302,6 +302,24 @@ export const CREATE_TRADES_SQL = sql`
     broker_commission TEXT,
     broker_fill_time TEXT,
     broker_leg_fills TEXT
+  )
+`;
+
+/** SQL to create the trade_events table (append-only action log used by recordTrade). */
+export const CREATE_TRADE_EVENTS_SQL = sql`
+  CREATE TABLE IF NOT EXISTS trade_events (
+    id TEXT PRIMARY KEY,
+    trade_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    price TEXT,
+    quantity INTEGER,
+    legs TEXT DEFAULT '[]',
+    strategy TEXT,
+    direction TEXT,
+    message_id TEXT,
+    metadata TEXT DEFAULT '{}',
+    timestamp TEXT NOT NULL,
+    created_at TEXT
   )
 `;
 
@@ -352,6 +370,7 @@ export type InsertOpenOptionTradeParams = {
 export function makeDbHelpers(db: any, schema: any, defaultRunId = 'test-run') {
   return {
     async resetDb() {
+      await db.run(sql`DELETE FROM trade_events`);
       await db.run(sql`DELETE FROM trades`);
     },
 
