@@ -14,6 +14,7 @@ Shared utilities live in src/lib/. If something is used by more than one module,
   src/lib/pnl.ts — computeTradePnl: direction-aware, contract-multiplied PnL from entry/exit/qty/strategy. Throws on NaN. Single source of truth.
   src/lib/trade.ts — contractMultiplier (STOCK=1, options=100), assetType (EQ/OP), tradeQty (null→1 fallback for legacy rows)
   src/lib/enums.ts — Zod schemas for Direction, Strategy, TradeAction (OPEN/CLOSE/ADD/TRIM/LEG_OFF), LegType, LegAction. Single source for all trading enums.
+  src/broker/order-schemas.ts — Zod schemas for OrderParams, WorkingOrderParams, OrderResult. Cross-field constraints via .refine(): LIMIT orders require limitPrice, FILLED results require filledPrice + fillTimestamp. Parsed at boundaries (OrderManager.submitOrder, OrderManager.tick, pipeline placeOrder).
   src/trades/filters.ts — composable Drizzle query fragments (isOpen, isClosed, forSymbol, forTrader, forStrategy, PositionFilters type). Imports from db/schema (not db/client) so the web layer can use it without pulling in native libsql.
 
 Backtest vs live — shared infrastructure:
@@ -36,11 +37,14 @@ Position sizing: src/position-sizing/index.ts — discriminated union on strateg
 Trade data model: trades table is a denormalized view. trade_events table is the append-only source of truth. recordTrade() in src/trades/record-trade.ts is the single write path — all mutations go through it, including sim-broker closes. When the caller already knows which trade to target, pass tradeId to skip the redundant scope-filter query.
 
 Rules:
+  - Validate at the boundary, not in orchestration. Cross-field constraints (e.g. LIMIT→limitPrice, FILLED→filledPrice+fillTimestamp) belong in Zod .refine() schemas parsed at entry points, not as ad-hoc throws deep in business logic. Pattern: Signal schemas (agent/schemas.ts), order schemas (broker/order-schemas.ts), API response schemas (broker/schemas.ts).
+  - When a callback only fires in a narrowed state, type the callback with the narrowed type. Example: onFill receives FilledWorkingOrder (filledPrice: number) not WorkingOrder (filledPrice?: number). This eliminates ! assertions in every consumer.
   - Never mass-delete .cache/databento/ files. They cost real money to re-fetch. Empty [] files are valid (weekends/holidays).
   - computeCoreStats() in src/backtest/report.ts is the single source of truth for trade stats. Don't duplicate it.
   - Backtest trades must have explicit timestamps — never fall back to wall-clock time.
   - dayBoundsUTC() dynamically detects EST/EDT. Don't hardcode UTC offsets.
   - Drizzle $type<>() annotations on JSON columns properly narrow types — don't add as casts.
+  - No inline type imports. Never use `import('path').Type` in type annotations — always use a top-level `import type { Type } from 'path'`. Inline imports are unreadable and hide dependencies.
   - NO backwards compatibility. Ever. No optional fields for "older runs", no migration shims, no deprecated re-exports, no _unused vars. If a type changes, update all producers and consumers. This is an internal tool — there are no external clients to support.
 
 Debugging: use disposable test scripts.

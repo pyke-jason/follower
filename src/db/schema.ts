@@ -3,6 +3,8 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
+import type { LegFill } from '../broker/types.js';
+import type { ExtendedMetrics, LiveMetrics } from '../backtest/types.js';
 import { LegTypeSchema, LegActionSchema } from '../lib/enums.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
@@ -115,7 +117,7 @@ export const trades = sqliteTable('trades', {
   brokerFillQty:   integer('broker_fill_qty'),
   brokerCommission: text('broker_commission'),
   brokerFillTime:  text('broker_fill_time'),
-  brokerLegFills:  text('broker_leg_fills', { mode: 'json' }).$type<import('../broker/types.js').LegFill[] | null>(),
+  brokerLegFills:  text('broker_leg_fills', { mode: 'json' }).$type<LegFill[] | null>(),
   realizedPnl:     text('realized_pnl'),  // accumulated PnL from partial exits (TRIMs)
 }, (table) => [
   index('idx_trades_trader').on(table.trader),
@@ -167,8 +169,8 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   experimentTag:   text('experiment_tag'),           // groups runs, e.g. "model-comparison-feb"
   parentRunId:     text('parent_run_id').references((): any => backtestRuns.id),
   pinned:          integer('pinned', { mode: 'boolean' }).default(false),
-  extendedMetrics: text('extended_metrics', { mode: 'json' }).$type<import('../backtest/types.js').ExtendedMetrics | null>(),
-  liveMetrics:     text('live_metrics', { mode: 'json' }).$type<import('../backtest/types.js').LiveMetrics | null>(),
+  extendedMetrics: text('extended_metrics', { mode: 'json' }).$type<ExtendedMetrics | null>(),
+  liveMetrics:     text('live_metrics', { mode: 'json' }).$type<LiveMetrics | null>(),
 }, (table) => [
   index('idx_backtest_runs_status').on(table.status),
   index('idx_backtest_runs_experiment_tag').on(table.experimentTag),

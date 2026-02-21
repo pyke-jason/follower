@@ -14,7 +14,7 @@ export type MessageIntent = {
   version: number;
   decision: string;
   reasoning: string | null;
-  signals: import('../../../src/db/schema').Signal[] | null;
+  signals: Signal[] | null;
   durationMs: number | null;
   inputTokens: number | null;
   outputTokens: number | null;

@@ -2,15 +2,13 @@ import { loadSecrets } from './lib/secrets/index.js';
 await loadSecrets();
 
 import { startIngestion, closeBrowser } from './ingestion/ingest.js';
-import { startTaskRunner, stopTaskRunner, awaitCurrentTask } from './tasks/runner.js';
+import { startTaskRunner, stopTaskRunner, awaitCurrentTask, destroyOrderManager } from './tasks/runner.js';
 import { createTaskFromMessage } from './tasks/factory.js';
 import { classifyMessage } from './parsing/classify.js';
 import { db, schema } from './db/client.js';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
-import { enrichTradeWithFill } from './tasks/recorder.js';
 import { liveService } from './broker/tradestation.js';
-import type { TradeMetadata } from './db/schema.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
@@ -22,37 +20,6 @@ const LOCK_PATH = PATHS.lockFile;
 
 let reconScheduler: ReconciliationScheduler | null = null;
 let fillSweep: FillSweep | null = null;
-
-/**
- * onFill callback for OrderManager — enriches the corresponding trade
- * with broker fill data when a working order gets filled.
- */
-async function handleOrderFill(order: import('./broker/types.js').WorkingOrder): Promise<void> {
-  try {
-    // Find the trade that references this broker order ID
-    const trades = await db.select()
-      .from(schema.trades)
-      .where(and(
-        eq(schema.trades.isBacktest, false),
-        sql`json_extract(metadata, '$.brokerOrderId') = ${order.orderId}`,
-      ))
-      .limit(1);
-
-    if (trades[0]) {
-      await enrichTradeWithFill(trades[0].id, {
-        orderId: order.orderId,
-        status: 'FILLED',
-        filledPrice: order.filledPrice,
-        filledQuantity: order.filledQuantity,
-        commission: order.commission,
-        fillTimestamp: order.fillTimestamp,
-        legFills: order.legFills,
-      });
-    }
-  } catch (err) {
-    console.warn('Failed to enrich trade on fill:', err);
-  }
-}
 
 async function main() {
   const lock = acquireLock(LOCK_PATH);
@@ -131,6 +98,7 @@ async function shutdown() {
   }
 
   // Drain background services
+  destroyOrderManager();
   await reconScheduler?.stop();
   await fillSweep?.stop();
   await closeBrowser();
