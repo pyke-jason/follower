@@ -167,12 +167,12 @@ function buildOrderParams(
   };
 }
 
-/** Place order through broker or order manager and handle fill/pending. */
+/** Place order through broker or order manager and handle fill/pending.
+ *  Single code path: both immediate and deferred fills use pendingContext.recordFill. */
 async function placeOrder(
   deps: PipelineDeps,
   params: WorkingOrderParams,
-  onFill: (result: OrderResult) => Promise<void>,
-  pendingContext?: PendingOrderContext,
+  pendingContext: PendingOrderContext,
 ): Promise<OrderResult> {
   let result: OrderResult;
   if (deps.orderManager) {
@@ -183,8 +183,14 @@ async function placeOrder(
   }
 
   if (result.status === 'FILLED') {
-    await onFill(result);
-  } else if (result.status === 'OPEN' && result.orderId && deps.onPending && pendingContext) {
+    if (result.filledPrice == null) {
+      throw new Error(`Order ${result.orderId} FILLED but no filledPrice`);
+    }
+    await pendingContext.recordFill(
+      result.filledPrice,
+      result.fillTimestamp ? new Date(result.fillTimestamp) : undefined,
+    );
+  } else if (result.status === 'OPEN' && result.orderId && deps.onPending) {
     deps.onPending(result.orderId, pendingContext);
   }
 
@@ -245,13 +251,14 @@ async function executeOpen(
   });
 
   let tradeId: string | undefined;
-  const result = await placeOrder(deps, params, async (orderResult) => {
-    const recorded = await deps.recordTrade(buildRecordInput(orderResult.filledPrice ?? signal.limitPrice ?? 0, orderResult.fillTimestamp ? new Date(orderResult.fillTimestamp) : undefined));
-    if (recorded) tradeId = recorded.tradeId;
-  }, {
+  const result = await placeOrder(deps, params, {
     action: 'OPEN', symbol: signal.symbol, direction: signal.direction,
     strategy: signal.strategy, quantity: size.quantity, legs, messageId: opts.messageId,
-    recordFill: async (fp, fa) => deps.recordTrade(buildRecordInput(fp, fa)),
+    recordFill: async (fp, fa) => {
+      const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
+      if (recorded) tradeId = recorded.tradeId;
+      return recorded;
+    },
   });
 
   log.debug(`OPEN ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${size.quantity} → ${result.status}`);
@@ -320,13 +327,14 @@ async function executeClose(
   });
 
   let tradeId: string | undefined;
-  const result = await placeOrder(deps, params, async (orderResult) => {
-    const recorded = await deps.recordTrade(buildRecordInput(orderResult.filledPrice ?? signal.limitPrice ?? 0, orderResult.fillTimestamp ? new Date(orderResult.fillTimestamp) : undefined));
-    if (recorded) tradeId = recorded.tradeId;
-  }, {
+  const result = await placeOrder(deps, params, {
     action: 'CLOSE', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
     strategy: existing.strategy, quantity, legs, messageId: opts.messageId,
-    recordFill: async (fp, fa) => deps.recordTrade(buildRecordInput(fp, fa)),
+    recordFill: async (fp, fa) => {
+      const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
+      if (recorded) tradeId = recorded.tradeId;
+      return recorded;
+    },
   });
 
   log.debug(`CLOSE ${existing.direction} ${existing.strategy} ${signal.symbol} qty=${quantity} → ${result.status}`);
@@ -397,13 +405,14 @@ async function executeAdd(
   });
 
   let tradeId: string | undefined;
-  const result = await placeOrder(deps, params, async (orderResult) => {
-    const recorded = await deps.recordTrade(buildRecordInput(orderResult.filledPrice ?? signal.limitPrice ?? 0, orderResult.fillTimestamp ? new Date(orderResult.fillTimestamp) : undefined));
-    if (recorded) tradeId = recorded.tradeId;
-  }, {
+  const result = await placeOrder(deps, params, {
     action: 'ADD', symbol: signal.symbol, direction: signal.direction,
     strategy: signal.strategy, quantity: size.quantity, legs, messageId: opts.messageId,
-    recordFill: async (fp, fa) => deps.recordTrade(buildRecordInput(fp, fa)),
+    recordFill: async (fp, fa) => {
+      const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
+      if (recorded) tradeId = recorded.tradeId;
+      return recorded;
+    },
   });
 
   log.debug(`ADD ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${size.quantity} → ${result.status}`);
@@ -474,13 +483,14 @@ async function executeTrim(
   });
 
   let tradeId: string | undefined;
-  const result = await placeOrder(deps, params, async (orderResult) => {
-    const recorded = await deps.recordTrade(buildRecordInput(orderResult.filledPrice ?? signal.limitPrice ?? 0, orderResult.fillTimestamp ? new Date(orderResult.fillTimestamp) : undefined));
-    if (recorded) tradeId = recorded.tradeId;
-  }, {
+  const result = await placeOrder(deps, params, {
     action: 'TRIM', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
     strategy: existing.strategy, quantity: trimQty, legs, messageId: opts.messageId,
-    recordFill: async (fp, fa) => deps.recordTrade(buildRecordInput(fp, fa)),
+    recordFill: async (fp, fa) => {
+      const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
+      if (recorded) tradeId = recorded.tradeId;
+      return recorded;
+    },
   });
 
   log.debug(`TRIM ${existing.direction} ${existing.strategy} ${signal.symbol} qty=${trimQty}/${currentQty} → ${result.status}`);
@@ -553,16 +563,14 @@ async function executeLegOff(
   });
 
   let tradeId: string | undefined;
-  const result = await placeOrder(deps, params, async (orderResult) => {
-    const recorded = await deps.recordTrade(
-      buildRecordInput(orderResult.filledPrice ?? signal.limitPrice ?? 0,
-        orderResult.fillTimestamp ? new Date(orderResult.fillTimestamp) : undefined),
-    );
-    if (recorded) tradeId = recorded.tradeId;
-  }, {
+  const result = await placeOrder(deps, params, {
     action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
     strategy: existing.strategy, quantity, legs: closingLegs, messageId: opts.messageId,
-    recordFill: async (fp, fa) => deps.recordTrade(buildRecordInput(fp, fa)),
+    recordFill: async (fp, fa) => {
+      const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
+      if (recorded) tradeId = recorded.tradeId;
+      return recorded;
+    },
   });
 
   log.debug(`LEG_OFF ${existing.strategy}→${targetStrategy} ${signal.symbol} qty=${quantity} → ${result.status}`);

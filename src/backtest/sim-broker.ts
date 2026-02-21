@@ -98,6 +98,8 @@ export function computeModelFillPrice(params: FillPriceParams): number {
 export class SimBroker implements BrokerService {
   private orderCounter = 0;
   private workingOrders = new Map<string, WorkingEntry>();
+  /** Tracks filled orders so getOrderStatus() returns FILLED even after removal from workingOrders. */
+  private filledOrders = new Map<string, { price: number; timestamp: string }>();
 
   /** Last time advanceTo() was called — used to determine tick range for next call. */
   private lastAdvanceTime: Date | null = null;
@@ -214,6 +216,7 @@ export class SimBroker implements BrokerService {
     entry.status = 'FILLED';
     entry.filledPrice = roundedFill;
     this.workingOrders.delete(orderId);
+    this.filledOrders.set(orderId, { price: roundedFill, timestamp: timestamp.toISOString() });
 
     const side = isBuy ? 'BUY' : 'SELL';
     log.debug(`Fill: ${orderId} ${side} ${symbol} @ $${roundedFill}`);
@@ -348,6 +351,11 @@ export class SimBroker implements BrokerService {
   }
 
   async cancelOrder(orderId: string): Promise<OrderResult> {
+    // Already filled — can't cancel a filled order
+    const filled = this.filledOrders.get(orderId);
+    if (filled) {
+      return { orderId, status: 'FILLED', filledPrice: filled.price, fillTimestamp: filled.timestamp };
+    }
     const entry = this.workingOrders.get(orderId);
     if (!entry) {
       return { orderId, status: 'REJECTED' };
@@ -359,14 +367,14 @@ export class SimBroker implements BrokerService {
 
   async getOrderStatus(orderId: string): Promise<OrderResult> {
     const entry = this.workingOrders.get(orderId);
-    if (!entry) {
-      return { orderId, status: 'REJECTED' };
+    if (entry) {
+      return { orderId, status: entry.status, filledPrice: entry.filledPrice };
     }
-    return {
-      orderId,
-      status: entry.status,
-      filledPrice: entry.filledPrice,
-    };
+    const filled = this.filledOrders.get(orderId);
+    if (filled) {
+      return { orderId, status: 'FILLED', filledPrice: filled.price, fillTimestamp: filled.timestamp };
+    }
+    return { orderId, status: 'REJECTED' };
   }
 
   /**

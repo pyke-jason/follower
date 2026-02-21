@@ -75,7 +75,32 @@ export class OrderManager {
     for (const [orderId, order] of this.workingOrders) {
       if (order.status !== 'OPEN') continue;
 
-      // 1. Check auto-cancel timeout
+      // 1. Check fill status FIRST — fills from advanceTo() must be detected
+      //    before auto-cancel can fire, otherwise we lose recorded trades.
+      const status = await this.broker.getOrderStatus(orderId);
+      if (status.status === 'FILLED') {
+        log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
+        order.status = 'FILLED';
+        order.filledPrice = status.filledPrice;
+        order.filledAt = status.fillTimestamp ? new Date(status.fillTimestamp) : now;
+        order.filledQuantity = status.filledQuantity;
+        order.commission = status.commission;
+        order.fillTimestamp = status.fillTimestamp;
+        order.legFills = status.legFills;
+        this.workingOrders.delete(orderId);
+        this.onFill?.(order);
+        this.stopTimerIfEmpty();
+        continue;
+      } else if (status.status === 'CANCELLED' || status.status === 'REJECTED') {
+        order.status = status.status;
+        order.cancelledAt = now;
+        this.workingOrders.delete(orderId);
+        this.onCancel?.(order);
+        this.stopTimerIfEmpty();
+        continue;
+      }
+
+      // 2. Check auto-cancel timeout
       if (order.params.cancelAfterSec) {
         const elapsed = (now.getTime() - order.placedAt.getTime()) / 1000;
         if (elapsed >= order.params.cancelAfterSec) {
@@ -90,7 +115,7 @@ export class OrderManager {
         }
       }
 
-      // 2. Check adjustment rules (PRICE_CHASE)
+      // 3. Check adjustment rules (PRICE_CHASE)
       if (order.params.adjustmentRules) {
         for (const rule of order.params.adjustmentRules) {
           if (rule.type !== 'PRICE_CHASE') continue;
@@ -117,28 +142,6 @@ export class OrderManager {
           order.lastAdjustedAt = now;
           order.adjustmentCount++;
         }
-      }
-
-      // 3. Check fill status
-      const status = await this.broker.getOrderStatus(orderId);
-      if (status.status === 'FILLED') {
-        log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
-        order.status = 'FILLED';
-        order.filledPrice = status.filledPrice;
-        order.filledAt = now;
-        order.filledQuantity = status.filledQuantity;
-        order.commission = status.commission;
-        order.fillTimestamp = status.fillTimestamp;
-        order.legFills = status.legFills;
-        this.workingOrders.delete(orderId);
-        this.onFill?.(order);
-        this.stopTimerIfEmpty();
-      } else if (status.status === 'CANCELLED' || status.status === 'REJECTED') {
-        order.status = status.status;
-        order.cancelledAt = now;
-        this.workingOrders.delete(orderId);
-        this.onCancel?.(order);
-        this.stopTimerIfEmpty();
       }
     }
   }

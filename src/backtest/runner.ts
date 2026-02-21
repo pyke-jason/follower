@@ -680,14 +680,17 @@ async function processMessage(
   );
 
   const executedResults = pipelineResults.filter(r => r.executed);
+  const pendingResults = pipelineResults.filter(r => !r.executed && r.orderId);
   const firstTradeId = executedResults[0]?.tradeId;
 
   const pipelineFailures = pipelineResults
-    .filter(r => !r.executed && r.reason)
+    .filter(r => !r.executed && !r.orderId && r.reason)
     .map(r => `${r.signal.action} ${r.signal.symbol}: ${r.reason}`);
 
   // ── 8. Record result ──
-  if (executedResults.length > 0 && firstTradeId) {
+  // Working orders (pendingResults) count as executions — they'll fill via
+  // advanceTo() and get recorded through the onFill callback.
+  if (executedResults.length > 0 || pendingResults.length > 0) {
     await recordExecute(ctx, 'intent', reasoning, firstTradeId, usage);
   } else if (pipelineFailures.length > 0) {
     const failReason = `[pipeline] ${pipelineFailures.join('; ')} | Intent: ${reasoning}`;
