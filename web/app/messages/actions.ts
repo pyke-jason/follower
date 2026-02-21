@@ -22,7 +22,7 @@ export type MessageIntent = {
   createdAt: string | null;
 };
 
-export type LabelFilter = 'labeled' | 'unlabeled' | 'mismatched';
+export type LabelFilter = 'labeled' | 'unlabeled' | 'mismatched' | 'needs-review';
 
 export type MessageFilters = {
   authors?: string[];
@@ -46,7 +46,7 @@ export async function fetchMessages(
   // For "mismatched", we need to fetch labeled messages, then post-filter.
   // Over-fetch to ensure we can fill a page after filtering.
   const isMismatchFilter = filters.labelFilter === 'mismatched';
-  const queryLabelFilter = (isMismatchFilter ? 'labeled' : filters.labelFilter) as 'labeled' | 'unlabeled' | undefined;
+  const queryLabelFilter = (isMismatchFilter ? 'labeled' : filters.labelFilter) as 'labeled' | 'unlabeled' | 'needs-review' | undefined;
   const fetchLimit = isMismatchFilter ? PAGE_SIZE * 4 : PAGE_SIZE + 1;
 
   const rows = await getMessages({
