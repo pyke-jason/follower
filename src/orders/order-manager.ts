@@ -32,11 +32,11 @@ export class OrderManager {
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
-    const legCount = params.legs.length || 1;
+    const legCount = params.legs.length;
     const ruleCount = params.adjustmentRules?.length ?? 0;
     log.debug(`submit: ${params.orderType} ${params.symbol} legs=${legCount} limit=$${params.limitPrice ?? 'MKT'} cancelAfter=${params.cancelAfterSec ?? 'none'}s rules=${ruleCount}`);
 
-    const hasRules = params.adjustmentRules?.length || params.cancelAfterSec;
+    const hasRules = (params.adjustmentRules?.length ?? 0) > 0 || params.cancelAfterSec != null;
     const isLimit = params.orderType === 'LIMIT';
 
     // Pass straight through if MARKET or LIMIT without rules
@@ -56,11 +56,14 @@ export class OrderManager {
 
     // Register as working order
     const now = this.clock();
+    if (params.limitPrice == null) {
+      throw new Error(`LIMIT order accepted by broker without a limitPrice — orderId=${result.orderId}`);
+    }
     const workingOrder: WorkingOrder = {
       orderId: result.orderId,
       params,
       status: result.status,
-      currentLimitPrice: params.limitPrice!,
+      currentLimitPrice: params.limitPrice,
       placedAt: now,
       lastAdjustedAt: now,
       adjustmentCount: 0,
@@ -82,7 +85,10 @@ export class OrderManager {
         log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
         order.status = 'FILLED';
         order.filledPrice = status.filledPrice;
-        order.filledAt = status.fillTimestamp ? new Date(status.fillTimestamp) : now;
+        if (!status.fillTimestamp) {
+          throw new Error(`Broker reported FILLED for ${orderId} without a fillTimestamp`);
+        }
+        order.filledAt = new Date(status.fillTimestamp);
         order.filledQuantity = status.filledQuantity;
         order.commission = status.commission;
         order.fillTimestamp = status.fillTimestamp;
@@ -101,7 +107,7 @@ export class OrderManager {
       }
 
       // 2. Check auto-cancel timeout
-      if (order.params.cancelAfterSec) {
+      if (order.params.cancelAfterSec != null) {
         const elapsed = (now.getTime() - order.placedAt.getTime()) / 1000;
         if (elapsed >= order.params.cancelAfterSec) {
           log.debug(`Auto-cancel: ${orderId} after ${order.params.cancelAfterSec}s`);
@@ -123,7 +129,7 @@ export class OrderManager {
           const sinceLastAdj = (now.getTime() - order.lastAdjustedAt.getTime()) / 1000;
           if (sinceLastAdj < rule.intervalSec) continue;
 
-          if (rule.maxSteps && order.adjustmentCount >= rule.maxSteps) continue;
+          if (rule.maxSteps != null && order.adjustmentCount >= rule.maxSteps) continue;
 
           // BUY chases UP, SELL chases DOWN
           const firstLeg = order.params.legs[0];
