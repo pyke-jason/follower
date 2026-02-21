@@ -44,6 +44,7 @@ import {
   vShapedPrice,
   makeDbHelpers,
   CREATE_TRADES_SQL,
+  CREATE_TRADE_EVENTS_SQL,
   type PriceFn,
 } from './test-fixtures.js';
 import { formatOccSymbol } from './occ-symbology.js';
@@ -52,6 +53,7 @@ import { formatOccSymbol } from './occ-symbology.js';
 
 beforeAll(async () => {
   await db.run(CREATE_TRADES_SQL);
+  await db.run(CREATE_TRADE_EVENTS_SQL);
 });
 
 const RUN_ID = 'temporal-run';

@@ -45,10 +45,12 @@ import {
   makeStockSellOrder,
   stubMarketDataFromQuote,
   CREATE_TRADES_SQL,
+  CREATE_TRADE_EVENTS_SQL,
 } from './test-fixtures.js';
 
 beforeAll(async () => {
   await db.run(CREATE_TRADES_SQL);
+  await db.run(CREATE_TRADE_EVENTS_SQL);
 });
 
 // ── 1. computeModelFillPrice ─────────────────────────────────────────
