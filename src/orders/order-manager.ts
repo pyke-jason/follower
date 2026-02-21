@@ -1,5 +1,6 @@
 import type { BrokerService } from '../broker/interface.js';
 import type { OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
+import { WorkingOrderParamsSchema, OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { roundCents } from '../lib/numbers.js';
 
@@ -32,6 +33,7 @@ export class OrderManager {
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
+    WorkingOrderParamsSchema.parse(params);
     const legCount = params.legs.length;
     const ruleCount = params.adjustmentRules?.length ?? 0;
     log.debug(`submit: ${params.orderType} ${params.symbol} legs=${legCount} limit=$${params.limitPrice ?? 'MKT'} cancelAfter=${params.cancelAfterSec ?? 'none'}s rules=${ruleCount}`);
@@ -54,16 +56,13 @@ export class OrderManager {
       return result;
     }
 
-    // Register as working order
+    // Register as working order — limitPrice guaranteed by schema refine above
     const now = this.clock();
-    if (params.limitPrice == null) {
-      throw new Error(`LIMIT order accepted by broker without a limitPrice — orderId=${result.orderId}`);
-    }
     const workingOrder: WorkingOrder = {
       orderId: result.orderId,
       params,
       status: result.status,
-      currentLimitPrice: params.limitPrice,
+      currentLimitPrice: params.limitPrice!,
       placedAt: now,
       lastAdjustedAt: now,
       adjustmentCount: 0,
@@ -80,15 +79,12 @@ export class OrderManager {
 
       // 1. Check fill status FIRST — fills from advanceTo() must be detected
       //    before auto-cancel can fire, otherwise we lose recorded trades.
-      const status = await this.broker.getOrderStatus(orderId);
+      const status = OrderResultSchema.parse(await this.broker.getOrderStatus(orderId));
       if (status.status === 'FILLED') {
         log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
         order.status = 'FILLED';
         order.filledPrice = status.filledPrice;
-        if (!status.fillTimestamp) {
-          throw new Error(`Broker reported FILLED for ${orderId} without a fillTimestamp`);
-        }
-        order.filledAt = new Date(status.fillTimestamp);
+        order.filledAt = new Date(status.fillTimestamp!);
         order.filledQuantity = status.filledQuantity;
         order.commission = status.commission;
         order.fillTimestamp = status.fillTimestamp;
