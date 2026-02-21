@@ -1,6 +1,7 @@
 'use server';
 
-import { getMessages, getMessageById, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
+import { getMessages, getMessageById, getMessagesBySymbols, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
+import { compareSignals } from '../../../src/lib/eval';
 import { db, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -21,11 +22,14 @@ export type MessageIntent = {
   createdAt: string | null;
 };
 
+export type LabelFilter = 'labeled' | 'unlabeled' | 'mismatched' | 'needs-review';
+
 export type MessageFilters = {
   authors?: string[];
   startDate?: string;
   endDate?: string;
   signalsOnly?: boolean;
+  labelFilter?: LabelFilter;
   cursor?: string;
 };
 
@@ -39,23 +43,85 @@ export async function fetchMessages(
   labels: Record<string, MessageLabel>;
   nextCursor: string | null;
 }> {
+  // For "mismatched", we need to fetch labeled messages, then post-filter.
+  // Over-fetch to ensure we can fill a page after filtering.
+  const isMismatchFilter = filters.labelFilter === 'mismatched';
+  const queryLabelFilter = (isMismatchFilter ? 'labeled' : filters.labelFilter) as 'labeled' | 'unlabeled' | 'needs-review' | undefined;
+  const fetchLimit = isMismatchFilter ? PAGE_SIZE * 4 : PAGE_SIZE + 1;
+
   const rows = await getMessages({
     authors: filters.authors,
     startDate: filters.startDate,
     endDate: filters.endDate,
     signalsOnly: filters.signalsOnly,
+    labelFilter: queryLabelFilter,
     cursor: filters.cursor,
-    limit: PAGE_SIZE + 1, // fetch one extra to detect if there are more
+    limit: fetchLimit + 1,
   });
 
-  const hasMore = rows.length > PAGE_SIZE;
-  const messages = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+  if (!isMismatchFilter) {
+    const hasMore = rows.length > PAGE_SIZE;
+    const messages = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    const nextCursor = hasMore ? messages[messages.length - 1].timestamp : null;
 
-  // Messages are ordered desc (newest first). The cursor for "older" is the
-  // timestamp of the last (oldest) message in this batch.
-  const nextCursor = hasMore
-    ? messages[messages.length - 1].timestamp
-    : null;
+    const ids = messages.map((m) => m.id);
+    const [intents, labels] = await Promise.all([
+      getLatestIntents(ids),
+      getLabelsForMessages(ids),
+    ]);
+
+    return { messages, intents, labels, nextCursor };
+  }
+
+  // Mismatched: load intents+labels for all fetched rows, then filter to mismatches
+  const allIds = rows.map((m) => m.id);
+  const [allIntents, allLabels] = await Promise.all([
+    getLatestIntents(allIds),
+    getLabelsForMessages(allIds),
+  ]);
+
+  const mismatched = rows.filter((m) => {
+    const label = allLabels[m.id];
+    const intent = allIntents[m.id];
+    if (!label || !intent) return false;
+    return !compareSignals((label.signals as Signal[]) ?? [], intent);
+  });
+
+  const hasMore = mismatched.length > PAGE_SIZE;
+  const messages = hasMore ? mismatched.slice(0, PAGE_SIZE) : mismatched;
+  const nextCursor = hasMore ? messages[messages.length - 1].timestamp : null;
+
+  // Return only intents/labels for the page
+  const intents: Record<string, MessageIntent> = {};
+  const labels: Record<string, MessageLabel> = {};
+  for (const m of messages) {
+    if (allIntents[m.id]) intents[m.id] = allIntents[m.id];
+    if (allLabels[m.id]) labels[m.id] = allLabels[m.id];
+  }
+
+  return { messages, intents, labels, nextCursor };
+}
+
+export async function fetchMessage(id: string): Promise<Message | null> {
+  return getMessageById(id);
+}
+
+/** Fetch messages that share any symbol with the given message. */
+export async function fetchRelatedMessages(
+  messageId: string,
+): Promise<{
+  messages: Message[];
+  intents: Record<string, MessageIntent>;
+  labels: Record<string, MessageLabel>;
+  sourceSymbols: string[];
+}> {
+  const source = await getMessageById(messageId);
+  if (!source) return { messages: [], intents: {}, labels: {}, sourceSymbols: [] };
+
+  const sourceSymbols = (source.symbols as string[]) ?? [];
+  if (sourceSymbols.length === 0) return { messages: [source], intents: {}, labels: {}, sourceSymbols };
+
+  const messages = await getMessagesBySymbols(sourceSymbols, 200);
 
   const ids = messages.map((m) => m.id);
   const [intents, labels] = await Promise.all([
@@ -63,11 +129,7 @@ export async function fetchMessages(
     getLabelsForMessages(ids),
   ]);
 
-  return { messages, intents, labels, nextCursor };
-}
-
-export async function fetchMessage(id: string): Promise<Message | null> {
-  return getMessageById(id);
+  return { messages, intents, labels, sourceSymbols };
 }
 
 // ─── Label Actions ──────────────────────────────────

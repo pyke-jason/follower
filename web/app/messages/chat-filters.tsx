@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Input } from '@/components/ui/input';
 import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
 import { Users, X, Check } from 'lucide-react';
-import type { MessageFilters } from './actions';
+import type { MessageFilters, LabelFilter } from './actions';
 
 type TimePeriod = 'today' | '7d' | '30d' | 'all';
 
@@ -77,6 +77,11 @@ export function ChatFilters({
 
   const toggleSignalsOnly = (checked: boolean) => {
     onFilterChange({ ...filters, signalsOnly: checked || undefined });
+  };
+
+  const handleLabelFilter = (value: string) => {
+    // ToggleGroup returns '' when deselecting — clear the filter
+    onFilterChange({ ...filters, labelFilter: (value || undefined) as LabelFilter | undefined });
   };
 
   return (
@@ -200,6 +205,23 @@ export function ChatFilters({
           Signals only
         </Label>
       </div>
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-border" />
+
+      {/* Label filter */}
+      <ToggleGroup
+        type="single"
+        value={filters.labelFilter ?? ''}
+        onValueChange={handleLabelFilter}
+        variant="outline"
+        size="sm"
+      >
+        <ToggleGroupItem value="labeled" className="text-xs">Labeled</ToggleGroupItem>
+        <ToggleGroupItem value="unlabeled" className="text-xs">Unlabeled</ToggleGroupItem>
+        <ToggleGroupItem value="mismatched" className="text-xs">Mismatched</ToggleGroupItem>
+        <ToggleGroupItem value="needs-review" className="text-xs">Needs Review</ToggleGroupItem>
+      </ToggleGroup>
     </div>
   );
 }

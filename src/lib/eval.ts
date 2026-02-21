@@ -51,6 +51,38 @@ export function strikesMatch(expected: number[] | undefined, got: number[] | und
   return eSorted.every((v, i) => Math.abs(v - gSorted[i]) <= 0.01);
 }
 
+// ─── Quick match check ─────────────────────────────
+
+/** Returns true if label signals match intent signals (no mismatch). */
+export function compareSignals(
+  labelSignals: Signal[],
+  intent: { decision: string; signals: Signal[] | null },
+): boolean {
+  const intentSignals = (intent.signals ?? []) as Signal[];
+  const labelIsTrade = labelSignals.length > 0;
+  const intentIsTrade = intent.decision === 'EXECUTE' && intentSignals.length > 0;
+
+  if (labelIsTrade !== intentIsTrade) return false;
+  if (!labelIsTrade) return true; // both agree: not a trade
+
+  const ls = labelSignals[0];
+  const is_ = intentSignals[0];
+  if (!ls || !is_) return false;
+
+  if (normalizeNull(ls.action) !== normalizeNull(is_.action)) return false;
+  if (normalizeNull(ls.direction) !== normalizeNull(is_.direction)) return false;
+  if (normalizeNull(ls.strategy) !== normalizeNull(is_.strategy)) return false;
+  if (normalizeNull(ls.symbol)?.toUpperCase() !== normalizeNull(is_.symbol)?.toUpperCase()) return false;
+
+  const labelPrice = normalizeNull(ls.limitPrice);
+  if (labelPrice != null && !priceMatch(labelPrice, normalizeNull(is_.limitPrice))) return false;
+
+  const labelStrikes = extractStrikes(ls);
+  if (labelStrikes && labelStrikes.length > 0 && !strikesMatch(labelStrikes, extractStrikes(is_))) return false;
+
+  return true;
+}
+
 // ─── Core comparison ────────────────────────────────
 
 type LabelRow = {

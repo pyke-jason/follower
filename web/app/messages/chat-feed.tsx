@@ -41,10 +41,12 @@ export function ChatFeed({
   hasMore = false,
   focusMessageId,
   highlightMessageId,
+  selectedMessageId,
   anchorMessageId,
   intents,
   labels,
   renderItem,
+  onMessageClick,
 }: {
   messages: Message[];
   firstItemIndex?: number;
@@ -53,11 +55,13 @@ export function ChatFeed({
   hasMore?: boolean;
   focusMessageId?: string;
   highlightMessageId?: string;
+  selectedMessageId?: string;
   /** When set, scroll-to-bottom button scrolls here instead of absolute bottom. */
   anchorMessageId?: string;
   intents?: Record<string, MessageIntent>;
   labels?: Record<string, MessageLabel>;
   renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
+  onMessageClick?: (message: Message) => void;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -117,11 +121,19 @@ export function ChatFeed({
             return <DateSeparator date={item.date} />;
           }
           const isHighlighted = item.message.id === highlightMessageId;
+          const isSelected = item.message.id === selectedMessageId;
           if (renderItem) {
             return renderItem(item.message, isHighlighted);
           }
           return (
-            <div className={cn(isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20')}>
+            <div
+              className={cn(
+                isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20',
+                isSelected && 'bg-primary/5 ring-1 ring-inset ring-primary/20',
+                onMessageClick && 'cursor-pointer',
+              )}
+              onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
+            >
               <ChatBubble message={item.message} intent={intents?.[item.message.id]} label={labels?.[item.message.id]} />
             </div>
           );

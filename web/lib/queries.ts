@@ -147,6 +147,7 @@ export async function getMessages(opts: {
   startDate?: string;
   endDate?: string;
   signalsOnly?: boolean;
+  labelFilter?: 'labeled' | 'unlabeled' | 'needs-review';
 } = {}) {
   const conditions: SQL[] = [];
 
@@ -182,6 +183,61 @@ export async function getMessages(opts: {
         sql`json_array_length(${schema.messages.badges}) > 0`,
       )!
     );
+  }
+
+  // Label-based filtering requires JOINs
+  if (opts.labelFilter === 'labeled') {
+    conditions.push(isNotNull(schema.messageLabels.id));
+    conditions.push(eq(schema.messageLabels.reviewed, true));
+
+    const query = db
+      .select({ messages: schema.messages })
+      .from(schema.messages)
+      .innerJoin(schema.messageLabels, eq(schema.messages.id, schema.messageLabels.messageId))
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+
+    const rows = conditions.length > 0
+      ? await query.where(and(...conditions))
+      : await query;
+    return rows.map((r) => r.messages);
+  }
+
+  if (opts.labelFilter === 'unlabeled') {
+    const query = db
+      .select({ messages: schema.messages })
+      .from(schema.messages)
+      .leftJoin(schema.messageLabels, eq(schema.messages.id, schema.messageLabels.messageId))
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+
+    conditions.push(
+      or(
+        isNull(schema.messageLabels.id),
+        eq(schema.messageLabels.reviewed, false),
+      )!,
+    );
+
+    const rows = await query.where(and(...conditions));
+    return rows.map((r) => r.messages);
+  }
+
+  if (opts.labelFilter === 'needs-review') {
+    // EXISTS subquery avoids duplicates from multiple intent versions
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM ${schema.messageIntents} WHERE ${schema.messageIntents.messageId} = ${schema.messages.id} AND ${schema.messageIntents.decision} = 'MANUAL_REVIEW')`,
+    );
+
+    const query = db
+      .select()
+      .from(schema.messages)
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+
+    return query.where(and(...conditions));
   }
 
   const query = db
@@ -225,6 +281,23 @@ export async function getTaskById(id: string) {
     .from(schema.tasks)
     .where(eq(schema.tasks.id, id));
   return task ?? null;
+}
+
+/** Get messages that reference any of the given symbols (via JSON symbols column). */
+export async function getMessagesBySymbols(symbols: string[], limit = 200) {
+  if (symbols.length === 0) return [];
+
+  // SQLite JSON: check if any symbol appears in the json array
+  const symbolConditions = symbols.map(
+    (s) => sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${s})`,
+  );
+
+  return db
+    .select()
+    .from(schema.messages)
+    .where(or(...symbolConditions)!)
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(limit);
 }
 
 export async function getMessageById(id: string) {
@@ -325,35 +398,6 @@ export async function getBacktestRunById(id: string) {
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, id));
   return run ?? null;
-}
-
-// ─── Label / Eval Queries ───────────────────────────
-
-export async function getLabels(opts: {
-  reviewed?: boolean;
-  limit?: number;
-  offset?: number;
-} = {}) {
-  const conditions: SQL[] = [];
-  if (opts.reviewed !== undefined) {
-    conditions.push(eq(schema.messageLabels.reviewed, opts.reviewed));
-  }
-
-  const query = db
-    .select({
-      label: schema.messageLabels,
-      message: schema.messages,
-    })
-    .from(schema.messageLabels)
-    .innerJoin(schema.messages, eq(schema.messageLabels.messageId, schema.messages.id))
-    .orderBy(desc(schema.messageLabels.createdAt))
-    .limit(opts.limit ?? 50)
-    .offset(opts.offset ?? 0);
-
-  if (conditions.length > 0) {
-    return query.where(and(...conditions));
-  }
-  return query;
 }
 
 // ─── Run Decision Queries ────────────────────────────
@@ -912,63 +956,6 @@ export async function getEnrichedMessages(opts: {
     rows: enriched,
     nextCursor: hasMore ? result[result.length - 1].message.timestamp : null,
   };
-}
-
-// ─── Accuracy Queries (lazy, no eval run needed) ────
-
-export async function computeGlobalAccuracy() {
-  const { compareLabelsVsIntents } = await import('../../src/lib/eval');
-
-  const CHUNK = 500;
-
-  const labelRows = await db
-    .select()
-    .from(schema.messageLabels)
-    .where(eq(schema.messageLabels.reviewed, true));
-
-  if (labelRows.length === 0) return null;
-
-  const labelMap = new Map(labelRows.map((l) => [l.messageId, l]));
-  const labeledMessageIds = [...labelMap.keys()];
-
-  const intentRows: (typeof schema.messageIntents.$inferSelect)[] = [];
-  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
-    const chunk = labeledMessageIds.slice(i, i + CHUNK);
-    const rows = await db
-      .select()
-      .from(schema.messageIntents)
-      .where(inArray(schema.messageIntents.messageId, chunk));
-    intentRows.push(...rows);
-  }
-
-  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
-  for (const row of intentRows) {
-    const existing = intentMap.get(row.messageId);
-    if (!existing || row.version > existing.version) intentMap.set(row.messageId, row);
-  }
-
-  const msgRows: { id: string; cleanText: string }[] = [];
-  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
-    const chunk = labeledMessageIds.slice(i, i + CHUNK);
-    const rows = await db
-      .select({ id: schema.messages.id, cleanText: schema.messages.cleanText })
-      .from(schema.messages)
-      .where(inArray(schema.messages.id, chunk));
-    msgRows.push(...rows);
-  }
-  const msgMap = new Map(msgRows.map((m) => [m.id, m.cleanText]));
-
-  const pairs = labeledMessageIds
-    .filter((mid) => intentMap.has(mid))
-    .map((mid) => ({
-      label: labelMap.get(mid)!,
-      intent: intentMap.get(mid)!,
-      cleanText: msgMap.get(mid) ?? '',
-    }));
-
-  if (pairs.length === 0) return null;
-
-  return compareLabelsVsIntents(pairs);
 }
 
 export async function computeBacktestAccuracy(backtestRunId: string) {
