@@ -13,7 +13,8 @@ import {
   getOpenPositionsTool,
 } from '../agent/tool-factory.js';
 import { executeSignals } from '../pipeline/execute.js';
-import type { PipelineDeps } from '../pipeline/execute.js';
+import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
+import { OrderManager } from '../orders/order-manager.js';
 import { liveService } from '../broker/tradestation.js';
 import { getTrader } from '../config/traders.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
@@ -30,6 +31,29 @@ const riskConfig: RiskCheckConfig = {
   maxDrawdownPct: 5,
   maxNotionalMultiplier: 2,
 };
+
+// ─── Order Manager (shared across tasks, persists working orders) ───
+
+const pendingIntents = new Map<string, PendingOrderContext>();
+
+const orderManager = new OrderManager({
+  broker: liveService,
+  clock: () => new Date(),
+  onFill: async (order) => {
+    const pending = pendingIntents.get(order.orderId);
+    if (!pending) return;
+    pendingIntents.delete(order.orderId);
+    await pending.recordFill(order.filledPrice, order.filledAt);
+  },
+  onCancel: (order) => {
+    pendingIntents.delete(order.orderId);
+  },
+});
+
+export function destroyOrderManager(): void {
+  orderManager.destroy();
+  pendingIntents.clear();
+}
 
 const getOpenPositions = async (filters: PositionFilters = {}) => {
   const conditions = [isOpen, notBacktest];
@@ -210,6 +234,7 @@ async function processTask(task: Task): Promise<void> {
 
       const pipelineDeps: PipelineDeps = {
         broker: liveService,
+        orderManager,
         getOpenPositions,
         calculatePositionSize: async (input) => {
           const traderConfig = await getTrader(input.trader);
@@ -231,6 +256,9 @@ async function processTask(task: Task): Promise<void> {
           taskId: task.id,
           isBacktest: false,
         }),
+        onPending: (orderId, context) => {
+          pendingIntents.set(orderId, context);
+        },
       };
 
       const pipelineResults = await executeSignals(
