@@ -9,7 +9,7 @@ const log = createLogger('OrderMgr');
 export type OrderManagerConfig = {
   broker: BrokerService;
   clock: () => Date;
-  onFill?: (order: FilledWorkingOrder) => void;
+  onFill?: (order: FilledWorkingOrder) => void | Promise<void>;
   onCancel?: (order: WorkingOrder) => void;
   /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
   manualTick?: boolean;
@@ -91,7 +91,7 @@ export class OrderManager {
         order.fillTimestamp = status.fillTimestamp!;
         order.legFills = status.legFills;
         this.workingOrders.delete(orderId);
-        this.onFill?.(order as FilledWorkingOrder);
+        await this.onFill?.(order as FilledWorkingOrder);
         this.stopTimerIfEmpty();
         continue;
       } else if (status.status === 'CANCELLED' || status.status === 'REJECTED') {

@@ -166,7 +166,7 @@ describe('OrderManager fill properties', () => {
           const mgr = new OrderManager({
             broker,
             clock: () => T0,
-            onFill: (order) => fills.push({ orderId: order.orderId, price: order.filledPrice }),
+            onFill: (order) => { fills.push({ orderId: order.orderId, price: order.filledPrice }); },
             manualTick: true,
           });
 
@@ -582,7 +582,7 @@ describe('OrderManager concurrent order properties', () => {
           const mgr = new OrderManager({
             broker,
             clock: () => T0,
-            onFill: (order) => fillIds.push(order.orderId),
+            onFill: (order) => { fillIds.push(order.orderId); },
             onCancel: (order) => cancelIds.push(order.orderId),
             manualTick: true,
           });
