@@ -44,6 +44,7 @@ Rules:
   - Backtest trades must have explicit timestamps — never fall back to wall-clock time.
   - dayBoundsUTC() dynamically detects EST/EDT. Don't hardcode UTC offsets.
   - Drizzle $type<>() annotations on JSON columns properly narrow types — don't add as casts.
+  - No inline type imports. Never use `import('path').Type` in type annotations — always use a top-level `import type { Type } from 'path'`. Inline imports are unreadable and hide dependencies.
   - NO backwards compatibility. Ever. No optional fields for "older runs", no migration shims, no deprecated re-exports, no _unused vars. If a type changes, update all producers and consumers. This is an internal tool — there are no external clients to support.
 
 Debugging: use disposable test scripts.

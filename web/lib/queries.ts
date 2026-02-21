@@ -4,6 +4,7 @@ import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
+import type { BacktestRunConfig } from '../../src/db/schema';
 
 /** Scoping helper: when runId is set, show that backtest's data. Otherwise, live only. */
 function tradeScope(runId?: string): SQL {
@@ -507,7 +508,7 @@ export async function getBacktestRunBrief(id: string) {
     .from(schema.trades)
     .where(eq(schema.trades.backtestRunId, id));
 
-  const config = run.config as import('../../src/db/schema').BacktestRunConfig;
+  const config = run.config as BacktestRunConfig;
   const closed = stats?.closed ?? 0;
   const wins = stats?.wins ?? 0;
   return {

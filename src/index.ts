@@ -11,6 +11,7 @@ import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './re
 import { enrichTradeWithFill } from './tasks/recorder.js';
 import { liveService } from './broker/tradestation.js';
 import type { TradeMetadata } from './db/schema.js';
+import type { FilledWorkingOrder } from './broker/types.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
@@ -27,7 +28,7 @@ let fillSweep: FillSweep | null = null;
  * onFill callback for OrderManager — enriches the corresponding trade
  * with broker fill data when a working order gets filled.
  */
-async function handleOrderFill(order: import('./broker/types.js').FilledWorkingOrder): Promise<void> {
+async function handleOrderFill(order: FilledWorkingOrder): Promise<void> {
   try {
     // Find the trade that references this broker order ID
     const trades = await db.select()
