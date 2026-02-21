@@ -27,7 +27,7 @@ let fillSweep: FillSweep | null = null;
  * onFill callback for OrderManager — enriches the corresponding trade
  * with broker fill data when a working order gets filled.
  */
-async function handleOrderFill(order: import('./broker/types.js').WorkingOrder): Promise<void> {
+async function handleOrderFill(order: import('./broker/types.js').FilledWorkingOrder): Promise<void> {
   try {
     // Find the trade that references this broker order ID
     const trades = await db.select()

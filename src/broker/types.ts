@@ -121,6 +121,14 @@ export type WorkingOrder = {
   legFills?: LegFill[];
 };
 
+/** Narrowed WorkingOrder for onFill callbacks — filled fields are guaranteed present. */
+export type FilledWorkingOrder = WorkingOrder & {
+  status: 'FILLED';
+  filledPrice: number;
+  filledAt: Date;
+  fillTimestamp: string;
+};
+
 export type OrderParams = {
   symbol: string;
   strategy: string;

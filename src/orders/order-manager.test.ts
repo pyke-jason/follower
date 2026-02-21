@@ -161,7 +161,7 @@ describe('OrderManager fill properties', () => {
         arbLimitPrice,
         fc.integer({ min: 1, max: 10 }),
         async (fillPrice, tickCount) => {
-          const fills: Array<{ orderId: string; price: number | undefined }> = [];
+          const fills: Array<{ orderId: string; price: number }> = [];
           const { broker, statusMap } = makeMockBroker();
           const mgr = new OrderManager({
             broker,

@@ -16,6 +16,7 @@ import type { PositionFilters } from '../trades/filters.js';
 export type { RecordTradeResult };
 export type { OrderLeg };
 import type { Signal } from '../agent/schemas.js';
+import { OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
@@ -174,21 +175,20 @@ async function placeOrder(
   params: WorkingOrderParams,
   pendingContext: PendingOrderContext,
 ): Promise<OrderResult> {
-  let result: OrderResult;
+  let raw: OrderResult;
   if (deps.orderManager) {
-    result = await deps.orderManager.submitOrder(params);
+    raw = await deps.orderManager.submitOrder(params);
   } else {
     const { adjustmentRules, cancelAfterSec, ...orderParams } = params;
-    result = await deps.broker.placeOrder(orderParams);
+    raw = await deps.broker.placeOrder(orderParams);
   }
+  // Validate at boundary — Zod refines guarantee filledPrice + fillTimestamp for FILLED
+  const result = OrderResultSchema.parse(raw);
 
   if (result.status === 'FILLED') {
-    if (result.filledPrice == null) {
-      throw new Error(`Order ${result.orderId} FILLED but no filledPrice`);
-    }
     await pendingContext.recordFill(
-      result.filledPrice,
-      result.fillTimestamp ? new Date(result.fillTimestamp) : undefined,
+      result.filledPrice!,
+      new Date(result.fillTimestamp!),
     );
   } else if (result.status === 'OPEN' && result.orderId && deps.onPending) {
     deps.onPending(result.orderId, pendingContext);

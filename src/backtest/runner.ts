@@ -218,7 +218,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       const pending = pendingIntents.get(order.orderId);
       if (!pending) return;
       pendingIntents.delete(order.orderId);
-      await pending.recordFill(order.filledPrice!, order.filledAt);
+      await pending.recordFill(order.filledPrice, order.filledAt);
     },
     onCancel: (order) => {
       pendingIntents.delete(order.orderId);

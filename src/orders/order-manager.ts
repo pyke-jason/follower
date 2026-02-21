@@ -1,5 +1,5 @@
 import type { BrokerService } from '../broker/interface.js';
-import type { OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
+import type { FilledWorkingOrder, OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
 import { WorkingOrderParamsSchema, OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { roundCents } from '../lib/numbers.js';
@@ -9,7 +9,7 @@ const log = createLogger('OrderMgr');
 export type OrderManagerConfig = {
   broker: BrokerService;
   clock: () => Date;
-  onFill?: (order: WorkingOrder) => void;
+  onFill?: (order: FilledWorkingOrder) => void;
   onCancel?: (order: WorkingOrder) => void;
   /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
   manualTick?: boolean;
@@ -18,7 +18,7 @@ export type OrderManagerConfig = {
 export class OrderManager {
   private broker: BrokerService;
   private clock: () => Date;
-  private onFill?: (order: WorkingOrder) => void;
+  private onFill?: (order: FilledWorkingOrder) => void;
   private onCancel?: (order: WorkingOrder) => void;
   private manualTick: boolean;
   private workingOrders = new Map<string, WorkingOrder>();
@@ -82,15 +82,16 @@ export class OrderManager {
       const status = OrderResultSchema.parse(await this.broker.getOrderStatus(orderId));
       if (status.status === 'FILLED') {
         log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
+        // Zod refines guarantee filledPrice + fillTimestamp are present for FILLED
         order.status = 'FILLED';
-        order.filledPrice = status.filledPrice;
+        order.filledPrice = status.filledPrice!;
         order.filledAt = new Date(status.fillTimestamp!);
         order.filledQuantity = status.filledQuantity;
         order.commission = status.commission;
-        order.fillTimestamp = status.fillTimestamp;
+        order.fillTimestamp = status.fillTimestamp!;
         order.legFills = status.legFills;
         this.workingOrders.delete(orderId);
-        this.onFill?.(order);
+        this.onFill?.(order as FilledWorkingOrder);
         this.stopTimerIfEmpty();
         continue;
       } else if (status.status === 'CANCELLED' || status.status === 'REJECTED') {
