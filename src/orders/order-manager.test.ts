@@ -568,6 +568,122 @@ describe('OrderManager price chase properties', () => {
   });
 });
 
+describe('OrderManager concurrent order properties', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  test('mixed fill/cancel/open in a single tick — each order gets exactly its correct callback', () => {
+    fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 2, max: 6 }),
+        async (n) => {
+          const fillIds: string[] = [];
+          const cancelIds: string[] = [];
+          const { broker, statusMap } = makeMockBroker();
+          const mgr = new OrderManager({
+            broker,
+            clock: () => T0,
+            onFill: (order) => fillIds.push(order.orderId),
+            onCancel: (order) => cancelIds.push(order.orderId),
+            manualTick: true,
+          });
+
+          const orderIds: string[] = [];
+          for (let i = 0; i < n; i++) {
+            const result = await mgr.submitOrder(makeLimitBuyParams());
+            orderIds.push(result.orderId);
+          }
+
+          // Assign outcomes: even indexes fill, odd indexes cancel, last stays open
+          const expectedFills: string[] = [];
+          const expectedCancels: string[] = [];
+          for (let i = 0; i < orderIds.length; i++) {
+            if (i === orderIds.length - 1 && orderIds.length > 2) {
+              // Leave the last order open (no status override — stays OPEN)
+              continue;
+            }
+            if (i % 2 === 0) {
+              statusMap.set(orderIds[i], { status: 'FILLED', filledPrice: 100, fillTimestamp: timeAfter(5).toISOString() });
+              expectedFills.push(orderIds[i]);
+            } else {
+              statusMap.set(orderIds[i], { status: 'CANCELLED' });
+              expectedCancels.push(orderIds[i]);
+            }
+          }
+
+          await mgr.tick(timeAfter(5));
+
+          // Exactly the right callbacks fired
+          expect(fillIds.sort()).toEqual(expectedFills.sort());
+          expect(cancelIds.sort()).toEqual(expectedCancels.sort());
+
+          // Working orders = only the ones left open
+          const stillOpen = orderIds.length > 2 ? 1 : 0;
+          expect(mgr.getWorkingOrders()).toHaveLength(stillOpen);
+          mgr.destroy();
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  test('REJECTED status triggers onCancel (same as CANCELLED)', () => {
+    fc.assert(
+      fc.asyncProperty(arbLimitPrice, async () => {
+        let cancelFired = false;
+        let fillFired = false;
+        let capturedStatus: string | undefined;
+        const { broker, statusMap } = makeMockBroker();
+        const mgr = new OrderManager({
+          broker,
+          clock: () => T0,
+          onFill: () => { fillFired = true; },
+          onCancel: (order) => { cancelFired = true; capturedStatus = order.status; },
+          manualTick: true,
+        });
+
+        const result = await mgr.submitOrder(makeLimitBuyParams());
+        statusMap.set(result.orderId, { status: 'REJECTED' });
+        await mgr.tick(timeAfter(1));
+
+        expect(cancelFired).toBe(true);
+        expect(fillFired).toBe(false);
+        expect(capturedStatus).toBe('REJECTED');
+        expect(mgr.getWorkingOrders()).toHaveLength(0);
+        mgr.destroy();
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  test('each chase step is exactly roundCents(previous - stepAmount) for SELL', () => {
+    fc.assert(
+      fc.asyncProperty(arbLimitPrice, arbStepAmount, arbIntervalSec, async (limitPrice, stepAmount, intervalSec) => {
+        const { broker } = makeMockBroker();
+        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+
+        await mgr.submitOrder(makeLimitSellParams({
+          limitPrice,
+          cancelAfterSec: 9999,
+          adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount, intervalSec }],
+        }));
+
+        let prevPrice = limitPrice;
+        for (let i = 1; i <= 3; i++) {
+          await mgr.tick(timeAfter(i * intervalSec));
+          const wo = mgr.getWorkingOrders()[0];
+          if (wo) {
+            const expected = roundCents(prevPrice - stepAmount);
+            expect(wo.currentLimitPrice).toBe(expected);
+            prevPrice = wo.currentLimitPrice;
+          }
+        }
+        mgr.destroy();
+      }),
+      { numRuns: 500 },
+    );
+  });
+});
+
 describe('OrderManager guard rails — no silent fallbacks', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
