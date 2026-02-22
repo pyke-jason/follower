@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getBacktestRuns } from '@/lib/queries';
-import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
+import { BacktestRunConfigSchema } from '../../../../src/db/config-schemas';
+import type { BacktestRunSummary } from '../../../../src/db/schema';
 
 export async function GET() {
   const runs = await getBacktestRuns({ limit: 30 });
@@ -9,7 +10,7 @@ export async function GET() {
   const items = runs
     .filter((r) => r.status === 'COMPLETED' || r.status === 'RUNNING' || r.status === 'CANCELLED')
     .map((r) => {
-      const config = r.config as BacktestRunConfig;
+      const config = BacktestRunConfigSchema.parse(r.config);
       const summary = r.summary as BacktestRunSummary | null;
       return {
         id: r.id,
@@ -26,7 +27,7 @@ export async function GET() {
   return NextResponse.json(items);
 }
 
-export const BacktestRunsResponseSchema = z.array(z.object({
+export const BacktestRunItemSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
   status: z.string(),
@@ -35,4 +36,7 @@ export const BacktestRunsResponseSchema = z.array(z.object({
   endDate: z.string(),
   totalPnl: z.number().nullable(),
   winRate: z.number().nullable(),
-}));
+});
+export type BacktestRunItem = z.infer<typeof BacktestRunItemSchema>;
+
+export const BacktestRunsResponseSchema = z.array(BacktestRunItemSchema);
