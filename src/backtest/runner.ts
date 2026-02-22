@@ -298,7 +298,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
   const intentDeps: IntentExtractionDeps = {
     getQuote: (symbol, at) => priceProvider.getQuote(symbol, at),
-    getOptionsChain: (symbol, expiry, optionType, at) => priceProvider.getOptionsChain(symbol, expiry, optionType, at),
     prefetch: (symbols, at) => priceProvider.prefetch(symbols, at),
     getTraderConfig: getTrader,
   };
@@ -640,7 +639,6 @@ async function processMessage(
       {
         broker: btCtx.pipelineDeps.broker,
         getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
-        getTraderConfig: getTrader,
       },
     );
   } catch {
@@ -680,7 +678,7 @@ async function processMessage(
       messageId: msg.id,
       backtestRunId: btCtx.runId,
       isBacktest: true,
-      allowedStrategies: prefetched?.traderProfile?.strategies,
+      allowedStrategies: (await getTrader(msg.author))?.strategies ?? undefined,
     },
   );
 

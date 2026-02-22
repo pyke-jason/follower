@@ -51,6 +51,41 @@ export function parseOccSymbol(symbol: string): OccOptionParts | null {
   };
 }
 
+/**
+ * Normalize a trader-supplied expiry string to YYYY-MM-DD.
+ * Accepts: YYYY-MM-DD (pass-through), MM/DD (year inferred), MM/DD/YY, MM/DD/YYYY.
+ * For MM/DD without year: uses the next occurrence of that date on or after referenceDate.
+ */
+export function normalizeExpiry(expiry: string, referenceDate: Date): string {
+  // Already canonical
+  if (/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return expiry;
+
+  const slashParts = expiry.split('/');
+  if (slashParts.length < 2 || slashParts.length > 3) {
+    throw new Error(`normalizeExpiry: unrecognized expiry format "${expiry}"`);
+  }
+
+  const month = parseInt(slashParts[0], 10);
+  const day = parseInt(slashParts[1], 10);
+  if (isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(`normalizeExpiry: invalid month/day in "${expiry}"`);
+  }
+
+  let year: number;
+  if (slashParts.length === 3) {
+    const rawYear = parseInt(slashParts[2], 10);
+    if (isNaN(rawYear)) throw new Error(`normalizeExpiry: invalid year in "${expiry}"`);
+    year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  } else {
+    // MM/DD: pick the next occurrence of that calendar date on or after referenceDate
+    const refYear = referenceDate.getFullYear();
+    const candidate = new Date(refYear, month - 1, day);
+    year = candidate >= referenceDate ? refYear : refYear + 1;
+  }
+
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 export function formatOccSymbol(option: {
   underlying: string;
   expiration: string; // YYYY-MM-DD
@@ -64,6 +99,9 @@ export function formatOccSymbol(option: {
   const year = parseInt(yearStr, 10) % 100;
   const month = parseInt(monthStr, 10);
   const day = parseInt(dayStr, 10);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) {
+    throw new Error(`formatOccSymbol: invalid expiration "${option.expiration}" — expected YYYY-MM-DD`);
+  }
   const dateStr = `${year.toString().padStart(2, '0')}${month
     .toString()
     .padStart(2, '0')}${day.toString().padStart(2, '0')}`;

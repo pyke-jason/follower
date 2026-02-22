@@ -1,4 +1,4 @@
-# Replace get_options_chain with get_option_quote
+# Remove get_options_chain tool
 
 ## Problem
 
@@ -8,39 +8,36 @@ SimBroker's `getOptionSpreadQuote` also calls `getOptionsChain` purely to warm t
 
 ## Fix
 
-Replace the `get_options_chain` LLM tool with `get_option_quote(symbol, expiry, optionType, strike)` that fetches a single contract. The LLM already has heuristics for computing ATM strikes; it just needs to validate individual quotes, not scan an entire chain. Remove the chain-warming block from SimBroker.
+Remove `get_options_chain` entirely. The LLM already has heuristics for computing ATM strikes from the stock price (via `get_quote`). Strike validation happens at execution time when SimBroker calls `getQuote(occSymbol)` per leg. No new tool needed.
 
 ## Changes
 
-### 1. Add `get_option_quote` tool, remove `get_options_chain` tool
+### 1. Remove `get_options_chain` tool
 
-src/agent/schemas.ts
-- Add `GetOptionQuoteInput`: `{ symbol, expiry, optionType, strike: z.number().positive() }`
-- Remove `GetOptionsChainInput`
-
-src/agent/tool-factory.ts
-- Add `getOptionQuoteTool(cb)` -- takes `(symbol, expiry, optionType, strike) => Promise<Quote>`, builds OCC symbol internally via `formatOccSymbol`, returns a Quote
-- Remove `getOptionsChainTool`
-- Remove `OptionsChain` import
+src/agent/schemas.ts -- remove `GetOptionsChainInput`
+src/agent/tool-factory.ts -- remove `getOptionsChainTool`, remove `OptionsChain` import
 
 ### 2. Update IntentExtractionDeps + tool wiring
 
 src/intents/extract-intent.ts
-- `IntentExtractionDeps`: replace `getOptionsChain` field with `getOptionQuote: (symbol, expiry, optionType, strike, at) => Promise<Quote>`
-- `createIntentTools()`: wire `getOptionQuoteTool` pinned to `msgTime`
+- `IntentExtractionDeps`: remove `getOptionsChain` field
+- `createIntentTools()`: remove `getOptionsChainTool` from tool array
 - Bump `INTENT_VERSION` from 1 to 2 (invalidates cached intents that used old tool)
 
 ### 3. Update system prompt
 
 src/intents/extract-intent.ts -- INTENT_SYSTEM_PROMPT
-- Step 3 (line 63): "Call get_quote and get_option_quote to verify prices and strikes"
+- Step 3 (line 63): change to "Call get_quote to verify the stock price aligns with the trader's message."
 - Replace `<inferring_strikes>` section (lines 99-110):
-  1. Get stock price via get_quote
+  1. Get the current stock price via get_quote
   2. Compute ATM strike by rounding to nearest standard increment ($0.50 under $25, $1 for $25-200, $5 for >$200)
-  3. Compute second leg using width heuristic (already in prompt)
-  4. Call get_option_quote per leg to validate. If no data, try next standard strike
-  5. For premium matching ("for .09"), try 2-3 nearby combos with get_option_quote
+  3. Compute second leg using width heuristic ($2.50 if <$50, $5 if $50-200, $10 if >$200)
+  4. For PDS: long (BUY) = ATM, short (SELL) = ATM - width. For CDS: long = ATM, short = ATM + width
+  5. If the trader mentions a net premium ("for .09"), adjust strikes narrower/wider to approximate
+  6. Use the stated premium as limitPrice (or mid of estimated debit if not stated)
+  7. If a trader-specified strike seems implausible (far from ATM), flag for review
 - Update examples that mention get_options_chain (line 138)
+- Remove line 109 ("If a trader-specified strike does not exist in the chain, flag for review")
 
 ### 4. Remove chain warming from SimBroker
 
@@ -59,9 +56,9 @@ src/broker/interface.ts -- `BrokerService` interface: remove `getOptionsChain`
 
 ### 6. Update all consumers
 
-src/backtest/runner.ts -- wire `getOptionQuote` in `intentDeps` using `formatOccSymbol` + `priceProvider.getQuote`
-src/tasks/runner.ts -- wire `getOptionQuoteTool` in `classificationTools` using `formatOccSymbol` + `liveService.getQuote`
-src/agent/agent-loop.ts -- update tool output summary (line 48): replace `get_options_chain` branch with `get_option_quote`
+src/backtest/runner.ts -- remove `getOptionsChain` from `intentDeps`
+src/tasks/runner.ts -- remove `getOptionsChainTool` from `classificationTools`, remove import
+src/agent/agent-loop.ts -- remove `get_options_chain` branch in tool output summary (line 48)
 src/backtest/test-fixtures.ts -- remove `getOptionsChain` stubs from all three helpers
 src/orders/order-manager.test.ts -- remove `getOptionsChain: vi.fn()` from mock broker
 
@@ -70,6 +67,7 @@ src/orders/order-manager.test.ts -- remove `getOptionsChain: vi.fn()` from mock 
 - `DatabentoMarketDataProvider.getOptionsChain()` concrete method -- keep it, just remove from interface
 - `tradestation.ts` `getOptionsChain` export -- keep it, just remove from `BrokerService` interface
 - `trade-agent.ts` -- no LLM prompt here, it's rule-based
+- `get_quote` tool -- unchanged, already works for equity tickers
 
 ## Verification
 
@@ -79,10 +77,8 @@ src/orders/order-manager.test.ts -- remove `getOptionsChain: vi.fn()` from mock 
    - No "constructed OCC symbols" log lines during intent extraction
    - SimBroker fetches only leg-specific OCC symbols (2 per spread, not 100)
    - Same trade results as before
-4. Smoke test live path: verify `liveService.getQuote(occSymbol)` works with TradeStation's quote endpoint
 
 ## Risk
 
-- **Premium matching**: LLM tries 2-3 combos instead of scanning full chain. Slightly more LLM tokens, dramatically less data cost. The heuristic already narrows the search.
-- **TradeStation OCC quotes**: The live `getQuote` endpoint should accept OCC symbols (placeOrder already uses them), but verify before deploying live.
-- **Strike validation**: If computed strike doesn't exist, `getQuote` will throw. Prompt instructs LLM to try next standard strike. Same behavior as current "flag for review if strike not in chain."
+- **Premium matching**: Without the chain, the LLM uses stated premium as limitPrice rather than scanning strikes. This is fine -- the trader usually states the price they want.
+- **Strike inference accuracy**: The heuristic ($0.50/$1/$5 rounding) covers standard strikes well. Non-standard increments (e.g., $2.50 strikes on some ETFs) would require the LLM to guess. If wrong, SimBroker's `getQuote(occSymbol)` will fail at execution time and the order won't place -- same outcome as current "flag for review."

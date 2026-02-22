@@ -278,7 +278,7 @@ function mapTsStatus(tsStatus: string | undefined): OrderStatus {
 }
 
 export const liveService: BrokerService = {
-  getQuote, getOptionsChain, placeOrder, modifyOrder, cancelOrder, getOrderStatus,
+  getQuote, placeOrder, modifyOrder, cancelOrder, getOrderStatus,
   getPositions, getAccountBalance, getBars,
 };
 

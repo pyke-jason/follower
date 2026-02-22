@@ -7,7 +7,6 @@ import { completeTask, failTask, recordStep } from './recorder.js';
 import type { Task, TaskContext } from '../db/schema.js';
 import {
   getQuoteTool,
-  getOptionsChainTool,
   flagForReviewTool,
   submitDecisionTool,
   getOpenPositionsTool,
@@ -148,7 +147,6 @@ async function processTask(task: Task): Promise<void> {
       prefetched = await prefetchForAgent(context, {
         broker: liveService,
         getOpenPositions,
-        getTraderConfig: getTrader,
       });
     } catch (err) {
       console.warn(`[Runner] Prefetch failed for task ${task.id}: ${err instanceof Error ? err.message : err}`);
@@ -168,14 +166,14 @@ async function processTask(task: Task): Promise<void> {
     // Classification-only tools — no execution capabilities
     const classificationTools = [
       getQuoteTool((s) => liveService.getQuote(s)),
-      getOptionsChainTool((s, e, t) => liveService.getOptionsChain(s, e, t)),
       flagForReviewTool(),
       submitDecisionTool(),
       getOpenPositionsTool(getOpenPositions),
     ];
 
     // Run classification agent
-    const { steps, result, model } = await runAgent(context, classificationTools, undefined, prefetched);
+    const traderConfig = await getTrader(context.author ?? '');
+    const { steps, result, model } = await runAgent(context, classificationTools, undefined, prefetched, traderConfig);
 
     // Write model info to task
     await db.update(schema.tasks)
@@ -268,7 +266,7 @@ async function processTask(task: Task): Promise<void> {
         {
           messageId: task.messageId ?? undefined,
           taskId: task.id,
-          allowedStrategies: prefetched?.traderProfile?.strategies,
+          allowedStrategies: (await getTrader(context.author ?? ''))?.strategies ?? undefined,
         },
       );
 

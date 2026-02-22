@@ -40,7 +40,6 @@ function makeMockBroker(overrides: {
       return { orderId, status: 'CANCELLED' as OrderStatus };
     }),
     getQuote: vi.fn(),
-    getOptionsChain: vi.fn(),
     getPositions: vi.fn(),
     getAccountBalance: vi.fn(),
     getBars: vi.fn(),

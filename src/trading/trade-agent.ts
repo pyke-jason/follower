@@ -114,7 +114,8 @@ export class RuleBasedTradeAgent implements TradeAgent {
     }
 
     // 4. Build order from signal
-    const order = buildOrderFromSignal(signal, quantity);
+    const referenceDate = taskContext.messageTimestamp ? new Date(taskContext.messageTimestamp) : new Date();
+    const order = buildOrderFromSignal(signal, quantity, referenceDate);
     log.debug(`${signal.action} ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${quantity} legs=${order.legs.length}`);
     return [{
       type: 'PLACE_ORDER',
