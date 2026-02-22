@@ -51,14 +51,50 @@ export function parseOccSymbol(symbol: string): OccOptionParts | null {
   };
 }
 
+// Maps 3-char lowercase month abbreviation → month number (1-based).
+// Taking the first 3 chars of any name handles both "Jan" and "January".
+const MONTH_ABBREVS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
 /**
  * Normalize a trader-supplied expiry string to YYYY-MM-DD.
- * Accepts: YYYY-MM-DD (pass-through), MM/DD (year inferred), MM/DD/YY, MM/DD/YYYY.
- * For MM/DD without year: uses the next occurrence of that date on or after referenceDate.
+ * Accepts:
+ *   YYYY-MM-DD (pass-through)
+ *   MM/DD, MM/DD/YY, MM/DD/YYYY
+ *   M-DD, MM-DD, MM-DD-YY, MM-DD-YYYY (dash-separated)
+ *   "Oct 18", "Oct 18th", "October 18", "October 18, 2025" (month-name first)
+ *   "18 Oct", "18th Oct", "18 October", "18 October 2025" (day first)
+ * For formats without a year: uses the next occurrence on or after referenceDate.
  */
 export function normalizeExpiry(expiry: string, referenceDate: Date): string {
+  expiry = expiry.trim();
+
   // Already canonical
   if (/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return expiry;
+
+  // Month-name formats: "Oct 18", "Oct 18th", "October 18, 2025", "18th October 2025", etc.
+  const monthFirst = expiry.match(/^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:[,\s]+(\d{2,4}))?$/i);
+  const dayFirst   = expiry.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:[,\s]+(\d{2,4}))?$/i);
+  const nameMatch  = monthFirst ?? dayFirst;
+  if (nameMatch) {
+    const [, a, b, yearStr] = nameMatch;
+    const [monthStr, dayStr] = monthFirst ? [a, b] : [b, a];
+    const monthNum = MONTH_ABBREVS[monthStr.toLowerCase().slice(0, 3)];
+    if (!monthNum) throw new Error(`normalizeExpiry: unrecognized month name "${monthStr}" in "${expiry}"`);
+    expiry = yearStr ? `${monthNum}/${dayStr}/${yearStr}` : `${monthNum}/${dayStr}`;
+    // falls through to the slash-parsing logic below
+  }
+
+  // Normalize dash-separated M-DD / MM-DD / MM-DD-YY / MM-DD-YYYY to slash form
+  // Only treat as dash-separated if the first segment is 1-2 digits (month), not 4 (year already handled above)
+  const dashMatch = expiry.match(/^(\d{1,2})-(\d{1,2})(?:-(\d{2,4}))?$/);
+  if (dashMatch) {
+    expiry = dashMatch[3]
+      ? `${dashMatch[1]}/${dashMatch[2]}/${dashMatch[3]}`
+      : `${dashMatch[1]}/${dashMatch[2]}`;
+  }
 
   const slashParts = expiry.split('/');
   if (slashParts.length < 2 || slashParts.length > 3) {

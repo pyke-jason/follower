@@ -645,12 +645,13 @@ async function processMessage(
     prefetched = undefined;
   }
 
-  // ── 6. Run trade agent (deterministic skip + risk + sizing) ──
+  // ── 6. Run trade agent (deterministic skip + strategy gate + risk + sizing) ──
+  const allowedStrategies = (await getTrader(msg.author))?.strategies ?? undefined;
 
   // Process each signal through the trade agent
   const allActions: Action[] = [];
   for (const signal of signals) {
-    const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched);
+    const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched, allowedStrategies);
     allActions.push(...actions);
   }
 
@@ -678,7 +679,7 @@ async function processMessage(
       messageId: msg.id,
       backtestRunId: btCtx.runId,
       isBacktest: true,
-      allowedStrategies: (await getTrader(msg.author))?.strategies ?? undefined,
+      allowedStrategies,
     },
   );
 

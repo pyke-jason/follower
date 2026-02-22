@@ -221,23 +221,42 @@ export class SimBroker implements BrokerService {
         underlyingPrice = params.limitPrice ?? 0;
       }
 
-      const estimatedPrice = params.limitPrice ?? underlyingPrice;
-      const legs: TradeLeg[] = params.legs;
+      // For MARKET option orders, use the actual spread mid-price as the debit/credit estimate
+      // rather than falling back to the underlying price (which would produce a wildly inflated margin).
+      let estimatedPrice: number | null = params.limitPrice ?? null;
+      if (estimatedPrice === null) {
+        if (isOptions) {
+          try {
+            const spreadQuote = await this.getOptionSpreadQuote(params, this.clock.now());
+            estimatedPrice = (spreadQuote.bid + spreadQuote.ask) / 2;
+          } catch {
+            // No spread quote available — skip the buying power check now;
+            // the MARKET fill path below will reject with "no market data".
+            estimatedPrice = null;
+          }
+        } else {
+          estimatedPrice = underlyingPrice;
+        }
+      }
 
-      const marginReq = computeMarginRequirement({
-        strategy: params.strategy,
-        direction: params.direction,
-        entryPrice: estimatedPrice,
-        quantity: tradeQty(params.legs[0]?.quantity),
-        legs,
-        underlyingPrice,
-      });
+      if (estimatedPrice !== null) {
+        const legs: TradeLeg[] = params.legs;
 
-      if (marginReq.initial > 0) {
-        const balance = await this.getAccountBalance();
-        if (marginReq.initial > balance.buyingPower) {
-          log.debug(`  REJECTED: insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})`);
-          return { orderId, status: 'REJECTED', message: `Insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})` };
+        const marginReq = computeMarginRequirement({
+          strategy: params.strategy,
+          direction: params.direction,
+          entryPrice: estimatedPrice,
+          quantity: tradeQty(params.legs[0]?.quantity),
+          legs,
+          underlyingPrice,
+        });
+
+        if (marginReq.initial > 0) {
+          const balance = await this.getAccountBalance();
+          if (marginReq.initial > balance.buyingPower) {
+            log.debug(`  REJECTED: insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})`);
+            return { orderId, status: 'REJECTED', message: `Insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})` };
+          }
         }
       }
     }
