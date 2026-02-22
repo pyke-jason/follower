@@ -1,32 +1,57 @@
 'use server';
 
+import { z } from 'zod';
 import { db, schema } from '@/lib/db';
 import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots, getMessagesByIds, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
-import type { BacktestRunConfig, CommissionSchedule } from '../../../src/db/schema';
+import { BacktestRunConfigSchema } from '../../../src/db/config-schemas';
+import type { BacktestRunConfig } from '../../../src/db/config-schemas';
+import type { CommissionSchedule } from '../../../src/db/schema';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 
+// Checkbox helper: FormData checkboxes submit 'on' when checked, absent when unchecked.
+const zCheckbox = z.string().optional().transform(v => v === 'on');
+
+// Numeric helper: empty string → undefined, non-empty → coerced number.
+const zOptionalNumber = z.string().optional().transform(v => (v ? Number(v) : undefined));
+
+const StartBacktestSchema = z.object({
+  startDate:                   z.string().date(),
+  endDate:                     z.string().date(),
+  traders:                     z.string().min(1, 'At least one trader is required'),
+  refreshQuoteCache:           zCheckbox,
+  agentProvider:               z.string().optional().transform(v => v || undefined),
+  agentModel:                  z.string().optional().transform(v => v || undefined),
+  logLevel:                    z.string().default('debug'),
+  disableRiskLimits:           zCheckbox,
+  clearIntentCache:            zCheckbox,
+  maxOnSymbol:                 zOptionalNumber,
+  maxTotalPositions:           zOptionalNumber,
+  maxDrawdownPct:              zOptionalNumber,
+  maxAgentCalls:               zOptionalNumber,
+  startingEquity:              zOptionalNumber,
+  commissionOptionPerContract: zOptionalNumber,
+  commissionStockPerShare:     zOptionalNumber,
+});
+
 export async function startBacktest(formData: FormData) {
-  const startDate = formData.get('startDate') as string;
-  const endDate = formData.get('endDate') as string;
-  const tradersRaw = formData.get('traders') as string;
-  const refreshQuoteCache = formData.get('refreshQuoteCache') === 'on';
-  const agentProvider = (formData.get('agentProvider') as string) || undefined;
-  const agentModel = (formData.get('agentModel') as string) || undefined;
-  const logLevel = (formData.get('logLevel') as string) || 'debug';
-  const disableRiskLimits = formData.get('disableRiskLimits') === 'on';
-  const clearIntentCache = formData.get('clearIntentCache') === 'on';
-  const maxOnSymbol = formData.get('maxOnSymbol') ? Number(formData.get('maxOnSymbol')) : undefined;
-  const maxTotalPositions = formData.get('maxTotalPositions') ? Number(formData.get('maxTotalPositions')) : undefined;
-  const maxDrawdownPct = formData.get('maxDrawdownPct') ? Number(formData.get('maxDrawdownPct')) : undefined;
-  const maxAgentCalls = formData.get('maxAgentCalls') ? Number(formData.get('maxAgentCalls')) : undefined;
-  const startingEquity = formData.get('startingEquity') ? Number(formData.get('startingEquity')) : undefined;
-  const commOptionPerContract = formData.get('commissionOptionPerContract') ? Number(formData.get('commissionOptionPerContract')) : undefined;
-  const commStockPerShare = formData.get('commissionStockPerShare') ? Number(formData.get('commissionStockPerShare')) : undefined;
+  const parsed = StartBacktestSchema.parse(Object.fromEntries(formData));
+  const {
+    startDate, endDate, refreshQuoteCache, agentProvider, agentModel,
+    logLevel, disableRiskLimits, clearIntentCache,
+    maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity,
+    commissionOptionPerContract: commOptionPerContract,
+    commissionStockPerShare: commStockPerShare,
+  } = parsed;
+
+  const traders = parsed.traders.split(',').map((t) => t.trim()).filter(Boolean);
+  if (traders.length === 0) {
+    throw new Error('At least one trader is required');
+  }
 
   // Build commission schedule if any values provided
   const commissionSchedule: CommissionSchedule | undefined =
@@ -36,15 +61,6 @@ export async function startBacktest(formData: FormData) {
           ...(commStockPerShare != null ? { stock: { perShare: commStockPerShare } } : {}),
         }
       : undefined;
-
-  if (!startDate || !endDate || !tradersRaw) {
-    throw new Error('Missing required fields');
-  }
-
-  const traders = tradersRaw.split(',').map((t) => t.trim()).filter(Boolean);
-  if (traders.length === 0) {
-    throw new Error('At least one trader is required');
-  }
 
   const config: BacktestRunConfig = {
     startDate: new Date(startDate + 'T00:00:00Z').toISOString(),
@@ -172,7 +188,7 @@ export async function cancelBacktestRun(formData: FormData) {
       .select({ config: schema.backtestRuns.config })
       .from(schema.backtestRuns)
       .where(eq(schema.backtestRuns.id, runId));
-    const cancelledConfig = cancelledRun?.config as BacktestRunConfig | undefined;
+    const cancelledConfig = cancelledRun ? BacktestRunConfigSchema.parse(cancelledRun.config) : undefined;
 
     const report = generateReportFromTrades({
       trades: trades.map((t) => ({
@@ -323,7 +339,7 @@ export async function invalidateIntentCache(formData: FormData) {
 
   if (!run) return;
 
-  const config = run.config as BacktestRunConfig;
+  const config = BacktestRunConfigSchema.parse(run.config);
 
   // Find message IDs that fall within this backtest's scope
   const messages = await db

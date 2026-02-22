@@ -1,6 +1,8 @@
 import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
-import type { TrackedTrader } from '../db/schema.js';
+import { z } from 'zod';
+import { TrackedTraderSchema } from '../db/config-schemas.js';
+import type { TrackedTrader } from '../db/config-schemas.js';
 
 let cachedTraders: Map<string, TrackedTrader> | null = null;
 let cacheTime = 0;
@@ -11,7 +13,8 @@ export async function getTrackedTraders(): Promise<Map<string, TrackedTrader>> {
     return cachedTraders;
   }
 
-  const traders = await db.select().from(schema.trackedTraders).where(eq(schema.trackedTraders.enabled, true));
+  const rows = await db.select().from(schema.trackedTraders).where(eq(schema.trackedTraders.enabled, true));
+  const traders = z.array(TrackedTraderSchema).parse(rows);
   cachedTraders = new Map(traders.map(t => [t.name, t]));
   cacheTime = Date.now();
   return cachedTraders;
