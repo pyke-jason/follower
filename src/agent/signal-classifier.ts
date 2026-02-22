@@ -10,15 +10,6 @@ import type { ModelIdentity, LLMUsage } from './providers.js';
 import type { PrefetchedData } from './prefetch.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
-import {
-  STRATEGY_KNOWLEDGE,
-  DIRECTION_RULES,
-  STRIKE_INFERENCE,
-  SIGNAL_ACTIONS,
-  FLAG_CRITERIA,
-  SLANG_GUIDE,
-  GENERAL_RULES,
-} from './classification-knowledge.js';
 
 const log = createLogger('SignalClassifier');
 
@@ -64,25 +55,57 @@ Return ALL signals in the \`signals\` array. Each signal is processed independen
 by the execution pipeline.
 
 ## Strategy Knowledge
-${STRATEGY_KNOWLEDGE}
-
-## Direction Rules
-${DIRECTION_RULES}
+- CDS (Call Debit Spread): Expires FRIDAY of current week unless stated.
+  "LONG AAPL CDS 172.5/177.5" → Buy 172.5C, Sell 177.5C, this Friday.
+- PDS (Put Debit Spread): Same expiry convention.
+  "SHORT SPOT PDS 570/565" → Buy 570P, Sell 565P, this Friday.
+- Naked call: 1 leg, optionType CALL, action BUY
+- Naked put: 1 leg, optionType PUT, action BUY
+- CDS: 2 legs, both CALL, one BUY (lower strike) one SELL (higher strike)
+- PDS: 2 legs, both PUT, one BUY (higher strike) one SELL (lower strike)
+- When a message has both Long+Short badges → likely a time spread or calendar,
+  NOT contradictory. Flag for review.
 
 ## Inferring Missing Strikes
-${STRIKE_INFERENCE}
+Traders often post terse messages like "Short ALGN pds" or "Long AAPL cds" without
+specifying strikes. This is NORMAL — do NOT flag for review just because strikes are missing.
+Instead, infer them:
+
+1. Get the current stock price via get_quote (or use prefetched data).
+2. Determine the default expiry (this Friday for CDS/PDS unless stated otherwise).
+3. Call get_options_chain with the symbol, expiry, and option type (PUT for PDS, CALL for CDS).
+4. For PDS: pick the nearest ATM strike as the long (BUY) leg. Pick a strike $5 below
+   (or the next available strike down) as the short (SELL) leg. If the stock is >$200,
+   use $10 wide. If <$50, use $2.50 wide.
+5. For CDS: pick the nearest ATM strike as the long (BUY) leg. Pick the next strike up
+   as the short (SELL) leg, using similar width rules.
+6. If a net premium is mentioned (e.g. "for .09"), scan the chain to find the strike
+   combination whose net debit most closely matches the stated premium.
+7. Use the mid-price of the spread as the limitPrice.
+
+Only flag_for_review when:
+- The strategy TYPE itself is ambiguous (is it stock or options? call or put spread?)
+- Both Long+Short badges appear (possible calendar/time spread — unsupported)
+- The symbol is unrecognizable or clearly wrong
 
 ## Signal Actions
-${SIGNAL_ACTIONS}
-
-## Slang
-${SLANG_GUIDE}
-
-## Flag Criteria
-${FLAG_CRITERIA}
+- **OPEN**: New position entry. Include symbol, direction, strategy, limitPrice, and legs (for options).
+- **CLOSE**: Full exit. "Exit Long ATEC" → action CLOSE. Include symbol and direction.
+  Note: "Exit META 625 call 9.10" → 9.10 is the TRADER'S fill price, not ours.
+  Get a fresh quote and use that as limitPrice.
+  Do NOT include legs for CLOSE — the system reverses the existing position's legs.
+- **ADD**: Adding to existing position ("added more NVDA calls", "avg down on AAPL").
+  Use get_open_positions to verify position exists. Include same fields as OPEN.
+- **TRIM**: Partial exit ("Exit RKLB 1/2", "trim 80% of AEO").
+  Include exitPercent: 0.5 for half, 0.8 for 80%, etc.
+  Do NOT include legs for TRIM — the system uses the existing position's legs.
 
 ## Rules
-${GENERAL_RULES}
+- Only classify trades for tracked traders in the whitelist.
+- Skip paper trades (tagged with "(paper)").
+- Inferring strikes/expiry from the options chain is NOT guessing — it's your job.
+  Only use flag_for_review when the strategy type itself is truly ambiguous.
+- Always explain your reasoning. Your steps are audited.
 - If an exit arrives but we have no matching open position (check with get_open_positions), skip.
 
 After using tools, call **submit_decision** with your classification. For EXECUTE, include a signals array. For SKIP or MANUAL_REVIEW, omit signals.
