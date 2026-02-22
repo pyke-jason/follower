@@ -19,17 +19,10 @@ import {
   CommandSeparator,
 } from '@/components/ui/command';
 import { useRunScope } from './run-scope-provider';
+import { BacktestRunsResponseSchema } from '../api/backtest-runs/route.js';
+import type { z } from 'zod';
 
-type RunItem = {
-  id: string;
-  name: string | null;
-  status: string;
-  traders: string[];
-  startDate: string;
-  endDate: string;
-  totalPnl: number | null;
-  winRate: number | null;
-};
+type RunItem = z.infer<typeof BacktestRunsResponseSchema>[number];
 
 export function RunScopeSelector() {
   const { runId, runBrief, selectRun } = useRunScope();
@@ -45,10 +38,11 @@ export function RunScopeSelector() {
     setLoading(true);
     fetch('/api/backtest-runs')
       .then((r) => r.json())
-      .then((data: RunItem[]) => {
-        setRuns(data);
+      .then((data) => {
+        setRuns(BacktestRunsResponseSchema.parse(data));
         setFetched(true);
       })
+      .catch(() => { setFetched(true); })
       .finally(() => setLoading(false));
   }, [open, fetched]);
 
