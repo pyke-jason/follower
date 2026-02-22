@@ -1,25 +1,31 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { placeOrder } from '../../broker/tradestation.js';
 import { recordTrade } from '../../trades/record-trade.js';
+import { DirectionSchema, StrategySchema } from '../../lib/enums.js';
+import { TradeLegSchema } from '../../db/schema.js';
+
+const ForceExitRequestSchema = z.object({
+  tradeId: z.string().uuid(),
+  symbol: z.string().min(1),
+  trader: z.string().min(1),
+  strategy: StrategySchema,
+  direction: DirectionSchema,
+  legs: z.array(TradeLegSchema.omit({ fillPrice: true })),
+});
 
 const app = new Hono();
 
 app.post('/force-exit', async (c) => {
-  const body = await c.req.json<{
-    tradeId: string;
-    symbol: string;
-    trader: string;
-    strategy: string;
-    direction: 'LONG' | 'SHORT';
-    legs: Array<{
-      symbol: string;
-      type: 'CALL' | 'PUT' | 'STOCK';
-      action: 'BUY' | 'SELL';
-      quantity: number;
-      expiry: string;
-      strike: number;
-    }>;
-  }>();
+  let body: z.infer<typeof ForceExitRequestSchema>;
+  try {
+    body = ForceExitRequestSchema.parse(await c.req.json());
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      return c.json({ error: 'Invalid request body', details: e.errors }, 400);
+    }
+    throw e;
+  }
 
   const orderResult = await placeOrder({
     symbol: body.symbol,

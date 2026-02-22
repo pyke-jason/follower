@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import { existsSync } from 'node:fs';
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { PROJECT_ROOT, PATHS } from '../../lib/paths.js';
 import { db, schema } from '../../db/client.js';
@@ -22,26 +23,31 @@ function readLogTail(logPath: string, bytes = 2000): string {
   }
 }
 
+const BacktestSpawnSchema = z.object({
+  runId: z.string().min(1),
+  startDate: z.string(),
+  endDate: z.string(),
+  traders: z.array(z.string()),
+  agentProvider: z.string().optional(),
+  agentModel: z.string().optional(),
+  refreshQuoteCache: z.boolean().optional(),
+  logLevel: z.string().optional(),
+  disableRiskLimits: z.boolean().optional(),
+  maxOnSymbol: z.number().optional(),
+  maxTotalPositions: z.number().optional(),
+  maxDrawdownPct: z.number().optional(),
+  maxAgentCalls: z.number().optional(),
+  startingEquity: z.number().optional(),
+  commissionSchedule: z.object({
+    stock: z.object({ perShare: z.number() }).optional(),
+    option: z.object({ perContract: z.number() }).optional(),
+  }).optional(),
+});
+
 const app = new Hono();
 
 app.post('/spawn', async (c) => {
-  const body = await c.req.json<{
-    runId: string;
-    startDate: string;
-    endDate: string;
-    traders: string[];
-    agentProvider?: string;
-    agentModel?: string;
-    refreshQuoteCache?: boolean;
-    logLevel?: string;
-    disableRiskLimits?: boolean;
-    maxOnSymbol?: number;
-    maxTotalPositions?: number;
-    maxDrawdownPct?: number;
-    maxAgentCalls?: number;
-    startingEquity?: number;
-    commissionSchedule?: { stock?: { perShare: number }; option?: { perContract: number } };
-  }>();
+  const body = BacktestSpawnSchema.parse(await c.req.json());
 
   const { runId, startDate, endDate, traders, agentProvider, agentModel, refreshQuoteCache, logLevel,
     disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity,
@@ -138,10 +144,12 @@ app.post('/spawn', async (c) => {
 });
 
 app.post('/:id/cancel', async (c) => {
-  const pid = parseInt(c.req.query('pid') ?? '');
-  if (!pid || isNaN(pid)) {
-    return c.json({ error: 'Missing or invalid pid query parameter' }, 400);
+  const pidSchema = z.coerce.number().int().positive();
+  const pidResult = pidSchema.safeParse(c.req.query('pid'));
+  if (!pidResult.success) {
+    return c.json({ error: 'Invalid pid parameter' }, 400);
   }
+  const pid = pidResult.data;
 
   try {
     process.kill(-pid, 'SIGTERM');
