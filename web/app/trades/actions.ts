@@ -4,12 +4,12 @@ import { db, schema } from '@/lib/db';
 import { TradeLeg } from '@db/schema';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 
 export async function forceExitTrade(formData: FormData) {
-  const tradeId = formData.get('tradeId') as string;
-  if (!tradeId) return;
+  const tradeId = z.string().uuid('tradeId must be a UUID').parse(formData.get('tradeId'));
 
   const [trade] = await db
     .select()

@@ -8,7 +8,8 @@
 import { z } from 'zod';
 import { TradeLegSchema } from './schema.js';
 import type { TradeLeg } from './schema.js';
-import { DirectionSchema } from '../lib/enums.js';
+import * as schema from './schema.js';
+import { DirectionSchema, StrategySchema } from '../lib/enums.js';
 
 /**
  * Parse the `legs` column from a trade row.
@@ -36,4 +37,18 @@ export function parseDirection(raw: string, tradeId?: string): 'LONG' | 'SHORT' 
     throw new Error(`Invalid direction "${raw}"${ctx}: expected LONG or SHORT`);
   }
   return result.data;
+}
+
+/**
+ * Parse and validate a trade row from the DB.
+ * Validates direction, strategy, and legs at the boundary so callers
+ * get real types without any `as` casts.
+ */
+export function parseTradeFromDb(row: typeof schema.trades.$inferSelect) {
+  return {
+    ...row,
+    direction: parseDirection(row.direction, row.id),
+    strategy: StrategySchema.parse(row.strategy),
+    legs: parseLegs(row.legs, row.id),
+  };
 }

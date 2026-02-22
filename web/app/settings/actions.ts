@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { getProvider, SECRET_KEYS } from '@secrets';
+import { z } from 'zod';
 
 type Result = { ok: boolean; error?: string };
 
@@ -53,10 +54,17 @@ export async function toggleSetting(id: ToggleId, enabled: boolean): Promise<Res
   }
 }
 
+const SecretKeySchema = z.enum(SECRET_KEYS as [string, ...string[]]);
+
 export async function setSecret(_prev: Result | null, formData: FormData): Promise<Result> {
-  const key = formData.get('key') as string;
-  const value = formData.get('value') as string;
-  if (!key || !value) return { ok: false, error: 'Key and value are required' };
+  let key: string;
+  let value: string;
+  try {
+    key = SecretKeySchema.parse(formData.get('key'));
+    value = z.string().parse(formData.get('value'));
+  } catch {
+    return { ok: false, error: 'Key and value are required' };
+  }
 
   try {
     const provider = getProvider();
@@ -68,8 +76,12 @@ export async function setSecret(_prev: Result | null, formData: FormData): Promi
 }
 
 export async function deleteSecret(_prev: Result | null, formData: FormData): Promise<Result> {
-  const key = formData.get('key') as string;
-  if (!key) return { ok: false, error: 'Key is required' };
+  let key: string;
+  try {
+    key = SecretKeySchema.parse(formData.get('key'));
+  } catch {
+    return { ok: false, error: 'Key is required' };
+  }
 
   try {
     const provider = getProvider();

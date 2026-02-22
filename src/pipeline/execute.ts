@@ -17,6 +17,7 @@ export type { RecordTradeResult };
 export type { OrderLeg };
 import type { Signal } from '../agent/schemas.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
+import { parseTradeFromDb } from '../db/parse.js';
 import { createLogger } from '../lib/logger.js';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
@@ -120,8 +121,8 @@ function buildStockLegs(underlying: string, direction: 'LONG' | 'SHORT', quantit
     symbol: underlying,
     strike: 0,
     expiry: '',
-    type: 'STOCK' as const,
-    action: direction === 'LONG' ? 'BUY' as const : 'SELL' as const,
+    type: 'STOCK',
+    action: direction === 'LONG' ? 'BUY' : 'SELL',
     quantity,
   }];
 }
@@ -186,10 +187,10 @@ async function placeOrder(
   const result = OrderResultSchema.parse(raw);
 
   if (result.status === 'FILLED') {
-    await pendingContext.recordFill(
-      result.filledPrice!,
-      new Date(result.fillTimestamp!),
-    );
+    if (result.filledPrice == null || result.fillTimestamp == null) {
+      throw new Error('OrderResultSchema.parse passed but FILLED result is missing price/timestamp');
+    }
+    await pendingContext.recordFill(result.filledPrice, new Date(result.fillTimestamp));
   } else if (result.status === 'OPEN' && result.orderId && deps.onPending) {
     deps.onPending(result.orderId, pendingContext);
   }
@@ -276,10 +277,11 @@ async function executeClose(
 ): Promise<PipelineResult> {
   // 1. Find existing position (strategy filter prevents matching e.g. STOCK when signal says PDS)
   const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
-  const existing = positions[0];
-  if (!existing) {
+  const existingRaw = positions[0];
+  if (!existingRaw) {
     return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
+  const existing = parseTradeFromDb(existingRaw);
 
   // 2. Use current remaining quantity (accounts for prior TRIMs)
   const quantity = tradeQty(existing.quantity);
@@ -293,15 +295,15 @@ async function executeClose(
   });
 
   // 4. Build order — reverse direction from existing position
-  const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
+  const existingLegs = existing.legs;
   const legs = existing.strategy === 'STOCK'
-    ? buildStockLegs(existing.symbol, existing.direction as 'LONG' | 'SHORT', quantity)
+    ? buildStockLegs(existing.symbol, existing.direction, quantity)
     : existingLegs.map(l => ({ ...l, quantity, action: l.action === 'BUY' ? 'SELL' as const : 'BUY' as const }));
 
   // Reverse direction for close order
   const closeDirection: 'LONG' | 'SHORT' = existing.direction === 'LONG' ? 'SHORT' : 'LONG';
   const params = buildOrderParams(
-    { ...signal, direction: closeDirection, strategy: existing.strategy as Signal['strategy'] },
+    { ...signal, direction: closeDirection, strategy: existing.strategy },
     legs,
     signal.limitPrice,
   );
@@ -313,7 +315,7 @@ async function executeClose(
     tradeId: existing.id,
     symbol: signal.symbol,
     trader,
-    direction: existing.direction as 'LONG' | 'SHORT',
+    direction: existing.direction,
     strategy: existing.strategy,
     exitPrice: filledPrice,
     quantity,
@@ -328,7 +330,7 @@ async function executeClose(
 
   let tradeId: string | undefined;
   const result = await placeOrder(deps, params, {
-    action: 'CLOSE', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    action: 'CLOSE', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity, legs, messageId: opts.messageId,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
@@ -430,10 +432,11 @@ async function executeTrim(
 ): Promise<PipelineResult> {
   // 1. Find existing position
   const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
-  const existing = positions[0];
-  if (!existing) {
+  const existingRaw = positions[0];
+  if (!existingRaw) {
     return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
+  const existing = parseTradeFromDb(existingRaw);
 
   // 2. Compute trim quantity from current remaining qty
   const currentQty = tradeQty(existing.quantity);
@@ -449,14 +452,14 @@ async function executeTrim(
   });
 
   // 4. Build order — reverse direction for the trim
-  const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
+  const existingLegs = existing.legs;
   const legs = existing.strategy === 'STOCK'
-    ? buildStockLegs(existing.symbol, existing.direction as 'LONG' | 'SHORT', trimQty)
+    ? buildStockLegs(existing.symbol, existing.direction, trimQty)
     : existingLegs.map(l => ({ ...l, quantity: trimQty, action: l.action === 'BUY' ? 'SELL' as const : 'BUY' as const }));
 
   const closeDirection: 'LONG' | 'SHORT' = existing.direction === 'LONG' ? 'SHORT' : 'LONG';
   const params = buildOrderParams(
-    { ...signal, direction: closeDirection, strategy: existing.strategy as Signal['strategy'] },
+    { ...signal, direction: closeDirection, strategy: existing.strategy },
     legs,
     signal.limitPrice,
   );
@@ -468,7 +471,7 @@ async function executeTrim(
     tradeId: existing.id,
     symbol: signal.symbol,
     trader,
-    direction: existing.direction as 'LONG' | 'SHORT',
+    direction: existing.direction,
     strategy: existing.strategy,
     exitPrice: filledPrice,
     closeQuantity: trimQty,
@@ -484,7 +487,7 @@ async function executeTrim(
 
   let tradeId: string | undefined;
   const result = await placeOrder(deps, params, {
-    action: 'TRIM', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    action: 'TRIM', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity: trimQty, legs, messageId: opts.messageId,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
@@ -508,13 +511,14 @@ async function executeLegOff(
 ): Promise<PipelineResult> {
   // 1. Find existing position (use signal.strategy — the pre-mutation strategy)
   const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
-  const existing = positions[0];
-  if (!existing) {
+  const existingRaw = positions[0];
+  if (!existingRaw) {
     return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
+  const existing = parseTradeFromDb(existingRaw);
 
   // 2. Identify the leg to close (the SELL leg in CDS→CALL or PDS→PUT)
-  const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
+  const existingLegs = existing.legs;
   const targetStrategy = signal.targetStrategy!;
 
   const legToClose = existingLegs.find(l => l.action === 'SELL');
@@ -528,11 +532,11 @@ async function executeLegOff(
   const closingLegs: OrderLeg[] = [{
     ...legToClose,
     quantity,
-    action: 'BUY' as const,
+    action: 'BUY',
   }];
 
   const params = buildOrderParams(
-    { ...signal, direction: 'LONG' as const, strategy: existing.strategy as Signal['strategy'] },
+    { ...signal, direction: 'LONG', strategy: existing.strategy },
     closingLegs,
     signal.limitPrice,
   );
@@ -544,7 +548,7 @@ async function executeLegOff(
     tradeId: existing.id,
     symbol: signal.symbol,
     trader,
-    direction: existing.direction as 'LONG' | 'SHORT',
+    direction: existing.direction,
     strategy: existing.strategy,
     exitPrice: filledPrice,
     quantity,
@@ -564,7 +568,7 @@ async function executeLegOff(
 
   let tradeId: string | undefined;
   const result = await placeOrder(deps, params, {
-    action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity, legs: closingLegs, messageId: opts.messageId,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
@@ -595,8 +599,10 @@ export async function executeSignal(
     case 'ADD':     return executeAdd(signal, trader, deps, opts);
     case 'TRIM':    return executeTrim(signal, trader, deps, opts);
     case 'LEG_OFF': return executeLegOff(signal, trader, deps, opts);
-    default:
-      return { signal, executed: false, reason: `Unknown action: ${(signal as any).action}` };
+    default: {
+      const _never: never = signal.action;
+      return { signal, executed: false, reason: `Unknown action: ${String(_never)}` };
+    }
   }
 }
 
