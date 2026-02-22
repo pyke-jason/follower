@@ -345,9 +345,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
   // Live metrics tracking — written to DB after every message
   resetApiStats();
-  const MTM_INTERVAL_MS = 30_000;
   const MTM_INTERVAL_MSGS = 100;
-  let lastMtmTime = 0;
   let lastMtmValue: number | null = null;
   let lastOpenCount = 0;
 
@@ -410,14 +408,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     const shouldRecomputeMtm =
       (i === 0) ||
       (i === tradableMessages.length - 1) ||
-      (i % MTM_INTERVAL_MSGS === 0) ||
-      (Date.now() - lastMtmTime > MTM_INTERVAL_MS);
+      (i % MTM_INTERVAL_MSGS === 0);
 
     if (shouldRecomputeMtm) {
       try {
         lastMtmValue = await broker.getUnrealizedPnl();
         lastOpenCount = await broker.getOpenPositionCount();
-        lastMtmTime = Date.now();
       } catch {
         // Failed to compute MTM — carry forward last known value.
         // This prevents an unexpected Databento fetch from slowing the loop.

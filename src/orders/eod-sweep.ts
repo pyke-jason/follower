@@ -48,6 +48,17 @@ async function sweepOpenPositions(): Promise<void> {
 
   // Create MANUAL_REVIEW tasks for today's trades that are still open
   for (const trade of todayTrades) {
+    // Deduplicate: skip if a PENDING MANUAL_REVIEW task already exists for this trade
+    const existingTask = await db.select().from(schema.tasks)
+      .where(and(
+        eq(schema.tasks.taskType, 'MANUAL_REVIEW'),
+        eq(schema.tasks.status, 'PENDING'),
+        sql`json_extract(context, '$.tradeId') = ${trade.id}`,
+      ))
+      .limit(1);
+
+    if (existingTask.length > 0) continue;
+
     await db.insert(schema.tasks).values({
       messageId: trade.sourceMessageId,
       taskType: 'MANUAL_REVIEW',

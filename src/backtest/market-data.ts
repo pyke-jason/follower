@@ -11,7 +11,7 @@ const log = createLogger('MarketData');
  * MarketDataProvider: Abstraction for getting price data at a point in time.
  */
 export interface MarketDataProvider {
-  getQuote(symbol: string, at: Date): Promise<Quote>;
+  getQuote(symbol: string, at: Date, allowStaleQuotes?: boolean): Promise<Quote>;
   getOptionsChain(symbol: string, expiry: string, optionType: 'CALL' | 'PUT', at: Date): Promise<OptionsChain>;
   getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]>;
 }
@@ -118,7 +118,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   /** Max previous trading days to search for a stale quote when current day has no tick yet. */
   private static readonly MAX_STALE_DAYS = 5;
 
-  async getQuote(symbol: string, at: Date): Promise<Quote> {
+  async getQuote(symbol: string, at: Date, allowStaleQuotes: boolean = false): Promise<Quote> {
     const ticks = await this.loadDay(symbol, at);
     const tick = this.findLastTickBefore(ticks, at);
 
@@ -135,9 +135,16 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       };
     }
 
+    // No current-day tick found. If stale quotes are not allowed, fail fast.
+    const currentDayKey = toDateKey(at);
+    if (!allowStaleQuotes) {
+      throw new Error(
+        `No current-day quote available for ${symbol} on ${currentDayKey}. Set allowStaleQuotes to use stale data.`,
+      );
+    }
+
     // Fallback: walk back previous trading days for the last known quote.
     // Handles illiquid options that haven't traded yet in the current session.
-    const currentDayKey = toDateKey(at);
     let prevDayKey = getPreviousTradingDayKey(currentDayKey);
 
     for (let i = 0; i < DatabentoMarketDataProvider.MAX_STALE_DAYS && prevDayKey; i++) {
