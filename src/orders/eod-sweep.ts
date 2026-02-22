@@ -1,5 +1,5 @@
 import { db, schema } from '../db/client.js';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { sendSystemAlert } from '../lib/alert.js';
 import { isOpen, notBacktest } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
@@ -46,25 +46,27 @@ async function sweepOpenPositions(): Promise<void> {
 
   lastSweepDate = today;
 
-  // Create MANUAL_REVIEW tasks for today's trades that are still open
-  for (const trade of todayTrades) {
-    // Deduplicate: skip if a PENDING MANUAL_REVIEW task already exists for this trade
-    const existingTask = await db.select().from(schema.tasks)
-      .where(and(
-        eq(schema.tasks.taskType, 'MANUAL_REVIEW'),
-        eq(schema.tasks.status, 'PENDING'),
-        sql`json_extract(context, '$.tradeId') = ${trade.id}`,
-      ))
-      .limit(1);
+  // Batch-load existing PENDING MANUAL_REVIEW tasks to avoid N+1 queries.
+  // The json_extract is the standard SQLite JSON column query pattern — the
+  // tasks table stores tradeId inside the context JSON (no dedicated column).
+  const existingReviewTasks = await db.select({ context: schema.tasks.context }).from(schema.tasks)
+    .where(and(
+      eq(schema.tasks.taskType, 'MANUAL_REVIEW'),
+      eq(schema.tasks.status, 'PENDING'),
+    ));
+  const reviewedTradeIds = new Set(
+    existingReviewTasks.map(t => (t.context as Record<string, unknown>)?.tradeId).filter(Boolean),
+  );
 
-    if (existingTask.length > 0) continue;
+  for (const trade of todayTrades) {
+    if (reviewedTradeIds.has(trade.id)) continue;
 
     await db.insert(schema.tasks).values({
       messageId: trade.sourceMessageId,
       taskType: 'MANUAL_REVIEW',
       status: 'PENDING',
       assignee: 'human',
-      priority: 10, // high priority
+      priority: 10,
       context: {
         eodSweep: true,
         tradeId: trade.id,

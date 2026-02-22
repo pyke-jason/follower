@@ -522,6 +522,9 @@ async function executeLegOff(
     return { signal, executed: false, reason: `No SELL leg found to close on ${existing.strategy}` };
   }
   const legToKeep = existingLegs.find(l => l.action === 'BUY');
+  if (!legToKeep) {
+    return { signal, executed: false, reason: `No BUY leg found to keep on ${existing.strategy}` };
+  }
 
   // 3. Build order — buy back the sold leg (reverse it)
   const quantity = tradeQty(existing.quantity);
@@ -547,19 +550,15 @@ async function executeLegOff(
     direction: existing.direction as 'LONG' | 'SHORT',
     strategy: existing.strategy,
     exitPrice: filledPrice,
-    quantity,
-    legs: existingLegs,
     closedAt: filledAt?.toISOString(),
     sourceMessageId: existing.sourceMessageId ?? undefined,
     closeMessageId: opts.messageId,
     taskId: opts.taskId,
     backtestRunId: opts.backtestRunId,
     isBacktest: opts.isBacktest ?? false,
-    metadata: {
-      targetStrategy,
-      closedLeg: legToClose,
-      keptLeg: legToKeep,
-    },
+    targetStrategy,
+    keptLeg: legToKeep,
+    closedLeg: legToClose,
   });
 
   let tradeId: string | undefined;

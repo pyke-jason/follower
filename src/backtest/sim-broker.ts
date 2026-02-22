@@ -432,6 +432,8 @@ export class SimBroker implements BrokerService {
       tradeId,
       symbol: trade.symbol,
       trader: trade.trader,
+      direction: trade.direction as 'LONG' | 'SHORT',
+      strategy: trade.strategy,
       exitPrice,
       closedAt,
       backtestRunId: this.backtestRunId,
