@@ -124,6 +124,7 @@ export const trades = sqliteTable('trades', {
   index('idx_trades_symbol').on(table.symbol),
   index('idx_trades_status').on(table.status),
   index('idx_trades_backtest_run').on(table.backtestRunId),
+  index('trades_status_symbol_trader_idx').on(table.status, table.symbol, table.trader),
 ]);
 
 // ─── Trade Events (append-only action log) ──────────

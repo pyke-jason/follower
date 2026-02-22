@@ -42,7 +42,7 @@ export function toDateKeyET(d: Date): string {
 /** 0=Sun..6=Sat in ET. */
 export function getDayOfWeekET(d: Date): number {
   const { year, month, day } = getETComponents(d);
-  return new Date(year, month - 1, day).getDay();
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
 /** True if the ET date is Mon-Fri. */

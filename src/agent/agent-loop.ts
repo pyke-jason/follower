@@ -27,6 +27,8 @@ export type AgentConfig = {
   onToolCall?: (name: string, input: Record<string, unknown>, output: unknown) => unknown | null;
   maxTurns?: number;  // default 10
   maxTokens?: number; // default 2048
+  /** Absolute timeout for the entire agent loop in milliseconds. Default 120_000 (2 minutes). */
+  timeoutMs?: number;
 };
 
 /** Produce a short one-line summary of a tool's output for logging. */
@@ -68,6 +70,7 @@ export async function runAgentLoop(
     systemPrompt, tools, onToolCall,
     maxTurns = parseInt(process.env.AGENT_MAX_TURNS ?? '10', 10),
     maxTokens = parseInt(process.env.AGENT_MAX_TOKENS ?? '2048', 10),
+    timeoutMs = parseInt(process.env.AGENT_TIMEOUT_MS ?? '120000', 10),
   } = config;
 
   const steps: AgentStep[] = [];
@@ -75,9 +78,19 @@ export async function runAgentLoop(
   let toolCallIndex = 0;
   const usage: LLMUsage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
 
+  const timeoutController = new AbortController();
+  const timeoutTimer = setTimeout(() => timeoutController.abort(), timeoutMs);
+
   const messages: unknown[] = [provider.makeUserMessage(userPrompt)];
 
+  try {
   for (let turn = 0; turn < maxTurns; turn++) {
+    // Check timeout before each LLM call
+    if (timeoutController.signal.aborted) {
+      log.warn(`Agent loop timed out after ${timeoutMs}ms (completed ${turn} turns)`);
+      break;
+    }
+
     const startTime = Date.now();
 
     const response = await provider.chatWithTools({
@@ -166,6 +179,9 @@ export async function runAgentLoop(
     } else {
       messages.push(formattedResults);
     }
+  }
+  } finally {
+    clearTimeout(timeoutTimer);
   }
 
   return { steps, result, model: provider.identity, usage };

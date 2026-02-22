@@ -9,6 +9,9 @@ import type { AgentStep } from './agent-loop.js';
 import type { ModelIdentity, LLMUsage } from './providers.js';
 import type { PrefetchedData } from './prefetch.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('SignalClassifier');
 
 export type { AgentStep };
 
@@ -216,6 +219,7 @@ export async function runAgent(
         if (name === 'submit_decision') {
           const parsed = SubmitDecisionInput.safeParse(input);
           if (parsed.success) return parsed.data satisfies TaskResult;
+          log.warn('LLM decision parse failed', { error: parsed.error.message, rawArgs: input });
           return null;
         }
         if (name === 'flag_for_review') {

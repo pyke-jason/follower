@@ -47,9 +47,13 @@ export type RecordTradeResult = {
   trade: typeof schema.trades.$inferSelect;
 };
 
+// ─── Types ────────────────────────────────────────────
+
+type DbContext = typeof db;
+
 // ─── Event helper ────────────────────────────────────
 
-function emitEvent(params: {
+function emitEvent(dbCtx: DbContext, params: {
   tradeId: string;
   action: string;
   price?: number | null;
@@ -61,7 +65,7 @@ function emitEvent(params: {
   metadata?: Record<string, unknown>;
   timestamp: string;
 }) {
-  return db.insert(schema.tradeEvents).values({
+  return dbCtx.insert(schema.tradeEvents).values({
     id: crypto.randomUUID(),
     tradeId: params.tradeId,
     action: params.action,
@@ -88,6 +92,11 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   } = input;
 
   const now = new Date().toISOString();
+
+  // Guard: direction and strategy must be explicit — silent defaults to
+  // LONG/STOCK make PnL 100x wrong for options trades.
+  if (!direction) throw new Error(`recordTrade: direction is required for ${action} ${symbol}`);
+  if (!strategy) throw new Error(`recordTrade: strategy is required for ${action} ${symbol}`);
 
   // Guard: backtest trades must have explicit timestamps — never fall back to
   // wall-clock time, which collapses the equity curve to a single day.
@@ -120,8 +129,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       sourceMessageId: sourceMessageId ?? null,
       trader,
       symbol,
-      direction: direction ?? 'LONG',
-      strategy: strategy ?? 'STOCK',
+      direction,
+      strategy,
       legs: legs ?? [],
       status: 'OPEN',
       entryPrice: entryPrice != null ? String(entryPrice) : null,
@@ -134,20 +143,23 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       backtestRunId: backtestRunId ?? null,
       metadata: metadata ?? {},
     };
-    await db.insert(schema.trades).values(values);
-    await emitEvent({
-      tradeId,
-      action: 'OPEN',
-      price: entryPrice,
-      quantity: quantity ?? 1,
-      legs: legs ?? [],
-      strategy: strategy ?? 'STOCK',
-      direction: direction ?? 'LONG',
-      messageId: sourceMessageId,
-      timestamp: ts,
+    const trade = await db.transaction(async (tx) => {
+      await tx.insert(schema.trades).values(values);
+      await emitEvent(tx, {
+        tradeId,
+        action: 'OPEN',
+        price: entryPrice,
+        quantity: quantity ?? 1,
+        legs: legs ?? [],
+        strategy,
+        direction,
+        messageId: sourceMessageId,
+        timestamp: ts,
+      });
+      const [row] = await tx.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
+      return row;
     });
-    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
-    log.debug(`OPEN: ${direction ?? 'LONG'} ${strategy ?? 'STOCK'} ${symbol} qty=${quantity ?? 1} @$${entryPrice} [${tradeId.slice(0, 8)}]`);
+    log.debug(`OPEN: ${direction} ${strategy} ${symbol} qty=${quantity ?? 1} @$${entryPrice} [${tradeId.slice(0, 8)}]`);
     return { tradeId, action: 'OPEN', trade };
   }
 
@@ -164,7 +176,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
   // ── CLOSE: close the entire position ──
   if (action === 'CLOSE') {
-    const exit = exitPrice ?? 0;
+    if (exitPrice == null) throw new Error(`Cannot record trade close: exitPrice is missing for ${symbol} [${existing.id.slice(0, 8)}]`);
+    const exit = exitPrice;
     const entry = safeParseFloat(existing.entryPrice);
     const qty = tradeQty(existing.quantity);
     const closePnl = computeTradePnl({
@@ -177,29 +190,32 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const totalPnl = roundCents(closePnl + priorRealized);
     const ts = closedAt ?? now;
 
-    await emitEvent({
-      tradeId: existing.id,
-      action: 'CLOSE',
-      price: exit,
-      quantity: qty,
-      strategy: existing.strategy,
-      direction: existing.direction,
-      messageId: closeMessageId,
-      timestamp: ts,
+    const trade = await db.transaction(async (tx) => {
+      await emitEvent(tx, {
+        tradeId: existing.id,
+        action: 'CLOSE',
+        price: exit,
+        quantity: qty,
+        strategy: existing.strategy,
+        direction: existing.direction,
+        messageId: closeMessageId,
+        timestamp: ts,
+      });
+
+      await tx.update(schema.trades)
+        .set({
+          status: 'CLOSED',
+          exitPrice: String(exit),
+          pnl: String(totalPnl),
+          closedAt: ts,
+          closeMessageId: closeMessageId ?? null,
+          ...(metadata ? { metadata: { ...(existing.metadata as Record<string, unknown> ?? {}), ...metadata } } : {}),
+        })
+        .where(eq(schema.trades.id, existing.id));
+
+      const [row] = await tx.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+      return row;
     });
-
-    await db.update(schema.trades)
-      .set({
-        status: 'CLOSED',
-        exitPrice: String(exit),
-        pnl: String(totalPnl),
-        closedAt: ts,
-        closeMessageId: closeMessageId ?? null,
-        ...(metadata ? { metadata: { ...(existing.metadata as Record<string, unknown> ?? {}), ...metadata } } : {}),
-      })
-      .where(eq(schema.trades.id, existing.id));
-
-    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
     log.debug(`CLOSE: ${existing.symbol} exit=$${exit} closePnl=$${closePnl} realizedPnl=$${priorRealized} totalPnl=$${totalPnl} [${existing.id.slice(0, 8)}]`);
     return { tradeId: existing.id, action: 'CLOSE', trade };
   }
@@ -215,26 +231,29 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const avgPrice = roundCents((existingPrice * existingQty + addPrice * addQty) / totalQty);
     const ts = openedAt ?? now;
 
-    await emitEvent({
-      tradeId: existing.id,
-      action: 'ADD',
-      price: addPrice,
-      quantity: addQty,
-      strategy: existing.strategy,
-      direction: existing.direction,
-      messageId: sourceMessageId,
-      timestamp: ts,
+    const trade = await db.transaction(async (tx) => {
+      await emitEvent(tx, {
+        tradeId: existing.id,
+        action: 'ADD',
+        price: addPrice,
+        quantity: addQty,
+        strategy: existing.strategy,
+        direction: existing.direction,
+        messageId: sourceMessageId,
+        timestamp: ts,
+      });
+
+      await tx.update(schema.trades)
+        .set({
+          quantity: totalQty,
+          entryPrice: String(avgPrice),
+          avgEntryPrice: String(avgPrice),
+        })
+        .where(eq(schema.trades.id, existing.id));
+
+      const [row] = await tx.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+      return row;
     });
-
-    await db.update(schema.trades)
-      .set({
-        quantity: totalQty,
-        entryPrice: String(avgPrice),
-        avgEntryPrice: String(avgPrice),
-      })
-      .where(eq(schema.trades.id, existing.id));
-
-    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
     log.debug(`ADD: ${symbol} +${addQty} @$${addPrice} -> avg=$${avgPrice} totalQty=${totalQty} [${existing.id.slice(0, 8)}]`);
     return { tradeId: existing.id, action: 'ADD', trade };
   }
@@ -252,7 +271,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       trimQty = existingQty;
     }
 
-    const exit = exitPrice ?? 0;
+    if (exitPrice == null) throw new Error(`Cannot record trade trim: exitPrice is missing for ${symbol} [${existing.id.slice(0, 8)}]`);
+    const exit = exitPrice;
     const entry = safeParseFloat(existing.entryPrice);
     const trimPnl = computeTradePnl({
       entryPrice: entry, exitPrice: exit,
@@ -261,46 +281,49 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     });
     const ts = closedAt ?? now;
 
-    await emitEvent({
-      tradeId: existing.id,
-      action: 'TRIM',
-      price: exit,
-      quantity: trimQty,
-      strategy: existing.strategy,
-      direction: existing.direction,
-      messageId: closeMessageId,
-      metadata: { exitPercent: exitPercent ?? (existingQty > 0 ? trimQty / existingQty : null), trimPnl },
-      timestamp: ts,
-    });
-
     // Accumulate realized PnL from this trim
     const priorRealized = safeParseFloat(existing.realizedPnl);
     const newRealized = roundCents(priorRealized + trimPnl);
     const remainingQty = existingQty - trimQty;
 
-    if (remainingQty <= 0) {
-      // 100% trim = effectively a close
-      await db.update(schema.trades)
-        .set({
-          quantity: 0,
-          status: 'CLOSED',
-          realizedPnl: String(newRealized),
-          pnl: String(newRealized),
-          exitPrice: String(exit),
-          closedAt: ts,
-          closeMessageId: closeMessageId ?? null,
-        })
-        .where(eq(schema.trades.id, existing.id));
-    } else {
-      await db.update(schema.trades)
-        .set({
-          quantity: remainingQty,
-          realizedPnl: String(newRealized),
-        })
-        .where(eq(schema.trades.id, existing.id));
-    }
+    const trade = await db.transaction(async (tx) => {
+      await emitEvent(tx, {
+        tradeId: existing.id,
+        action: 'TRIM',
+        price: exit,
+        quantity: trimQty,
+        strategy: existing.strategy,
+        direction: existing.direction,
+        messageId: closeMessageId,
+        metadata: { exitPercent: exitPercent ?? (existingQty > 0 ? trimQty / existingQty : null), trimPnl },
+        timestamp: ts,
+      });
 
-    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+      if (remainingQty <= 0) {
+        // 100% trim = effectively a close
+        await tx.update(schema.trades)
+          .set({
+            quantity: 0,
+            status: 'CLOSED',
+            realizedPnl: String(newRealized),
+            pnl: String(newRealized),
+            exitPrice: String(exit),
+            closedAt: ts,
+            closeMessageId: closeMessageId ?? null,
+          })
+          .where(eq(schema.trades.id, existing.id));
+      } else {
+        await tx.update(schema.trades)
+          .set({
+            quantity: remainingQty,
+            realizedPnl: String(newRealized),
+          })
+          .where(eq(schema.trades.id, existing.id));
+      }
+
+      const [row] = await tx.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+      return row;
+    });
     log.debug(`TRIM: ${symbol} -${trimQty}/${existingQty} @$${exit} trimPnl=$${trimPnl} realizedPnl=$${newRealized} remaining=${remainingQty} [${existing.id.slice(0, 8)}]`);
     return { tradeId: existing.id, action: 'TRIM', trade };
   }
@@ -309,7 +332,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   // Not a new trade — the position stays open with a different shape.
   // OPEN CDS → LEG_OFF (mutate to CALL) → eventually CLOSE CALL. One trade row.
   if (action === 'LEG_OFF') {
-    const exit = exitPrice ?? 0;
+    if (exitPrice == null) throw new Error(`Cannot record leg-off: exitPrice is missing for ${symbol} [${existing.id.slice(0, 8)}]`);
+    const exit = exitPrice;
     const entry = safeParseFloat(existing.entryPrice);
 
     const targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as string;
@@ -324,28 +348,31 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const newEntryPrice = roundCents(entry + exit);
     const ts = closedAt ?? now;
 
-    await emitEvent({
-      tradeId: existing.id,
-      action: 'LEG_OFF',
-      price: exit,
-      quantity: tradeQty(existing.quantity),
-      legs: existing.legs as TradeLeg[],
-      strategy: existing.strategy,
-      direction: existing.direction,
-      messageId: closeMessageId,
-      metadata: { targetStrategy, closedLeg, keptLeg },
-      timestamp: ts,
+    const trade = await db.transaction(async (tx) => {
+      await emitEvent(tx, {
+        tradeId: existing.id,
+        action: 'LEG_OFF',
+        price: exit,
+        quantity: tradeQty(existing.quantity),
+        legs: existing.legs as TradeLeg[],
+        strategy: existing.strategy,
+        direction: existing.direction,
+        messageId: closeMessageId,
+        metadata: { targetStrategy, closedLeg, keptLeg },
+        timestamp: ts,
+      });
+
+      await tx.update(schema.trades)
+        .set({
+          strategy: targetStrategy,
+          legs: [keptLeg],
+          entryPrice: String(newEntryPrice),
+        })
+        .where(eq(schema.trades.id, existing.id));
+
+      const [row] = await tx.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+      return row;
     });
-
-    await db.update(schema.trades)
-      .set({
-        strategy: targetStrategy,
-        legs: [keptLeg],
-        entryPrice: String(newEntryPrice),
-      })
-      .where(eq(schema.trades.id, existing.id));
-
-    const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
     log.debug(`LEG_OFF: ${existing.strategy}→${targetStrategy} ${symbol} buyback=$${exit} newBasis=$${newEntryPrice} [${existing.id.slice(0, 8)}]`);
     return { tradeId: existing.id, action: 'LEG_OFF', trade };
   }

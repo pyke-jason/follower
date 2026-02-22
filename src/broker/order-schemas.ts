@@ -81,4 +81,7 @@ export const OrderResultSchema = z.object({
 ).refine(
   r => r.status !== 'FILLED' || r.fillTimestamp != null,
   { message: 'FILLED orders require fillTimestamp' },
+).refine(
+  r => r.status !== 'FILLED' || r.filledQuantity != null,
+  { message: 'FILLED orders require filledQuantity' },
 );

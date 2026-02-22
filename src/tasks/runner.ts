@@ -1,6 +1,6 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql, asc } from 'drizzle-orm';
-import { runAgent } from '../agent/trade-agent.js';
+import { runAgent } from '../agent/signal-classifier.js';
 import { prefetchForAgent } from '../agent/prefetch.js';
 import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
 import { completeTask, failTask, recordStep } from './recorder.js';

@@ -1,21 +1,32 @@
 import type { Page } from 'playwright';
+import { z } from 'zod';
+import { createLogger } from '../lib/logger.js';
 
-export type SignalRMessage = {
-  Id: string;
-  MessageText: string;
-  User: { Name: string };
-  PostTime: string;
-  Tag: string;
-  Votes: number;
-  Reactions: unknown[];
-};
+const log = createLogger('SignalR');
+
+const SignalRMessageSchema = z.object({
+  Id: z.string(),
+  MessageText: z.string(),
+  User: z.object({ Name: z.string() }),
+  PostTime: z.string(),
+  Tag: z.string(),
+  Votes: z.number(),
+  Reactions: z.array(z.unknown()),
+});
+
+export type SignalRMessage = z.infer<typeof SignalRMessageSchema>;
 
 export type MessageHandler = (msg: SignalRMessage) => void;
 
 export async function injectSignalRListener(page: Page, handler: MessageHandler): Promise<void> {
   // Expose the handler to the browser context
   await page.exposeFunction('__onSignalRMessage', (raw: unknown) => {
-    handler(raw as SignalRMessage);
+    const parsed = SignalRMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      log.error('[SignalR] Invalid message shape:', parsed.error.message);
+      return;
+    }
+    handler(parsed.data);
   });
 
   await page.evaluate(() => {
