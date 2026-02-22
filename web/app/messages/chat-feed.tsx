@@ -3,11 +3,12 @@
 import { useRef, useCallback, useState, type ReactNode } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatBubble } from './chat-bubble';
+import { EnrichedChatBubble } from '../components/enriched-chat-bubble';
 import { DateSeparator } from './date-separator';
 import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
 import type { Message, MessageLabel } from '../../../src/db/schema';
-import type { MessageIntent } from './actions';
+import type { MessageIntent, MessageEnrichment } from './actions';
 
 type FeedItem =
   | { type: 'date'; date: string; key: string }
@@ -45,6 +46,9 @@ export function ChatFeed({
   anchorMessageId,
   intents,
   labels,
+  enrichment,
+  lastProcessedTs,
+  runId,
   renderItem,
   onMessageClick,
 }: {
@@ -60,6 +64,9 @@ export function ChatFeed({
   anchorMessageId?: string;
   intents?: Record<string, MessageIntent>;
   labels?: Record<string, MessageLabel>;
+  enrichment?: Record<string, MessageEnrichment>;
+  lastProcessedTs?: string;
+  runId?: string;
   renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
   onMessageClick?: (message: Message) => void;
 }) {
@@ -125,11 +132,32 @@ export function ChatFeed({
           if (renderItem) {
             return renderItem(item.message, isHighlighted);
           }
+          const msgEnrichment = enrichment?.[item.message.id];
+          const isPending = !!(lastProcessedTs && item.message.timestamp > lastProcessedTs);
+          if (msgEnrichment && (msgEnrichment.decision || msgEnrichment.trade)) {
+            return (
+              <div
+                className={cn(
+                  isSelected && 'ring-1 ring-inset ring-primary/20',
+                  onMessageClick && 'cursor-pointer',
+                )}
+                onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
+              >
+                <EnrichedChatBubble
+                  enriched={{ message: item.message, trade: msgEnrichment.trade, decision: msgEnrichment.decision }}
+                  runId={runId}
+                  isHighlighted={isHighlighted}
+                  isPending={isPending}
+                />
+              </div>
+            );
+          }
           return (
             <div
               className={cn(
                 isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20',
                 isSelected && 'bg-primary/5 ring-1 ring-inset ring-primary/20',
+                isPending && 'opacity-40',
                 onMessageClick && 'cursor-pointer',
               )}
               onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}

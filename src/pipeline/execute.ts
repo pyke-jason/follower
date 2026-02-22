@@ -21,6 +21,7 @@ import { createLogger } from '../lib/logger.js';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
 import { formatOccSymbol } from '../backtest/occ-symbology.js';
+import { shouldSkipSignal } from '../agent/deterministic-skips.js';
 
 const log = createLogger('Pipeline');
 
@@ -66,6 +67,8 @@ export type PipelineOpts = {
   taskId?: string;
   backtestRunId?: string;
   isBacktest?: boolean;
+  /** Trader's allowed strategies. Signals with strategies outside this list are skipped (OPEN/ADD only). */
+  allowedStrategies?: string[];
 };
 
 export type PipelineResult = {
@@ -589,6 +592,11 @@ export async function executeSignal(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
+  const strategySkip = shouldSkipSignal(signal, opts.allowedStrategies);
+  if (strategySkip) {
+    return { signal, executed: false, reason: strategySkip.reason };
+  }
+
   switch (signal.action) {
     case 'OPEN':    return executeOpen(signal, trader, deps, opts);
     case 'CLOSE':   return executeClose(signal, trader, deps, opts);

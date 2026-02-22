@@ -676,7 +676,12 @@ async function processMessage(
     executeableSignals,
     msg.author,
     btCtx.pipelineDeps,
-    { messageId: msg.id, backtestRunId: btCtx.runId, isBacktest: true },
+    {
+      messageId: msg.id,
+      backtestRunId: btCtx.runId,
+      isBacktest: true,
+      allowedStrategies: prefetched?.traderProfile?.strategies,
+    },
   );
 
   const executedResults = pipelineResults.filter(r => r.executed);

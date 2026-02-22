@@ -265,7 +265,11 @@ async function processTask(task: Task): Promise<void> {
         result.signals,
         context.author ?? 'unknown',
         pipelineDeps,
-        { messageId: task.messageId ?? undefined, taskId: task.id },
+        {
+          messageId: task.messageId ?? undefined,
+          taskId: task.id,
+          allowedStrategies: prefetched?.traderProfile?.strategies,
+        },
       );
 
       const executedTrades = pipelineResults.filter(r => r.executed);
