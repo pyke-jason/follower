@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { useSearchParams, usePathname, useRouter } from 'next/navigation';
 import { isRunScopedPath } from '@/lib/run-scope';
+import { StatusResponseSchema } from '../api/status/route.js';
 
 export interface RunBrief {
   id: string;
@@ -60,7 +61,7 @@ export function RunScopeProvider({ children }: { children: ReactNode }) {
     const url = runId ? `/api/status?run=${runId}` : '/api/status';
     fetch(url)
       .then((r) => r.json())
-      .then(setStatus)
+      .then((data) => setStatus(StatusResponseSchema.parse(data)))
       .catch(() => {});
   }, [runId]);
 

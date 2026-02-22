@@ -11,34 +11,12 @@ import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
+import { RecordTradeInputSchema, LegOffMetadataSchema } from './schemas.js';
 import type { TradeLeg } from '../db/schema.js';
 
-const log = createLogger('RecordTrade');
+export type { RecordTradeInput } from './schemas.js';
 
-export type RecordTradeInput = {
-  action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
-  symbol: string;
-  trader: string;
-  direction?: 'LONG' | 'SHORT';
-  strategy?: string;
-  /** When the caller already knows which trade to target (from a prior lookup),
-   *  pass the ID here to skip the redundant scope-filter query. */
-  tradeId?: string;
-  entryPrice?: number;
-  exitPrice?: number;
-  quantity?: number;
-  closeQuantity?: number;
-  exitPercent?: number;
-  legs?: TradeLeg[];
-  openedAt?: string;       // ISO string
-  closedAt?: string;       // ISO string
-  sourceMessageId?: string;
-  closeMessageId?: string;
-  taskId?: string;
-  backtestRunId?: string;
-  isBacktest?: boolean;
-  metadata?: Record<string, unknown>;
-};
+const log = createLogger('RecordTrade');
 
 export type RecordTradeResult = {
   tradeId: string;
@@ -78,25 +56,25 @@ function emitEvent(params: {
 
 // ─── Main ────────────────────────────────────────────
 
-export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeResult | null> {
-  const {
-    action, symbol, trader, direction, strategy,
-    entryPrice, exitPrice, quantity,
-    closeQuantity, exitPercent,
-    legs, openedAt, closedAt, sourceMessageId, closeMessageId,
-    taskId, backtestRunId, isBacktest, metadata,
-  } = input;
+export async function recordTrade(rawInput: unknown): Promise<RecordTradeResult | null> {
+  const input = RecordTradeInputSchema.parse(rawInput);
+  // Common fields present in every variant
+  const { action, symbol, trader, direction, strategy,
+          tradeId: inputTradeId, isBacktest, backtestRunId,
+          sourceMessageId, closeMessageId, taskId, metadata } = input;
 
   const now = new Date().toISOString();
 
   // Guard: backtest trades must have explicit timestamps — never fall back to
   // wall-clock time, which collapses the equity curve to a single day.
   if (isBacktest || backtestRunId) {
-    if (action === 'OPEN' && !openedAt) {
-      throw new Error(`recordTrade: backtest OPEN for ${symbol} missing openedAt timestamp`);
+    if (action === 'OPEN') {
+      const openedAt = input.action === 'OPEN' ? input.openedAt : undefined;
+      if (!openedAt) throw new Error(`recordTrade: backtest OPEN for ${symbol} missing openedAt timestamp`);
     }
-    if ((action === 'CLOSE' || action === 'TRIM') && !closedAt) {
-      throw new Error(`recordTrade: backtest ${action} for ${symbol} missing closedAt timestamp`);
+    if (action === 'CLOSE' || action === 'TRIM') {
+      const closedAt = (input.action === 'CLOSE' || input.action === 'TRIM') ? input.closedAt : undefined;
+      if (!closedAt) throw new Error(`recordTrade: backtest ${action} for ${symbol} missing closedAt timestamp`);
     }
   }
 
@@ -111,7 +89,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   ];
 
   // ── OPEN: insert a new trade row ──
-  if (action === 'OPEN') {
+  if (input.action === 'OPEN') {
+    const { entryPrice, quantity, openedAt, legs } = input;
     const tradeId = crypto.randomUUID();
     const ts = openedAt ?? now;
     const values = {
@@ -154,8 +133,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   // ── Find existing open position for CLOSE/ADD/TRIM/LEG_OFF ──
   // Fast path: caller already identified the trade (pipeline does its own lookup).
   // Fallback: scope-filter query for callers that only know symbol/trader/strategy.
-  const [existing] = input.tradeId
-    ? await db.select().from(schema.trades).where(eq(schema.trades.id, input.tradeId))
+  const [existing] = inputTradeId
+    ? await db.select().from(schema.trades).where(eq(schema.trades.id, inputTradeId))
     : await db.select().from(schema.trades).where(and(...scopeFilters)).limit(1);
   if (!existing) {
     log.debug(`${action}: no open position for ${symbol}/${trader}${backtestRunId ? ` run=${backtestRunId.slice(0, 8)}` : ''}`);
@@ -163,7 +142,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   }
 
   // ── CLOSE: close the entire position ──
-  if (action === 'CLOSE') {
+  if (input.action === 'CLOSE') {
+    const { exitPrice, closedAt } = input;
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
     const qty = tradeQty(existing.quantity);
@@ -205,7 +185,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   }
 
   // ── ADD: increase quantity on existing position ──
-  if (action === 'ADD') {
+  if (input.action === 'ADD') {
+    const { entryPrice, quantity, openedAt } = input;
     const addQty = quantity ?? 1;
     const addPrice = entryPrice ?? 0;
     const existingQty = tradeQty(existing.quantity);
@@ -240,7 +221,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   }
 
   // ── TRIM: partial close — update position in place, accumulate realizedPnl ──
-  if (action === 'TRIM') {
+  if (input.action === 'TRIM') {
+    const { exitPrice, closeQuantity, exitPercent, closedAt } = input;
     const existingQty = tradeQty(existing.quantity);
     let trimQty = closeQuantity ?? (exitPercent
       ? Math.max(1, Math.floor(existingQty * exitPercent))
@@ -308,18 +290,12 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   // ── LEG_OFF: close one leg of a spread, mutate position in place ──
   // Not a new trade — the position stays open with a different shape.
   // OPEN CDS → LEG_OFF (mutate to CALL) → eventually CLOSE CALL. One trade row.
-  if (action === 'LEG_OFF') {
+  if (input.action === 'LEG_OFF') {
+    const { exitPrice, closedAt } = input;
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
 
-    const targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as string;
-    const closedLeg = (metadata as Record<string, unknown>)?.closedLeg as TradeLeg | undefined;
-    const keptLeg = (metadata as Record<string, unknown>)?.keptLeg as TradeLeg | undefined;
-
-    if (!targetStrategy || !keptLeg) {
-      log.warn(`LEG_OFF: missing targetStrategy or keptLeg metadata for ${symbol}/${trader}`);
-      return null;
-    }
+    const { targetStrategy, closedLeg, keptLeg } = LegOffMetadataSchema.parse(metadata);
 
     const newEntryPrice = roundCents(entry + exit);
     const ts = closedAt ?? now;

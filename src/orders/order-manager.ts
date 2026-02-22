@@ -1,6 +1,7 @@
 import type { BrokerService } from '../broker/interface.js';
 import type { FilledWorkingOrder, OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
 import { WorkingOrderParamsSchema, OrderResultSchema } from '../broker/order-schemas.js';
+import type { FilledOrderResult } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { roundCents } from '../lib/numbers.js';
 
@@ -57,12 +58,15 @@ export class OrderManager {
     }
 
     // Register as working order — limitPrice guaranteed by schema refine above
+    if (params.limitPrice == null) {
+      throw new Error('WorkingOrderParamsSchema.parse passed but LIMIT order is missing limitPrice');
+    }
     const now = this.clock();
     const workingOrder: WorkingOrder = {
       orderId: result.orderId,
       params,
       status: result.status,
-      currentLimitPrice: params.limitPrice!,
+      currentLimitPrice: params.limitPrice,
       placedAt: now,
       lastAdjustedAt: now,
       adjustmentCount: 0,
@@ -81,15 +85,19 @@ export class OrderManager {
       //    before auto-cancel can fire, otherwise we lose recorded trades.
       const status = OrderResultSchema.parse(await this.broker.getOrderStatus(orderId));
       if (status.status === 'FILLED') {
-        log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
         // Zod refines guarantee filledPrice + fillTimestamp are present for FILLED
+        if (status.filledPrice == null || status.fillTimestamp == null) {
+          throw new Error(`OrderResultSchema.parse passed but FILLED order ${orderId} is missing price/timestamp`);
+        }
+        const filled = status as FilledOrderResult;
+        log.debug(`Fill confirmed: ${orderId} @ $${filled.filledPrice}`);
         order.status = 'FILLED';
-        order.filledPrice = status.filledPrice!;
-        order.filledAt = new Date(status.fillTimestamp!);
-        order.filledQuantity = status.filledQuantity;
-        order.commission = status.commission;
-        order.fillTimestamp = status.fillTimestamp!;
-        order.legFills = status.legFills;
+        order.filledPrice = filled.filledPrice;
+        order.filledAt = new Date(filled.fillTimestamp);
+        order.filledQuantity = filled.filledQuantity;
+        order.commission = filled.commission;
+        order.fillTimestamp = filled.fillTimestamp;
+        order.legFills = filled.legFills;
         this.workingOrders.delete(orderId);
         await this.onFill?.(order as FilledWorkingOrder);
         this.stopTimerIfEmpty();

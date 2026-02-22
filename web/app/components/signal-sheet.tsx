@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Radio, ArrowRight, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { SignalsResponseSchema } from '../api/signals/route.js';
+import type { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -15,24 +17,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from './badge';
 
-interface Signal {
-  message: {
-    id: string;
-    author: string;
-    cleanText: string | null;
-    actionHint: string | null;
-    directionHint: string | null;
-    badges: string[] | null;
-    symbols: unknown[] | null;
-    timestamp: string;
-  };
-  trade: {
-    id: string;
-    status: string;
-    pnl: string | null;
-    symbol: string;
-  } | null;
-}
+type Signal = z.infer<typeof SignalsResponseSchema>[number];
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -88,7 +73,7 @@ export function SignalSheet() {
 
     fetch(`/api/signals?${params}`)
       .then((r) => r.json())
-      .then(setSignals)
+      .then((data) => setSignals(SignalsResponseSchema.parse(data)))
       .catch(() => {});
   }, [open, runId]);
 

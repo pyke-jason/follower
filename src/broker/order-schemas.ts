@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { TradeLegSchema } from '../db/schema.js';
 import { DirectionSchema } from '../lib/enums.js';
 import { zPrice } from '../lib/zod-financial.js';
+import type { OrderResult } from './types.js';
 
 // ── OrderLeg (TradeLeg minus fillPrice) ──────────────────────────────
 
@@ -82,3 +83,10 @@ export const OrderResultSchema = z.object({
   r => r.status !== 'FILLED' || r.fillTimestamp != null,
   { message: 'FILLED orders require fillTimestamp' },
 );
+
+/** Narrowed OrderResult for FILLED status — filledPrice and fillTimestamp are guaranteed present. */
+export type FilledOrderResult = Omit<OrderResult, 'filledPrice' | 'fillTimestamp'> & {
+  status: 'FILLED';
+  filledPrice: number;
+  fillTimestamp: string;
+};

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getBacktestRuns } from '@/lib/queries';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
 
@@ -24,3 +25,14 @@ export async function GET() {
 
   return NextResponse.json(items);
 }
+
+export const BacktestRunsResponseSchema = z.array(z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  status: z.string(),
+  traders: z.array(z.string()),
+  startDate: z.string(),
+  endDate: z.string(),
+  totalPnl: z.number().nullable(),
+  winRate: z.number().nullable(),
+}));
