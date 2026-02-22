@@ -1,4 +1,18 @@
+import { z } from 'zod';
+
 const TOKEN_URL = 'https://signin.tradestation.com/oauth/token';
+
+const AuthEnvSchema = z.object({
+  TS_CLIENT_ID: z.string().min(1, 'Missing TS_CLIENT_ID'),
+  TS_CLIENT_SECRET: z.string().min(1, 'Missing TS_CLIENT_SECRET'),
+  TS_REFRESH_TOKEN: z.string().min(1, 'Missing TS_REFRESH_TOKEN'),
+});
+
+const authEnv = AuthEnvSchema.parse({
+  TS_CLIENT_ID: process.env.TS_CLIENT_ID,
+  TS_CLIENT_SECRET: process.env.TS_CLIENT_SECRET,
+  TS_REFRESH_TOKEN: process.env.TS_REFRESH_TOKEN,
+});
 
 let accessToken: string | null = null;
 let tokenExpiresAt = 0;
@@ -8,19 +22,11 @@ export async function getAccessToken(): Promise<string> {
     return accessToken;
   }
 
-  const clientId = process.env.TS_CLIENT_ID;
-  const clientSecret = process.env.TS_CLIENT_SECRET;
-  const refreshToken = process.env.TS_REFRESH_TOKEN;
-
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('Missing TradeStation credentials: TS_CLIENT_ID, TS_CLIENT_SECRET, TS_REFRESH_TOKEN');
-  }
-
   const params = new URLSearchParams({
     grant_type: 'refresh_token',
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
+    client_id: authEnv.TS_CLIENT_ID,
+    client_secret: authEnv.TS_CLIENT_SECRET,
+    refresh_token: authEnv.TS_REFRESH_TOKEN,
   });
 
   const res = await fetch(TOKEN_URL, {

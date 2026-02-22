@@ -13,7 +13,7 @@ import type { Quote, OptionsChain } from '../broker/types.js';
 import type { TrackedTrader } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { runAgentLoop } from '../agent/agent-loop.js';
-import { FlagForReviewInput, SubmitDecisionInput } from '../agent/schemas.js';
+import { FlagForReviewInput, GetRecentChatInput, SubmitDecisionInput } from '../agent/schemas.js';
 import { getRecentTraderMessages, getRecentChatMessages, formatTraderContext, formatChatContext } from './trader-context.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
@@ -236,8 +236,8 @@ function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string)
         },
       },
       execute: async (input) => {
-        const author = (input as { author?: string }).author;
-        const limit = Math.min((input as { limit?: number }).limit ?? 20, 50);
+        const { author, limit: rawLimit } = GetRecentChatInput.parse(input);
+        const limit = Math.min(rawLimit ?? 20, 50);
         const messages = await getRecentChatMessages(messageTimestamp, author, limit);
         return formatChatContext(messages);
       },
@@ -345,7 +345,7 @@ export async function extractIntent(
   const startMs = Date.now();
 
   // Prefetch market data for this message's timestamp (if available)
-  const symbols = (message.symbols as string[] | null) ?? [];
+  const symbols = message.symbols ?? [];
   if (symbols.length > 0 && deps.prefetch) {
     await deps.prefetch(symbols, new Date(message.timestamp));
   }
@@ -367,11 +367,11 @@ export async function extractIntent(
     messageTimestamp: message.timestamp,
     author: message.author,
     cleanText: message.cleanText,
-    badges: message.badges as string[],
-    symbols: message.symbols as string[],
+    badges: message.badges,
+    symbols: message.symbols,
     actionHint: message.actionHint,
     directionHint: message.directionHint,
-    detectedStrategies: message.detectedStrategies as TaskContext['detectedStrategies'],
+    detectedStrategies: message.detectedStrategies,
   };
 
   // Build intent-specific prompt with recent messages instead of positions
@@ -448,7 +448,7 @@ async function prefetchQuotes(
   message: Message,
   deps: IntentExtractionDeps,
 ): Promise<Record<string, { bid: number; ask: number; last: number }>> {
-  const symbols = (message.symbols as string[] | null) ?? [];
+  const symbols = message.symbols ?? [];
   if (symbols.length === 0) return {};
 
   const msgTime = new Date(message.timestamp);

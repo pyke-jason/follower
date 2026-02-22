@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill, Bar, GetBarsParams } from './types.js';
 import type { BrokerService } from './interface.js';
 import { getAccessToken } from './auth.js';
@@ -12,6 +13,20 @@ import {
   TsBarsResponseSchema,
   parseApiResponse,
 } from './schemas.js';
+
+const TsEnvSchema = z.object({
+  TS_ACCOUNT_ID: z.string().min(1, 'Missing TS_ACCOUNT_ID'),
+  TS_CLIENT_ID: z.string().min(1, 'Missing TS_CLIENT_ID'),
+  TS_CLIENT_SECRET: z.string().min(1, 'Missing TS_CLIENT_SECRET'),
+  TS_REFRESH_TOKEN: z.string().min(1, 'Missing TS_REFRESH_TOKEN'),
+});
+
+const tsEnv = TsEnvSchema.parse({
+  TS_ACCOUNT_ID: process.env.TS_ACCOUNT_ID,
+  TS_CLIENT_ID: process.env.TS_CLIENT_ID,
+  TS_CLIENT_SECRET: process.env.TS_CLIENT_SECRET,
+  TS_REFRESH_TOKEN: process.env.TS_REFRESH_TOKEN,
+});
 
 const BASE = process.env.TS_BASE_URL || 'https://api.tradestation.com/v3';
 
@@ -80,9 +95,6 @@ export async function getOptionsChain(
 }
 
 export async function placeOrder(params: OrderParams): Promise<OrderResult> {
-  const accountId = process.env.TS_ACCOUNT_ID;
-  if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
-
   const tsLegs = params.legs.map((leg) => ({
     Symbol: leg.type === 'STOCK'
       ? params.symbol
@@ -92,7 +104,7 @@ export async function placeOrder(params: OrderParams): Promise<OrderResult> {
   }));
 
   const body: Record<string, unknown> = {
-    AccountID: accountId,
+    AccountID: tsEnv.TS_ACCOUNT_ID,
     Symbol: params.symbol,
     OrderType: params.orderType === 'LIMIT' ? 'Limit' : 'Market',
     Legs: tsLegs,
@@ -123,14 +135,11 @@ export async function placeOrder(params: OrderParams): Promise<OrderResult> {
 }
 
 export async function modifyOrder(orderId: string, newLimitPrice: number): Promise<OrderResult> {
-  const accountId = process.env.TS_ACCOUNT_ID;
-  if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
-
   return withRetry(async (signal) => {
     const data = await ts(`/orderexecution/orders/${encodeURIComponent(orderId)}`, {
       method: 'PUT',
       body: JSON.stringify({
-        AccountID: accountId,
+        AccountID: tsEnv.TS_ACCOUNT_ID,
         LimitPrice: String(newLimitPrice),
       }),
       signal,
@@ -196,11 +205,8 @@ export async function getOrderStatus(orderId: string): Promise<OrderResult> {
 }
 
 export async function getPositions(): Promise<BrokerPosition[]> {
-  const accountId = process.env.TS_ACCOUNT_ID;
-  if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
-
   return withRetry(async (signal) => {
-    const data = await ts(`/brokerage/accounts/${encodeURIComponent(accountId)}/positions`, { signal });
+    const data = await ts(`/brokerage/accounts/${encodeURIComponent(tsEnv.TS_ACCOUNT_ID)}/positions`, { signal });
     const validated = parseApiResponse(TsPositionsResponseSchema, data, `GET /brokerage/accounts/.../positions`);
 
     return validated.Positions.map((p) => {
@@ -245,16 +251,13 @@ export async function getBars(params: GetBarsParams): Promise<Bar[]> {
 }
 
 export async function getAccountBalance(): Promise<AccountBalance> {
-  const accountId = process.env.TS_ACCOUNT_ID;
-  if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
-
   return withRetry(async (signal) => {
-    const data = await ts(`/brokerage/accounts/${encodeURIComponent(accountId)}/balances`, { signal });
+    const data = await ts(`/brokerage/accounts/${encodeURIComponent(tsEnv.TS_ACCOUNT_ID)}/balances`, { signal });
     const validated = parseApiResponse(TsBalancesResponseSchema, data, `GET /brokerage/accounts/.../balances`);
     const bal = validated.Balances[0];
 
     return {
-      accountId,
+      accountId: tsEnv.TS_ACCOUNT_ID,
       cashBalance: safeParseFloat(bal.CashBalance),
       buyingPower: safeParseFloat(bal.BuyingPower),
       equity: safeParseFloat(bal.Equity),

@@ -27,6 +27,12 @@ export const FlagForReviewInput = z.object({
   uncertainty: z.string().optional(),
 });
 
+export const GetRecentChatInput = z.object({
+  author: z.string().optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+export type GetRecentChatInput = z.infer<typeof GetRecentChatInput>;
+
 // --- Signal schema (classification-only agent output) ---
 
 const SignalLegSchema = z.object({

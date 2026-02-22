@@ -50,6 +50,7 @@ const OpenVariant = z.object({
 const CloseVariant = z.object({
   action:     z.literal('CLOSE'),
   exitPrice:  zNonNegPrice.default(0),
+  quantity:   z.number().int().positive().optional(),
   closedAt:   z.string().optional(),
   legs:       z.array(TradeLegSchema).optional(),
   ...commonFields,
@@ -70,13 +71,16 @@ const TrimVariant = z.object({
   closeQuantity: z.number().int().positive().optional(),
   exitPercent:   z.number().min(0).max(1).optional(),
   closedAt:      z.string().optional(),
+  legs:          z.array(TradeLegSchema).optional(),
   ...commonFields,
 });
 
 const LegOffVariant = z.object({
   action:    z.literal('LEG_OFF'),
   exitPrice: zNonNegPrice.default(0),
+  quantity:  z.number().int().positive().optional(),
   closedAt:  z.string().optional(),
+  legs:      z.array(TradeLegSchema).optional(),
   ...commonFields,
 });
 
