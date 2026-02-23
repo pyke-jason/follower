@@ -15,7 +15,7 @@ export function assetType(strategy: string): 'EQ' | 'OP' {
   return strategy === 'STOCK' ? 'EQ' : 'OP';
 }
 
-/** Trade quantity with default of 1 (legacy trades have null quantity). */
+/** Trade quantity with null→1 coercion for legacy DB rows. Write-time validation lives in recordTrade(). */
 export function tradeQty(quantity: number | null | undefined): number {
   return quantity ?? 1;
 }

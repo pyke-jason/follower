@@ -18,9 +18,9 @@ export function computeTradePnl(params: {
   const multiplier = params.direction === 'LONG' ? 1 : -1;
   const mult = contractMultiplier(params.strategy);
   const raw = Math.round(diff * multiplier * params.quantity * mult * 100) / 100;
-  if (Number.isNaN(raw)) {
+  if (!Number.isFinite(raw)) {
     throw new Error(
-      `computeTradePnl produced NaN (entry=${params.entryPrice}, exit=${params.exitPrice}, dir=${params.direction}, qty=${params.quantity})`,
+      `computeTradePnl produced ${raw} (entry=${params.entryPrice}, exit=${params.exitPrice}, dir=${params.direction}, qty=${params.quantity})`,
     );
   }
   // Normalise -0 → +0 (JS quirk when diff=0 and multiplier=-1)

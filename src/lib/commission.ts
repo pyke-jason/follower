@@ -35,6 +35,9 @@ function computeOneSideCommission(
     if (perShare === 0) return 0;
     const min = schedule.stock?.minimum ?? 0;
     const max = schedule.stock?.maximum ?? Infinity;
+    if (min > max) {
+      throw new Error(`CommissionSchedule: stock minimum (${min}) exceeds maximum (${max})`);
+    }
     return roundCents(Math.min(Math.max(perShare * qty, min), max));
   }
 

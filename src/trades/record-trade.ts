@@ -89,6 +89,14 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
   const now = new Date().toISOString();
 
+  // Guard: quantity must be positive if provided (validate at boundary, not in readers).
+  if (quantity != null && quantity <= 0) {
+    throw new Error(`recordTrade: invalid quantity ${quantity} for ${action} ${symbol} (must be positive)`);
+  }
+  if (closeQuantity != null && closeQuantity <= 0) {
+    throw new Error(`recordTrade: invalid closeQuantity ${closeQuantity} for ${action} ${symbol} (must be positive)`);
+  }
+
   // Guard: backtest trades must have explicit timestamps — never fall back to
   // wall-clock time, which collapses the equity curve to a single day.
   if (isBacktest || backtestRunId) {

@@ -9,8 +9,7 @@ import { Badge } from '../../components/badge';
 import { InfoChip } from '../../components/info-chip';
 import { MetricStrip, type Metric } from '../../components/metric-strip';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
-import { TradeRow } from '../../components/trade-row';
+import { TradesTableClient } from '../../components/trades-table-client';
 import { OverviewEquityCurve } from '../../components/overview-equity-curve';
 import { BarChartComponent } from '../../components/charts/bar-chart';
 import { formatCurrency } from '@/lib/format';
@@ -118,33 +117,10 @@ export default async function TraderDetailPage({
 
       {/* Recent Trades */}
       {recentTrades.length > 0 && (
-        <Card className="py-0 gap-0 overflow-hidden">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Recent Trades</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Symbol</TableHead>
-                  <TableHead>Trader</TableHead>
-                  <TableHead>Direction</TableHead>
-                  <TableHead>Strategy</TableHead>
-                  <TableHead className="text-right">Entry</TableHead>
-                  <TableHead className="text-right">Exit</TableHead>
-                  <TableHead className="text-right">P&L</TableHead>
-                  <TableHead>Opened</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recentTrades.map((t) => (
-                  <TradeRow key={t.id} trade={t} />
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        <div>
+          <h3 className="text-sm font-medium text-foreground mb-3">Recent Trades</h3>
+          <TradesTableClient trades={recentTrades} />
+        </div>
       )}
 
       {summary.totalTrades === 0 && (

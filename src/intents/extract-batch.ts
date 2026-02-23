@@ -88,37 +88,45 @@ export async function extractBatchIntents(
 
   const limiter = new RateLimiter(rpm);
 
-  // One worker per message — the rate limiter is the sole throttle.
-  const tasks = needsExtraction.map(async (msg) => {
-    if (signal?.aborted) return;
+  // Worker pool — only N tasks alive at once so completed ones get GC'd.
+  // rpm/3 gives ~10x headroom over steady-state need (each extractIntent takes ~1-3s),
+  // ensuring the rate limiter is never starved even with bursty latency.
+  const concurrency = Math.min(Math.ceil(rpm / 3), needsExtraction.length);
+  let cursor = 0;
 
-    await limiter.acquire();
-    if (signal?.aborted) return;
+  async function worker(): Promise<void> {
+    while (cursor < needsExtraction.length) {
+      if (signal?.aborted) return;
+      const msg = needsExtraction[cursor++];
 
-    try {
-      const result = await extractIntent(msg, model, provider, deps, version);
-      intents.set(msg.id, result.intent);
-      if (result.cached) {
-        progress.cached++;
-      } else {
-        progress.fresh++;
+      await limiter.acquire();
+      if (signal?.aborted) return;
+
+      try {
+        const result = await extractIntent(msg, model, provider, deps, version);
+        intents.set(msg.id, result.intent);
+        if (result.cached) {
+          progress.cached++;
+        } else {
+          progress.fresh++;
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log.warn(`  Error extracting intent for ${msg.id}: ${errMsg}`);
+        progress.errors++;
       }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log.warn(`  Error extracting intent for ${msg.id}: ${errMsg}`);
-      progress.errors++;
+
+      progress.processed++;
+
+      if (progress.processed % 10 === 0 || progress.processed === progress.total) {
+        log.info(`  Progress: ${progress.processed}/${progress.total} (cached=${progress.cached} fresh=${progress.fresh} errors=${progress.errors})`);
+      }
+
+      onProgress?.(progress);
     }
+  }
 
-    progress.processed++;
-
-    if (progress.processed % 10 === 0 || progress.processed === progress.total) {
-      log.info(`  Progress: ${progress.processed}/${progress.total} (cached=${progress.cached} fresh=${progress.fresh} errors=${progress.errors})`);
-    }
-
-    onProgress?.(progress);
-  });
-
-  await Promise.all(tasks);
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
   log.info(`Batch extraction complete: ${progress.processed}/${progress.total} (cached=${progress.cached} fresh=${progress.fresh} errors=${progress.errors})`);
 

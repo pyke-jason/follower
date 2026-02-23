@@ -1,9 +1,7 @@
 import { getClosedTrades, getTradeHistorySummary } from '@/lib/queries';
-import { TradeRow } from '../components/trade-row';
+import { TradesTableClient } from '../components/trades-table-client';
 import { MetricStrip } from '../components/metric-strip';
 import type { Metric } from '../components/metric-strip';
-import { Card, CardContent } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { buildHref } from '@/lib/run-scope';
@@ -123,35 +121,14 @@ export default async function TradeHistoryPage({
         )}
       </div>
 
-      <Card className="py-0 gap-0 overflow-hidden animate-in-up">
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Symbol</TableHead>
-                <TableHead>Trader</TableHead>
-                <TableHead>Direction</TableHead>
-                <TableHead>Strategy</TableHead>
-                <TableHead className="text-right">Entry</TableHead>
-                <TableHead className="text-right">Exit</TableHead>
-                <TableHead className="text-right">P&L</TableHead>
-                <TableHead>Opened</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {trades.map((t) => (
-                <TradeRow key={t.id} trade={t} runId={runId} />
-              ))}
-            </TableBody>
-          </Table>
-          {trades.length === 0 && (
-            <p className="px-4 py-6 text-sm text-muted-foreground text-center">
-              No closed trades{hasFilters ? ' matching filters' : ''}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div className="animate-in-up">
+        <TradesTableClient trades={trades} runId={runId} />
+        {trades.length === 0 && hasFilters && (
+          <p className="px-4 py-6 text-sm text-muted-foreground text-center">
+            No closed trades matching filters
+          </p>
+        )}
+      </div>
 
       <div className="flex gap-2 justify-center items-center">
         {page > 1 && (

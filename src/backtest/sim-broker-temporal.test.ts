@@ -29,6 +29,7 @@ import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { roundCents } from '../lib/numbers.js';
+import { isMarketHours, lastMarketCloseUTC } from '../lib/et-date.js';
 
 import {
   arbDirection,
@@ -66,10 +67,11 @@ const {
   insertOpenOptionTrade,
 } = makeDbHelpers(db, schema, RUN_ID);
 
-// Fixed time references — options expiry is 2026-06-19, giving ~168 days from T0.
+// Fixed time references — options expiry is 2026-07-17 (3rd Friday of July),
+// giving ~196 days from T0. Must NOT be a market holiday or weekend.
 const T0 = new Date('2026-01-02T10:00:00Z');
-const EXPIRY = '2026-06-19';
-const EXPIRY_DATE = new Date('2026-06-19T20:00:00Z'); // 4 PM ET (EDT) = OCC settlement
+const EXPIRY = '2026-07-17';
+const EXPIRY_DATE = new Date('2026-07-17T20:00:00Z'); // 4 PM ET (EDT) = OCC settlement
 
 /** Build N evenly-spaced timestamps between `from` and `to` (inclusive of both). */
 function spacedTimestamps(from: Date, to: Date, n: number): Date[] {
@@ -623,7 +625,7 @@ describe('temporal: post-expiry value', () => {
     const [closedTrade] = await db.select().from(schema.trades).where(
       eq(schema.trades.id, tradeId),
     );
-    expect(closedTrade.closedAt).toBe('2026-06-19T20:00:00.000Z');
+    expect(closedTrade.closedAt).toBe('2026-07-17T20:00:00.000Z');
 
     // Verify settlement at intrinsic
     const exitPrice = parseFloat(closedTrade.exitPrice!);
@@ -1308,7 +1310,9 @@ describe('temporal: time value model', () => {
             clock.advance(t);
             const marks = await broker.markToMarket();
             const mark = marks.get(tradeId)!;
-            const tv = expectedTimeValue(baseTV, t, EXPIRY_DATE);
+            // getTradeQuote snaps to lastMarketCloseUTC for after-hours timestamps
+            const effectiveT = isMarketHours(t) ? t : lastMarketCloseUTC(t);
+            const tv = expectedTimeValue(baseTV, effectiveT, EXPIRY_DATE);
             expect(mark).toBeCloseTo(intrinsic + tv, 2);
           }
         },

@@ -4,7 +4,7 @@ import { db, schema } from '@/lib/db';
 import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots, getMessagesByIds, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
+import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
 import type { BacktestRunConfig, CommissionSchedule } from '../../../src/db/schema';
 
@@ -343,30 +343,3 @@ export async function invalidateIntentCache(formData: FormData) {
   revalidatePath(`/backtests/${runId}`);
 }
 
-/** Fetch only the messages directly linked to a trade (via trade_events). */
-export async function fetchTradeLinkedMessages(tradeId: string) {
-  // Get the trade + all events to find linked message IDs
-  const [trades, events] = await Promise.all([
-    db.select().from(schema.trades).where(eq(schema.trades.id, tradeId)),
-    db.select().from(schema.tradeEvents).where(eq(schema.tradeEvents.tradeId, tradeId)),
-  ]);
-
-  // Collect unique message IDs from trade row + events
-  const msgIds = new Set<string>();
-  for (const t of trades) {
-    if (t.sourceMessageId) msgIds.add(t.sourceMessageId);
-    if (t.closeMessageId) msgIds.add(t.closeMessageId);
-  }
-  for (const e of events) {
-    if (e.messageId) msgIds.add(e.messageId);
-  }
-  if (msgIds.size === 0) return { messages: [], intents: {}, labels: {} };
-
-  const ids = [...msgIds];
-  const [messages, intents, labels] = await Promise.all([
-    getMessagesByIds(ids),
-    getLatestIntents(ids),
-    getLabelsForMessages(ids),
-  ]);
-  return { messages, intents, labels };
-}

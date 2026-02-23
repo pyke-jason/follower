@@ -20,7 +20,7 @@ import { StrategyEquityChart } from './strategy-equity';
 import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { DecisionScatter } from './decision-scatter';
-import { TradesTable } from './trades-table';
+import { TradesTableClient } from '../../components/trades-table-client';
 import { AccuracyGrid } from '../../components/accuracy-grid';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
@@ -226,7 +226,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTable trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} />;
+  const tradesContent = <TradesTableClient trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} enableChatPanel />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.

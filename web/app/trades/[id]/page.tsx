@@ -53,6 +53,14 @@ export default async function TradeDetailPage({
           <Badge label={trade.strategy} />
           <Badge label={trade.status} />
         </div>
+        {trade.taskId && (
+          <Link
+            href={buildHref(`/tasks/${trade.taskId}`, runId)}
+            className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors ml-auto"
+          >
+            View Decision &rarr;
+          </Link>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6">
