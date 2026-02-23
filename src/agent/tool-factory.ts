@@ -1,9 +1,8 @@
-import type { Quote, OptionsChain } from '../broker/types.js';
+import type { Quote } from '../broker/types.js';
 import type { Trade } from '../db/schema.js';
 import type { PositionFilters } from '../trades/filters.js';
 import {
   GetQuoteInput,
-  GetOptionsChainInput,
   GetOpenPositionsInput,
   FlagForReviewInput,
   SubmitDecisionInput,
@@ -32,28 +31,6 @@ export function getQuoteTool(getQuote: (symbol: string) => Promise<Quote>): Tool
     execute: async (input) => {
       const { symbol } = GetQuoteInput.parse(input);
       return await getQuote(symbol);
-    },
-  };
-}
-
-export function getOptionsChainTool(
-  getOptionsChain: (symbol: string, expiry: string, optionType: 'CALL' | 'PUT') => Promise<OptionsChain>,
-): ToolDef {
-  return {
-    name: 'get_options_chain',
-    description: 'Get options chain filtered by expiry and type. Returns strikes with bid/ask. IV and greeks may not be available for historical data.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        symbol: { type: 'string', description: 'Underlying ticker' },
-        expiry: { type: 'string', description: 'ISO date, e.g. 2025-11-28' },
-        optionType: { type: 'string', enum: ['CALL', 'PUT'] },
-      },
-      required: ['symbol', 'expiry', 'optionType'],
-    },
-    execute: async (input) => {
-      const { symbol, expiry, optionType } = GetOptionsChainInput.parse(input);
-      return await getOptionsChain(symbol, expiry, optionType);
     },
   };
 }

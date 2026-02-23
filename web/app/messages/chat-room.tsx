@@ -1,13 +1,21 @@
 'use client';
 
-import { useState, useCallback, useTransition, useEffect } from 'react';
+import { useState, useMemo, useCallback, useTransition, useEffect } from 'react';
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
 import { RelatedMessagesPanel } from './related-messages-panel';
-import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageIntent } from './actions';
+import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageIntent, type MessageEnrichment } from './actions';
 import type { Message, MessageLabel } from '../../../src/db/schema';
 
 const START_INDEX = 100_000;
+
+export type FilterConstraints = {
+  authors?: string[];
+  startDate?: string;
+  endDate?: string;
+  runId?: string;
+  lastProcessedTs?: string;
+};
 
 type RelatedContext = {
   messages: Message[];
@@ -21,17 +29,22 @@ export function ChatRoom({
   initialCursor,
   initialIntents,
   initialLabels,
+  initialEnrichment,
   authors,
+  constraints,
 }: {
   initialMessages: Message[];
   initialCursor: string | null;
   initialIntents: Record<string, MessageIntent>;
   initialLabels: Record<string, MessageLabel>;
+  initialEnrichment?: Record<string, MessageEnrichment>;
   authors: string[];
+  constraints?: FilterConstraints;
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [intents, setIntents] = useState(initialIntents);
   const [labels, setLabels] = useState(initialLabels);
+  const [enrichment, setEnrichment] = useState<Record<string, MessageEnrichment>>(initialEnrichment ?? {});
   const [cursor, setCursor] = useState(initialCursor);
   const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX);
   const [filters, setFilters] = useState<MessageFilters>({});
@@ -42,8 +55,45 @@ export function ChatRoom({
   const [relatedContext, setRelatedContext] = useState<RelatedContext | null>(null);
   const [isLoadingRelated, startRelatedTransition] = useTransition();
 
-  // Sync filters to URL search params
+  // Merge constraints into filters for every fetch
+  const mergedFilters = useMemo((): MessageFilters => ({
+    ...filters,
+    ...(constraints?.authors && { authors: constraints.authors }),
+    ...(constraints?.startDate && { startDate: constraints.startDate }),
+    ...(constraints?.endDate && { endDate: constraints.endDate }),
+    ...(constraints?.runId && { runId: constraints.runId }),
+  }), [filters, constraints]);
+
+  // Decision summary from enrichment (for filter bar badges)
+  const decisionSummary = useMemo(() => {
+    if (!constraints?.runId) return null;
+    const entries = Object.values(enrichment);
+    const executed = entries.filter((e) => e.trade).length;
+    const skipped = entries.filter((e) => e.decision && !e.trade).length;
+    // Collect skip reasons
+    const reasonCounts = new Map<string, number>();
+    for (const e of entries) {
+      if (e.decision && !e.trade && e.decision.reasoning) {
+        const reason = e.decision.reasoning;
+        reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+      }
+    }
+    const skipReasonCounts = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1]);
+    return { executedCount: executed, skippedCount: skipped, skipReasonCounts };
+  }, [enrichment, constraints?.runId]);
+
+  // Anchor to last processed message for live runs
+  const anchorMessageId = useMemo(() => {
+    if (!constraints?.lastProcessedTs) return undefined;
+    const ts = constraints.lastProcessedTs;
+    // Messages are in desc order in state; find first one at or before cutoff
+    const found = [...messages].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).find((m) => m.timestamp <= ts);
+    return found?.id;
+  }, [constraints?.lastProcessedTs, messages]);
+
+  // Sync filters to URL search params (skip when in constrained mode)
   useEffect(() => {
+    if (constraints) return;
     const params = new URLSearchParams();
     if (filters.authors?.length) params.set('authors', filters.authors.join(','));
     if (filters.startDate) params.set('start', filters.startDate);
@@ -54,7 +104,7 @@ export function ChatRoom({
     const search = params.toString();
     const url = search ? `${window.location.pathname}?${search}` : window.location.pathname;
     window.history.replaceState(null, '', url);
-  }, [filters]);
+  }, [filters, constraints]);
 
   // When filters change, reset and reload
   const handleFilterChange = useCallback(
@@ -62,15 +112,25 @@ export function ChatRoom({
       setFilters(newFilters);
       setFirstItemIndex(START_INDEX);
 
+      // Merge constraints into the fetch
+      const merged: MessageFilters = {
+        ...newFilters,
+        ...(constraints?.authors && { authors: constraints.authors }),
+        ...(constraints?.startDate && { startDate: constraints.startDate }),
+        ...(constraints?.endDate && { endDate: constraints.endDate }),
+        ...(constraints?.runId && { runId: constraints.runId }),
+      };
+
       startLoadingTransition(async () => {
-        const result = await fetchMessages(newFilters);
+        const result = await fetchMessages(merged);
         setMessages(result.messages);
         setIntents(result.intents);
         setLabels(result.labels);
+        setEnrichment(result.enrichment);
         setCursor(result.nextCursor);
       });
     },
-    []
+    [constraints]
   );
 
   // Load older messages (prepend)
@@ -78,7 +138,7 @@ export function ChatRoom({
     if (!cursor) return;
 
     startLoadingTransition(async () => {
-      const result = await fetchMessages({ ...filters, cursor });
+      const result = await fetchMessages({ ...mergedFilters, cursor });
       if (result.messages.length === 0) {
         setCursor(null);
         return;
@@ -89,9 +149,10 @@ export function ChatRoom({
       setMessages((prev) => [...result.messages, ...prev]);
       setIntents((prev) => ({ ...prev, ...result.intents }));
       setLabels((prev) => ({ ...prev, ...result.labels }));
+      setEnrichment((prev) => ({ ...prev, ...result.enrichment }));
       setCursor(result.nextCursor);
     });
-  }, [cursor, filters]);
+  }, [cursor, mergedFilters]);
 
   // Handle message click → load related messages
   const handleMessageClick = useCallback((message: Message) => {
@@ -115,6 +176,8 @@ export function ChatRoom({
         authors={authors}
         filters={filters}
         onFilterChange={handleFilterChange}
+        constraints={constraints}
+        decisionSummary={decisionSummary}
       />
       <div className="flex flex-1 min-h-0 gap-0">
         <div className="flex-1 min-w-0 flex flex-col">
@@ -122,12 +185,17 @@ export function ChatRoom({
             messages={messages}
             intents={intents}
             labels={labels}
+            enrichment={Object.keys(enrichment).length > 0 ? enrichment : undefined}
+            lastProcessedTs={constraints?.lastProcessedTs ?? undefined}
+            runId={constraints?.runId}
             firstItemIndex={firstItemIndex}
             onLoadOlder={handleLoadOlder}
             isLoadingOlder={isLoadingOlder}
             hasMore={cursor !== null}
             selectedMessageId={selectedMessage?.id}
             onMessageClick={handleMessageClick}
+            anchorMessageId={anchorMessageId}
+            focusMessageId={anchorMessageId}
           />
         </div>
         {selectedMessage && (

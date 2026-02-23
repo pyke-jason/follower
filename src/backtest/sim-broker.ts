@@ -1,5 +1,5 @@
 import type { BrokerService } from '../broker/interface.js';
-import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, Bar, GetBarsParams } from '../broker/types.js';
+import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, Bar, GetBarsParams } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
@@ -116,14 +116,6 @@ export class SimBroker implements BrokerService {
     return this.marketData.getQuote(symbol, this.clock.now());
   }
 
-  async getOptionsChain(
-    symbol: string,
-    expiry: string,
-    optionType: 'CALL' | 'PUT',
-  ): Promise<OptionsChain> {
-    return this.marketData.getOptionsChain(symbol, expiry, optionType, this.clock.now());
-  }
-
   /**
    * Get a synthetic quote for an options order by fetching individual OCC leg quotes
    * and computing net spread bid/ask. For single-leg options, returns the option's
@@ -133,26 +125,6 @@ export class SimBroker implements BrokerService {
     const optionLegs = params.legs.filter(l => l.type !== 'STOCK');
     if (optionLegs.length === 0) {
       throw new Error('getOptionSpreadQuote called with no option legs');
-    }
-
-    // Warm the cache: fetch the options chain for each unique expiry+type combination.
-    // getOptionsChain uses loadSpecificContracts (batch) which works reliably,
-    // and caches individual OCC ticks so getQuote(occSymbol) below can find them.
-    const seenChains = new Set<string>();
-    for (const leg of optionLegs) {
-      const chainKey = `${params.symbol}:${leg.expiry}:${leg.type}`;
-      if (seenChains.has(chainKey)) continue;
-      seenChains.add(chainKey);
-      try {
-        await this.marketData.getOptionsChain(
-          params.symbol,
-          leg.expiry,
-          leg.type as 'CALL' | 'PUT',
-          at,
-        );
-      } catch {
-        // Chain fetch failed — individual quotes below will also fail
-      }
     }
 
     let netBid = 0;
@@ -249,23 +221,42 @@ export class SimBroker implements BrokerService {
         underlyingPrice = params.limitPrice ?? 0;
       }
 
-      const estimatedPrice = params.limitPrice ?? underlyingPrice;
-      const legs: TradeLeg[] = params.legs;
+      // For MARKET option orders, use the actual spread mid-price as the debit/credit estimate
+      // rather than falling back to the underlying price (which would produce a wildly inflated margin).
+      let estimatedPrice: number | null = params.limitPrice ?? null;
+      if (estimatedPrice === null) {
+        if (isOptions) {
+          try {
+            const spreadQuote = await this.getOptionSpreadQuote(params, this.clock.now());
+            estimatedPrice = (spreadQuote.bid + spreadQuote.ask) / 2;
+          } catch {
+            // No spread quote available — skip the buying power check now;
+            // the MARKET fill path below will reject with "no market data".
+            estimatedPrice = null;
+          }
+        } else {
+          estimatedPrice = underlyingPrice;
+        }
+      }
 
-      const marginReq = computeMarginRequirement({
-        strategy: params.strategy,
-        direction: params.direction,
-        entryPrice: estimatedPrice,
-        quantity: tradeQty(params.legs[0]?.quantity),
-        legs,
-        underlyingPrice,
-      });
+      if (estimatedPrice !== null) {
+        const legs: TradeLeg[] = params.legs;
 
-      if (marginReq.initial > 0) {
-        const balance = await this.getAccountBalance();
-        if (marginReq.initial > balance.buyingPower) {
-          log.debug(`  REJECTED: insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})`);
-          return { orderId, status: 'REJECTED', message: `Insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})` };
+        const marginReq = computeMarginRequirement({
+          strategy: params.strategy,
+          direction: params.direction,
+          entryPrice: estimatedPrice,
+          quantity: tradeQty(params.legs[0]?.quantity),
+          legs,
+          underlyingPrice,
+        });
+
+        if (marginReq.initial > 0) {
+          const balance = await this.getAccountBalance();
+          if (marginReq.initial > balance.buyingPower) {
+            log.debug(`  REJECTED: insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})`);
+            return { orderId, status: 'REJECTED', message: `Insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})` };
+          }
         }
       }
     }

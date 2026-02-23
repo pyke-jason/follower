@@ -1,12 +1,13 @@
 'use server';
 
-import { getMessages, getMessageById, getMessagesBySymbols, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
+import { getMessages, getMessageById, getMessagesBySymbols, getLatestIntents, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
 import { compareSignals } from '../../../src/lib/eval';
 import { db, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import type { Message, MessageLabel } from '../../../src/db/schema';
 import type { Signal } from '../../../src/agent/schemas';
+import type { TradeOutcome, MessageDecision } from '../../../src/lib/enriched-message';
 
 export type MessageIntent = {
   id: string;
@@ -24,6 +25,11 @@ export type MessageIntent = {
 
 export type LabelFilter = 'labeled' | 'unlabeled' | 'mismatched' | 'needs-review';
 
+export type MessageEnrichment = {
+  decision: MessageDecision | null;
+  trade: TradeOutcome | null;
+};
+
 export type MessageFilters = {
   authors?: string[];
   startDate?: string;
@@ -31,20 +37,31 @@ export type MessageFilters = {
   signalsOnly?: boolean;
   labelFilter?: LabelFilter;
   cursor?: string;
+  runId?: string;
+  roleFilter?: 'all' | 'executed' | 'skipped';
+};
+
+export type FetchMessagesResult = {
+  messages: Message[];
+  intents: Record<string, MessageIntent>;
+  labels: Record<string, MessageLabel>;
+  enrichment: Record<string, MessageEnrichment>;
+  nextCursor: string | null;
 };
 
 const PAGE_SIZE = 50;
 
 export async function fetchMessages(
   filters: MessageFilters
-): Promise<{
-  messages: Message[];
-  intents: Record<string, MessageIntent>;
-  labels: Record<string, MessageLabel>;
-  nextCursor: string | null;
-}> {
-  // For "mismatched", we need to fetch labeled messages, then post-filter.
-  // Over-fetch to ensure we can fill a page after filtering.
+): Promise<FetchMessagesResult> {
+  // When runId is present, use the enriched query path
+  if (filters.runId) {
+    return fetchEnrichedPath(filters);
+  }
+  return fetchStandardPath(filters);
+}
+
+async function fetchStandardPath(filters: MessageFilters): Promise<FetchMessagesResult> {
   const isMismatchFilter = filters.labelFilter === 'mismatched';
   const queryLabelFilter = (isMismatchFilter ? 'labeled' : filters.labelFilter) as 'labeled' | 'unlabeled' | 'needs-review' | undefined;
   const fetchLimit = isMismatchFilter ? PAGE_SIZE * 4 : PAGE_SIZE + 1;
@@ -70,7 +87,7 @@ export async function fetchMessages(
       getLabelsForMessages(ids),
     ]);
 
-    return { messages, intents, labels, nextCursor };
+    return { messages, intents, labels, enrichment: {}, nextCursor };
   }
 
   // Mismatched: load intents+labels for all fetched rows, then filter to mismatches
@@ -91,7 +108,6 @@ export async function fetchMessages(
   const messages = hasMore ? mismatched.slice(0, PAGE_SIZE) : mismatched;
   const nextCursor = hasMore ? messages[messages.length - 1].timestamp : null;
 
-  // Return only intents/labels for the page
   const intents: Record<string, MessageIntent> = {};
   const labels: Record<string, MessageLabel> = {};
   for (const m of messages) {
@@ -99,7 +115,33 @@ export async function fetchMessages(
     if (allLabels[m.id]) labels[m.id] = allLabels[m.id];
   }
 
-  return { messages, intents, labels, nextCursor };
+  return { messages, intents, labels, enrichment: {}, nextCursor };
+}
+
+async function fetchEnrichedPath(filters: MessageFilters): Promise<FetchMessagesResult> {
+  const enrichedResult = await getEnrichedMessages({
+    traders: filters.authors ?? [],
+    startDate: filters.startDate ?? '',
+    endDate: filters.endDate ?? '',
+    cursor: filters.cursor,
+    runId: filters.runId,
+    roleFilter: filters.roleFilter,
+  });
+
+  const messages = enrichedResult.rows.map((r) => r.message);
+  const enrichment: Record<string, MessageEnrichment> = {};
+  for (const r of enrichedResult.rows) {
+    enrichment[r.message.id] = { decision: r.decision, trade: r.trade };
+  }
+
+  // Also load intents + labels for the full ChatRoom experience
+  const ids = messages.map((m) => m.id);
+  const [intents, labels] = await Promise.all([
+    getLatestIntents(ids),
+    getLabelsForMessages(ids),
+  ]);
+
+  return { messages, intents, labels, enrichment, nextCursor: enrichedResult.nextCursor };
 }
 
 export async function fetchMessage(id: string): Promise<Message | null> {

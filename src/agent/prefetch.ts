@@ -1,6 +1,6 @@
 import type { BrokerService } from '../broker/interface.js';
 import type { Quote } from '../broker/types.js';
-import type { Trade, TrackedTrader } from '../db/schema.js';
+import type { Trade } from '../db/schema.js';
 import type { PositionFilters } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 
@@ -22,16 +22,11 @@ export type PrefetchedPositions = {
 export type PrefetchedData = {
   quotes: Record<string, PrefetchedQuote>;
   positions: PrefetchedPositions;
-  traderProfile: {
-    strategies: string[];
-    notes: string | null;
-  } | null;
 };
 
 export type PrefetchDeps = {
   broker: BrokerService;
   getOpenPositions: (filters: PositionFilters) => Promise<Trade[]>;
-  getTraderConfig: (name: string) => Promise<TrackedTrader | undefined>;
 };
 
 // ─── Helpers ────────────────────────────────────────
@@ -70,10 +65,9 @@ export async function prefetchForAgent(
   const author = context.author ?? '';
 
   // Fire all fetches in parallel — each leg handles its own errors
-  const [quotesResult, positionsResult, traderResult] = await Promise.allSettled([
+  const [quotesResult, positionsResult] = await Promise.allSettled([
     fetchQuotes(symbols, deps.broker),
     deps.getOpenPositions({ trader: author }),
-    author ? deps.getTraderConfig(author) : Promise.resolve(undefined),
   ]);
 
   // Quotes: per-symbol errors already captured inside fetchQuotes
@@ -96,15 +90,5 @@ export async function prefetchForAgent(
     positions = { forSymbol: [], allForTrader: [], totalCount: -1, failed: true };
   }
 
-  // Trader profile: null if not found or fetch failed
-  let traderProfile: PrefetchedData['traderProfile'] = null;
-  if (traderResult.status === 'fulfilled' && traderResult.value) {
-    const t = traderResult.value;
-    traderProfile = {
-      strategies: t.strategies ?? [],
-      notes: t.notes ?? null,
-    };
-  }
-
-  return { quotes, positions, traderProfile };
+  return { quotes, positions };
 }

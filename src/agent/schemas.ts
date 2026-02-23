@@ -11,12 +11,6 @@ export const GetQuoteInput = z.object({
   symbol: z.string().min(1),
 });
 
-export const GetOptionsChainInput = z.object({
-  symbol: z.string().min(1),
-  expiry: z.string().min(1),
-  optionType: z.enum(['CALL', 'PUT']),
-});
-
 export const GetOpenPositionsInput = z.object({
   symbol: z.string().optional(),
   trader: z.string().optional(),
