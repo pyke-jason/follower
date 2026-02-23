@@ -17,6 +17,7 @@ import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
 import { recordTrade } from '../trades/record-trade.js';
 import { isMarketHours, lastMarketCloseUTC } from '../lib/et-date.js';
+import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('SimBroker');
 
@@ -199,8 +200,6 @@ export class SimBroker implements BrokerService {
     this.filledOrders.set(orderId, { price: roundedFill, timestamp: timestamp.toISOString() });
 
     const side = isBuy ? 'BUY' : 'SELL';
-    log.debug(`Fill: ${orderId} ${side} ${symbol} @ $${roundedFill}`);
-
     return {
       orderId,
       symbol,
@@ -214,8 +213,6 @@ export class SimBroker implements BrokerService {
   async placeOrder(params: OrderParams): Promise<OrderResult> {
     const orderId = `SIM-${++this.orderCounter}`;
     const legCount = params.legs.length;
-
-    log.debug(`placeOrder: ${params.orderType} ${params.symbol} legs=${legCount} limit=${params.limitPrice ?? 'MKT'}`);
 
     const isOptions = this.hasOptionLegs(params);
 
@@ -293,7 +290,6 @@ export class SimBroker implements BrokerService {
           ? Math.min(params.limitPrice, quote.ask)
           : Math.max(params.limitPrice, quote.bid);
         const filledPrice = roundCents(improved);
-        log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
         this.balanceCache = null;
         return { orderId, status: 'FILLED', filledPrice, fillTimestamp: this.clock.now().toISOString() };
       }
@@ -306,7 +302,6 @@ export class SimBroker implements BrokerService {
         isOptionOrder: isOptions,
       });
       this.balanceCache = null;
-      log.debug(`  LIMIT queued as working ${orderId} @ $${params.limitPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
       return { orderId, status: 'OPEN' };
     }
 
@@ -328,8 +323,6 @@ export class SimBroker implements BrokerService {
       legCount: params.legs.length,
     });
     const roundedFill = roundCents(fillPrice);
-
-    log.debug(`  MARKET filled @ $${roundedFill} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)} model=${this.fillModel}${isOptions ? ' [options]' : ''})`);
 
     this.balanceCache = null;
     return {
@@ -419,9 +412,7 @@ export class SimBroker implements BrokerService {
         const quote = await this.getTradeQuote(t, time);
         markPrices.set(t.id, (quote.bid + quote.ask) / 2);
       } catch (err) {
-        // markToMarket is advisory (used for MTM snapshots in equity curve).
-        // Missing mark for one trade should not crash the entire backtest.
-        log.warn(`markToMarket: no quote for ${t.symbol} ${t.strategy} at ${time.toISOString()}: ${err instanceof Error ? err.message : err}`);
+        log.debug(`markToMarket: no quote for ${t.symbol} ${t.strategy}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return markPrices;
@@ -445,6 +436,8 @@ export class SimBroker implements BrokerService {
 
     if (!result) throw new Error(`recordTrade CLOSE failed for trade ${tradeId}`);
 
+    this.balanceCache = null;
+
     const pnl = safeParseFloat(result.trade.pnl);
     return { pnl };
   }
@@ -460,7 +453,7 @@ export class SimBroker implements BrokerService {
       try {
         quote = await this.getTradeQuote(row, time);
       } catch (err) {
-        log.warn(`getUnrealizedPnl: no quote for ${row.symbol} ${row.strategy} at ${time.toISOString()}: ${err instanceof Error ? err.message : err}`);
+        log.debug(`getUnrealizedPnl: no quote for ${row.symbol} ${row.strategy}: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
       const mark = (quote.bid + quote.ask) / 2;
@@ -627,7 +620,7 @@ export class SimBroker implements BrokerService {
       try {
         tradeQuote = await this.getTradeQuote(t, now);
       } catch (err) {
-        log.warn(`getAccountBalance: no quote for ${t.symbol} ${t.strategy} at ${now.toISOString()}: ${err instanceof Error ? err.message : err}`);
+        log.debug(`getAccountBalance: no quote for ${t.symbol} ${t.strategy}: ${err instanceof Error ? err.message : String(err)}`);
       }
       quoteMs += Date.now() - tq0;
 
@@ -696,8 +689,8 @@ export class SimBroker implements BrokerService {
     const buyingPower = Math.max(0, roundCents(equity - totalMaintenanceMargin - workingOrderMargin));
 
     const total = Date.now() - t0;
-    if (total > 100) {
-      log.warn(`getAccountBalance SLOW: ${total}ms (db1=${tDb1 - t0}ms db2=${tDb2 - tDb1}ms quotes=${quoteMs}ms open=${openTrades.length})`);
+    if (total > 500) {
+      log.info(`getAccountBalance SLOW: ${total}ms (db1=${tDb1 - t0}ms db2=${tDb2 - tDb1}ms quotes=${quoteMs}ms open=${openTrades.length})`);
     }
 
     const result: AccountBalance = {
