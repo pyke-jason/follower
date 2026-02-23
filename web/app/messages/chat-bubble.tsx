@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { AuthorAvatar } from './author-avatar';
 import { MessageContent } from './message-content';
 import { IntentStrip } from './intent-strip';
@@ -20,7 +21,7 @@ function getAccentBorder(message: Message): string {
   return 'border-l-border';
 }
 
-export function ChatBubble({ message, noBorder, intent, label }: { message: Message; noBorder?: boolean; intent?: MessageIntent | null; label?: MessageLabel | null }) {
+export const ChatBubble = memo(function ChatBubble({ message, noBorder, intent, label }: { message: Message; noBorder?: boolean; intent?: MessageIntent | null; label?: MessageLabel | null }) {
   const badges = (message.badges as string[]) || [];
   const symbols = (message.symbols as string[]) || [];
   const isSignal =
@@ -68,4 +69,4 @@ export function ChatBubble({ message, noBorder, intent, label }: { message: Mess
       </div>
     </div>
   );
-}
+});

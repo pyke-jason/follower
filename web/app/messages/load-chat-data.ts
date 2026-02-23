@@ -2,7 +2,7 @@ import { getMessages, getDistinctAuthors, getLatestIntents, getLabelsForMessages
 import type { Message, MessageLabel } from '../../../src/db/schema';
 import type { MessageIntent, MessageEnrichment, LabelFilter } from './actions';
 
-const PAGE_SIZE = 50;
+export const PAGE_SIZE = 50;
 
 export type ChatInitialData = {
   messages: Message[];

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback, useTransition, useEffect } from 'react';
+import { useState, useRef, useMemo, useCallback, useTransition, useEffect } from 'react';
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
 import { RelatedMessagesPanel } from './related-messages-panel';
@@ -8,6 +8,16 @@ import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageI
 import type { Message, MessageLabel } from '../../../src/db/schema';
 
 const START_INDEX = 100_000;
+
+function buildMergedFilters(filters: MessageFilters, constraints: FilterConstraints | undefined): MessageFilters {
+  return {
+    ...filters,
+    ...(constraints?.authors && { authors: constraints.authors }),
+    ...(constraints?.startDate && { startDate: constraints.startDate }),
+    ...(constraints?.endDate && { endDate: constraints.endDate }),
+    ...(constraints?.runId && { runId: constraints.runId }),
+  };
+}
 
 export type FilterConstraints = {
   authors?: string[];
@@ -24,6 +34,12 @@ type RelatedContext = {
   sourceSymbols: string[];
 };
 
+export type StableDecisionCounts = {
+  processedCount: number;
+  executedCount: number;
+  skippedCount: number;
+};
+
 export function ChatRoom({
   initialMessages,
   initialCursor,
@@ -32,6 +48,7 @@ export function ChatRoom({
   initialEnrichment,
   authors,
   constraints,
+  stableDecisionCounts,
 }: {
   initialMessages: Message[];
   initialCursor: string | null;
@@ -40,6 +57,7 @@ export function ChatRoom({
   initialEnrichment?: Record<string, MessageEnrichment>;
   authors: string[];
   constraints?: FilterConstraints;
+  stableDecisionCounts?: StableDecisionCounts;
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [intents, setIntents] = useState(initialIntents);
@@ -56,40 +74,50 @@ export function ChatRoom({
   const [isLoadingRelated, startRelatedTransition] = useTransition();
 
   // Merge constraints into filters for every fetch
-  const mergedFilters = useMemo((): MessageFilters => ({
-    ...filters,
-    ...(constraints?.authors && { authors: constraints.authors }),
-    ...(constraints?.startDate && { startDate: constraints.startDate }),
-    ...(constraints?.endDate && { endDate: constraints.endDate }),
-    ...(constraints?.runId && { runId: constraints.runId }),
-  }), [filters, constraints]);
+  const mergedFilters = useMemo(() => buildMergedFilters(filters, constraints), [filters, constraints]);
 
-  // Decision summary from enrichment (for filter bar badges)
+  // Decision summary for filter bar badges.
+  // Prefer stable counts from the server (full run totals) over the paginated enrichment subset.
   const decisionSummary = useMemo(() => {
     if (!constraints?.runId) return null;
+    if (stableDecisionCounts) return stableDecisionCounts;
+    // Fallback: derive from current enrichment page (counts will shift with filter changes)
     const entries = Object.values(enrichment);
     const executed = entries.filter((e) => e.trade).length;
     const skipped = entries.filter((e) => e.decision && !e.trade).length;
-    // Collect skip reasons
-    const reasonCounts = new Map<string, number>();
-    for (const e of entries) {
-      if (e.decision && !e.trade && e.decision.reasoning) {
-        const reason = e.decision.reasoning;
-        reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
-      }
-    }
-    const skipReasonCounts = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1]);
-    return { executedCount: executed, skippedCount: skipped, skipReasonCounts };
-  }, [enrichment, constraints?.runId]);
+    return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
+  }, [stableDecisionCounts, enrichment, constraints?.runId]);
 
   // Anchor to last processed message for live runs
   const anchorMessageId = useMemo(() => {
     if (!constraints?.lastProcessedTs) return undefined;
     const ts = constraints.lastProcessedTs;
     // Messages are in desc order in state; find first one at or before cutoff
-    const found = [...messages].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).find((m) => m.timestamp <= ts);
+    const found = messages.find((m) => m.timestamp <= ts);
     return found?.id;
   }, [constraints?.lastProcessedTs, messages]);
+
+  // Refs to avoid stale closures in the effect below
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+
+  // When the server passes fresh initialMessages (e.g. AutoRefresh on a running backtest),
+  // merge new messages into state without blowing away older ones the user may have loaded.
+  // Skip if user has applied client-side filters — initialMessages reflects server constraints
+  // only and would pollute a filtered view.
+  useEffect(() => {
+    if (Object.keys(filtersRef.current).length > 0) return;
+    const existingIds = new Set(messagesRef.current.map((m) => m.id));
+    const incoming = initialMessages.filter((m) => !existingIds.has(m.id));
+    if (!incoming.length) return;
+    // State is desc (newest first); incoming messages are newer, so prepend.
+    setMessages((prev) => [...incoming, ...prev]);
+    setEnrichment((prev) => ({ ...prev, ...initialEnrichment }));
+    setIntents((prev) => ({ ...prev, ...initialIntents }));
+    setLabels((prev) => ({ ...prev, ...initialLabels }));
+  }, [initialMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync filters to URL search params (skip when in constrained mode)
   useEffect(() => {
@@ -112,14 +140,7 @@ export function ChatRoom({
       setFilters(newFilters);
       setFirstItemIndex(START_INDEX);
 
-      // Merge constraints into the fetch
-      const merged: MessageFilters = {
-        ...newFilters,
-        ...(constraints?.authors && { authors: constraints.authors }),
-        ...(constraints?.startDate && { startDate: constraints.startDate }),
-        ...(constraints?.endDate && { endDate: constraints.endDate }),
-        ...(constraints?.runId && { runId: constraints.runId }),
-      };
+      const merged = buildMergedFilters(newFilters, constraints);
 
       startLoadingTransition(async () => {
         const result = await fetchMessages(merged);
@@ -171,7 +192,7 @@ export function ChatRoom({
   }, [selectedMessage?.id]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       <ChatFilters
         authors={authors}
         filters={filters}

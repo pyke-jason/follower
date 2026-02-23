@@ -74,7 +74,7 @@ const options: HTMLReactParserOptions = {
     if (domNode.name === 'blockquote') {
       const { author, text, messageRef } = extractQuote(domNode);
       if (!text) return <></>;
-      return <QuoteDisplay author={author} text={text} messageRef={messageRef} />;
+      return <div className="py-1.5"><QuoteDisplay author={author} text={text} messageRef={messageRef} /></div>;
     }
 
     // Badge spans → TradeBadge

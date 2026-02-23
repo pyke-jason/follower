@@ -16,6 +16,7 @@ import { parseLegs, parseDirection } from '../db/parse.js';
 import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
 import { recordTrade } from '../trades/record-trade.js';
+import { isMarketHours, lastMarketCloseUTC } from '../lib/et-date.js';
 
 const log = createLogger('SimBroker');
 
@@ -89,6 +90,10 @@ export function computeModelFillPrice(params: FillPriceParams): number {
   }
 }
 
+/** Tight options lookback for trade execution (fills, limit checks).
+ *  Valuation paths use the wider default (60 min) in MarketDataProvider.getQuote(). */
+const EXECUTION_LOOKBACK_MINS = 5;
+
 /**
  * SimBroker: Simulated broker for backtesting.
  * Implements BrokerService interface. Uses MarketDataProvider for prices
@@ -121,7 +126,7 @@ export class SimBroker implements BrokerService {
    * and computing net spread bid/ask. For single-leg options, returns the option's
    * own bid/ask. For multi-leg spreads, computes net values and normalizes to positive.
    */
-  private async getOptionSpreadQuote(params: OrderParams, at: Date): Promise<Quote> {
+  private async getOptionSpreadQuote(params: OrderParams, at: Date, optionsMaxLookbackMins?: number): Promise<Quote> {
     const optionLegs = params.legs.filter(l => l.type !== 'STOCK');
     if (optionLegs.length === 0) {
       throw new Error('getOptionSpreadQuote called with no option legs');
@@ -138,7 +143,7 @@ export class SimBroker implements BrokerService {
         strike: leg.strike,
       });
 
-      const quote = await this.marketData.getQuote(occSymbol, at);
+      const quote = await this.marketData.getQuote(occSymbol, at, optionsMaxLookbackMins);
 
       if (leg.action === 'BUY') {
         netBid += quote.bid;
@@ -227,7 +232,7 @@ export class SimBroker implements BrokerService {
       if (estimatedPrice === null) {
         if (isOptions) {
           try {
-            const spreadQuote = await this.getOptionSpreadQuote(params, this.clock.now());
+            const spreadQuote = await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS);
             estimatedPrice = (spreadQuote.bid + spreadQuote.ask) / 2;
           } catch {
             // No spread quote available — skip the buying power check now;
@@ -271,7 +276,7 @@ export class SimBroker implements BrokerService {
       let quote: Quote;
       try {
         quote = isOptions
-          ? await this.getOptionSpreadQuote(params, this.clock.now())
+          ? await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS)
           : await this.getQuote(params.symbol);
       } catch {
         log.debug(`  LIMIT rejected: no market data for ${params.symbol}`);
@@ -304,7 +309,7 @@ export class SimBroker implements BrokerService {
     let quote: Quote;
     try {
       quote = isOptions
-        ? await this.getOptionSpreadQuote(params, this.clock.now())
+        ? await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS)
         : await this.getQuote(params.symbol);
     } catch {
       log.debug(`  MARKET rejected: no market data for ${params.symbol}`);
@@ -381,6 +386,9 @@ export class SimBroker implements BrokerService {
       return this.marketData.getQuote(row.symbol, at);
     }
 
+    // OPRA has no after-hours data; snap to last market close for the most recent quote.
+    const effectiveAt = isMarketHours(at) ? at : lastMarketCloseUTC(at);
+
     const legs = parseLegs(row.legs);
     const params: OrderParams = {
       symbol: row.symbol,
@@ -389,7 +397,7 @@ export class SimBroker implements BrokerService {
       legs,
       orderType: 'MARKET',
     };
-    return this.getOptionSpreadQuote(params, at);
+    return this.getOptionSpreadQuote(params, effectiveAt);
   }
 
   // ─── Shared internals ────────────────────────────────────
@@ -404,10 +412,10 @@ export class SimBroker implements BrokerService {
       try {
         const quote = await this.getTradeQuote(t, time);
         markPrices.set(t.id, (quote.bid + quote.ask) / 2);
-      } catch {
+      } catch (err) {
         // markToMarket is advisory (used for MTM snapshots in equity curve).
         // Missing mark for one trade should not crash the entire backtest.
-        log.warn(`markToMarket: no quote for ${t.id} (${t.symbol} ${t.strategy})`);
+        log.warn(`markToMarket: no quote for ${t.symbol} ${t.strategy} at ${time.toISOString()}: ${err instanceof Error ? err.message : err}`);
       }
     }
     return markPrices;
@@ -445,8 +453,8 @@ export class SimBroker implements BrokerService {
       let quote: Quote;
       try {
         quote = await this.getTradeQuote(row, time);
-      } catch {
-        log.warn(`getUnrealizedPnl: no quote for ${row.id} (${row.symbol} ${row.strategy})`);
+      } catch (err) {
+        log.warn(`getUnrealizedPnl: no quote for ${row.symbol} ${row.strategy} at ${time.toISOString()}: ${err instanceof Error ? err.message : err}`);
         continue;
       }
       const mark = (quote.bid + quote.ask) / 2;
@@ -575,21 +583,25 @@ export class SimBroker implements BrokerService {
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
+    const t0 = Date.now();
     const now = this.clock.now();
     const [realizedRow] = await db
       .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
       .from(schema.trades)
       .where(and(isClosed, forRun(this.backtestRunId)));
     const realizedPnl = roundCents(realizedRow?.total ?? 0);
+    const tDb1 = Date.now();
 
     // Single pass over open trades: cash effects, margin, unrealized PnL, market value.
     const openTrades = await db.select().from(schema.trades)
       .where(and(isOpen, forRun(this.backtestRunId)));
+    const tDb2 = Date.now();
 
     let cash = this.startingEquity + realizedPnl;
     let totalMaintenanceMargin = 0;
     let unrealizedPnl = 0;
     let totalMarketValue = 0;
+    let quoteMs = 0;
 
     for (const t of openTrades) {
       const legs = parseLegs(t.legs, t.id)
@@ -600,11 +612,13 @@ export class SimBroker implements BrokerService {
 
       // Fetch mark — only getTradeQuote can legitimately fail (missing market data)
       let tradeQuote: Quote | null = null;
+      const tq0 = Date.now();
       try {
         tradeQuote = await this.getTradeQuote(t, now);
-      } catch {
-        log.warn(`getAccountBalance: no quote for ${t.id} (${t.symbol} ${t.strategy})`);
+      } catch (err) {
+        log.warn(`getAccountBalance: no quote for ${t.symbol} ${t.strategy} at ${now.toISOString()}: ${err instanceof Error ? err.message : err}`);
       }
+      quoteMs += Date.now() - tq0;
 
       // Underlying price for margin calc: for STOCK it's the mark, for options fetch equity quote
       let underlyingPrice = entry; // fallback
@@ -612,12 +626,14 @@ export class SimBroker implements BrokerService {
         if (t.strategy === 'STOCK') {
           underlyingPrice = (tradeQuote.bid + tradeQuote.ask) / 2;
         } else {
+          const tq1 = Date.now();
           try {
             const eq = await this.marketData.getQuote(t.symbol, now);
             underlyingPrice = (eq.bid + eq.ask) / 2;
           } catch {
             // Options underlying quote failed — use entry as fallback for margin
           }
+          quoteMs += Date.now() - tq1;
         }
       }
 
@@ -667,6 +683,11 @@ export class SimBroker implements BrokerService {
     unrealizedPnl = roundCents(unrealizedPnl);
     const equity = roundCents(cash + totalMarketValue);
     const buyingPower = Math.max(0, roundCents(equity - totalMaintenanceMargin - workingOrderMargin));
+
+    const total = Date.now() - t0;
+    if (total > 100) {
+      log.warn(`getAccountBalance SLOW: ${total}ms (db1=${tDb1 - t0}ms db2=${tDb2 - tDb1}ms quotes=${quoteMs}ms open=${openTrades.length})`);
+    }
 
     return {
       accountId: 'SIM',
@@ -782,7 +803,7 @@ export class SimBroker implements BrokerService {
           if (!entry || entry.status !== 'OPEN') continue;
 
           try {
-            const quote = await this.getOptionSpreadQuote(entry.params, tickTime);
+            const quote = await this.getOptionSpreadQuote(entry.params, tickTime, EXECUTION_LOOKBACK_MINS);
             if (shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, quote.bid, quote.ask)) {
               allFills.push(this.fillWorkingOrder(orderId, entry, entry.params.symbol, tickTime, quote.bid, quote.ask));
             }
@@ -799,7 +820,7 @@ export class SimBroker implements BrokerService {
         if (!entry || entry.status !== 'OPEN') continue;
 
         try {
-          const quote = await this.getOptionSpreadQuote(entry.params, time);
+          const quote = await this.getOptionSpreadQuote(entry.params, time, EXECUTION_LOOKBACK_MINS);
           if (shouldFillLimit(isBuyOrder(entry.params), entry.currentLimitPrice, quote.bid, quote.ask)) {
             allFills.push(this.fillWorkingOrder(orderId, entry, entry.params.symbol, time, quote.bid, quote.ask));
           }

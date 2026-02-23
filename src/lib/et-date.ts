@@ -152,6 +152,29 @@ export function dayBoundsUTC(day: string): { start: Date; end: Date } {
   return { start, end };
 }
 
+/** Most recent market close as a UTC Date. For after-hours: same day's close.
+ *  For pre-market / weekends / holidays: previous trading day's close. */
+export function lastMarketCloseUTC(at: Date): Date {
+  const dayKey = toDateKeyET(at);
+  if (isTradingDay(at) && getETMinuteOfDay(at) >= marketCloseMinute(at)) {
+    return marketCloseUTC(at);
+  }
+  const prevKey = getPreviousTradingDayKey(dayKey);
+  if (!prevKey) return at;
+  return marketCloseUTC(parseDateKey(prevKey));
+}
+
+// ── Date Helpers ────────────────────────────────────────────────────
+
+/** Returns the next Friday (YYYY-MM-DD) on or after referenceDate, using UTC day-of-week. */
+export function nextFriday(referenceDate: Date): string {
+  const d = new Date(referenceDate);
+  const dow = d.getUTCDay(); // 0=Sun, 5=Fri
+  const daysToAdd = dow <= 5 ? (5 - dow) : 6; // If Sat (6), next Fri is 6 days out
+  d.setUTCDate(d.getUTCDate() + daysToAdd);
+  return d.toISOString().split('T')[0];
+}
+
 // ── LLM-Friendly Formatting ─────────────────────────────────────────
 
 /** Shared ET formatter for human-readable timestamps in LLM prompts. */

@@ -13,4 +13,5 @@ export const PATHS = {
   lockFile: projectPath('data', 'backend.lock'),
   envFile: projectPath('.env'),
   browserSession: projectPath('data', 'browser-session'),
+  tickCacheDb: projectPath('data', 'tick-cache.db'),
 } as const;

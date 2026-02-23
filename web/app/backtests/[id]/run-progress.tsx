@@ -42,19 +42,18 @@ export function RunProgress({
   const startMs = startedAt ? new Date(startedAt).getTime() : null;
   const endMs = completedAt ? new Date(completedAt).getTime() : null;
 
-  const [elapsed, setElapsed] = useState(() => {
-    if (!startMs) return 0;
-    const end = endMs ?? Date.now();
-    return Math.floor((end - startMs) / 1000);
-  });
+  const [elapsed, setElapsed] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!isActive || !startMs) return;
+    if (!startMs) return;
+    const end = endMs ?? Date.now();
+    setElapsed(Math.floor((end - startMs) / 1000));
+    if (!isActive) return;
     const timer = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startMs) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [startMs, isActive]);
+  }, [startMs, endMs, isActive]);
 
   // During extraction phase, show extraction progress; otherwise show replay progress
   const progressLabel = isExtracting
@@ -74,9 +73,11 @@ export function RunProgress({
     outputTokens: llmTokens.output,
   });
 
-  const elapsedStr = elapsed >= 60
-    ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-    : `${elapsed}s`;
+  const elapsedStr = elapsed == null
+    ? ''
+    : elapsed >= 60
+      ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+      : `${elapsed}s`;
 
   return (
     <div className="rounded-lg border bg-card px-4 py-3 space-y-2">
@@ -107,10 +108,8 @@ export function RunProgress({
         {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
           <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
         )}
-        {startMs != null && elapsed > 0 && (
-          <span suppressHydrationWarning>
-            <InfoChip label={elapsedStr} icon={Clock} />
-          </span>
+        {startMs != null && elapsed != null && elapsed > 0 && (
+          <InfoChip label={elapsedStr} icon={Clock} />
         )}
       </div>
     </div>

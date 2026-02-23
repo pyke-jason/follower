@@ -1,18 +1,14 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { zCoercePrice } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
-import { toDateKeyET, dayBoundsUTC, isMarketHours, parseDateKey } from '../lib/et-date.js';
-import type { Bar } from '../broker/types.js';
+import { toDateKeyET, parseDateKey, isTradingDay, getPreviousTradingDayKey } from '../lib/et-date.js';
 import { parseOccSymbol } from './occ-symbology.js';
+import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
+import type { TickCacheDB } from './tick-cache-db.js';
 
 const log = createLogger('QuoteTape');
-
-const CACHE_DIR = '.cache/databento';
 
 /**
  * Async line iterator over a Node Readable stream.
@@ -37,7 +33,7 @@ async function* readLines(reader: Readable): AsyncGenerator<string> {
 /** Hard limit on bytes read from a single Databento streaming response. */
 const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50 MB
 
-/** Per-symbol-day fetch metadata for downstream error enrichment. */
+/** Per-symbol fetch metadata for downstream error enrichment. */
 type FetchMeta = {
   status?: number;
   requestId?: string;
@@ -48,8 +44,8 @@ type FetchMeta = {
 
 const fetchMetaMap = new Map<string, FetchMeta>();
 
-export function getFetchMeta(symbol: string, day: string): FetchMeta | undefined {
-  return fetchMetaMap.get(`${symbol}:${day}`);
+export function getFetchMeta(symbol: string): FetchMeta | undefined {
+  return fetchMetaMap.get(symbol);
 }
 
 /**
@@ -90,6 +86,9 @@ export type QuoteTick = {
   bid: number;
   ask: number;
   timestamp: Date;
+  open?: number;
+  close?: number;
+  volume?: number;
 };
 
 /** Default quote schema per dataset. cbbo-1s is only for consolidated feeds (OPRA). */
@@ -131,95 +130,15 @@ export function isRangeCovered(ranges: [number, number][], start: number, end: n
   return false;
 }
 
-// ── Cache types and v2 format ─────────────────────────────────────
+// ── Cache types ───────────────────────────────────────────────────
 
 export type TickCacheData = {
   ranges: [number, number][];
   ticks: QuoteTick[];
 };
 
-type CacheEnvelope = {
-  v: 2;
-  ranges: [number, number][];
-  ticks: Array<{ symbol: string; bid: number; ask: number; timestamp: string }>;
-};
-
-/** Cache path for a single symbol's data within a dataset/schema/date. */
-export function getDayCachePath(params: {
-  dataset: string;
-  schema: string;
-  symbol: string;
-  day: string; // YYYY-MM-DD
-  stype_in?: string;
-}): string {
-  const { dataset, schema, symbol, day, stype_in } = params;
-  const parts = [dataset, schema, symbol, day];
-  if (stype_in) parts.push(stype_in);
-  const key = parts.join('|');
-  const hash = createHash('sha256').update(key).digest('hex');
-  return join(CACHE_DIR, `${hash}.json`);
-}
-
-/**
- * Read tick cache supporting both v1 (bare array) and v2 (envelope with ranges).
- * v1 files are treated as covering [firstTick, lastTick]. Empty arrays → empty ranges.
- */
-export async function readTickCache(path: string): Promise<TickCacheData | null> {
-  try {
-    const data = await readFile(path, 'utf-8');
-    const raw = JSON.parse(data);
-
-    if (Array.isArray(raw)) {
-      // v1 format: bare QuoteTick[]
-      const ticks: QuoteTick[] = raw.map((t: { symbol: string; bid: number; ask: number; timestamp: string }) => ({
-        ...t,
-        timestamp: new Date(t.timestamp),
-      }));
-      if (ticks.length === 0) {
-        return { ranges: [], ticks: [] };
-      }
-      const first = ticks[0].timestamp.getTime();
-      const last = ticks[ticks.length - 1].timestamp.getTime();
-      return { ranges: [[first, last]], ticks };
-    }
-
-    if (raw && typeof raw === 'object' && raw.v === 2) {
-      // v2 format: envelope with explicit ranges
-      const ticks: QuoteTick[] = (raw.ticks ?? []).map((t: { symbol: string; bid: number; ask: number; timestamp: string }) => ({
-        ...t,
-        timestamp: new Date(t.timestamp),
-      }));
-      return { ranges: raw.ranges ?? [], ticks };
-    }
-
-    log.warn(`Corrupted cache at ${path}, ignoring`);
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** Always writes v2 envelope format. */
-export async function writeTickCache(path: string, data: TickCacheData): Promise<void> {
-  await mkdir(CACHE_DIR, { recursive: true });
-  const envelope: CacheEnvelope = {
-    v: 2,
-    ranges: data.ranges,
-    ticks: data.ticks.map(t => ({
-      symbol: t.symbol,
-      bid: t.bid,
-      ask: t.ask,
-      timestamp: t.timestamp.toISOString(),
-    })),
-  };
-  await writeFile(path, JSON.stringify(envelope));
-}
-
 /** Re-export for existing callers. */
 export const toDateKey = toDateKeyET;
-
-/** Re-export for existing callers. */
-const dayRangeUTC = dayBoundsUTC;
 
 // ── Retry logic for Databento API calls ───────────────────────────────
 
@@ -307,162 +226,6 @@ async function fetchWithRetry(
   throw new Error('fetchWithRetry: unreachable');
 }
 
-// ── Daily bar cache (ohlcv-1d) ──────────────────────────────────────
-
-async function readBarCache(path: string): Promise<Bar | null> {
-  try {
-    const data = await readFile(path, 'utf-8');
-    const raw = JSON.parse(data);
-    if (!raw || typeof raw !== 'object' || !raw.timestamp) return null;
-    return raw as Bar;
-  } catch {
-    return null;
-  }
-}
-
-async function writeBarCache(path: string, bar: Bar): Promise<void> {
-  await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(path, JSON.stringify(bar));
-}
-
-/**
- * Fetch daily OHLCV bars for a symbol across multiple trading days in a SINGLE
- * Databento API call using the ohlcv-1d schema. Returns one Bar per trading day.
- *
- * Cache is per-symbol-per-day (same getDayCachePath with schema='ohlcv-1d'),
- * so repeated calls only fetch uncached days.
- *
- * Cost: ~1 row per trading day vs ~390 rows/day for ohlcv-1m.
- */
-export async function loadDailyBars(params: {
-  apiKey: string;
-  dataset: string;
-  symbol: string;
-  days: string[];        // YYYY-MM-DD trading days, any order
-  refreshCache?: boolean;
-}): Promise<Bar[]> {
-  const schema = 'ohlcv-1d';
-  const sortedDays = [...params.days].sort();
-
-  // Check per-day cache
-  const bars: Map<string, Bar> = new Map();
-  const uncachedDays: string[] = [];
-
-  for (const day of sortedDays) {
-    const cachePath = getDayCachePath({ dataset: params.dataset, schema, symbol: params.symbol, day });
-    if (params.refreshCache) await unlink(cachePath).catch(() => {});
-    const cached = await readBarCache(cachePath);
-    if (cached) {
-      bars.set(day, cached);
-    } else {
-      uncachedDays.push(day);
-    }
-  }
-
-  if (uncachedDays.length === 0) {
-    return sortedDays.map((d) => bars.get(d)!).filter(Boolean);
-  }
-
-  // Single API call spanning the full uncached range
-  const rangeStart = dayRangeUTC(uncachedDays[0]).start;
-  const rangeEnd = dayRangeUTC(uncachedDays[uncachedDays.length - 1]).end;
-  const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
-
-  const fetchParams = new URLSearchParams({
-    dataset: params.dataset,
-    schema,
-    encoding: 'json',
-    pretty_px: 'true',
-    pretty_ts: 'true',
-    map_symbols: 'true',
-    symbols: params.symbol,
-    start: rangeStart.toISOString(),
-    end: rangeEnd.toISOString(),
-  });
-
-  const fetchStart = Date.now();
-  const { res, retries } = await fetchWithRetry(
-    'https://hist.databento.com/v0/timeseries.get_range',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: authHeader,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: fetchParams.toString(),
-    },
-    { day: `${uncachedDays[0]}..${uncachedDays[uncachedDays.length - 1]}`, symbols: [params.symbol] },
-  );
-
-  const httpStatus = res.status;
-  const requestId = res.headers.get('x-request-id') ?? undefined;
-  if (!res.body) throw new Error('Response body is null');
-
-  // Parse response — one record per trading day
-  let bytesRead = 0;
-  let records = 0;
-  const reader = Readable.from(res.body as any);
-
-  for await (const line of readLines(reader)) {
-    bytesRead += Buffer.byteLength(line) + 1;
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    let raw: unknown;
-    try { raw = JSON.parse(trimmed); } catch { continue; }
-    records++;
-
-    const recordResult = DatabentoRecord.safeParse(raw);
-    if (!recordResult.success) continue;
-    const rec = recordResult.data;
-
-    const ts = rec.ts_event ?? rec.hd?.ts_event ?? rec.ts_recv;
-    if (!ts) continue;
-    const timestamp = new Date(ts);
-    if (isNaN(timestamp.getTime())) continue;
-
-    const dayKey = toDateKeyET(timestamp);
-    if (rec.open == null || rec.high == null || rec.low == null || rec.close == null) continue;
-
-    bars.set(dayKey, {
-      timestamp: timestamp.toISOString(),
-      open: rec.open,
-      high: rec.high,
-      low: rec.low,
-      close: rec.close,
-      volume: rec.volume ?? 0,
-    });
-  }
-
-  const durMs = Date.now() - fetchStart;
-  const parts: string[] = [
-    `daily-bars ${params.symbol}`,
-    `range=${uncachedDays[0]}..${uncachedDays[uncachedDays.length - 1]}`,
-    `status=${httpStatus}`,
-    `bytes=${bytesRead}`,
-    `records=${records}`,
-    `bars=${bars.size}`,
-  ];
-  if (retries) parts.push(`retries=${retries}`);
-  if (requestId) parts.push(`req=${requestId}`);
-  parts.push(`dur=${durMs}ms`);
-  log.info(parts.join(' '));
-
-  _apiStats.fetches++;
-  _apiStats.bytesRead += bytesRead;
-  _apiStats.records += records;
-
-  // Cache each day's bar
-  for (const day of uncachedDays) {
-    const bar = bars.get(day);
-    if (bar) {
-      const cachePath = getDayCachePath({ dataset: params.dataset, schema, symbol: params.symbol, day });
-      await writeBarCache(cachePath, bar);
-    }
-  }
-
-  return sortedDays.map((d) => bars.get(d)!).filter(Boolean);
-}
 
 // ── Two-phase options chain helpers ─────────────────────────────────────
 
@@ -494,31 +257,24 @@ export async function loadChainDefinitions(params: {
   parentSymbol: string;   // e.g. "GE.OPT"
   day: string;            // YYYY-MM-DD
   refreshCache?: boolean;
+  db: TickCacheDB;
 }): Promise<ChainDefinition[]> {
   const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
-  const cacheKey = [params.dataset, 'definition', params.parentSymbol, params.day, 'parent'].join('|');
-  const cachePath = join(CACHE_DIR, createHash('sha256').update(cacheKey).digest('hex') + '.json');
 
-  if (params.refreshCache) {
-    await unlink(cachePath).catch(() => {});
-  }
-
-  // Read from cache
-  try {
-    const raw = JSON.parse(await readFile(cachePath, 'utf-8'));
-    if (Array.isArray(raw) && raw.length >= 0) {
-      log.debug(`definition cache hit: ${params.parentSymbol} ${params.day} (${raw.length} contracts)`);
-      return raw as ChainDefinition[];
+  if (!params.refreshCache) {
+    const cached = await loadCachedChain(params.db, params.dataset, params.parentSymbol, params.day);
+    if (cached) {
+      log.debug(`definition cache hit: ${params.parentSymbol} ${params.day} (${cached.length} contracts)`);
+      return cached;
     }
-  } catch { /* cache miss */ }
+  }
 
   // Definitions are daily snapshots — use date-only range (Databento requires UTC midnight start)
   const definitions = await fetchDefinitionSnapshot(authHeader, params.dataset, params.parentSymbol, params.day);
 
   // Only cache non-empty results — empty may be transient (pre-market, API issues)
   if (definitions.length > 0) {
-    await mkdir(CACHE_DIR, { recursive: true });
-    await writeFile(cachePath, JSON.stringify(definitions));
+    await saveCachedChain(params.db, params.dataset, params.parentSymbol, params.day, definitions);
   }
 
   return definitions;
@@ -709,7 +465,6 @@ export async function fetchTickWindow(params: {
 
     const tick = parseTick(recordResult.data);
     if (!tick) continue;
-    if (!isMarketHours(tick.timestamp)) continue;
 
     ticks.push(tick);
   }
@@ -740,8 +495,7 @@ export async function fetchTickWindow(params: {
     ticksBySymbol.set(tick.symbol, (ticksBySymbol.get(tick.symbol) ?? 0) + 1);
   }
   for (const sym of params.symbols) {
-    const day = toDateKey(params.start);
-    fetchMetaMap.set(`${sym}:${day}`, {
+    fetchMetaMap.set(sym, {
       status: httpStatus,
       requestId,
       bytes: bytesRead,
@@ -760,9 +514,10 @@ function parseTick(record: z.infer<typeof DatabentoRecord>): QuoteTick | null {
 
   let bid: number | undefined;
   let ask: number | undefined;
+  const isOhlcv = record.high != null && record.low != null;
 
-  // ohlcv-1m schema: synthesize bid/ask from high/low of the minute bar
-  if (record.high != null && record.low != null) {
+  // ohlcv schema: synthesize bid/ask from high/low
+  if (isOhlcv) {
     bid = record.low;
     ask = record.high;
   }
@@ -782,8 +537,28 @@ function parseTick(record: z.infer<typeof DatabentoRecord>): QuoteTick | null {
 
   const ts = record.ts_event ?? record.hd?.ts_event ?? record.ts_recv;
   if (!ts) return null;
-  const timestamp = new Date(ts);
+  let timestamp = new Date(ts);
   if (isNaN(timestamp.getTime())) return null;
 
-  return { symbol, bid, ask, timestamp };
+  // ohlcv-1d ts_event = midnight UTC of the NEXT calendar day (Monday for Friday).
+  // toDateKeyET maps midnight UTC → 8pm ET previous day, which works for Mon-Thu
+  // but maps Friday bars to Sunday. Snap non-trading-day timestamps to the
+  // previous trading day at noon UTC so they sort and cache correctly.
+  if (isOhlcv) {
+    const dayKey = toDateKeyET(timestamp);
+    if (!isTradingDay(parseDateKey(dayKey))) {
+      const corrected = getPreviousTradingDayKey(dayKey);
+      if (corrected) {
+        timestamp = parseDateKey(corrected); // noon UTC on the trading day
+      }
+    }
+  }
+
+  const tick: QuoteTick = { symbol, bid, ask, timestamp };
+  if (isOhlcv) {
+    if (record.open != null) tick.open = record.open;
+    if (record.close != null) tick.close = record.close;
+    tick.volume = record.volume ?? 0;
+  }
+  return tick;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback, useState, type ReactNode } from 'react';
+import { useRef, useCallback, useState, useMemo, type ReactNode } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatBubble } from './chat-bubble';
 import { EnrichedChatBubble } from '../components/enriched-chat-bubble';
@@ -73,7 +73,7 @@ export function ChatFeed({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
-  const feedItems = buildFeedItems(messages);
+  const feedItems = useMemo(() => buildFeedItems(messages), [messages]);
 
   const focusIndex = focusMessageId
     ? feedItems.findIndex(
@@ -103,6 +103,50 @@ export function ChatFeed({
     });
   }, [anchorIndex, feedItems.length]);
 
+  const renderItemContent = useCallback((_index: number, item: FeedItem) => {
+    if (item.type === 'date') {
+      return <DateSeparator date={item.date} />;
+    }
+    const isHighlighted = item.message.id === highlightMessageId;
+    const isSelected = item.message.id === selectedMessageId;
+    if (renderItem) {
+      return renderItem(item.message, isHighlighted);
+    }
+    const msgEnrichment = enrichment?.[item.message.id];
+    const isPending = !!(lastProcessedTs && item.message.timestamp > lastProcessedTs);
+    if (msgEnrichment && (msgEnrichment.decision || msgEnrichment.trade)) {
+      return (
+        <div
+          className={cn(
+            isSelected && 'ring-1 ring-inset ring-primary/20',
+            onMessageClick && 'cursor-pointer',
+          )}
+          onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
+        >
+          <EnrichedChatBubble
+            enriched={{ message: item.message, trade: msgEnrichment.trade, decision: msgEnrichment.decision }}
+            runId={runId}
+            isHighlighted={isHighlighted}
+            isPending={isPending}
+          />
+        </div>
+      );
+    }
+    return (
+      <div
+        className={cn(
+          isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20',
+          isSelected && 'bg-primary/5 ring-1 ring-inset ring-primary/20',
+          isPending && 'opacity-40',
+          onMessageClick && 'cursor-pointer',
+        )}
+        onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
+      >
+        <ChatBubble message={item.message} intent={intents?.[item.message.id]} label={labels?.[item.message.id]} />
+      </div>
+    );
+  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, runId, intents, labels, renderItem, onMessageClick]);
+
   if (messages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -122,50 +166,10 @@ export function ChatFeed({
         initialTopMostItemIndex={initialIndex}
         startReached={handleStartReached}
         atBottomStateChange={(atBottom) => setShowScrollBtn(!atBottom)}
-        followOutput="smooth"
-        itemContent={(_index, item) => {
-          if (item.type === 'date') {
-            return <DateSeparator date={item.date} />;
-          }
-          const isHighlighted = item.message.id === highlightMessageId;
-          const isSelected = item.message.id === selectedMessageId;
-          if (renderItem) {
-            return renderItem(item.message, isHighlighted);
-          }
-          const msgEnrichment = enrichment?.[item.message.id];
-          const isPending = !!(lastProcessedTs && item.message.timestamp > lastProcessedTs);
-          if (msgEnrichment && (msgEnrichment.decision || msgEnrichment.trade)) {
-            return (
-              <div
-                className={cn(
-                  isSelected && 'ring-1 ring-inset ring-primary/20',
-                  onMessageClick && 'cursor-pointer',
-                )}
-                onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
-              >
-                <EnrichedChatBubble
-                  enriched={{ message: item.message, trade: msgEnrichment.trade, decision: msgEnrichment.decision }}
-                  runId={runId}
-                  isHighlighted={isHighlighted}
-                  isPending={isPending}
-                />
-              </div>
-            );
-          }
-          return (
-            <div
-              className={cn(
-                isHighlighted && 'bg-info/5 ring-1 ring-inset ring-info/20',
-                isSelected && 'bg-primary/5 ring-1 ring-inset ring-primary/20',
-                isPending && 'opacity-40',
-                onMessageClick && 'cursor-pointer',
-              )}
-              onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
-            >
-              <ChatBubble message={item.message} intent={intents?.[item.message.id]} label={labels?.[item.message.id]} />
-            </div>
-          );
-        }}
+        followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
+        estimatedItemHeight={60}
+        increaseViewportBy={{ top: 300, bottom: 100 }}
+        itemContent={renderItemContent}
         computeItemKey={(_index, item) => item.key}
         style={{ height: '100%' }}
         className="scrollbar-thin"

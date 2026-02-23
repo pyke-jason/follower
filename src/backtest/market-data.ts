@@ -1,12 +1,17 @@
 import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js';
 import {
-  loadDailyBars, loadChainDefinitions, toDateKey, getFetchMeta,
-  fetchTickWindow, getDayCachePath, defaultSchemaForDataset,
-  readTickCache, writeTickCache, mergeRanges, isRangeCovered,
+  loadChainDefinitions, toDateKey, getFetchMeta,
+  fetchTickWindow, defaultSchemaForDataset,
+  mergeRanges, isRangeCovered,
 } from './databento-tape.js';
 import type { QuoteTick, TickCacheData } from './databento-tape.js';
+import {
+  readCachedRanges, readCachedTicks, writeCachedTicks,
+  loadCachedChain, saveCachedChain,
+} from './tick-cache-db.js';
+import type { TickCacheDB } from './tick-cache-db.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
-import { getPreviousTradingDayKey, parseDateKey, marketCloseUTC, isTradingDay } from '../lib/et-date.js';
+import { getPreviousTradingDayKey, dayBoundsUTC, isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('MarketData');
@@ -15,7 +20,10 @@ const log = createLogger('MarketData');
  * MarketDataProvider: Abstraction for getting price data at a point in time.
  */
 export interface MarketDataProvider {
-  getQuote(symbol: string, at: Date): Promise<Quote>;
+  /** Get a quote for a symbol at a point in time.
+   *  optionsMaxLookbackMins overrides the default 300-min cap for option lookback.
+   *  Execution paths pass 5 for tight freshness; valuation uses the wide default. */
+  getQuote(symbol: string, at: Date, optionsMaxLookbackMins?: number): Promise<Quote>;
   getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]>;
 }
 
@@ -31,11 +39,11 @@ export interface BacktestPriceProvider extends MarketDataProvider {
 /**
  * DatabentoMarketDataProvider: Uses Databento historical data for real market
  * prices. Ticks are fetched in narrow windows (not full days) and cached via
- * an interval-merging disk+memory cache. All lookups respect the sim clock.
+ * an interval-merging SQLite DB + memory cache. All lookups respect the sim clock.
  */
 export class DatabentoMarketDataProvider implements BacktestPriceProvider {
-  /** "SYMBOL:YYYY-MM-DD" -> interval-cached ticks (in-memory on top of disk cache) */
-  private dayTicks = new Map<string, TickCacheData>();
+  /** symbol -> interval-cached ticks (in-memory on top of DB cache) */
+  private tickCache = new Map<string, TickCacheData>();
   /** symbol -> most recent mid price (for getPriceSnapshot) */
   private latestQuotes = new Map<string, number>();
   /** "SYMBOL:EXPIRY:TYPE:TIMESTAMP_MS" -> assembled chain snapshot */
@@ -43,6 +51,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
   constructor(
     private apiKey: string,
+    private tickCacheDb: TickCacheDB,
     private dataset: string = 'DBEQ.BASIC',
     private refreshCache: boolean = false,
     private optionsDataset: string = 'OPRA.PILLAR',
@@ -65,9 +74,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     await Promise.all(fetches);
 
     // Update latestQuotes
-    const day = toDateKey(at);
     for (const sym of symbols) {
-      const entry = this.dayTicks.get(`${sym}:${day}`);
+      const entry = this.tickCache.get(sym);
       if (!entry || entry.ticks.length === 0) continue;
       const tick = this.findLastTickBefore(entry.ticks, at);
       if (tick) {
@@ -86,47 +94,59 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     return result;
   }
 
-  /** Max previous trading days to search for a stale quote when current day has no tick yet. */
-  private static readonly MAX_STALE_DAYS = 5;
+  /**
+   * Expanding lookback windows (minutes). Keeps widening until a tick is found.
+   * Covers: intraday → same day → multi-day (accounts for weekends/holidays).
+   */
+  private static readonly LOOKBACK_MINUTES = [
+    1, 2, 5, 10, 30,        // intraday
+    60, 300, 600,            // 1hr, 5hr, 10hr
+    1_440, 4_320, 14_400,   // 1d, 3d, 10d
+  ];
 
-  /** Expanding lookback windows (minutes) before falling back to previous days. */
-  private static readonly LOOKBACK_MINUTES = [1, 2, 5, 10, 30];
-
-  async getQuote(symbol: string, at: Date): Promise<Quote> {
+  async getQuote(symbol: string, at: Date, optionsMaxLookbackMins?: number): Promise<Quote> {
     const atMs = at.getTime();
+    const optionCap = optionsMaxLookbackMins ?? 300;
 
-    // Expanding lookback on the current day
+    const isOption = isOccOptionSymbol(symbol);
+    let lastCheckedMins = 0;
     for (const mins of DatabentoMarketDataProvider.LOOKBACK_MINUTES) {
+      if (isOption && mins > optionCap) break;
+      lastCheckedMins = mins;
       const windowStart = new Date(atMs - mins * 60_000);
       const windowEnd = new Date(atMs + 60_000);
-      const ticks = await this.ensureRange(symbol, windowStart, windowEnd);
-      const tick = this.findLastTickBefore(ticks, at);
-      if (tick) return this.makeQuote(symbol, tick);
-    }
-
-    // Previous days: fetch last 5 minutes before close
-    let prevDayKey: string | null = getPreviousTradingDayKey(toDateKey(at));
-    for (let i = 0; i < DatabentoMarketDataProvider.MAX_STALE_DAYS && prevDayKey; i++) {
-      const prevClose = marketCloseUTC(parseDateKey(prevDayKey));
-      try {
-        const ticks = await this.ensureRange(symbol, new Date(prevClose.getTime() - 5 * 60_000), prevClose);
-        if (ticks.length > 0) {
-          const tick = ticks[ticks.length - 1];
-          log.warn(`Stale quote for "${symbol}" at ${at.toISOString()}: using ${prevDayKey} tick`);
-          return this.makeQuote(symbol, tick);
+      // ensureRange fetches+caches data for this window
+      await this.ensureRange(symbol, windowStart, windowEnd);
+      // Search ALL cached ticks, not just the window-filtered subset.
+      // Databento cbbo-1s reports ts_event = when the quote was established, not the
+      // snapshot second. For illiquid options the BBO may persist for hours, so a tick
+      // timestamped well before the window can still be the best available quote.
+      // The expanding lookback still controls staleness: we only accept a tick if its
+      // age is within the current window (so execution paths with 5-min cap won't use
+      // a 60-min-old tick, but valuation paths with 60-min cap will).
+      const entry = this.tickCache.get(symbol);
+      if (entry) {
+        const tick = this.findLastTickBefore(entry.ticks, at);
+        if (tick) {
+          const tickAgeMins = (atMs - tick.timestamp.getTime()) / 60_000;
+          if (tickAgeMins <= mins) {
+            if (tickAgeMins >= 1_440) {
+              log.warn(`Stale quote for "${symbol}" at ${at.toISOString()}: tick is ${tickAgeMins.toFixed(0)} min old`);
+            }
+            return this.makeQuote(symbol, tick);
+          }
+          // tick exists but too stale for this window — try wider window
         }
-      } catch { /* try next day */ }
-      prevDayKey = getPreviousTradingDayKey(prevDayKey);
+      }
     }
 
-    const day = toDateKey(at);
-    const meta = getFetchMeta(symbol, day);
+    const meta = getFetchMeta(symbol);
     const fetchCtx = meta
       ? `Fetch: status=${meta.status} bytes=${meta.bytes} records=${meta.records}${meta.requestId ? ` req=${meta.requestId}` : ''}`
       : 'No fetch metadata found — check QuoteTape logs above.';
     throw new Error(
       `[MarketData] No Databento data for "${symbol}" at or before ${at.toISOString()} ` +
-      `(checked ${DatabentoMarketDataProvider.MAX_STALE_DAYS} previous trading days).\n` +
+      `(checked ${lastCheckedMins || optionCap} min lookback).\n` +
       `  ${fetchCtx}`,
     );
   }
@@ -148,15 +168,41 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       tradingDays.unshift(dayKey);
       dayKey = getPreviousTradingDayKey(dayKey);
     }
+    if (tradingDays.length === 0) return [];
 
-    // Single API call via ohlcv-1d — ~15 rows instead of ~6,000 via ohlcv-1m
-    const bars = await loadDailyBars({
-      apiKey: this.apiKey,
-      dataset: this.dataset,
-      symbol,
-      days: tradingDays,
-      refreshCache: this.refreshCache,
-    });
+    // Fetch via unified cache with ohlcv-1d schema.
+    // dayBoundsUTC range covers all ts_event values (next-day midnight UTC convention).
+    const { start } = dayBoundsUTC(tradingDays[0]);
+    const end = dayBoundsUTC(tradingDays[tradingDays.length - 1]).end;
+    await this.ensureRange(symbol, start, end, 'ohlcv-1d');
+
+    // Map cached QuoteTicks → Bars for matching trading days
+    const entry = this.tickCache.get(`${symbol}:ohlcv-1d`);
+    if (!entry) return [];
+
+    // Deduplicate: DBEQ.BASIC may return multiple ohlcv-1d records per day
+    // (different exchange feeds). Keep the highest-volume bar per trading day.
+    const tradingDaySet = new Set(tradingDays);
+    const bestByDay = new Map<string, Bar>();
+    for (const tick of entry.ticks) {
+      const tickDay = toDateKey(tick.timestamp);
+      if (!tradingDaySet.has(tickDay)) continue;
+      const bar: Bar = {
+        timestamp: tickDay,
+        open: tick.open ?? tick.bid,
+        high: tick.ask,
+        low: tick.bid,
+        close: tick.close ?? (tick.bid + tick.ask) / 2,
+        volume: tick.volume ?? 0,
+      };
+      const existing = bestByDay.get(tickDay);
+      if (!existing || bar.volume > existing.volume) {
+        bestByDay.set(tickDay, bar);
+      }
+    }
+    const bars = tradingDays
+      .map(d => bestByDay.get(d))
+      .filter((b): b is Bar => b != null);
 
     log.debug(`${symbol} bars: ${bars.length} daily bars for ${tradingDays.length} trading days`);
     return bars.slice(-barsBack);
@@ -211,7 +257,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const endMs = at.getTime() + 60_000;
 
     for (const sym of candidateSymbols) {
-      const entry = this.dayTicks.get(`${sym}:${day}`);
+      const entry = this.tickCache.get(sym);
       if (entry && isRangeCovered(entry.ranges, startMs, endMs)) {
         allTicks.push(...entry.ticks);
       } else {
@@ -230,7 +276,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
       // Collect ticks from freshly cached entries
       for (const sym of uncachedSymbols) {
-        const entry = this.dayTicks.get(`${sym}:${day}`);
+        const entry = this.tickCache.get(sym);
         if (entry) allTicks.push(...entry.ticks);
       }
     }
@@ -252,6 +298,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       parentSymbol: `${symbol}.OPT`,
       day,
       refreshCache: this.refreshCache,
+      db: this.tickCacheDb,
     });
 
     const callPutFilter = optionType === 'CALL' ? 'C' as const : 'P' as const;
@@ -288,59 +335,48 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   }
 
   async getTicksInRange(symbol: string, from: Date, to: Date): Promise<QuoteTick[]> {
-    const toDay = toDateKey(to);
-    const result: QuoteTick[] = [];
+    await this.ensureRange(symbol, from, to);
+    const entry = this.tickCache.get(symbol);
+    if (!entry) return [];
     const fromMs = from.getTime();
     const toMs = to.getTime();
-
-    // Iterate calendar days in range (usually just one)
-    let d = new Date(from);
-    d.setUTCHours(0, 0, 0, 0);
-    while (toDateKey(d) <= toDay) {
-      // Clip the window to just this day's portion of [from, to]
-      const dayFrom = d.getTime() > fromMs ? d : from;
-      const nextDay = new Date(d.getTime() + 24 * 60 * 60 * 1000);
-      const dayTo = nextDay.getTime() < toMs ? nextDay : to;
-
-      const ticks = await this.ensureRange(symbol, dayFrom, dayTo);
-      for (const tick of ticks) {
-        const t = tick.timestamp.getTime();
-        if (t >= fromMs && t <= toMs) result.push(tick);
-      }
-      d = nextDay;
-    }
-
-    return result;
+    return entry.ticks.filter(t => {
+      const ms = t.timestamp.getTime();
+      return ms >= fromMs && ms <= toMs;
+    });
   }
 
   // ── Private helpers ─────────────────────────────────────────────────
 
   /**
    * Ensure ticks for [start, end] are in the interval cache. Checks memory,
-   * then disk, then fetches from Databento via fetchTickWindow.
+   * then DB, then fetches from Databento via fetchTickWindow.
    * Returns ticks filtered to [start, end].
    */
-  private async ensureRange(symbol: string, start: Date, end: Date): Promise<QuoteTick[]> {
-    const day = toDateKey(start);
-    const key = `${symbol}:${day}`;
+  private async ensureRange(symbol: string, start: Date, end: Date, schemaOverride?: string): Promise<QuoteTick[]> {
     const startMs = start.getTime();
     const endMs = end.getTime();
 
+    const dataset = isOccOptionSymbol(symbol) ? this.optionsDataset : this.dataset;
+    const schema = schemaOverride ?? defaultSchemaForDataset(dataset);
+    // Separate in-memory key when using non-default schema (e.g. ohlcv-1d vs ohlcv-1m)
+    const memKey = schemaOverride ? `${symbol}:${schemaOverride}` : symbol;
+
     // 1. Check in-memory cache
-    let entry = this.dayTicks.get(key);
+    let entry = this.tickCache.get(memKey);
     if (entry && isRangeCovered(entry.ranges, startMs, endMs)) {
       return this.filterTicks(entry.ticks, startMs, endMs);
     }
 
-    // 2. Check disk cache
-    const dataset = isOccOptionSymbol(symbol) ? this.optionsDataset : this.dataset;
-    const schema = defaultSchemaForDataset(dataset);
-    const cachePath = getDayCachePath({ dataset, schema, symbol, day });
+    // 2. Check DB cache
     if (!entry) {
-      const diskData = await readTickCache(cachePath);
-      if (diskData) {
-        entry = diskData;
-        this.dayTicks.set(key, entry);
+      const [dbRanges, dbTicks] = await Promise.all([
+        readCachedRanges(this.tickCacheDb, dataset, schema, symbol),
+        readCachedTicks(this.tickCacheDb, symbol, schema),
+      ]);
+      if (dbRanges.length > 0 || dbTicks.length > 0) {
+        entry = { ranges: dbRanges, ticks: dbTicks };
+        this.tickCache.set(memKey, entry);
         if (isRangeCovered(entry.ranges, startMs, endMs)) {
           return this.filterTicks(entry.ticks, startMs, endMs);
         }
@@ -364,18 +400,18 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     }
 
     // 4. Don't cache empty results on trading days (transient API issue — force retry)
-    if (newTicks.length === 0 && isTradingDay(parseDateKey(day))) {
+    if (newTicks.length === 0 && isTradingDay(start)) {
       if (!entry) return [];
       return this.filterTicks(entry.ticks, startMs, endMs);
     }
 
-    // 5. Merge into cache
+    // 5. Merge into memory cache + write DB
     const existing = entry ?? { ranges: [], ticks: [] };
     const mergedRanges = mergeRanges(existing.ranges, [startMs, endMs]);
     const merged = this.mergeTicks(existing.ticks, newTicks);
     const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
-    this.dayTicks.set(key, updated);
-    await writeTickCache(cachePath, updated);
+    this.tickCache.set(memKey, updated);
+    await writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, newTicks, [startMs, endMs]);
 
     return this.filterTicks(merged, startMs, endMs);
   }
@@ -398,20 +434,20 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     // Find which symbols need fetching
     const uncached: string[] = [];
     for (const symbol of symbols) {
-      const day = toDateKey(start);
-      const key = `${symbol}:${day}`;
-
       // Check in-memory
-      const memEntry = this.dayTicks.get(key);
+      const memEntry = this.tickCache.get(symbol);
       if (memEntry && isRangeCovered(memEntry.ranges, startMs, endMs)) continue;
 
-      // Check disk
+      // Check DB
       if (!memEntry) {
-        const cachePath = getDayCachePath({ dataset, schema, symbol, day });
-        const diskData = await readTickCache(cachePath);
-        if (diskData) {
-          this.dayTicks.set(key, diskData);
-          if (isRangeCovered(diskData.ranges, startMs, endMs)) continue;
+        const [dbRanges, dbTicks] = await Promise.all([
+          readCachedRanges(this.tickCacheDb, dataset, schema, symbol),
+          readCachedTicks(this.tickCacheDb, symbol, schema),
+        ]);
+        if (dbRanges.length > 0 || dbTicks.length > 0) {
+          const dbEntry: TickCacheData = { ranges: dbRanges, ticks: dbTicks };
+          this.tickCache.set(symbol, dbEntry);
+          if (isRangeCovered(dbEntry.ranges, startMs, endMs)) continue;
         }
       }
 
@@ -447,21 +483,18 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     }
 
     // Merge each symbol into its cache
-    const day = toDateKey(start);
     for (const [symbol, symTicks] of bySymbol) {
-      const key = `${symbol}:${day}`;
-      const existing = this.dayTicks.get(key) ?? { ranges: [], ticks: [] };
+      const existing = this.tickCache.get(symbol) ?? { ranges: [], ticks: [] };
 
       // Skip caching empty results on trading days (transient API issue)
-      if (symTicks.length === 0 && isTradingDay(parseDateKey(day))) continue;
+      if (symTicks.length === 0 && isTradingDay(start)) continue;
 
       const mergedRanges = mergeRanges(existing.ranges, [startMs, endMs]);
       const merged = this.mergeTicks(existing.ticks, symTicks);
       const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
-      this.dayTicks.set(key, updated);
+      this.tickCache.set(symbol, updated);
 
-      const cachePath = getDayCachePath({ dataset, schema, symbol, day });
-      await writeTickCache(cachePath, updated);
+      await writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, symTicks, [startMs, endMs]);
     }
   }
 
@@ -518,24 +551,13 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
   /** Log per-symbol data quality summary. Call after backtest loop completes. */
   printDataSummary(): void {
-    const bySymbol = new Map<string, { days: number; emptyDays: number; totalTicks: number }>();
-
-    for (const [key, entry] of this.dayTicks) {
-      const symbol = key.split(':')[0];
-      let stat = bySymbol.get(symbol);
-      if (!stat) { stat = { days: 0, emptyDays: 0, totalTicks: 0 }; bySymbol.set(symbol, stat); }
-      stat.days++;
-      stat.totalTicks += entry.ticks.length;
-      if (entry.ticks.length === 0) stat.emptyDays++;
-    }
-
-    if (bySymbol.size === 0) return;
+    if (this.tickCache.size === 0) return;
 
     log.info('QuoteTape Data Summary:');
-    const sorted = [...bySymbol.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    for (const [symbol, { days, emptyDays, totalTicks }] of sorted) {
-      const status = emptyDays === days ? '!! ALL EMPTY' : emptyDays > 0 ? `! ${emptyDays} empty` : 'ok';
-      log.info(`  ${symbol.padEnd(8)} ${totalTicks.toLocaleString().padStart(8)} ticks across ${days - emptyDays}/${days} days  ${status}`);
+    const sorted = [...this.tickCache.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    for (const [symbol, entry] of sorted) {
+      const status = entry.ticks.length === 0 ? '!! EMPTY' : 'ok';
+      log.info(`  ${symbol.padEnd(25)} ${entry.ticks.length.toLocaleString().padStart(8)} ticks  ${entry.ranges.length} ranges  ${status}`);
     }
   }
 }

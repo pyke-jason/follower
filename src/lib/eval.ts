@@ -74,8 +74,8 @@ export function compareSignals(
   if (normalizeNull(ls.strategy) !== normalizeNull(is_.strategy)) return false;
   if (normalizeNull(ls.symbol)?.toUpperCase() !== normalizeNull(is_.symbol)?.toUpperCase()) return false;
 
-  const labelPrice = normalizeNull(ls.limitPrice);
-  if (labelPrice != null && !priceMatch(labelPrice, normalizeNull(is_.limitPrice))) return false;
+  const labelPrice = normalizeNull(ls.statedPremium);
+  if (labelPrice != null && !priceMatch(labelPrice, normalizeNull(is_.statedPremium))) return false;
 
   const labelStrikes = extractStrikes(ls);
   if (labelStrikes && labelStrikes.length > 0 && !strikesMatch(labelStrikes, extractStrikes(is_))) return false;
@@ -198,10 +198,10 @@ export function compareLabelsVsIntents(
         }
 
         // Price (only when label has one)
-        const labelPrice = normalizeNull(ls.limitPrice);
+        const labelPrice = normalizeNull(ls.statedPremium);
         if (labelPrice != null) {
           fields.price.total++;
-          const intentPrice = normalizeNull(is_.limitPrice);
+          const intentPrice = normalizeNull(is_.statedPremium);
           if (priceMatch(labelPrice, intentPrice)) {
             fields.price.correct++;
           } else {

@@ -31,7 +31,7 @@ export function QuoteDisplay({
   return (
     <div
       onClick={interactive ? handleClick : undefined}
-      className={`border-l-2 border-muted-foreground/30 bg-muted/40 rounded-r pl-3 pr-3 py-2 my-1.5 ${
+      className={`border-l-2 border-muted-foreground/30 bg-muted/40 rounded-r pl-3 pr-3 py-2 ${
         interactive ? 'cursor-pointer hover:bg-muted/60 transition-colors' : ''
       }`}
     >

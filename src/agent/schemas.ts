@@ -35,15 +35,14 @@ export const SignalSchema = z.object({
   symbol: z.string().min(1),
   direction: DirectionSchema,
   strategy: StrategySchema,
-  limitPrice: zPrice.optional(),
+  /** Trader's stated premium from the message text ("for $3.72", "for .09"). Informational only — never used for order placement. */
+  statedPremium: zPrice.optional(),
   exitPercent: zPct01.optional(),     // for TRIM: 0.5 = half
+  /** Present when trader explicitly states strikes. Absent when strikes need inferring by pipeline. */
   legs: z.array(SignalLegSchema).optional(),
   /** For LEG_OFF: the strategy the position becomes after removing a leg. */
   targetStrategy: StrategySchema.optional(),
 }).refine(
-  s => s.strategy === 'STOCK' || !['OPEN', 'ADD'].includes(s.action) || (s.legs && s.legs.length > 0),
-  { message: 'Options OPEN/ADD signals require legs with strike, expiry, optionType, and action' },
-).refine(
   s => s.action !== 'LEG_OFF' || s.targetStrategy != null,
   { message: 'LEG_OFF requires targetStrategy (the strategy after removing the leg)' },
 );

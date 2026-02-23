@@ -3,7 +3,7 @@
 import { getMessages, getMessageById, getMessagesBySymbols, getLatestIntents, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
 import { compareSignals } from '../../../src/lib/eval';
 import { db, schema } from '@/lib/db';
-import { eq } from 'drizzle-orm';
+import { PAGE_SIZE } from './load-chat-data';
 import { revalidatePath } from 'next/cache';
 import type { Message, MessageLabel } from '../../../src/db/schema';
 import type { Signal } from '../../../src/agent/schemas';
@@ -38,7 +38,7 @@ export type MessageFilters = {
   labelFilter?: LabelFilter;
   cursor?: string;
   runId?: string;
-  roleFilter?: 'all' | 'executed' | 'skipped';
+  roleFilter?: 'all' | 'processed' | 'executed' | 'skipped';
 };
 
 export type FetchMessagesResult = {
@@ -49,7 +49,6 @@ export type FetchMessagesResult = {
   nextCursor: string | null;
 };
 
-const PAGE_SIZE = 50;
 
 export async function fetchMessages(
   filters: MessageFilters
@@ -189,22 +188,13 @@ export async function saveLabel(
     updatedAt: new Date().toISOString(),
   };
 
-  const existing = await db
-    .select({ id: schema.messageLabels.id })
-    .from(schema.messageLabels)
-    .where(eq(schema.messageLabels.messageId, messageId))
-    .limit(1);
-
-  if (existing.length > 0) {
-    await db
-      .update(schema.messageLabels)
-      .set(data)
-      .where(eq(schema.messageLabels.id, existing[0].id));
-  } else {
-    await db
-      .insert(schema.messageLabels)
-      .values({ ...data, messageId });
-  }
+  await db
+    .insert(schema.messageLabels)
+    .values({ ...data, messageId })
+    .onConflictDoUpdate({
+      target: schema.messageLabels.messageId,
+      set: data,
+    });
 
   revalidatePath('/messages');
 }

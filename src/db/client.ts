@@ -9,6 +9,6 @@ const client = createClient({ url: dbPath });
 client.executeMultiple(
   'PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;',
 );
-export const db = drizzle(client, { schema });
+export const db = drizzle({ client, schema });
 export { schema };
 export { client as sqliteClient };

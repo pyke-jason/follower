@@ -160,8 +160,8 @@ function SignalEditPopover({
             placeholder="Price"
             type="number"
             step="0.01"
-            value={draft.limitPrice ?? ''}
-            onChange={(e) => set('limitPrice', e.target.value ? parseFloat(e.target.value) : undefined)}
+            value={draft.statedPremium ?? ''}
+            onChange={(e) => set('statedPremium', e.target.value ? parseFloat(e.target.value) : undefined)}
           />
         </div>
 

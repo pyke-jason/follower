@@ -177,6 +177,12 @@ export default async function BacktestDetailPage({
   );
 
   // --- Messages Tab content (ChatRoom with constraints) ---
+  const stableDecisionCounts = (() => {
+    const executed = decisions.filter((d) => d.trade?.id != null).length;
+    const skipped = decisions.filter((d) => d.trade?.id == null).length;
+    return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
+  })();
+
   const scatterData = decisions
     .filter((r) => r.decision.pnl != null)
     .map((r) => ({
@@ -198,7 +204,7 @@ export default async function BacktestDetailPage({
           </CardContent>
         </Card>
       )}
-      <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0" style={{ minHeight: 'calc(100vh - 28rem)' }}>
+      <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
         <ChatRoom
           initialMessages={chatData.messages}
           initialCursor={chatData.cursor}
@@ -209,10 +215,11 @@ export default async function BacktestDetailPage({
           constraints={{
             authors: config.traders,
             startDate: config.startDate,
-            endDate: config.endDate,
+            endDate: messagesEndDate,
             runId: id,
             lastProcessedTs: lastProcessedTs ?? undefined,
           }}
+          stableDecisionCounts={stableDecisionCounts}
         />
       </div>
     </div>
@@ -227,7 +234,7 @@ export default async function BacktestDetailPage({
 
   return (
     <div className="flex flex-col min-h-full">
-    <div className="space-y-4 animate-in-up pb-6 flex-1">
+    <div className="space-y-4 animate-in-up pb-6 flex-1 flex flex-col">
       {isRunning && <AutoRefresh intervalMs={3000} />}
 
       {/* Header with action toolbar */}

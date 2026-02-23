@@ -20,7 +20,7 @@ vi.mock('../db/client.js', async () => {
   const { drizzle } = await import('drizzle-orm/libsql');
   const schema = await import('../db/schema.js');
   const client = createClient({ url: ':memory:' });
-  const db = drizzle(client, { schema });
+  const db = drizzle({ client, schema });
   return { db, schema, sqliteClient: client };
 });
 

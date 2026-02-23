@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
-import { Users, X, Check, Filter } from 'lucide-react';
+import { Users, X, Check } from 'lucide-react';
 import type { MessageFilters, LabelFilter } from './actions';
 import type { FilterConstraints } from './chat-room';
 
@@ -32,9 +32,9 @@ function formatDateCompact(iso: string): string {
 }
 
 type DecisionSummary = {
+  processedCount: number;
   executedCount: number;
   skippedCount: number;
-  skipReasonCounts: [string, number][];
 };
 
 export function ChatFilters({
@@ -51,7 +51,6 @@ export function ChatFilters({
   decisionSummary?: DecisionSummary | null;
 }) {
   const [search, setSearch] = useState('');
-  const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
 
   const hasDateConstraint = !!(constraints?.startDate && constraints?.endDate);
   const hasAuthorConstraint = !!(constraints?.authors && constraints.authors.length > 0);
@@ -107,18 +106,9 @@ export function ChatFilters({
     if (!value) return;
     onFilterChange({
       ...filters,
-      roleFilter: value === 'all' ? undefined : (value as 'executed' | 'skipped'),
+      roleFilter: value === 'all' ? undefined : (value as 'processed' | 'executed' | 'skipped'),
     });
-    setSelectedReasons([]);
   };
-
-  const toggleReason = (reason: string) => {
-    setSelectedReasons((prev) =>
-      prev.includes(reason) ? prev.filter((r) => r !== reason) : [...prev, reason],
-    );
-  };
-
-  const skipReasons = decisionSummary?.skipReasonCounts ?? [];
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm flex-wrap sticky top-0 z-10">
@@ -263,6 +253,9 @@ export function ChatFilters({
             size="sm"
           >
             <ToggleGroupItem value="all" className="text-xs">All</ToggleGroupItem>
+            <ToggleGroupItem value="processed" className="text-xs">
+              With Intent{decisionSummary ? ` (${decisionSummary.processedCount})` : ''}
+            </ToggleGroupItem>
             <ToggleGroupItem value="executed" className="text-xs">
               Executed{decisionSummary ? ` (${decisionSummary.executedCount})` : ''}
             </ToggleGroupItem>
@@ -270,76 +263,6 @@ export function ChatFilters({
               Skipped{decisionSummary ? ` (${decisionSummary.skippedCount})` : ''}
             </ToggleGroupItem>
           </ToggleGroup>
-
-          {/* Skip reason filter popover */}
-          {skipReasons.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:bg-accent transition-colors">
-                  <Filter className="w-3.5 h-3.5" />
-                  <span>Skip Reasons</span>
-                  {selectedReasons.length > 0 && (
-                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-secondary text-secondary-foreground text-[10px] leading-none font-medium">
-                      {selectedReasons.length}
-                    </span>
-                  )}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-72 p-0">
-                <div className="max-h-64 overflow-y-auto py-1">
-                  {skipReasons.map(([reason, count]) => {
-                    const isSelected = selectedReasons.includes(reason);
-                    return (
-                      <button
-                        key={reason}
-                        onClick={() => toggleReason(reason)}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-accent transition-colors"
-                      >
-                        <div className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0 ${
-                          isSelected ? 'bg-primary border-primary' : 'border-border'
-                        }`}>
-                          {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
-                        </div>
-                        <span className="truncate text-muted-foreground">{reason}</span>
-                        <span className="ml-auto text-muted-foreground/60 tabular-nums">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedReasons.length > 0 && (
-                  <div className="border-t border-border p-2">
-                    <button
-                      onClick={() => setSelectedReasons([])}
-                      className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Clear all
-                    </button>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Selected reason chips */}
-          {selectedReasons.length > 0 && (
-            <div className="flex items-center gap-1 flex-wrap">
-              {selectedReasons.slice(0, 2).map((reason) => (
-                <button
-                  key={reason}
-                  onClick={() => toggleReason(reason)}
-                  className="inline-flex items-center gap-1 text-[11px] pl-2 pr-1 py-0.5 rounded-full bg-secondary text-muted-foreground"
-                >
-                  {reason.length > 25 ? reason.slice(0, 22) + '...' : reason}
-                  <span className="opacity-60 hover:opacity-100 ml-0.5">&times;</span>
-                </button>
-              ))}
-              {selectedReasons.length > 2 && (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">
-                  +{selectedReasons.length - 2}
-                </span>
-              )}
-            </div>
-          )}
 
           <div className="w-px h-5 bg-border" />
         </>

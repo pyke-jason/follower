@@ -58,6 +58,14 @@ const MONTH_ABBREVS: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
+/** Returns the day-of-month of the Nth Friday in a given month. */
+function nthFriday(year: number, month: number, n: number): number {
+  // month is 1-based
+  const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay(); // 0=Sun
+  const daysToFirstFriday = (5 - firstDow + 7) % 7;
+  return 1 + daysToFirstFriday + (n - 1) * 7;
+}
+
 /**
  * Normalize a trader-supplied expiry string to YYYY-MM-DD.
  * Accepts:
@@ -66,6 +74,8 @@ const MONTH_ABBREVS: Record<string, number> = {
  *   M-DD, MM-DD, MM-DD-YY, MM-DD-YYYY (dash-separated)
  *   "Oct 18", "Oct 18th", "October 18", "October 18, 2025" (month-name first)
  *   "18 Oct", "18th Oct", "18 October", "18 October 2025" (day first)
+ *   "Oct (10)", "October (10)" (parenthesized day — LLM sometimes emits this)
+ *   "Oct", "October" (bare month → 3rd Friday, standard monthly expiry)
  * For formats without a year: uses the next occurrence on or after referenceDate.
  */
 export function normalizeExpiry(expiry: string, referenceDate: Date): string {
@@ -73,6 +83,9 @@ export function normalizeExpiry(expiry: string, referenceDate: Date): string {
 
   // Already canonical
   if (/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return expiry;
+
+  // "Oct (10)" / "October (10)" → "Oct 10" (parenthesized day notation)
+  expiry = expiry.replace(/^([A-Za-z]+)\s+\((\d{1,2})\)/, '$1 $2');
 
   // Month-name formats: "Oct 18", "Oct 18th", "October 18, 2025", "18th October 2025", etc.
   const monthFirst = expiry.match(/^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:[,\s]+(\d{2,4}))?$/i);
@@ -85,6 +98,21 @@ export function normalizeExpiry(expiry: string, referenceDate: Date): string {
     if (!monthNum) throw new Error(`normalizeExpiry: unrecognized month name "${monthStr}" in "${expiry}"`);
     expiry = yearStr ? `${monthNum}/${dayStr}/${yearStr}` : `${monthNum}/${dayStr}`;
     // falls through to the slash-parsing logic below
+  }
+
+  // Bare month name: "Oct", "October" → 3rd Friday of that month (standard monthly expiry)
+  const bareMonth = expiry.match(/^([A-Za-z]{3,9})$/i);
+  if (bareMonth) {
+    const monthNum = MONTH_ABBREVS[bareMonth[1].toLowerCase().slice(0, 3)];
+    if (!monthNum) throw new Error(`normalizeExpiry: unrecognized month name "${expiry}"`);
+    const refYear = referenceDate.getFullYear();
+    let year = refYear;
+    let day = nthFriday(year, monthNum, 3);
+    if (new Date(Date.UTC(year, monthNum - 1, day)) < referenceDate) {
+      year = refYear + 1;
+      day = nthFriday(year, monthNum, 3);
+    }
+    return `${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
 
   // Normalize dash-separated M-DD / MM-DD / MM-DD-YY / MM-DD-YYYY to slash form
@@ -151,13 +179,54 @@ export function formatOccSymbol(option: {
 }
 
 /** Pick a strike interval based on underlying price.
- *  Uses $1 increments for stocks up to $200 because exchanges list
- *  $1 strikes near ATM (not just $2.50). */
-function strikeInterval(price: number): number {
+ *  Uses $0.50 increments for stocks up to $200 because exchanges list
+ *  $0.50/$1 strikes near ATM. */
+export function strikeInterval(price: number): number {
   if (price < 25) return 0.5;
   if (price < 200) return 0.5;
   return 5;
 }
+
+// ── Strike Inference ─────────────────────────────────────────────────
+
+export type InferredSpread = {
+  longStrike: number;
+  shortStrike: number;
+  width: number;
+};
+
+/** Spread width heuristic based on stock price. */
+function spreadWidth(price: number): number {
+  if (price < 50) return 2.5;
+  if (price < 200) return 5;
+  return 10;
+}
+
+/**
+ * Infer ATM spread strikes from stock price + strategy.
+ * Pure function — no I/O, no LLM calls.
+ */
+export function inferATMSpread(
+  stockPrice: number,
+  strategy: 'CDS' | 'PDS',
+): InferredSpread {
+  const interval = strikeInterval(stockPrice);
+  const atm = Math.round(stockPrice / interval) * interval;
+  const width = spreadWidth(stockPrice);
+
+  if (strategy === 'CDS') {
+    return { longStrike: atm, shortStrike: atm + width, width };
+  }
+  return { longStrike: atm, shortStrike: atm - width, width };
+}
+
+/** Infer ATM strike for naked call/put. */
+export function inferATMStrike(stockPrice: number): number {
+  const interval = strikeInterval(stockPrice);
+  return Math.round(stockPrice / interval) * interval;
+}
+
+// ── OCC Symbol Generation ───────────────────────────────────────────
 
 /**
  * Generate candidate OCC symbols for a given underlying, expiry, option type,

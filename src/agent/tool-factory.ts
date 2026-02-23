@@ -73,12 +73,13 @@ export function submitDecisionTool(): ToolDef {
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['OPEN', 'CLOSE', 'ADD', 'TRIM'] },
+              action: { type: 'string', enum: ['OPEN', 'CLOSE', 'ADD', 'TRIM', 'LEG_OFF'] },
               symbol: { type: 'string' },
               direction: { type: 'string', enum: ['LONG', 'SHORT'] },
               strategy: { type: 'string', enum: ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS'] },
-              limitPrice: { type: 'number' },
+              statedPremium: { type: 'number', description: 'The premium/price the trader stated in the message (e.g. 3.72 from "for $3.72"). Omit if no price stated.' },
               exitPercent: { type: 'number', description: '0.0-1.0 for TRIM' },
+              targetStrategy: { type: 'string', enum: ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS'], description: 'For LEG_OFF: strategy after removing the leg' },
               legs: {
                 type: 'array',
                 items: {

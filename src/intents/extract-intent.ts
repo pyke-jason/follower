@@ -4,7 +4,6 @@ import type { TaskContext, Message, MessageIntent, IntentStep } from '../db/sche
 import type { TaskResult } from '../agent/schemas.js';
 import type { ToolDef } from '../agent/tool-factory.js';
 import {
-  getQuoteTool,
   flagForReviewTool,
   submitDecisionTool,
 } from '../agent/tool-factory.js';
@@ -19,7 +18,7 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
 
-export const INTENT_VERSION = 2;
+export const INTENT_VERSION = 4;
 
 export type IntentExtractionDeps = {
   /** Get a quote at a specific point in time (message timestamp). */
@@ -48,8 +47,8 @@ export type IntentResult = {
 export const INTENT_SYSTEM_PROMPT = `You are a trade signal parser monitoring a live trading chat room.
 
 Parse incoming messages from tracked traders and extract structured trade signals.
-You do not decide whether to trade -- position matching, risk management, and execution
-are handled by a separate system. Your job is purely to parse.
+You do not decide whether to trade -- position matching, risk management, strike inference,
+and execution are handled by a separate system. Your job is purely to parse text into structured intent.
 
 You are the SOLE parser. There is no regex fallback. Handle typos, abbreviations, and slang.
 
@@ -57,9 +56,7 @@ You are the SOLE parser. There is no regex fallback. Handle typos, abbreviations
 For each message:
 1. CLASSIFY: Is this a trade entry, exit, add, trim, or noise? Use the trader's recent messages to understand what positions they hold.
 2. IDENTIFY: Stock or options? If options, determine the structure (naked call/put, CDS, PDS).
-3. VALIDATE: Call get_quote to verify the stock price aligns with the trader's message.
-   After receiving tool results, reflect on whether the data aligns with the trader's message before proceeding.
-   If the market has moved >5% from the trader's stated price, flag for review.
+3. VALIDATE: Check the prefetched stock quotes in the message context. If the price seems wildly inconsistent with the trader's message, flag for review.
 4. OUTPUT: Always end by invoking a tool -- call submit_decision with your parsed signals (EXECUTE, SKIP, or MANUAL_REVIEW), or call flag_for_review. Never output your decision as text.
 </process>
 
@@ -85,29 +82,15 @@ Confirming with exit context: LOSS with exit < entry = they bought (paid high, s
 
 <signal_actions>
 All signals omit quantity -- the system calculates position size.
+Pricing: the system computes all prices from market data. You never set prices.
+If the trader states a premium ("for $3.72", "for .09", "$2.40 credit"), include it as statedPremium. Omit statedPremium if no price is mentioned.
 
-OPEN: New position. Include symbol, direction, strategy, limitPrice, legs (required for options).
-CLOSE: Full exit. Omit legs -- the system reverses existing position legs. Get a fresh quote for limitPrice (ignore the trader's stated fill).
+OPEN: New position. Include symbol, direction, strategy. Include legs ONLY when the trader explicitly states strikes. Omit legs when strikes are not stated -- the system infers ATM strikes from the stock price.
+CLOSE: Full exit. Omit legs and statedPremium -- the system handles exit pricing.
 ADD: Adding to existing position. Verify via recent messages that a position was previously opened. Same fields as OPEN.
-TRIM: Partial exit. Include exitPercent (0.5 = half, 0.8 = 80%). Omit legs.
-LEG_OFF: Close one leg of a spread, hold the other. Include targetStrategy (CALL or PUT) -- the strategy after the closed leg is removed. Omit legs.
+TRIM: Partial exit. Include exitPercent (0.5 = half, 0.8 = 80%). Omit legs and statedPremium.
+LEG_OFF: Close one leg of a spread, hold the other. Include targetStrategy (CALL or PUT) -- the strategy after the closed leg is removed. Omit legs and statedPremium.
 </signal_actions>
-
-<inferring_strikes>
-Traders often omit strikes ("Short ALGN pds", "Long AAPL cds"). This is normal -- infer them:
-
-1. Get the current stock price via get_quote.
-2. Compute the nearest ATM strike by rounding the stock price to the nearest standard increment:
-   $0.50 for stocks under $25, $1 for $25-$200, $5 for >$200.
-3. Compute the short leg using the width heuristic:
-   $2.50 if stock <$50, $5 if $50-200, $10 if >$200.
-   PDS: long (BUY) = ATM strike, short (SELL) = ATM - width.
-   CDS: long (BUY) = ATM strike, short (SELL) = ATM + width.
-4. If the trader mentions a net premium ("for .09"), adjust strikes narrower or wider to approximate.
-5. Use the stated premium as limitPrice, or estimate the debit from the spread width if not stated.
-
-If a trader-specified strike seems implausible (far from ATM), flag for review.
-</inferring_strikes>
 
 <follow_trades>
 Traders sometimes follow another trader's call ("following Dave", "tailing spectre", "ditto", or a bare entry seconds after someone else posted the same symbol). Call get_recent_chat to find the original trade and use it to resolve missing details (strikes, expiry, strategy).
@@ -122,8 +105,8 @@ Traders sometimes follow another trader's call ("following Dave", "tailing spect
 <rules>
 - Only parse trades for tracked traders in the whitelist. Skip paper trades tagged "(paper)".
 - Messages may contain multiple signals ("Exit TXN, Short TSLA") -- return ALL in the signals array.
-- Inferring strikes from the stock price is your job. Flag for review only when the strategy TYPE is truly ambiguous, the symbol is unrecognizable, or a specified strike seems implausible.
-- Always output expiry as YYYY-MM-DD. Traders write dates many ways ("12/19", "Dec 19", "12/19/25") -- convert them. For MM/DD without a year, use the next occurrence of that date on or after the message date.
+- When the trader states explicit strikes, include them in legs. When strikes are omitted, omit legs entirely -- the system infers them.
+- Always output expiry as YYYY-MM-DD. Traders write dates many ways ("12/19", "Dec 19", "12/19/25") -- convert them. For MM/DD without a year, use the next occurrence of that date on or after the message date. A bare month name like "Oct" with no day means the standard monthly expiry (3rd Friday of that month). When a date appears as "Oct (10)", the number in parentheses is the day (October 10th), not a contract count.
 - Always explain your reasoning -- your steps are audited.
 - If you don't understand a financial concept, say so. Never fabricate mechanics.
 </rules>
@@ -136,9 +119,9 @@ Every example ends with a tool call, never text output.
 <input>Short ALGN pds</input>
 <reasoning>
 "Short" = bearish stock view. "pds" = put debit spread. Buying a PDS is a debit strategy, so direction: LONG.
-No strikes specified. I will call get_quote for ALGN's price, then compute ATM put strikes expiring this Friday and infer a spread width.
+No strikes specified. Omit legs -- the system infers ATM strikes from the stock price.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol ALGN, direction LONG, strategy PDS, legs inferred from stock price
+submit_decision(EXECUTE): action OPEN, symbol ALGN, direction LONG, strategy PDS
 </example>
 
 <example>
@@ -148,7 +131,7 @@ submit_decision(EXECUTE): action OPEN, symbol ALGN, direction LONG, strategy PDS
 Legs are reversed from a long PDS: SELL 68P, BUY 67P. "for .63 credit" confirms this is a credit spread.
 "Long" is the stock view (bullish), not the trade direction.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol GLW, direction SHORT, strategy PDS, legs [SELL 68P, BUY 67P]
+submit_decision(EXECUTE): action OPEN, symbol GLW, direction SHORT, strategy PDS, legs [SELL 68P, BUY 67P], statedPremium 0.63
 </example>
 
 <example>
@@ -156,8 +139,19 @@ submit_decision(EXECUTE): action OPEN, symbol GLW, direction SHORT, strategy PDS
 <reasoning>
 "sold" is authoritative -- the trader SOLD a put. direction: SHORT, strategy: PUT.
 "Long" is the stock view (bullish, willing to be assigned). "Happy to own below X" confirms cash-secured put sale.
+"Oct" with no day = standard monthly expiry = 3rd Friday of October. Output as YYYY-MM-DD.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol BE, direction SHORT, strategy PUT, legs [SELL 59P Oct]
+submit_decision(EXECUTE): action OPEN, symbol BE, direction SHORT, strategy PUT, legs [SELL 59P expiry=3rd-Friday-of-Oct as YYYY-MM-DD], statedPremium 2.40
+</example>
+
+<example>
+<input>Long JOBY sold Oct (10) $15 put @ $.60. I only did one contract. You can still get this trade off.</input>
+<reasoning>
+"sold" is authoritative -- the trader SOLD a put. direction: SHORT, strategy: PUT.
+"Long" is the stock view. "Oct (10)" = October 10th -- the number in parentheses is the day, not a contract count (quantity is handled separately).
+Output expiry as 2025-10-10.
+</reasoning>
+submit_decision(EXECUTE): action OPEN, symbol JOBY, direction SHORT, strategy PUT, legs [SELL 15P expiry=2025-10-10], statedPremium 0.60
 </example>
 
 <example>
@@ -166,14 +160,14 @@ submit_decision(EXECUTE): action OPEN, symbol BE, direction SHORT, strategy PUT,
 "Lotto" = speculative buy, always buy-to-open. Trader is BUYING cheap puts as a bearish bet.
 direction: LONG, strategy: PUT. "Short" is the stock view, not the trade direction.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol ABNB, direction LONG, strategy PUT, legs [BUY 123P]
+submit_decision(EXECUTE): action OPEN, symbol ABNB, direction LONG, strategy PUT, legs [BUY 123P], statedPremium 0.21
 </example>
 
 <example>
 <input>Exit Long ATEC</input>
 <reasoning>
 "Exit" = closing a position. This is a CLOSE action on ATEC.
-I will get a fresh quote for limitPrice. Omit legs -- the system reverses the existing position.
+Omit legs and statedPremium -- the system handles exit pricing.
 </reasoning>
 submit_decision(EXECUTE): action CLOSE, symbol ATEC, direction LONG
 </example>
@@ -181,7 +175,7 @@ submit_decision(EXECUTE): action CLOSE, symbol ATEC, direction LONG
 <example>
 <input>Exit RKLB 1/2</input>
 <reasoning>
-"1/2" = partial exit. This is a TRIM with exitPercent 0.5. Omit legs.
+"1/2" = partial exit. This is a TRIM with exitPercent 0.5. Omit legs and statedPremium.
 </reasoning>
 submit_decision(EXECUTE): action TRIM, symbol RKLB, exitPercent 0.5
 </example>
@@ -190,7 +184,7 @@ submit_decision(EXECUTE): action TRIM, symbol RKLB, exitPercent 0.5
 <input>Exit Long UNH cds took small profit hold straight calls</input>
 <reasoning>
 Trader is closing the short leg of a CDS and keeping the long calls. This is LEG_OFF.
-targetStrategy: CALL (the remaining strategy after removing the short call leg). Omit legs.
+targetStrategy: CALL (the remaining strategy after removing the short call leg). Omit legs and statedPremium.
 </reasoning>
 submit_decision(EXECUTE): action LEG_OFF, symbol UNH, targetStrategy CALL
 </example>
@@ -219,10 +213,7 @@ submit_decision(SKIP)
  * reflect market state at message time.
  */
 function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string): ToolDef[] {
-  const msgTime = new Date(messageTimestamp);
-
   return [
-    getQuoteTool((symbol) => deps.getQuote(symbol, msgTime)),
     flagForReviewTool(),
     submitDecisionTool(),
     {

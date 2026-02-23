@@ -77,9 +77,7 @@ Instead, infer them:
    use $10 wide. If <$50, use $2.50 wide.
 5. For CDS: pick the nearest ATM strike as the long (BUY) leg. Pick the next strike up
    as the short (SELL) leg, using similar width rules.
-6. If a net premium is mentioned (e.g. "for .09"), scan the chain to find the strike
-   combination whose net debit most closely matches the stated premium.
-7. Use the mid-price of the spread as the limitPrice.
+6. If a net premium is mentioned (e.g. "for .09"), include it as statedPremium.
 
 Only flag_for_review when:
 - The strategy TYPE itself is ambiguous (is it stock or options? call or put spread?)
@@ -87,16 +85,17 @@ Only flag_for_review when:
 - The symbol is unrecognizable or clearly wrong
 
 ## Signal Actions
-- **OPEN**: New position entry. Include symbol, direction, strategy, limitPrice, and legs (for options).
+Pricing: the system computes all prices from market data. You never set prices.
+If the trader states a premium ("for $3.72", "for .09"), include it as statedPremium. Omit if no price stated.
+
+- **OPEN**: New position entry. Include symbol, direction, strategy. Include legs when strikes are stated. Omit legs when strikes are not stated -- the system infers them.
 - **CLOSE**: Full exit. "Exit Long ATEC" → action CLOSE. Include symbol and direction.
-  Note: "Exit META 625 call 9.10" → 9.10 is the TRADER'S fill price, not ours.
-  Get a fresh quote and use that as limitPrice.
-  Do NOT include legs for CLOSE — the system reverses the existing position's legs.
+  Omit legs and statedPremium -- the system handles exit pricing.
 - **ADD**: Adding to existing position ("added more NVDA calls", "avg down on AAPL").
   Use get_open_positions to verify position exists. Include same fields as OPEN.
 - **TRIM**: Partial exit ("Exit RKLB 1/2", "trim 80% of AEO").
   Include exitPercent: 0.5 for half, 0.8 for 80%, etc.
-  Do NOT include legs for TRIM — the system uses the existing position's legs.
+  Omit legs and statedPremium.
 
 ## Rules
 - Only classify trades for tracked traders in the whitelist.

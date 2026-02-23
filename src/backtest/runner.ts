@@ -23,6 +23,7 @@ import { buildLiveMetrics } from './live-metrics.js';
 import type { TaskContext } from '../db/schema.js';
 import type { LLMUsage } from '../agent/providers.js';
 import { resetApiStats } from './databento-tape.js';
+import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { extractBatchIntents } from '../intents/extract-batch.js';
@@ -152,7 +153,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     throw new Error('Backtest requires a Databento API key. Set databentoApiKey in config.');
   }
   const clock = new SimClock(startDate);
-  const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
+  const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, tickCacheDb, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
   const fillModel = config.fillModel ?? 'orats';
   const startingEquity = config.startingEquity ?? 100_000;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
@@ -631,6 +632,7 @@ async function processMessage(
   }
 
   // ── 5. Prefetch quotes + positions for deterministic skip checks ──
+  const tPrefetch0 = Date.now();
   await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
   let prefetched: PrefetchedData | undefined;
   try {
@@ -644,8 +646,10 @@ async function processMessage(
   } catch {
     prefetched = undefined;
   }
+  const tPrefetch = Date.now() - tPrefetch0;
 
   // ── 6. Run trade agent (deterministic skip + strategy gate + risk + sizing) ──
+  const tAgent0 = Date.now();
   const allowedStrategies = (await getTrader(msg.author))?.strategies ?? undefined;
 
   // Process each signal through the trade agent
@@ -654,6 +658,7 @@ async function processMessage(
     const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched, allowedStrategies);
     allActions.push(...actions);
   }
+  const tAgent = Date.now() - tAgent0;
 
   // ── 7. Execute actions through the pipeline ──
   const executeableSignals = allActions
@@ -671,6 +676,7 @@ async function processMessage(
     return;
   }
 
+  const tPipeline0 = Date.now();
   const pipelineResults = await executeSignals(
     executeableSignals,
     msg.author,
@@ -682,6 +688,11 @@ async function processMessage(
       allowedStrategies,
     },
   );
+  const tPipeline = Date.now() - tPipeline0;
+  const tTotal = Date.now() - tPrefetch0;
+  if (tTotal > 500) {
+    log.warn(`  EXECUTE timing: total=${tTotal}ms prefetch=${tPrefetch}ms agent=${tAgent}ms pipeline=${tPipeline}ms`);
+  }
 
   const executedResults = pipelineResults.filter(r => r.executed);
   const pendingResults = pipelineResults.filter(r => !r.executed && r.orderId);

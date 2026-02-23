@@ -156,9 +156,7 @@ export async function getMessages(opts: {
 
   // Multi-author filter
   if (opts.authors && opts.authors.length > 0) {
-    conditions.push(
-      or(...opts.authors.map((a) => eq(schema.messages.author, a)))!
-    );
+    conditions.push(inArray(schema.messages.author, opts.authors));
   }
 
   // Cursor-based pagination: fetch messages older than cursor
@@ -763,7 +761,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
     ? await db
         .select({ id: schema.messages.id, cleanText: schema.messages.cleanText, author: schema.messages.author })
         .from(schema.messages)
-        .where(or(...msgIds.map((id) => eq(schema.messages.id, id)))!)
+        .where(inArray(schema.messages.id, msgIds))
     : [];
 
   const msgMap = new Map(messages.map((m) => [m.id, m]));
@@ -781,7 +779,7 @@ export async function getBacktestRunsForComparison(ids: string[]) {
   return db
     .select()
     .from(schema.backtestRuns)
-    .where(or(...ids.map((id) => eq(schema.backtestRuns.id, id)))!);
+    .where(inArray(schema.backtestRuns.id, ids));
 }
 
 export async function getDistinctExperimentTags() {
@@ -868,8 +866,8 @@ export async function getEnrichedMessages(opts: {
   runId?: string;
   cursor?: string;
   limit?: number;
-  /** Server-side role filter: 'executed' = has trade, 'skipped' = has decision */
-  roleFilter?: 'all' | 'executed' | 'skipped';
+  /** Server-side role filter: 'processed' = any decision, 'executed' = has trade, 'skipped' = has decision but no trade */
+  roleFilter?: 'all' | 'processed' | 'executed' | 'skipped';
 }) {
   const pageSize = opts.limit ?? 100;
   const conditions: SQL[] = [
@@ -877,7 +875,7 @@ export async function getEnrichedMessages(opts: {
     lte(schema.messages.timestamp, opts.endDate),
   ];
   if (opts.traders.length > 0) {
-    conditions.push(or(...opts.traders.map((t) => eq(schema.messages.author, t)))!);
+    conditions.push(inArray(schema.messages.author, opts.traders));
   }
   if (opts.cursor) {
     conditions.push(lt(schema.messages.timestamp, opts.cursor));
@@ -892,10 +890,12 @@ export async function getEnrichedMessages(opts: {
     : sql`0 = 1`; // never match for live — live doesn't use runDecisions
 
   // Role-based server-side filtering
-  if (opts.roleFilter === 'executed') {
+  if (opts.roleFilter === 'processed') {
+    conditions.push(isNotNull(schema.runDecisions.decision));
+  } else if (opts.roleFilter === 'executed') {
     conditions.push(isNotNull(schema.trades.id));
   } else if (opts.roleFilter === 'skipped') {
-    conditions.push(isNotNull(schema.runDecisions.decision));
+    conditions.push(and(isNotNull(schema.runDecisions.decision), isNull(schema.trades.id))!);
   }
 
   const rows = await db

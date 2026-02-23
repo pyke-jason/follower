@@ -23,7 +23,9 @@ function ts(): string {
   const d = new Date();
   const h = d.getHours();
   const min = String(d.getMinutes()).padStart(2, '0');
-  return `${d.getMonth() + 1}/${d.getDate()} ${h}:${min}`;
+  const sec = String(d.getSeconds()).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${h}:${min}:${sec}.${ms}`;
 }
 
 export function createLogger(tag: string): Logger {

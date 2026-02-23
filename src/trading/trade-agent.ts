@@ -106,13 +106,15 @@ export class RuleBasedTradeAgent implements TradeAgent {
       }
     }
 
-    // 4. Position sizing (for OPEN/ADD)
+    // 4. Position sizing (for OPEN/ADD) — skip when legs are missing
+    //    (pipeline will re-size with broker quote and resolve legs)
+    const hasLegs = signal.strategy === 'STOCK' || (signal.legs && signal.legs.length > 0);
     let quantity = 1;
-    if (signal.action === 'OPEN' || signal.action === 'ADD') {
+    if ((signal.action === 'OPEN' || signal.action === 'ADD') && hasLegs) {
       const size = await this.config.calculateSize({
         trader,
         symbol: signal.symbol,
-        entryPrice: signal.limitPrice ?? 0,
+        entryPrice: signal.statedPremium ?? 0,
         strategy: signal.strategy,
       });
       if (size.quantity <= 0) {
@@ -121,9 +123,15 @@ export class RuleBasedTradeAgent implements TradeAgent {
       quantity = size.quantity;
     }
 
-    // 4. Build order from signal
+    // 5. Build order from signal — skip preview when legs are missing (pipeline resolves them)
     const referenceDate = taskContext.messageTimestamp ? new Date(taskContext.messageTimestamp) : new Date();
-    const order = buildOrderFromSignal(signal, quantity, referenceDate);
+    let order: OrderParams;
+    if (hasLegs) {
+      order = buildOrderFromSignal(signal, quantity, referenceDate);
+    } else {
+      log.debug(`${signal.action} ${signal.strategy} ${signal.symbol}: legs missing, pipeline will infer`);
+      order = { symbol: signal.symbol, strategy: signal.strategy, direction: signal.direction, legs: [], orderType: 'MARKET' };
+    }
     log.debug(`${signal.action} ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${quantity} legs=${order.legs.length}`);
     return [{
       type: 'PLACE_ORDER',
