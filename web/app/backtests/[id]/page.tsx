@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getEnrichedMessages, getMtmSnapshots, computeBacktestAccuracy } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, computeBacktestAccuracy } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -17,13 +17,13 @@ import { BreakdownCharts } from './breakdown-charts';
 import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
 import { StrategyEquityChart } from './strategy-equity';
-import { EnrichedChatPanel } from '../../components/enriched-chat-panel';
+import { ChatRoom } from '../../messages/chat-room';
+import { loadInitialChatData } from '../../messages/load-chat-data';
 import { DecisionScatter } from './decision-scatter';
-import { aggregateSkipReasons } from '../../../../src/lib/skip-reasons';
 import { TradesTable } from './trades-table';
 import { AccuracyGrid } from '../../components/accuracy-grid';
 import Link from 'next/link';
-import { LayoutDashboard, TrendingUp, ListTodo, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 
@@ -56,11 +56,11 @@ export default async function BacktestDetailPage({
     ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString() // +1hr buffer
     : config.endDate;
 
-  const [decisions, allTrades, enrichedResult, mtmSnapshots, accuracyResult] = await Promise.all([
+  const [decisions, allTrades, chatData, mtmSnapshots, accuracyResult] = await Promise.all([
     getRunDecisions(id),
     getTradesByBacktestRun(id, { includeOpen: true }),
-    getEnrichedMessages({
-      traders: config.traders,
+    loadInitialChatData({
+      authors: config.traders,
       startDate: config.startDate,
       endDate: messagesEndDate,
       runId: id,
@@ -176,16 +176,7 @@ export default async function BacktestDetailPage({
     </div>
   );
 
-  // --- Messages Tab content (enriched chat feed) ---
-  const decisionSummary = decisions.length > 0 ? {
-    executedCount: decisions.filter((d) => d.decision.decision === 'EXECUTE').length,
-    skippedCount: decisions.filter((d) => d.decision.decision === 'SKIP').length,
-    totalDecisions: decisions.length,
-    skipReasonCounts: aggregateSkipReasons(
-      decisions.map((d) => ({ decision: d.decision.decision, reasoning: d.decision.reasoning, skipCategory: d.decision.skipCategory })),
-    ),
-  } : null;
-
+  // --- Messages Tab content (ChatRoom with constraints) ---
   const scatterData = decisions
     .filter((r) => r.decision.pnl != null)
     .map((r) => ({
@@ -195,30 +186,36 @@ export default async function BacktestDetailPage({
       message: r.message.cleanText.slice(0, 60),
     }));
 
-  const scatterChart = scatterData.length > 0 ? (
-    <Card className="py-0 gap-0">
-      <CardHeader className="border-b py-3 px-4">
-        <CardTitle className="text-sm">Decision Outcomes</CardTitle>
-      </CardHeader>
-      <CardContent className="pt-4 pb-2 px-2">
-        <DecisionScatter data={scatterData} />
-      </CardContent>
-    </Card>
-  ) : undefined;
-
   const messagesContent = (
-    <EnrichedChatPanel
-      initialMessages={enrichedResult.rows}
-      initialCursor={enrichedResult.nextCursor}
-      runId={id}
-      traders={config.traders}
-      startDate={config.startDate}
-      endDate={config.endDate}
-      decisionSummary={decisionSummary}
-      scatterChart={scatterChart}
-      isRunning={isRunning}
-      lastProcessedTs={lastProcessedTs}
-    />
+    <div className="space-y-3 flex flex-col flex-1 min-h-0">
+      {scatterData.length > 0 && (
+        <Card className="py-0 gap-0">
+          <CardHeader className="border-b py-3 px-4">
+            <CardTitle className="text-sm">Decision Outcomes</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 pb-2 px-2">
+            <DecisionScatter data={scatterData} />
+          </CardContent>
+        </Card>
+      )}
+      <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0" style={{ minHeight: 'calc(100vh - 28rem)' }}>
+        <ChatRoom
+          initialMessages={chatData.messages}
+          initialCursor={chatData.cursor}
+          initialIntents={chatData.intents}
+          initialLabels={chatData.labels}
+          initialEnrichment={chatData.enrichment}
+          authors={chatData.authors}
+          constraints={{
+            authors: config.traders,
+            startDate: config.startDate,
+            endDate: config.endDate,
+            runId: id,
+            lastProcessedTs: lastProcessedTs ?? undefined,
+          }}
+        />
+      </div>
+    </div>
   );
 
   // --- Trades Tab content ---
@@ -258,6 +255,11 @@ export default async function BacktestDetailPage({
             <Button variant="ghost" size="xs" asChild>
               <Link href={`/?run=${run.id}`}>
                 <LayoutDashboard className="size-3" /> Dashboard
+              </Link>
+            </Button>
+            <Button variant="ghost" size="xs" asChild>
+              <Link href={`?tab=messages`}>
+                <MessageSquare className="size-3" /> Messages
               </Link>
             </Button>
             <Button variant="ghost" size="xs" asChild>
@@ -377,7 +379,7 @@ export default async function BacktestDetailPage({
             </p>
           )
         }
-        hasMessages={enrichedResult.rows.length > 0}
+        hasMessages={chatData.messages.length > 0}
         hasAccuracy={accuracyResult != null}
       />
     </div>

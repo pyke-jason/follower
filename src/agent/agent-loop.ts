@@ -1,6 +1,5 @@
 import type { ToolDef } from './tool-factory.js';
 import type { LLMProvider, ModelIdentity, LLMUsage } from './providers.js';
-import type { OptionsChain } from '../broker/types.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('Agent');
@@ -46,10 +45,6 @@ function summarizeToolOutput(toolName: string, output: unknown): string {
     }
     if (toolName === 'get_quote' && obj.bid != null) {
       return `bid=${obj.bid} ask=${obj.ask}`;
-    }
-    if (toolName === 'get_options_chain') {
-      const chain = output as OptionsChain;
-      return `${chain.strikes.length} strike(s) for ${chain.expiry}`;
     }
     return json.slice(0, 100) + '…';
   } catch {

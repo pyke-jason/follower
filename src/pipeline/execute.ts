@@ -20,7 +20,8 @@ import { OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
-import { formatOccSymbol } from '../backtest/occ-symbology.js';
+import { formatOccSymbol, normalizeExpiry } from '../backtest/occ-symbology.js';
+import { shouldSkipSignal } from '../agent/deterministic-skips.js';
 
 const log = createLogger('Pipeline');
 
@@ -63,9 +64,12 @@ export type PipelineDeps = {
 
 export type PipelineOpts = {
   messageId?: string;
+  messageTimestamp?: string; // ISO 8601 — used as reference for expiry year inference
   taskId?: string;
   backtestRunId?: string;
   isBacktest?: boolean;
+  /** Trader's allowed strategies. Signals with strategies outside this list are skipped (OPEN/ADD only). */
+  allowedStrategies?: string[];
 };
 
 export type PipelineResult = {
@@ -92,7 +96,7 @@ const ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; 
  * Pure function: convert a Signal + quantity into OrderParams.
  * Used by RuleBasedTradeAgent and internal pipeline executors.
  */
-export function buildOrderFromSignal(signal: Signal, quantity: number): OrderParams {
+export function buildOrderFromSignal(signal: Signal, quantity: number, referenceDate: Date = new Date()): OrderParams {
   // CLOSE/TRIM don't carry legs on the signal — the pipeline rebuilds
   // them from the existing position.  Pass an empty legs array; the
   // pipeline's executeClose / executeTrim will replace it.
@@ -102,7 +106,7 @@ export function buildOrderFromSignal(signal: Signal, quantity: number): OrderPar
     ? []
     : isStock
       ? buildStockLegs(signal.symbol, signal.direction, quantity)
-      : buildOptionLegs(signal, quantity);
+      : buildOptionLegs(signal, quantity, referenceDate);
   return {
     symbol: signal.symbol,
     strategy: signal.strategy,
@@ -126,23 +130,26 @@ function buildStockLegs(underlying: string, direction: 'LONG' | 'SHORT', quantit
   }];
 }
 
-function buildOptionLegs(signal: Signal, quantity: number): OrderLeg[] {
+function buildOptionLegs(signal: Signal, quantity: number, referenceDate: Date): OrderLeg[] {
   if (!signal.legs || signal.legs.length === 0) {
     throw new Error(`Options signal for ${signal.symbol} (${signal.action} ${signal.strategy}) missing legs`);
   }
-  return signal.legs.map(l => ({
-    symbol: formatOccSymbol({
-      underlying: signal.symbol,
-      expiration: l.expiry,
-      type: l.optionType,
+  return signal.legs.map(l => {
+    const expiry = normalizeExpiry(l.expiry, referenceDate);
+    return {
+      symbol: formatOccSymbol({
+        underlying: signal.symbol,
+        expiration: expiry,
+        type: l.optionType,
+        strike: l.strike,
+      }),
       strike: l.strike,
-    }),
-    strike: l.strike,
-    expiry: l.expiry,
-    type: l.optionType as 'CALL' | 'PUT',
-    action: l.action as 'BUY' | 'SELL',
-    quantity,
-  }));
+      expiry,
+      type: l.optionType as 'CALL' | 'PUT',
+      action: l.action as 'BUY' | 'SELL',
+      quantity,
+    };
+  });
 }
 
 /** Build order params with strategy-appropriate defaults. */
@@ -228,9 +235,10 @@ async function executeOpen(
   }
 
   // 3. Build order
+  const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
   const legs = signal.strategy === 'STOCK'
     ? buildStockLegs(signal.symbol, signal.direction, size.quantity)
-    : buildOptionLegs(signal, size.quantity);
+    : buildOptionLegs(signal, size.quantity, refDate);
   const params = buildOrderParams(signal, legs, signal.limitPrice);
 
   // 4. Place and record
@@ -380,9 +388,10 @@ async function executeAdd(
   }
 
   // 4. Build order
+  const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
   const legs = signal.strategy === 'STOCK'
     ? buildStockLegs(signal.symbol, signal.direction, size.quantity)
-    : buildOptionLegs(signal, size.quantity);
+    : buildOptionLegs(signal, size.quantity, refDate);
   const params = buildOrderParams(signal, legs, signal.limitPrice);
 
   // 5. Place and record
@@ -588,6 +597,11 @@ export async function executeSignal(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
+  const strategySkip = shouldSkipSignal(signal, opts.allowedStrategies);
+  if (strategySkip) {
+    return { signal, executed: false, reason: strategySkip.reason };
+  }
+
   switch (signal.action) {
     case 'OPEN':    return executeOpen(signal, trader, deps, opts);
     case 'CLOSE':   return executeClose(signal, trader, deps, opts);

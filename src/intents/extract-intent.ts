@@ -5,11 +5,10 @@ import type { TaskResult } from '../agent/schemas.js';
 import type { ToolDef } from '../agent/tool-factory.js';
 import {
   getQuoteTool,
-  getOptionsChainTool,
   flagForReviewTool,
   submitDecisionTool,
 } from '../agent/tool-factory.js';
-import type { Quote, OptionsChain } from '../broker/types.js';
+import type { Quote } from '../broker/types.js';
 import type { TrackedTrader } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { runAgentLoop } from '../agent/agent-loop.js';
@@ -20,13 +19,11 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
 
-export const INTENT_VERSION = 1;
+export const INTENT_VERSION = 2;
 
 export type IntentExtractionDeps = {
   /** Get a quote at a specific point in time (message timestamp). */
   getQuote: (symbol: string, at: Date) => Promise<Quote>;
-  /** Get options chain at a specific point in time (message timestamp). */
-  getOptionsChain: (symbol: string, expiry: string, optionType: 'CALL' | 'PUT', at: Date) => Promise<OptionsChain>;
   /** Optional: prefetch data for symbols at a point in time. */
   prefetch?: (symbols: string[], at: Date) => Promise<void>;
   getTraderConfig: (name: string) => Promise<TrackedTrader | undefined>;
@@ -60,7 +57,7 @@ You are the SOLE parser. There is no regex fallback. Handle typos, abbreviations
 For each message:
 1. CLASSIFY: Is this a trade entry, exit, add, trim, or noise? Use the trader's recent messages to understand what positions they hold.
 2. IDENTIFY: Stock or options? If options, determine the structure (naked call/put, CDS, PDS).
-3. VALIDATE: Call get_quote and get_options_chain to verify prices and strikes.
+3. VALIDATE: Call get_quote to verify the stock price aligns with the trader's message.
    After receiving tool results, reflect on whether the data aligns with the trader's message before proceeding.
    If the market has moved >5% from the trader's stated price, flag for review.
 4. OUTPUT: Always end by invoking a tool -- call submit_decision with your parsed signals (EXECUTE, SKIP, or MANUAL_REVIEW), or call flag_for_review. Never output your decision as text.
@@ -100,13 +97,16 @@ LEG_OFF: Close one leg of a spread, hold the other. Include targetStrategy (CALL
 Traders often omit strikes ("Short ALGN pds", "Long AAPL cds"). This is normal -- infer them:
 
 1. Get the current stock price via get_quote.
-2. Call get_options_chain with the default expiry (this Friday) and option type (PUT for PDS, CALL for CDS).
-3. Pick the nearest ATM strike as the long (BUY) leg.
-4. Pick the next available strike as the short (SELL) leg. Width heuristic: $2.50 if stock <$50, $5 if $50-200, $10 if >$200.
-5. If the trader mentions a net premium ("for .09"), scan the chain for the strike combo whose net debit best matches.
-6. Use the mid-price of the spread as limitPrice.
+2. Compute the nearest ATM strike by rounding the stock price to the nearest standard increment:
+   $0.50 for stocks under $25, $1 for $25-$200, $5 for >$200.
+3. Compute the short leg using the width heuristic:
+   $2.50 if stock <$50, $5 if $50-200, $10 if >$200.
+   PDS: long (BUY) = ATM strike, short (SELL) = ATM - width.
+   CDS: long (BUY) = ATM strike, short (SELL) = ATM + width.
+4. If the trader mentions a net premium ("for .09"), adjust strikes narrower or wider to approximate.
+5. Use the stated premium as limitPrice, or estimate the debit from the spread width if not stated.
 
-If a trader-specified strike does not exist in the chain, flag for review.
+If a trader-specified strike seems implausible (far from ATM), flag for review.
 </inferring_strikes>
 
 <follow_trades>
@@ -122,7 +122,8 @@ Traders sometimes follow another trader's call ("following Dave", "tailing spect
 <rules>
 - Only parse trades for tracked traders in the whitelist. Skip paper trades tagged "(paper)".
 - Messages may contain multiple signals ("Exit TXN, Short TSLA") -- return ALL in the signals array.
-- Inferring strikes from the chain is your job, not guessing. Flag for review only when the strategy TYPE is truly ambiguous, the symbol is unrecognizable, or a specified strike doesn't exist.
+- Inferring strikes from the stock price is your job. Flag for review only when the strategy TYPE is truly ambiguous, the symbol is unrecognizable, or a specified strike seems implausible.
+- Always output expiry as YYYY-MM-DD. Traders write dates many ways ("12/19", "Dec 19", "12/19/25") -- convert them. For MM/DD without a year, use the next occurrence of that date on or after the message date.
 - Always explain your reasoning -- your steps are audited.
 - If you don't understand a financial concept, say so. Never fabricate mechanics.
 </rules>
@@ -135,9 +136,9 @@ Every example ends with a tool call, never text output.
 <input>Short ALGN pds</input>
 <reasoning>
 "Short" = bearish stock view. "pds" = put debit spread. Buying a PDS is a debit strategy, so direction: LONG.
-No strikes specified. I will call get_quote for ALGN's price, then get_options_chain to find ATM puts expiring this Friday and infer a spread width.
+No strikes specified. I will call get_quote for ALGN's price, then compute ATM put strikes expiring this Friday and infer a spread width.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol ALGN, direction LONG, strategy PDS, legs inferred from chain
+submit_decision(EXECUTE): action OPEN, symbol ALGN, direction LONG, strategy PDS, legs inferred from stock price
 </example>
 
 <example>
@@ -214,7 +215,7 @@ submit_decision(SKIP)
 
 /**
  * Create tools for intent extraction.
- * Each tool gets a timestamp-pinned function so quotes/chains
+ * Each tool gets a timestamp-pinned function so quotes
  * reflect market state at message time.
  */
 function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string): ToolDef[] {
@@ -222,7 +223,6 @@ function createIntentTools(deps: IntentExtractionDeps, messageTimestamp: string)
 
   return [
     getQuoteTool((symbol) => deps.getQuote(symbol, msgTime)),
-    getOptionsChainTool((symbol, expiry, optionType) => deps.getOptionsChain(symbol, expiry, optionType, msgTime)),
     flagForReviewTool(),
     submitDecisionTool(),
     {

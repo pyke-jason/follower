@@ -8,6 +8,7 @@ import { runAgentLoop } from './agent-loop.js';
 import type { AgentStep } from './agent-loop.js';
 import type { ModelIdentity, LLMUsage } from './providers.js';
 import type { PrefetchedData } from './prefetch.js';
+import type { TrackedTrader } from '../db/schema.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 
@@ -125,6 +126,7 @@ After using tools, call **submit_decision** with your classification. For EXECUT
 export function buildUserPrompt(
   context: TaskContext,
   prefetched?: PrefetchedData,
+  traderConfig?: TrackedTrader,
 ): string {
   const dateStr = context.messageTimestamp
     ? formatTimestampForLLM(context.messageTimestamp)
@@ -154,14 +156,13 @@ Direction Hint: ${context.directionHint}`;
   prompt += `\n\n--- Pre-fetched Context ---`;
 
   // Trader profile
-  if (prefetched.traderProfile) {
-    const tp = prefetched.traderProfile;
+  if (traderConfig) {
     prompt += `\n\nTrader Profile:`;
-    if (tp.strategies.length > 0) {
-      prompt += `\n  Known strategies: ${tp.strategies.join(', ')}`;
+    if (traderConfig.strategies && traderConfig.strategies.length > 0) {
+      prompt += `\n  Known strategies: ${traderConfig.strategies.join(', ')}`;
     }
-    if (tp.notes) {
-      prompt += `\n  Notes: ${tp.notes}`;
+    if (traderConfig.notes) {
+      prompt += `\n  Notes: ${traderConfig.notes}`;
     }
   }
 
@@ -202,13 +203,14 @@ export async function runAgent(
   injectedTools: ToolDef[],
   provider?: LLMProvider,
   prefetched?: PrefetchedData,
+  traderConfig?: TrackedTrader,
 ): Promise<AgentRunResult> {
 
   if (!provider) {
     provider = await createProvider(DEFAULT_TRADE_MODEL);
   }
 
-  const userPrompt = buildUserPrompt(taskContext, prefetched);
+  const userPrompt = buildUserPrompt(taskContext, prefetched, traderConfig);
   const activeTools = injectedTools;
 
   const loopResult = await runAgentLoop(

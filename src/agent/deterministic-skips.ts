@@ -1,5 +1,6 @@
 import type { TaskContext } from '../db/schema.js';
 import type { PrefetchedData } from './prefetch.js';
+import type { Signal } from './schemas.js';
 
 export type SkipResult = { category: string; reason: string };
 
@@ -96,4 +97,26 @@ export function shouldSkipDeterministic(
   }
 
   return null;
+}
+
+/**
+ * Per-signal strategy gate.
+ * Returns a SkipResult if the signal's strategy is not in the trader's allowed list.
+ * Only blocks position-increasing actions (OPEN/ADD) — CLOSE/TRIM/LEG_OFF are always allowed
+ * so traders can exit positions even after a strategy is disabled.
+ *
+ * When allowedStrategies is empty/null (no trader config), the signal passes through —
+ * absence of config is not a restriction.
+ */
+export function shouldSkipSignal(
+  signal: Signal,
+  allowedStrategies: string[] | null | undefined,
+): SkipResult | null {
+  if (!allowedStrategies || allowedStrategies.length === 0) return null;
+  if (signal.action !== 'OPEN' && signal.action !== 'ADD') return null;
+  if (allowedStrategies.includes(signal.strategy)) return null;
+  return {
+    category: 'strategy not allowed',
+    reason: `${signal.strategy} not in allowed strategies [${allowedStrategies.join(', ')}]`,
+  };
 }

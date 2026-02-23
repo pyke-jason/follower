@@ -298,7 +298,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
   const intentDeps: IntentExtractionDeps = {
     getQuote: (symbol, at) => priceProvider.getQuote(symbol, at),
-    getOptionsChain: (symbol, expiry, optionType, at) => priceProvider.getOptionsChain(symbol, expiry, optionType, at),
     prefetch: (symbols, at) => priceProvider.prefetch(symbols, at),
     getTraderConfig: getTrader,
   };
@@ -636,19 +635,19 @@ async function processMessage(
       {
         broker: btCtx.pipelineDeps.broker,
         getOpenPositions: btCtx.pipelineDeps.getOpenPositions,
-        getTraderConfig: getTrader,
       },
     );
   } catch {
     prefetched = undefined;
   }
 
-  // ── 6. Run trade agent (deterministic skip + risk + sizing) ──
+  // ── 6. Run trade agent (deterministic skip + strategy gate + risk + sizing) ──
+  const allowedStrategies = (await getTrader(msg.author))?.strategies ?? undefined;
 
   // Process each signal through the trade agent
   const allActions: Action[] = [];
   for (const signal of signals) {
-    const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched);
+    const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched, allowedStrategies);
     allActions.push(...actions);
   }
 
@@ -672,7 +671,12 @@ async function processMessage(
     executeableSignals,
     msg.author,
     btCtx.pipelineDeps,
-    { messageId: msg.id, backtestRunId: btCtx.runId, isBacktest: true },
+    {
+      messageId: msg.id,
+      backtestRunId: btCtx.runId,
+      isBacktest: true,
+      allowedStrategies,
+    },
   );
 
   const executedResults = pipelineResults.filter(r => r.executed);

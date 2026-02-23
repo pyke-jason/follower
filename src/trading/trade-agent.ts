@@ -10,7 +10,7 @@ import type { Trade } from '../db/schema.js';
 import type { AccountBalance, Quote, OrderParams } from '../broker/types.js';
 import { buildOrderFromSignal } from '../pipeline/execute.js';
 import type { PositionSize } from '../position-sizing/index.js';
-import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
+import { shouldSkipDeterministic, shouldSkipSignal } from '../agent/deterministic-skips.js';
 import type { SkipCheckOpts } from '../agent/deterministic-skips.js';
 import type { PrefetchedData } from '../agent/prefetch.js';
 import type { TaskContext } from '../db/schema.js';
@@ -45,6 +45,7 @@ export interface TradeAgent {
     trader: string,
     taskContext: TaskContext,
     prefetched: PrefetchedData | undefined,
+    allowedStrategies?: string[],
   ): Promise<Action[]>;
 
   /** Called at backtest end — force-close all remaining positions. */
@@ -79,6 +80,7 @@ export class RuleBasedTradeAgent implements TradeAgent {
     trader: string,
     taskContext: TaskContext,
     prefetched: PrefetchedData | undefined,
+    allowedStrategies?: string[],
   ): Promise<Action[]> {
     // 1. Deterministic skip checks
     const skip = shouldSkipDeterministic(taskContext, prefetched, this.config.skipOpts);
@@ -86,7 +88,13 @@ export class RuleBasedTradeAgent implements TradeAgent {
       return [{ type: 'NO_OP', reasoning: `[deterministic] ${skip.reason}` }];
     }
 
-    // 2. Risk checks (for position-increasing actions)
+    // 2. Strategy gate — skip before expensive sizing/risk operations
+    const strategySkip = shouldSkipSignal(signal, allowedStrategies);
+    if (strategySkip) {
+      return [{ type: 'NO_OP', reasoning: `[strategy] ${strategySkip.reason}` }];
+    }
+
+    // 3. Risk checks (for position-increasing actions)
     if (!this.config.disableRiskLimits && (signal.action === 'OPEN' || signal.action === 'ADD')) {
       const risk = await checkRiskLimits(
         { symbol: signal.symbol, strategy: signal.strategy, trader, action: signal.action },
@@ -98,7 +106,7 @@ export class RuleBasedTradeAgent implements TradeAgent {
       }
     }
 
-    // 3. Position sizing (for OPEN/ADD)
+    // 4. Position sizing (for OPEN/ADD)
     let quantity = 1;
     if (signal.action === 'OPEN' || signal.action === 'ADD') {
       const size = await this.config.calculateSize({
@@ -114,7 +122,8 @@ export class RuleBasedTradeAgent implements TradeAgent {
     }
 
     // 4. Build order from signal
-    const order = buildOrderFromSignal(signal, quantity);
+    const referenceDate = taskContext.messageTimestamp ? new Date(taskContext.messageTimestamp) : new Date();
+    const order = buildOrderFromSignal(signal, quantity, referenceDate);
     log.debug(`${signal.action} ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${quantity} legs=${order.legs.length}`);
     return [{
       type: 'PLACE_ORDER',

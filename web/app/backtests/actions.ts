@@ -4,7 +4,7 @@ import { db, schema } from '@/lib/db';
 import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTradesByBacktestRun, getRunDecisions, getEnrichedMessages, getMtmSnapshots, getMessagesByIds, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
+import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots, getMessagesByIds, getLatestIntents, getLabelsForMessages } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
 import type { BacktestRunConfig, CommissionSchedule } from '../../../src/db/schema';
 
@@ -299,17 +299,6 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
   }
 
   revalidatePath('/backtests');
-}
-
-export async function fetchEnrichedMessages(
-  traders: string[],
-  startDate: string,
-  endDate: string,
-  cursor?: string,
-  runId?: string,
-  roleFilter?: 'all' | 'executed' | 'skipped',
-) {
-  return getEnrichedMessages({ traders, startDate, endDate, cursor, runId, roleFilter });
 }
 
 export async function invalidateIntentCache(formData: FormData) {
