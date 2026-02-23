@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useCallback } from 'react';
 import { cn } from '@/lib/utils';
-import { Check, Plus, X } from 'lucide-react';
+import { Check, Plus } from 'lucide-react';
 import {
   Popover,
   PopoverTrigger,

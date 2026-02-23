@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Badge } from './badge';
 import { TableRow, TableCell } from '@/components/ui/table';
-import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
+import { formatCurrency, formatDate } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import type { Trade, CommissionSchedule } from '../../../src/db/schema';
 import { safeParseFloat } from '../../../src/lib/numbers';

@@ -1,8 +1,6 @@
 import { notFound } from 'next/navigation';
 import { getBacktestRunsForComparison, getDecisionDiff } from '@/lib/queries';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { formatCurrency } from '@/lib/format';
-import { pctDisplay } from '../../../../src/lib/numbers';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';

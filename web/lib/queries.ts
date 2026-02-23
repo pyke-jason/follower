@@ -1,5 +1,5 @@
 import { db, schema } from './db';
-import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, ne, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';

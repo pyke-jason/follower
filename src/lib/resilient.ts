@@ -2,9 +2,9 @@ import { createLogger } from './logger.js';
 
 const log = createLogger('Retry');
 
-export type ErrorCategory = 'auth' | 'transient' | 'permanent';
+type ErrorCategory = 'auth' | 'transient' | 'permanent';
 
-export type RetryConfig = {
+type RetryConfig = {
   maxRetries: number;
   initialBackoffMs: number;
   maxBackoffMs: number;
@@ -38,7 +38,7 @@ export const LLM_DEFAULTS: RetryConfig = {
 };
 
 /** Classify an error based on HTTP status codes and network error patterns. */
-export function classifyError(err: unknown): ErrorCategory {
+function classifyError(err: unknown): ErrorCategory {
   const msg = err instanceof Error ? err.message : String(err);
 
   // Extract HTTP status code

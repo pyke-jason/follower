@@ -181,7 +181,7 @@ export function formatOccSymbol(option: {
 /** Pick a strike interval based on underlying price.
  *  Uses $0.50 increments for stocks up to $200 because exchanges list
  *  $0.50/$1 strikes near ATM. */
-export function strikeInterval(price: number): number {
+function strikeInterval(price: number): number {
   if (price < 25) return 0.5;
   if (price < 200) return 0.5;
   return 5;

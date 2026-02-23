@@ -1,3 +1,6 @@
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('Auth');
 const TOKEN_URL = 'https://signin.tradestation.com/oauth/token';
 
 let accessToken: string | null = null;
@@ -38,6 +41,6 @@ export async function getAccessToken(): Promise<string> {
   accessToken = data.access_token;
   tokenExpiresAt = Date.now() + data.expires_in * 1000;
 
-  console.log('[Auth] Token refreshed, expires in', data.expires_in, 'seconds');
+  log.debug(`Token refreshed, expires in ${data.expires_in} seconds`);
   return accessToken;
 }

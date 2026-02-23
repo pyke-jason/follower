@@ -5,20 +5,14 @@ import type { LLMProvider } from './providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from './providers.js';
 import { FlagForReviewInput, SubmitDecisionInput } from './schemas.js';
 import { runAgentLoop } from './agent-loop.js';
-import type { AgentStep } from './agent-loop.js';
-import type { ModelIdentity, LLMUsage } from './providers.js';
+import type { AgentStep, AgentRunResult as BaseAgentRunResult } from './agent-loop.js';
 import type { PrefetchedData } from './prefetch.js';
 import type { TrackedTrader } from '../db/schema.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
 
 export type { AgentStep };
 
-export type AgentRunResult = {
-  steps: AgentStep[];
-  result: TaskResult | null;
-  model: ModelIdentity;
-  usage: LLMUsage;
-};
+export type AgentRunResult = Omit<BaseAgentRunResult, 'result'> & { result: TaskResult | null };
 
 export const SYSTEM_PROMPT = `You are a trade signal classifier monitoring a live trading chat room.
 

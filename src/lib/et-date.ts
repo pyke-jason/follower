@@ -2,7 +2,7 @@
  * Eastern Time date utilities.
  *
  * All market-calendar / ET-conversion logic lives here so every call site
- * (ingestion, backtest runner, eod-sweep, databento-tape) uses one
+ * (ingestion, backtest runner, databento-tape) uses one
  * implementation with correct DST handling.
  */
 
@@ -20,7 +20,7 @@ const etParts = new Intl.DateTimeFormat('en-US', {
 });
 
 /** Extract ET year/month/day/hours/minutes/seconds from any Date. */
-export function getETComponents(d: Date) {
+function getETComponents(d: Date) {
   const parts = etParts.formatToParts(d);
   const get = (type: Intl.DateTimeFormatPartTypes) =>
     parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
@@ -40,13 +40,13 @@ export function toDateKeyET(d: Date): string {
 }
 
 /** 0=Sun..6=Sat in ET. */
-export function getDayOfWeekET(d: Date): number {
+function getDayOfWeekET(d: Date): number {
   const { year, month, day } = getETComponents(d);
   return new Date(year, month - 1, day).getDay();
 }
 
 /** True if the ET date is Mon-Fri. */
-export function isWeekdayET(d: Date): boolean {
+function isWeekdayET(d: Date): boolean {
   const dow = getDayOfWeekET(d);
   return dow >= 1 && dow <= 5;
 }
@@ -60,7 +60,7 @@ export function getETMinuteOfDay(d: Date): number {
 // ── Market Calendar ──────────────────────────────────────────────────
 
 /** Market holidays — closed all day. */
-export const MARKET_HOLIDAYS = new Set([
+const MARKET_HOLIDAYS = new Set([
   // 2025
   '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18',
   '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01',
@@ -72,7 +72,7 @@ export const MARKET_HOLIDAYS = new Set([
 ]);
 
 /** Early close days — market closes at 1:00 PM ET (minute 780) instead of 4:00 PM. */
-export const MARKET_EARLY_CLOSES = new Set([
+const MARKET_EARLY_CLOSES = new Set([
   // 2025 (day after Thanksgiving, Christmas Eve, etc.)
   '2025-07-03', '2025-11-28', '2025-12-24',
   // 2026
@@ -84,7 +84,7 @@ const EARLY_CLOSE_MINUTE = 780;    // 1:00 PM
 const MARKET_OPEN_MINUTE = 570;    // 9:30 AM
 
 /** Market close time in minutes-of-day for a given date (780 on early close, 960 normally). */
-export function marketCloseMinute(d: Date): number {
+function marketCloseMinute(d: Date): number {
   return MARKET_EARLY_CLOSES.has(toDateKeyET(d)) ? EARLY_CLOSE_MINUTE : REGULAR_CLOSE_MINUTE;
 }
 
@@ -178,7 +178,7 @@ export function nextFriday(referenceDate: Date): string {
 // ── LLM-Friendly Formatting ─────────────────────────────────────────
 
 /** Shared ET formatter for human-readable timestamps in LLM prompts. */
-export const ET_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const ET_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: ET_TZ,
   weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
   hour: 'numeric', minute: '2-digit', timeZoneName: 'short',

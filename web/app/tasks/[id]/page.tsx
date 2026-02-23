@@ -10,7 +10,7 @@ import { LegsTable } from '../../components/legs-table';
 import { StepViewer } from '../../components/step-viewer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { formatDate, formatTime, formatCurrency, pnlColor, formatDuration } from '@/lib/format';
+import { formatDate, formatCurrency, pnlColor, formatDuration } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import { skipTask } from '../actions';
 import Link from 'next/link';

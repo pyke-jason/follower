@@ -10,7 +10,7 @@ export type SignalRMessage = {
   Reactions: unknown[];
 };
 
-export type MessageHandler = (msg: SignalRMessage) => void;
+type MessageHandler = (msg: SignalRMessage) => void;
 
 export async function injectSignalRListener(page: Page, handler: MessageHandler): Promise<void> {
   // Expose the handler to the browser context

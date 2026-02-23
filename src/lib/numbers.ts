@@ -24,7 +24,3 @@ export function pctDisplay(val: number): string {
   return (val * 100).toFixed(1) + '%';
 }
 
-/** Price equality within epsilon (default $0.01). */
-export function priceEq(a: number, b: number, epsilon = 0.01): boolean {
-  return Math.abs(a - b) < epsilon;
-}

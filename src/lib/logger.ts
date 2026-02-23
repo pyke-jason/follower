@@ -8,11 +8,7 @@ export function setLogLevel(level: LogLevel): void {
   currentLevel = level;
 }
 
-export function getLogLevel(): LogLevel {
-  return currentLevel;
-}
-
-export type Logger = {
+type Logger = {
   debug: (...args: unknown[]) => void;
   info: (...args: unknown[]) => void;
   warn: (...args: unknown[]) => void;

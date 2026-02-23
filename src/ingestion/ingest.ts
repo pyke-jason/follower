@@ -108,7 +108,6 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
     directionHint: classification.directionHint,
     detectedStrategies: classification.detectedStrategies,
     isPaperTrade: classification.isPaperTrade,
-    hasMultipleTrades: classification.hasMultipleTrades,
     confidence: classification.confidence != null ? String(classification.confidence) : null,
   }).onConflictDoNothing();
 

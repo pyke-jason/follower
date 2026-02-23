@@ -100,10 +100,6 @@ web/
 │   ├── traders/[name]/page.tsx # Trader deep-dive: P&L, strategy breakdown, curve
 │   ├── trades/[id]/page.tsx    # Trade detail: steps, fills, slippage, partial exits
 │   ├── tasks/[id]/page.tsx     # Task audit trail: agent steps, tool calls
-│   ├── eval/
-│   │   ├── page.tsx            # Label dashboard: metrics, filters, paginated table
-│   │   ├── label-editor.tsx    # Edit sheet with parse-vs-label comparison
-│   │   └── actions.ts          # Server actions: save, approve, delete labels
 │   ├── reconciliation/page.tsx # Position mismatch alerts (DB vs broker)
 │   ├── settings/page.tsx       # Secrets, toggles (ingestion, Discord, Pushover)
 │   └── components/             # Sidebar, TopBar, Badge, charts, RunScopeSelector
@@ -166,7 +162,6 @@ npm run dev              # Start backend (ingestion + agent + reconciliation)
 npm run web              # Start Next.js dashboard on :3000
 npm run local-api        # Start Hono API on :4000
 npm run backtest         # Launch backtest (tsx src/backtest/launch.ts)
-npm run label            # Auto-label messages with Claude
 npm run db:generate      # Generate Drizzle migrations
 npm run db:migrate       # Apply migrations
 npm run secrets:import   # Import .env keys to macOS Keychain

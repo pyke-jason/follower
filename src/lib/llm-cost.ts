@@ -39,7 +39,7 @@ const DEFAULT_PRICING: ModelPricing = { input: 3.00, output: 15.00, cacheWrite: 
 
 // ─── Rate limits ────────────────────────────────────
 
-export type ModelRateLimits = {
+type ModelRateLimits = {
   /** Max API requests per minute (from provider docs / console). */
   rpm: number;
 };

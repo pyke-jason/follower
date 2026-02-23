@@ -25,7 +25,6 @@ export const messages = sqliteTable('messages', {
   directionHint:      text('direction_hint'),     // LONG | SHORT | null
   detectedStrategies: text('detected_strategies', { mode: 'json' }).$type<DetectedStrategy[]>().default([]),
   isPaperTrade:       integer('is_paper_trade', { mode: 'boolean' }).default(false),
-  hasMultipleTrades:  integer('has_multiple_trades', { mode: 'boolean' }).default(false),
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -167,7 +166,6 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   // Eval framework columns
   name:            text('name'),                    // human label, e.g. "sonnet baseline sept"
   experimentTag:   text('experiment_tag'),           // groups runs, e.g. "model-comparison-feb"
-  parentRunId:     text('parent_run_id').references((): any => backtestRuns.id),
   pinned:          integer('pinned', { mode: 'boolean' }).default(false),
   extendedMetrics: text('extended_metrics', { mode: 'json' }).$type<ExtendedMetrics | null>(),
   liveMetrics:     text('live_metrics', { mode: 'json' }).$type<LiveMetrics | null>(),

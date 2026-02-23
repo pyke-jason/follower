@@ -533,7 +533,6 @@ type Stats = {
   skipReasons: Map<string, number>;
 };
 
-// referencesFutures moved to shared deterministic-skips.ts
 
 /**
  * Context object passed through processMessage to avoid long parameter lists.
@@ -585,8 +584,6 @@ async function recordExecute(
     ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
   });
 }
-
-// shouldSkipDeterministic moved to shared ../agent/deterministic-skips.ts
 
 async function processMessage(
   msg: HistoricalMessage,

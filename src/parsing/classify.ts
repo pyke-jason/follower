@@ -11,7 +11,6 @@ export type MessageClassification = {
   directionHint: 'LONG' | 'SHORT' | null;
   detectedStrategies: DetectedStrategy[];
   isPaperTrade: boolean;
-  hasMultipleTrades: boolean;
   confidence: number;
   needsAgent: boolean;
   skipReason?: string;
@@ -26,23 +25,20 @@ export function classifyMessage(html: string): MessageClassification {
   if (badges.length === 0) {
     return {
       cleanText, badges, symbols, actionHint, directionHint,
-      detectedStrategies: [], isPaperTrade, hasMultipleTrades: false,
-      confidence: 0, needsAgent: false, skipReason: 'no_badge',
+      detectedStrategies: [], isPaperTrade, confidence: 0, needsAgent: false, skipReason: 'no_badge',
     };
   }
 
   if (isPaperTrade) {
     return {
       cleanText, badges, symbols, actionHint, directionHint,
-      detectedStrategies: [], isPaperTrade, hasMultipleTrades: false,
-      confidence: 0, needsAgent: false, skipReason: 'paper_trade',
+      detectedStrategies: [], isPaperTrade, confidence: 0, needsAgent: false, skipReason: 'paper_trade',
     };
   }
 
   // Agent handles all parsing — no confidence scoring needed
   return {
     cleanText, badges, symbols, actionHint, directionHint,
-    detectedStrategies: [], isPaperTrade, hasMultipleTrades: false,
-    confidence: 1, needsAgent: true,
+    detectedStrategies: [], isPaperTrade, confidence: 1, needsAgent: true,
   };
 }

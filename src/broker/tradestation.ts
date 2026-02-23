@@ -1,4 +1,4 @@
-import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill, Bar, GetBarsParams } from './types.js';
+import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill, Bar, GetBarsParams } from './types.js';
 import type { BrokerService } from './interface.js';
 import { getAccessToken } from './auth.js';
 import { safeParseFloat } from '../lib/numbers.js';
@@ -6,7 +6,6 @@ import { formatOccSymbol } from '../backtest/occ-symbology.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, tsClassify } from '../lib/resilient.js';
 import {
   TsQuotesResponseSchema,
-  TsOptionsResponseSchema,
   TsOrdersResponseSchema,
   TsPositionsResponseSchema,
   TsBalancesResponseSchema,
@@ -48,36 +47,6 @@ export async function getQuote(symbol: string): Promise<Quote> {
       timestamp: q.TradeTime,
     };
   }, { ...READ_DEFAULTS, classify: tsClassify }, `getQuote(${symbol})`);
-}
-
-export async function getOptionsChain(
-  symbol: string,
-  expiry: string,
-  optionType: 'CALL' | 'PUT'
-): Promise<OptionsChain> {
-  return withRetry(async (signal) => {
-    const data = await ts(
-      `/marketdata/options/chains/${encodeURIComponent(symbol)}?expiration=${expiry}&optionType=${optionType}`,
-      { signal },
-    );
-    const validated = parseApiResponse(TsOptionsResponseSchema, data, `GET /marketdata/options/chains/${symbol}`);
-    return {
-      symbol,
-      expiry,
-      optionType,
-      strikes: validated.Options.map((o) => ({
-        strike: o.StrikePrice,
-        bid: o.Bid,
-        ask: o.Ask,
-        last: o.Last,
-        iv: o.ImpliedVolatility,
-        delta: o.Delta,
-        gamma: o.Gamma,
-        theta: o.Theta,
-        openInterest: o.OpenInterest,
-      })),
-    };
-  }, { ...READ_DEFAULTS, classify: tsClassify }, `getOptionsChain(${symbol})`);
 }
 
 export async function placeOrder(params: OrderParams): Promise<OrderResult> {
