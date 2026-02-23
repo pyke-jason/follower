@@ -38,6 +38,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.extendedMetrics.sortinoRatio).toBe(0);
   });
@@ -56,6 +57,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.extendedMetrics.sharpeRatio).toBe(0);
   });
@@ -71,6 +73,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.extendedMetrics.maxConsecutiveWins).toBe(3);
     expect(result.extendedMetrics.maxConsecutiveLosses).toBe(2);
@@ -85,6 +88,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.extendedMetrics.medianPnl).toBe(200);
   });
@@ -99,6 +103,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.extendedMetrics.medianPnl).toBe(250);
   });
@@ -119,6 +124,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.extendedMetrics.avgHoldingPeriodHours).toBe(3);
   });
@@ -133,6 +139,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades,
       decisions: makeDecisions(trades.length),
+      startingEquity: 100_000,
     });
     expect(result.summary.netPnl).toBe(1000);
     expect(result.summary.maxDrawdown).toBe(500);
@@ -143,6 +150,7 @@ describe('extended metrics', () => {
     const result = generateReportFromTrades({
       trades: [],
       decisions: [],
+      startingEquity: 100_000,
     });
     const em = result.extendedMetrics;
     expect(em.sharpeRatio).toBe(0);

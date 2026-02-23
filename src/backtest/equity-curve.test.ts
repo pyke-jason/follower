@@ -159,7 +159,7 @@ describe('equity curve', () => {
       makeTrade({ pnl: '-80', quantity: 100, closedAt: '2025-01-02T15:00:00Z' }),
       makeTrade({ pnl: '30', quantity: 200, closedAt: '2025-01-03T15:00:00Z' }),
     ];
-    const { summary, equityCurve } = computeCoreStats(trades, undefined, 100_000, schedule);
+    const { summary, equityCurve } = computeCoreStats(trades, undefined, schedule);
     const finalCumPnl = equityCurve[equityCurve.length - 1].cumPnl;
     // Equity curve uses netPnlOf() per trade, summary.netPnl = gross - commissions
     // These must agree

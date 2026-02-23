@@ -117,8 +117,8 @@ export class SimBroker implements BrokerService {
     private marketData: BacktestPriceProvider,
     private clock: SimClock,
     private backtestRunId: string,
-    private fillModel: FillModel = 'orats',
-    private startingEquity: number = 100_000,
+    private fillModel: FillModel,
+    private startingEquity: number,
   ) {}
 
   async getQuote(symbol: string): Promise<Quote> {
@@ -486,9 +486,11 @@ export class SimBroker implements BrokerService {
 
       // Compute intrinsic value at expiry
       let netIntrinsic = 0;
+      let latestExpiry = '';
       for (const leg of legs) {
         if (leg.expiry > currentDate) continue;
         if (leg.type === 'STOCK') continue;
+        if (leg.expiry > latestExpiry) latestExpiry = leg.expiry;
 
         const expiryDate = new Date(leg.expiry + 'T20:00:00Z');
         const quote = await this.marketData.getQuote(t.symbol, expiryDate);
@@ -505,7 +507,8 @@ export class SimBroker implements BrokerService {
       // negative for credit/short positions). Exit price is always the
       // absolute cost to settle the spread at expiry.
       const exitPrice = Math.abs(netIntrinsic);
-      const expiryTimestamp = new Date(currentDate + 'T20:00:00Z');
+      // Close at the leg's actual expiry, not the sweep trigger date
+      const expiryTimestamp = new Date((latestExpiry || currentDate) + 'T20:00:00Z');
       await this.closePositionAtPrice(t.id, exitPrice, expiryTimestamp.toISOString());
 
       log.debug(`EXPIRE: ${t.id} ${t.symbol} ${t.strategy} intrinsic=$${netIntrinsic.toFixed(2)} exit=$${exitPrice.toFixed(2)}`);

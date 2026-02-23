@@ -15,6 +15,7 @@ import {
 import { startBacktest } from '../actions';
 import Link from 'next/link';
 import type { BacktestRunConfig } from '../../../../src/db/schema';
+import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '../../../../src/config/risk-defaults';
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: [
@@ -129,15 +130,15 @@ export function BacktestForm({
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Max on symbol</Label>
-          <Input name="maxOnSymbol" type="number" placeholder="3" defaultValue={defaultConfig?.maxOnSymbol ?? ''} className="h-9" />
+          <Input name="maxOnSymbol" type="number" placeholder={String(BACKTEST_RISK_DEFAULTS.maxOnSymbol)} defaultValue={defaultConfig?.maxOnSymbol ?? ''} className="h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Max positions</Label>
-          <Input name="maxTotalPositions" type="number" placeholder="20" defaultValue={defaultConfig?.maxTotalPositions ?? ''} className="h-9" />
+          <Input name="maxTotalPositions" type="number" placeholder={String(BACKTEST_RISK_DEFAULTS.maxTotalPositions)} defaultValue={defaultConfig?.maxTotalPositions ?? ''} className="h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Max DD %</Label>
-          <Input name="maxDrawdownPct" type="number" step="0.1" placeholder="5" defaultValue={defaultConfig?.maxDrawdownPct ?? ''} className="h-9" />
+          <Input name="maxDrawdownPct" type="number" step="0.1" placeholder={String(BACKTEST_RISK_DEFAULTS.maxDrawdownPct)} defaultValue={defaultConfig?.maxDrawdownPct ?? ''} className="h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Max agent calls</Label>
@@ -148,11 +149,11 @@ export function BacktestForm({
       <div className="grid grid-cols-5 gap-4">
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Option comm ($/ct)</Label>
-          <Input name="commissionOptionPerContract" type="number" step="0.01" placeholder="0.50" defaultValue={defaultConfig?.commissionSchedule?.option?.perContract ?? '0.50'} className="h-9" />
+          <Input name="commissionOptionPerContract" type="number" step="0.01" placeholder={String(DEFAULT_COMMISSION_SCHEDULE.option.perContract)} defaultValue={defaultConfig?.commissionSchedule?.option?.perContract ?? DEFAULT_COMMISSION_SCHEDULE.option.perContract} className="h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Stock comm ($/sh)</Label>
-          <Input name="commissionStockPerShare" type="number" step="0.001" placeholder="0.00" defaultValue={defaultConfig?.commissionSchedule?.stock?.perShare ?? '0.00'} className="h-9" />
+          <Input name="commissionStockPerShare" type="number" step="0.001" placeholder={String(DEFAULT_COMMISSION_SCHEDULE.stock.perShare)} defaultValue={defaultConfig?.commissionSchedule?.stock?.perShare ?? DEFAULT_COMMISSION_SCHEDULE.stock.perShare} className="h-9" />
         </div>
       </div>
 

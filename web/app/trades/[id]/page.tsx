@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask } from '@/lib/queries';
+import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask, getBacktestRunById } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
@@ -14,6 +14,9 @@ import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
+import { safeParseFloat } from '../../../../src/lib/numbers';
+import { computeTradeCommission } from '../../../../src/lib/commission';
+import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,16 +32,24 @@ export default async function TradeDetailPage({
   const trade = await getTradeById(id);
   if (!trade) notFound();
 
-  const [steps, sourceMessage, tradeEvents, task] = await Promise.all([
+  const [steps, sourceMessage, tradeEvents, task, closeMessage, backtestRun] = await Promise.all([
     trade.taskId ? getTradeSteps(trade.taskId) : Promise.resolve([]),
     trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
     getTradeEvents(trade.id),
     trade.taskId ? getTaskById(trade.taskId) : Promise.resolve(null),
+    trade.closeMessageId ? getMessageById(trade.closeMessageId) : Promise.resolve(null),
+    runId ? getBacktestRunById(runId) : Promise.resolve(null),
   ]);
 
-  const [nearbyMessages, runDecision] = await Promise.all([
+  const commissionSchedule: CommissionSchedule | undefined =
+    (backtestRun?.config as BacktestRunConfig | null)?.commissionSchedule;
+
+  const [nearbyMessages, closeNearbyMessages, runDecision] = await Promise.all([
     sourceMessage
-      ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60)
+      ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60, trade.symbol)
+      : Promise.resolve([]),
+    closeMessage
+      ? getNearbyMessages(closeMessage.author, closeMessage.timestamp, 60, trade.symbol)
       : Promise.resolve([]),
     sourceMessage && trade.backtestRunId
       ? getRunDecisionForTask(sourceMessage.id, trade.backtestRunId)
@@ -98,14 +109,28 @@ export default async function TradeDetailPage({
                 <p className="text-foreground tabular-nums font-medium">{formatCurrency(trade.exitPrice)}</p>
               </StatItem>
               <StatItem label="P&L">
-                <p className={`text-lg font-bold tabular-nums ${pnlColor(trade.pnl)}`}>
-                  {formatCurrency(trade.pnl)}
-                </p>
+                {(() => {
+                  const gross = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
+                  const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
+                  const net = gross != null ? gross - comm : null;
+                  return (
+                    <>
+                      <p className={`text-lg font-bold tabular-nums ${pnlColor(net)}`}>
+                        {formatCurrency(net)}
+                      </p>
+                      {comm > 0 && (
+                        <p className="text-[10px] text-muted-foreground tabular-nums">
+                          gross {formatCurrency(gross)} &minus; {formatCurrency(comm)} comm
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </StatItem>
               <StatItem label="Quantity">
-                <p className="text-foreground tabular-nums font-medium">{trade.quantity}</p>
+                <p className="text-foreground tabular-nums font-medium">{trade.quantity ?? 1}</p>
               </StatItem>
-              {trade.realizedPnl && trade.status === 'OPEN' && (
+              {trade.realizedPnl && safeParseFloat(trade.realizedPnl) !== 0 && (
                 <StatItem label="Realized P&L (trims)">
                   <p className={`tabular-nums font-medium ${pnlColor(trade.realizedPnl)}`}>
                     {formatCurrency(trade.realizedPnl)}
@@ -137,8 +162,8 @@ export default async function TradeDetailPage({
           <FillQuality trade={trade} />
 
           {/* Event Timeline */}
-          {tradeEvents.length > 1 && (
-            <EventTimeline events={tradeEvents} />
+          {tradeEvents.length > 0 && (
+            <EventTimeline events={tradeEvents} closeMessageId={trade.closeMessageId} />
           )}
 
           {/* Signal Decision */}
@@ -163,6 +188,16 @@ export default async function TradeDetailPage({
             author={sourceMessage?.author ?? trade.trader}
             viewAllHref={`/messages?authors=${encodeURIComponent(sourceMessage?.author ?? trade.trader)}`}
           />
+
+          {/* Close Context */}
+          {closeMessage && (
+            <ChatPreview
+              messages={closeNearbyMessages.length > 0 ? closeNearbyMessages : [closeMessage]}
+              focusMessageId={trade.closeMessageId ?? undefined}
+              author={closeMessage.author}
+              title="Close Context"
+            />
+          )}
 
           {/* Audit Trail */}
           {steps.length > 0 && (

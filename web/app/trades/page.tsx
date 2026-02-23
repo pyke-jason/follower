@@ -1,4 +1,4 @@
-import { getClosedTrades, getTradeHistorySummary } from '@/lib/queries';
+import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule } from '@/lib/queries';
 import { TradesTableClient } from '../components/trades-table-client';
 import { MetricStrip } from '../components/metric-strip';
 import type { Metric } from '../components/metric-strip';
@@ -23,7 +23,7 @@ export default async function TradeHistoryPage({
 
   const hasFilters = !!(params.trader || params.symbol || params.strategy);
 
-  const [trades, summary] = await Promise.all([
+  const [trades, summary, commissionSchedule] = await Promise.all([
     getClosedTrades({
       trader: params.trader,
       symbol: params.symbol,
@@ -38,6 +38,7 @@ export default async function TradeHistoryPage({
       strategy: params.strategy,
       runId,
     }),
+    runId ? getRunCommissionSchedule(runId) : undefined,
   ]);
 
   const metrics: Metric[] = [
@@ -122,7 +123,7 @@ export default async function TradeHistoryPage({
       </div>
 
       <div className="animate-in-up">
-        <TradesTableClient trades={trades} runId={runId} />
+        <TradesTableClient trades={trades} runId={runId} commissionSchedule={commissionSchedule} />
         {trades.length === 0 && hasFilters && (
           <p className="px-4 py-6 text-sm text-muted-foreground text-center">
             No closed trades matching filters

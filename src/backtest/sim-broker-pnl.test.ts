@@ -267,6 +267,7 @@ describe('forceCloseAll', () => {
       new SimClock(CLOCK_TIME),
       RUN_ID,
       'midpoint',
+      100_000,
     );
 
     const totalPnl = await brokerClose.forceCloseAll(CLOCK_TIME);
@@ -352,6 +353,7 @@ describe('Multiple positions', () => {
       new SimClock(CLOCK_TIME),
       RUN_ID,
       'midpoint',
+      100_000,
     );
 
     const totalPnl = await closeBroker.forceCloseAll(CLOCK_TIME);

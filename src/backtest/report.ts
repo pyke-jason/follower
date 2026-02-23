@@ -133,7 +133,7 @@ export function computeCoreStats<T extends {
   pnl: string | null; status: string; trader: string; strategy: string;
   quantity: number | null; legs: unknown[] | null;
   openedAt: string | null; closedAt: string | null;
-}>(trades: T[], mtmSnapshots?: MtmSnapshot[], startingEquity = 100_000, commissionSchedule?: CommissionSchedule) {
+}>(trades: T[], mtmSnapshots?: MtmSnapshot[], commissionSchedule?: CommissionSchedule) {
   const closed = trades.filter((t) => t.status === 'CLOSED');
   const open = trades.filter((t) => t.status !== 'CLOSED');
 
@@ -251,11 +251,11 @@ export function generateReportFromTrades(params: {
             entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
   decisions: { path: string; decision: string }[];
   mtmSnapshots?: MtmSnapshot[];
-  startingEquity?: number;
+  startingEquity: number;
   commissionSchedule?: CommissionSchedule;
 }): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
-  const { trades, decisions, mtmSnapshots, startingEquity = 100_000, commissionSchedule } = params;
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, startingEquity, commissionSchedule);
+  const { trades, decisions, mtmSnapshots, startingEquity, commissionSchedule } = params;
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, commissionSchedule);
 
   // Derive execution stats from decisions — count both live agent and cached intent paths
   const isClassified = (d: { path: string }) => d.path === 'agent' || d.path === 'intent';

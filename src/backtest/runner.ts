@@ -3,9 +3,11 @@ import { DatabentoMarketDataProvider } from './market-data.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker } from './sim-broker.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
+import { checkRiskLimits } from '../orders/risk-check.js';
+import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import { toDateKeyET, dayBoundsUTC, getPreviousTradingDayKey } from '../lib/et-date.js';
+import { toDateKeyET, dayBoundsUTC, getPreviousTradingDayKey, parseDateKey } from '../lib/et-date.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
 import { prefetchForAgent, type PrefetchedData } from '../agent/prefetch.js';
@@ -45,8 +47,6 @@ type BacktestContext = {
   agentProvider: LLMProvider;
   pipelineDeps: PipelineDeps;
   tradeAgent: TradeAgent;
-  maxOnSymbol: number;
-  maxTotalPositions: number;
 };
 
 const log = createLogger('Backtest');
@@ -155,15 +155,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const clock = new SimClock(startDate);
   const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, tickCacheDb, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
   const fillModel = config.fillModel ?? 'orats';
-  const startingEquity = config.startingEquity ?? 100_000;
+  const startingEquity = config.startingEquity ?? DEFAULT_STARTING_EQUITY;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
 
   const fetchBars = (symbol: string, barsBack: number) =>
     broker.getBars({ symbol, interval: '1', barsBack });
-
-  const MAX_CONTRACTS: Record<string, number> = {
-    CALL: 20, PUT: 20, CDS: 20, PDS: 20,
-  };
 
   const sizingService = {
     async calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }) {
@@ -184,10 +180,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     broker.getOpenTrades(filters);
 
   const riskConfig: RiskCheckConfig = {
-    maxOnSymbol: config.maxOnSymbol ?? 3,
-    maxTotalPositions: config.maxTotalPositions ?? 20,
-    maxDrawdownPct: config.maxDrawdownPct ?? 5,
-    maxNotionalMultiplier: config.maxNotionalMultiplier ?? 2,
+    maxOnSymbol: config.maxOnSymbol ?? BACKTEST_RISK_DEFAULTS.maxOnSymbol,
+    maxTotalPositions: config.maxTotalPositions ?? BACKTEST_RISK_DEFAULTS.maxTotalPositions,
+    maxDrawdownPct: config.maxDrawdownPct ?? BACKTEST_RISK_DEFAULTS.maxDrawdownPct,
+    maxNotionalMultiplier: config.maxNotionalMultiplier ?? BACKTEST_RISK_DEFAULTS.maxNotionalMultiplier,
   };
 
   const riskDeps: RiskCheckDeps = {
@@ -235,19 +231,14 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   log.info(`Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
 
   // Build PipelineDeps once — shared across all messages.
-  // Risk checks are a no-op: the TradeAgent already ran checkRiskLimits
-  // before any signal reaches the pipeline, so re-checking here would be
-  // redundant work (same deps, same config, same result).
   const pipelineDeps: PipelineDeps = {
     broker,
     orderManager,
     getOpenPositions,
     calculatePositionSize: async (input) => sizingService.calculateSize(input),
-    checkRiskLimits: async () => ({
-      allowed: true as boolean, dailyPnl: 0,
-      openPositionsOnSymbol: 0, totalOpenPositions: 0,
-      maxTotalPositions: 0, totalNotional: 0, maxNotional: 0,
-    }),
+    checkRiskLimits: config.disableRiskLimits
+      ? async () => ({ allowed: true as boolean, dailyPnl: 0, openPositionsOnSymbol: 0, totalOpenPositions: 0, maxTotalPositions: 0, totalNotional: 0, maxNotional: 0 })
+      : (input) => checkRiskLimits(input, riskDeps, riskConfig),
     recordTrade: (input) => recordTrade({
       ...input,
       backtestRunId: runId,
@@ -259,15 +250,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     },
   };
 
-  // Build the rule-based trade agent — wraps skip checks, risk, and sizing
+  // Build the rule-based trade agent — wraps skip checks and sizing
   const tradeAgent = new RuleBasedTradeAgent({
     skipOpts: {
       maxOnSymbol: riskConfig.maxOnSymbol,
       maxTotalPositions: riskConfig.maxTotalPositions,
     },
-    riskDeps,
-    riskConfig,
-    disableRiskLimits: config.disableRiskLimits,
     calculateSize: (input) => sizingService.calculateSize(input),
   });
 
@@ -278,8 +266,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     agentProvider,
     pipelineDeps,
     tradeAgent,
-    maxOnSymbol: riskConfig.maxOnSymbol,
-    maxTotalPositions: riskConfig.maxTotalPositions,
   };
 
   // ── Phase 1: Batch intent extraction ──
@@ -376,15 +362,34 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     const msg = tradableMessages[i];
     const msgDay = toDateKeyET(msg.timestamp);
 
-    // ── Day boundary: sweep expired options + MTM snapshot ──
+    // ── Day boundary: cancel stale close orders + sweep expired + MTM snapshot ──
     if (lastMsgDay && msgDay !== lastMsgDay) {
       log.info(`Day ${lastMsgDay} → ${msgDay}`);
+
+      // 0. Cancel surviving close/trim working orders from previous day.
+      //    These orders had all day to fill; if they didn't, the position
+      //    stays open (matches real market behavior for unfilled day orders).
+      const workingOrders = orderManager.getWorkingOrders();
+      for (const wo of workingOrders) {
+        if (wo.params.isClosing && wo.status === 'OPEN') {
+          log.info(`Day boundary: cancelling unfilled close order ${wo.orderId} ${wo.params.symbol}`);
+          await broker.cancelOrder(wo.orderId);
+          pendingIntents.delete(wo.orderId);
+        }
+      }
+      // Tick so the order manager processes the cancellations
+      await orderManager.tick(clock.now());
+
       const openCount = await broker.getOpenPositionCount();
       if (openCount > 0) {
-        // 1. Sweep expired options first (they become closed trades)
-        const expiredCount = await broker.sweepExpired(lastMsgDay);
+        // 1. Sweep expired options first (they become closed trades).
+        //    Use the day before msgDay (not lastMsgDay) so multi-day gaps
+        //    (weekends, holidays, message-less days) don't skip expiries.
+        const sweepThrough = new Date(parseDateKey(msgDay).getTime() - 86_400_000)
+          .toISOString().slice(0, 10);
+        const expiredCount = await broker.sweepExpired(sweepThrough);
         if (expiredCount > 0) {
-          log.info(`Swept ${expiredCount} expired option(s) on ${lastMsgDay}`);
+          log.info(`Swept ${expiredCount} expired option(s) through ${sweepThrough}`);
         }
 
         // 2. MTM snapshot for remaining open positions
@@ -702,6 +707,7 @@ async function processMessage(
     btCtx.pipelineDeps,
     {
       messageId: msg.id,
+      messageTimestamp: msg.timestamp.toISOString(),
       backtestRunId: btCtx.runId,
       isBacktest: true,
       allowedStrategies,

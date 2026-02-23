@@ -188,6 +188,7 @@ export async function cancelBacktestRun(formData: FormData) {
       })),
       decisions,
       mtmSnapshots,
+      startingEquity: cancelledConfig?.startingEquity ?? 100_000,
       commissionSchedule: cancelledConfig?.commissionSchedule,
     });
     await db.update(schema.backtestRuns)

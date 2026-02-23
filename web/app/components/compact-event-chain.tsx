@@ -3,7 +3,7 @@ import { formatCurrency, formatDate } from '@/lib/format';
 import { safeParseFloat } from '../../../src/lib/numbers';
 import type { TradeEvent } from '../../../src/db/schema';
 
-function EventLine({ event, index }: { event: TradeEvent; index: number }) {
+function EventLine({ event, index, closeMessageId }: { event: TradeEvent; index: number; closeMessageId?: string | null }) {
   const price = safeParseFloat(event.price);
   const meta = event.metadata as Record<string, unknown> | null;
 
@@ -60,6 +60,11 @@ function EventLine({ event, index }: { event: TradeEvent; index: number }) {
     <div className="flex items-center gap-2 text-xs">
       <span className="text-[10px] text-muted-foreground/60 tabular-nums w-4 shrink-0">{index + 1}.</span>
       <Badge label={event.action} />
+      {event.action === 'CLOSE' && (
+        <span className="text-[10px] text-muted-foreground/50 italic">
+          {closeMessageId ? 'Signal' : 'Auto'}
+        </span>
+      )}
       <span className="text-muted-foreground">{detail}</span>
       <span className="text-[10px] text-muted-foreground/50 ml-auto shrink-0">
         {formatDate(event.timestamp)}
@@ -68,13 +73,13 @@ function EventLine({ event, index }: { event: TradeEvent; index: number }) {
   );
 }
 
-export function CompactEventChain({ events }: { events: TradeEvent[] }) {
+export function CompactEventChain({ events, closeMessageId }: { events: TradeEvent[]; closeMessageId?: string | null }) {
   if (events.length === 0) return null;
 
   return (
     <div className="space-y-1">
       {events.map((event, i) => (
-        <EventLine key={event.id} event={event} index={i} />
+        <EventLine key={event.id} event={event} index={i} closeMessageId={closeMessageId} />
       ))}
     </div>
   );

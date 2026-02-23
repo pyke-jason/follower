@@ -11,9 +11,6 @@ import {
   getNearbyMessages,
   getMessageById,
   getRunDecisionForTask,
-  getMessagesByIds,
-  getLatestIntents,
-  getLabelsForMessages,
 } from '@/lib/queries';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
@@ -68,6 +65,7 @@ export type TradeStory = {
   taskContext: TaskContext | null;
   taskResult: TaskResult | null;
   sourceMessage: Message | null;
+  closeMessage: Message | null;
   nearbyMessages: Message[];
   decision: {
     decision: string;
@@ -82,15 +80,16 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
   const trade = await getTradeById(tradeId);
   if (!trade) return null;
 
-  const [events, task, sourceMessage] = await Promise.all([
+  const [events, task, sourceMessage, closeMessage] = await Promise.all([
     getTradeEvents(tradeId),
     trade.taskId ? getTaskById(trade.taskId) : Promise.resolve(null),
     trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
+    trade.closeMessageId ? getMessageById(trade.closeMessageId) : Promise.resolve(null),
   ]);
 
   // Fetch nearby messages and run decision in parallel (depend on sourceMessage/trade)
   const [nearbyMessages, runDecisionRow] = await Promise.all([
-    sourceMessage ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60) : Promise.resolve([]),
+    sourceMessage ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60, trade.symbol) : Promise.resolve([]),
     runId && trade.sourceMessageId ? getRunDecisionForTask(trade.sourceMessageId, runId) : Promise.resolve(null),
   ]);
 
@@ -117,35 +116,6 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
   const taskContext = task?.context ?? null;
   const taskResult = task?.result ?? null;
 
-  return { trade, events, task, taskContext, taskResult, sourceMessage, nearbyMessages, decision };
+  return { trade, events, task, taskContext, taskResult, sourceMessage, closeMessage, nearbyMessages, decision };
 }
 
-// ─── Trade Linked Messages ──────────────────────────
-
-/** Fetch only the messages directly linked to a trade (via trade_events). */
-export async function fetchTradeLinkedMessages(tradeId: string) {
-  // Get the trade + all events to find linked message IDs
-  const [trades, events] = await Promise.all([
-    db.select().from(schema.trades).where(eq(schema.trades.id, tradeId)),
-    db.select().from(schema.tradeEvents).where(eq(schema.tradeEvents.tradeId, tradeId)),
-  ]);
-
-  // Collect unique message IDs from trade row + events
-  const msgIds = new Set<string>();
-  for (const t of trades) {
-    if (t.sourceMessageId) msgIds.add(t.sourceMessageId);
-    if (t.closeMessageId) msgIds.add(t.closeMessageId);
-  }
-  for (const e of events) {
-    if (e.messageId) msgIds.add(e.messageId);
-  }
-  if (msgIds.size === 0) return { messages: [], intents: {}, labels: {} };
-
-  const ids = [...msgIds];
-  const [messages, intents, labels] = await Promise.all([
-    getMessagesByIds(ids),
-    getLatestIntents(ids),
-    getLabelsForMessages(ids),
-  ]);
-  return { messages, intents, labels };
-}

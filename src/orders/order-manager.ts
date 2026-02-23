@@ -123,6 +123,9 @@ export class OrderManager {
       }
 
       // 3. Check adjustment rules (PRICE_CHASE)
+      // Batch-apply steps based on elapsed time: in backtest, tick() fires once per
+      // message (potentially minutes apart), so we compute how many steps should have
+      // fired and apply them all at once.
       if (order.params.adjustmentRules) {
         for (const rule of order.params.adjustmentRules) {
           if (rule.type !== 'PRICE_CHASE') continue;
@@ -130,7 +133,12 @@ export class OrderManager {
           const sinceLastAdj = (now.getTime() - order.lastAdjustedAt.getTime()) / 1000;
           if (sinceLastAdj < rule.intervalSec) continue;
 
-          if (rule.maxSteps != null && order.adjustmentCount >= rule.maxSteps) continue;
+          const stepsElapsed = Math.floor(sinceLastAdj / rule.intervalSec);
+          const remainingSteps = rule.maxSteps != null
+            ? Math.max(0, rule.maxSteps - order.adjustmentCount)
+            : stepsElapsed;
+          const stepsToApply = Math.min(stepsElapsed, remainingSteps);
+          if (stepsToApply <= 0) continue;
 
           // BUY chases UP, SELL chases DOWN
           const firstLeg = order.params.legs[0];
@@ -138,16 +146,17 @@ export class OrderManager {
             throw new Error(`Working order ${orderId} has no legs — cannot determine price chase direction`);
           }
           const isBuy = firstLeg.action === 'BUY';
+          const totalMovement = stepsToApply * rule.stepAmount;
           const newPrice = isBuy
-            ? order.currentLimitPrice + rule.stepAmount
-            : order.currentLimitPrice - rule.stepAmount;
+            ? order.currentLimitPrice + totalMovement
+            : order.currentLimitPrice - totalMovement;
 
           const roundedPrice = roundCents(newPrice);
-          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${order.currentLimitPrice} -> $${roundedPrice} (step ${order.adjustmentCount + 1}/${rule.maxSteps ?? '∞'})`);
+          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${order.currentLimitPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
           await this.broker.modifyOrder(orderId, roundedPrice);
           order.currentLimitPrice = roundedPrice;
           order.lastAdjustedAt = now;
-          order.adjustmentCount++;
+          order.adjustmentCount += stepsToApply;
         }
       }
     }

@@ -54,6 +54,7 @@ export default async function TaskDetailPage({
   ]);
 
   // Round 2: depends on sourceMessage
+  // Task page has no trade symbol — show all nearby messages (no symbol filter)
   const nearbyMessages = sourceMessage
     ? await getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60)
     : [];

@@ -77,7 +77,7 @@ export class ATRPositionSizer implements PositionSizingStrategy {
 
     const reasoning = [
       atrFallback
-        ? `ATR fallback: 2% of $${entryPrice.toFixed(2)} (only ${bars.length} bar${bars.length === 1 ? '' : 's'} available)`
+        ? `ATR fallback: ${(ATR_FALLBACK_FACTOR * 100).toFixed(0)}% of $${entryPrice.toFixed(2)} (only ${bars.length} bar${bars.length === 1 ? '' : 's'} available)`
         : `ATR(${atrPeriod}) = $${atr.toFixed(2)}`,
       `Risk/trade = $${riskPerTrade.toFixed(0)} (${(riskPercent * 100).toFixed(1)}% of $${equity.toFixed(0)})`,
       `Per-unit risk = $${effectiveRisk.toFixed(2)} (ATR × ${atrMultiplier})`,

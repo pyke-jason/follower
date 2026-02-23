@@ -12,6 +12,8 @@ import { setLogLevel, createLogger } from '../lib/logger.js';
 import type { LogLevel } from '../lib/logger.js';
 import type { BacktestConfig, FillModel } from './types.js';
 import { db, schema } from '../db/client.js';
+import { DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
+
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -90,7 +92,7 @@ async function main() {
     ...(maxTotalPositionsArg ? { maxTotalPositions: parseInt(maxTotalPositionsArg, 10) } : {}),
     ...(maxDrawdownPctArg ? { maxDrawdownPct: parseFloat(maxDrawdownPctArg) } : {}),
     ...(maxAgentCallsArg ? { maxAgentCalls: parseInt(maxAgentCallsArg, 10) } : {}),
-    ...(startingEquityArg ? { startingEquity: parseInt(startingEquityArg, 10) } : {}),
+    startingEquity: startingEquityArg ? parseInt(startingEquityArg, 10) : DEFAULT_STARTING_EQUITY,
     ...((commissionOptionArg || commissionStockArg) ? {
       commissionSchedule: {
         ...(commissionOptionArg ? { option: { perContract: parseFloat(commissionOptionArg) } } : {}),

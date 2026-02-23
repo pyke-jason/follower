@@ -81,8 +81,7 @@ export default async function BacktestDetailPage({
 
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const configStartingEquity = config.startingEquity ?? 100_000;
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, configStartingEquity, mtmSnapshots, config.commissionSchedule);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, mtmSnapshots, config.commissionSchedule);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -218,7 +217,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTableClient trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} enableChatPanel />;
+  const tradesContent = <TradesTableClient trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -421,11 +420,10 @@ export type StrategyEquityPoint = Record<string, number | string>;
 function computeFromTrades(
   allTrades: TradeRow[],
   decisions: { decision: { path: string; decision: string } }[],
-  startingEquity = 100_000,
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
   commissionSchedule?: CommissionSchedule,
 ) {
-  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, startingEquity, commissionSchedule);
+  const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, commissionSchedule);
 
   // Execution stats from already-loaded decisions — no precomputed fallback
   const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;

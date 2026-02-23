@@ -48,6 +48,7 @@
   - DATABENTO COSTS MONEY: They charge per byte. Fetch minimum columns, narrowest date ranges, prefer cache. Never mass-delete `.cache/databento/` files. Empty `[]` files are valid.
   - TIMESTAMP STRICTNESS: Backtest trades MUST have explicit timestamps. Never fall back to wall-clock time.
   - DYNAMIC TIMEZONES: `dayBoundsUTC()` dynamically detects EST/EDT. Never hardcode UTC offsets.
+  - NEVER USE MARKET ORDERS ON OPTIONS: Options have massive bid-ask spreads (often $1-3+). MARKET orders fill at the worst side of the spread, costing $0.50+/contract — on a 12-contract position that's $600+ of avoidable slippage. ALWAYS use LIMIT orders with price-chase logic for options. This applies to ALL order types: OPEN, CLOSE, TRIM, LEG_OFF. The chase mechanism (`OrderManager` + `PRICE_CHASE` adjustment rules) widens the limit incrementally until filled. Position-reducing orders (CLOSE/TRIM/LEG_OFF) use `CLOSE_ORDER_DEFAULTS` with wider chase steps, no `cancelAfterSec`, and `maxSteps` caps — they persist until filled or day boundary. NEVER propose MARKET as a "simpler" alternative.
 </domain_rules>
 
 <workflows>

@@ -131,6 +131,28 @@ export function isRangeCovered(ranges: [number, number][], start: number, end: n
   return false;
 }
 
+/** Return portions of [start, end] not covered by any existing interval. */
+export function getUncoveredGaps(
+  ranges: [number, number][],
+  start: number,
+  end: number,
+): [number, number][] {
+  const relevant = ranges
+    .filter(([lo, hi]) => hi > start && lo < end)
+    .sort((a, b) => a[0] - b[0]);
+
+  const gaps: [number, number][] = [];
+  let cursor = start;
+
+  for (const [lo, hi] of relevant) {
+    if (lo > cursor) gaps.push([cursor, Math.min(lo, end)]);
+    cursor = Math.max(cursor, hi);
+  }
+
+  if (cursor < end) gaps.push([cursor, end]);
+  return gaps;
+}
+
 // ── Cache types ───────────────────────────────────────────────────
 
 export type TickCacheData = {

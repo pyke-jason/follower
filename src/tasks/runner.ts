@@ -23,13 +23,9 @@ import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { isOpen, isClosed, notBacktest, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { recordTrade } from '../trades/record-trade.js';
+import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
 
-const riskConfig: RiskCheckConfig = {
-  maxOnSymbol: 5,
-  maxTotalPositions: 20,
-  maxDrawdownPct: 5,
-  maxNotionalMultiplier: 2,
-};
+const riskConfig: RiskCheckConfig = { ...LIVE_RISK_DEFAULTS };
 
 // ─── Order Manager (shared across tasks, persists working orders) ───
 
@@ -154,8 +150,8 @@ async function processTask(task: Task): Promise<void> {
 
     // Deterministic pre-checks — skip without agent call if safe
     const skip = shouldSkipDeterministic(context, prefetched, {
-      maxOnSymbol: 5,
-      maxTotalPositions: 20,
+      maxOnSymbol: riskConfig.maxOnSymbol,
+      maxTotalPositions: riskConfig.maxTotalPositions,
     });
     if (skip) {
       await completeTask(task.id, { decision: 'SKIP', reasoning: `[deterministic] ${skip.reason}` });
@@ -246,6 +242,7 @@ async function processTask(task: Task): Promise<void> {
             entryPrice: input.entryPrice,
             equity: balance.equity,
             spreadMaxRisk: input.spreadMaxRisk,
+            maxQuantity: MAX_CONTRACTS[input.strategy],
           });
         },
         checkRiskLimits: (input) => checkRiskLimits(input, riskDeps, riskConfig),

@@ -2,27 +2,18 @@
  * Trade Agent — the single decision-making abstraction.
  *
  * Given parsed signals and portfolio state, decides what actions to take.
- * The RuleBasedTradeAgent wraps existing deterministic-skips and risk-check
+ * The RuleBasedTradeAgent wraps deterministic-skips and position sizing
  * logic so the runner doesn't call them directly.
  */
 import type { Signal } from '../agent/schemas.js';
-import type { Trade } from '../db/schema.js';
-import type { AccountBalance, Quote, OrderParams } from '../broker/types.js';
+import type { OrderParams } from '../broker/types.js';
 import { buildOrderFromSignal } from '../pipeline/execute.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import { shouldSkipDeterministic, shouldSkipSignal } from '../agent/deterministic-skips.js';
 import type { SkipCheckOpts } from '../agent/deterministic-skips.js';
 import type { PrefetchedData } from '../agent/prefetch.js';
 import type { TaskContext } from '../db/schema.js';
-import { checkRiskLimits } from '../orders/risk-check.js';
-import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
 // ─── Value Objects ─────────────────────────────────
-
-export type PortfolioState = {
-  positions: Trade[];
-  balance: AccountBalance;
-  quotes: Map<string, Quote>;
-};
 
 export type Action =
   | { type: 'PLACE_ORDER'; order: OrderParams; signal: Signal; trader: string; reasoning: string }
@@ -43,16 +34,12 @@ export interface TradeAgent {
     prefetched: PrefetchedData | undefined,
     allowedStrategies?: string[],
   ): Promise<Action[]>;
-
 }
 
 // ─── Rule-Based Implementation ─────────────────────
 
 export type RuleBasedTradeAgentConfig = {
   skipOpts: SkipCheckOpts;
-  riskDeps: RiskCheckDeps;
-  riskConfig: RiskCheckConfig;
-  disableRiskLimits?: boolean;
   calculateSize: (input: {
     trader: string;
     symbol: string;
@@ -63,8 +50,8 @@ export type RuleBasedTradeAgentConfig = {
 };
 
 /**
- * Deterministic trade agent. No LLM calls — applies skip checks, risk limits,
- * and position sizing rules to decide whether a signal should become an order.
+ * Deterministic trade agent. No LLM calls — applies skip checks and
+ * position sizing rules to decide whether a signal should become an order.
  */
 export class RuleBasedTradeAgent implements TradeAgent {
   constructor(private config: RuleBasedTradeAgentConfig) {}

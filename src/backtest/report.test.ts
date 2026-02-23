@@ -181,7 +181,7 @@ describe('computeCoreStats deterministic tests', () => {
   test('with commission schedule: stock perShare=$0.005, qty=100', () => {
     const schedule: CommissionSchedule = { stock: { perShare: 0.005 } };
     const trades = [makeTrade({ pnl: '10', quantity: 100 })];
-    const { summary } = computeCoreStats(trades, undefined, 100_000, schedule);
+    const { summary } = computeCoreStats(trades, undefined, schedule);
     // grossPnl = 10
     expect(summary.totalPnl).toBe(10);
     // commission: roundCents(0.005 * 100) * 2 = $1.00
@@ -196,7 +196,7 @@ describe('computeCoreStats deterministic tests', () => {
       makeTrade({ pnl: '100', status: 'CLOSED', quantity: 100 }),
       makeTrade({ pnl: null, status: 'OPEN', quantity: 100 }),
     ];
-    const { summary } = computeCoreStats(trades, undefined, 100_000, schedule);
+    const { summary } = computeCoreStats(trades, undefined, schedule);
     expect(summary.totalTrades).toBe(1); // only closed count
     expect(summary.openAtEnd).toBe(1);
     // closed commission: roundCents(0.005*100)*2 = $1.00
@@ -244,7 +244,7 @@ describe('computeCoreStats deterministic tests', () => {
       makeTrade({ pnl: '-80', quantity: 100, closedAt: '2025-01-02T15:00:00Z' }),
       makeTrade({ pnl: '30', quantity: 200, closedAt: '2025-01-03T15:00:00Z' }),
     ];
-    const { summary } = computeCoreStats(trades, undefined, 100_000, schedule);
+    const { summary } = computeCoreStats(trades, undefined, schedule);
     // grossPnl = 200 - 80 + 30 = 150
     expect(summary.totalPnl).toBe(150);
     // commissions: qty50 -> 0.005*50*2=0.50, qty100 -> 0.005*100*2=1.00, qty200 -> 0.005*200*2=2.00 => total=3.50

@@ -67,7 +67,7 @@ function EventDetail({ event }: { event: TradeEvent }) {
   }
 }
 
-export function EventTimeline({ events }: { events: TradeEvent[] }) {
+export function EventTimeline({ events, closeMessageId }: { events: TradeEvent[]; closeMessageId?: string | null }) {
   if (events.length === 0) return null;
 
   return (
@@ -87,6 +87,11 @@ export function EventTimeline({ events }: { events: TradeEvent[] }) {
             >
               <span className="text-xs text-muted-foreground tabular-nums w-5">{i + 1}.</span>
               <Badge label={event.action} />
+              {event.action === 'CLOSE' && (
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${closeMessageId ? 'text-blue-600 bg-blue-500/10' : 'text-muted-foreground bg-muted'}`}>
+                  {closeMessageId ? 'Signal' : 'Auto'}
+                </span>
+              )}
               <EventDetail event={event} />
               <span className="text-[10px] text-muted-foreground/60 ml-auto">
                 {formatDate(event.timestamp)}

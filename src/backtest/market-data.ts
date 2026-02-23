@@ -2,7 +2,7 @@ import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js
 import {
   getFetchMeta,
   fetchTickWindow, defaultSchemaForDataset,
-  mergeRanges, isRangeCovered,
+  mergeRanges, isRangeCovered, getUncoveredGaps,
 } from './databento-tape.js';
 import type { QuoteTick, TickCacheData } from './databento-tape.js';
 import {
@@ -15,6 +15,22 @@ import { createLogger } from '../lib/logger.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('MarketData');
+
+/** Returns true if the date is more than 48h in the past (data finalized, safe to cache empty). */
+function isHistoricalDate(d: Date): boolean {
+  return Date.now() - d.getTime() > 48 * 60 * 60 * 1000;
+}
+
+/** Snap ms timestamp down to the start of its minute. */
+function snapToMinuteFloor(ms: number): number {
+  return ms - (ms % 60_000);
+}
+
+/** Snap ms timestamp up to the start of the next minute (no-op if already aligned). */
+function snapToMinuteCeil(ms: number): number {
+  const rem = ms % 60_000;
+  return rem === 0 ? ms : ms + (60_000 - rem);
+}
 
 /**
  * MarketDataProvider: Abstraction for getting price data at a point in time.
@@ -62,8 +78,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
    * Fetches a 1-minute window around `at` for each uncached symbol.
    */
   async prefetch(symbols: string[], at: Date): Promise<void> {
-    const windowStart = new Date(at.getTime() - 60_000);
-    const windowEnd = new Date(at.getTime() + 60_000);
+    const atMs = at.getTime();
+    const windowStart = new Date(snapToMinuteFloor(atMs - 60_000));
+    const windowEnd   = new Date(snapToMinuteCeil(atMs + 60_000));
 
     const equitySyms = symbols.filter(s => !isOccOptionSymbol(s));
     const optionSyms = symbols.filter(s => isOccOptionSymbol(s));
@@ -116,6 +133,19 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const optionCap = optionsMaxLookbackMins ?? 300;
 
     const isOption = isOccOptionSymbol(symbol);
+
+    // Short-circuit: if memory cache already has a tick within 1 min, skip ensureRange entirely
+    const cached = this.tickCache.get(symbol);
+    if (cached && cached.ticks.length > 0) {
+      const tick = this.findLastTickBefore(cached.ticks, at);
+      if (tick) {
+        const ageMs = atMs - tick.timestamp.getTime();
+        if (ageMs >= 0 && ageMs <= 60_000) {
+          return this.makeQuote(symbol, tick);
+        }
+      }
+    }
+
     let lastCheckedMins = 0;
     let foundTick: QuoteTick | null = null;
     for (const mins of DatabentoMarketDataProvider.LOOKBACK_MINUTES) {
@@ -125,8 +155,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       // Only fetch if we haven't found a tick yet. Once a tick is found,
       // wider windows won't discover a newer one — just widen staleness acceptance.
       if (!foundTick) {
-        const windowStart = new Date(atMs - mins * 60_000);
-        const windowEnd = new Date(atMs + 60_000);
+        const windowStart = new Date(snapToMinuteFloor(atMs - mins * 60_000));
+        const windowEnd   = new Date(snapToMinuteCeil(atMs + 60_000));
         await this.ensureRange(symbol, windowStart, windowEnd);
         const entry = this.tickCache.get(symbol);
         if (entry) {
@@ -255,8 +285,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     // Phase 2: Fetch prices for constructed symbols via narrow window.
     const allTicks: QuoteTick[] = [];
     const uncachedSymbols: string[] = [];
-    const startMs = at.getTime() - 60_000;
-    const endMs = at.getTime() + 60_000;
+    const startMs = snapToMinuteFloor(at.getTime() - 60_000);
+    const endMs   = snapToMinuteCeil(at.getTime() + 60_000);
 
     for (const sym of candidateSymbols) {
       const entry = this.tickCache.get(sym);
@@ -368,37 +398,53 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       }
     }
 
-    // 3. Fetch from API
-    let newTicks: QuoteTick[];
-    try {
-      newTicks = await fetchTickWindow({
-        apiKey: this.apiKey,
-        dataset,
-        schema,
-        symbols: [symbol],
-        start,
-        end,
-        stypeIn: isOccOptionSymbol(symbol) ? 'raw_symbol' : undefined,
-      });
-    } catch (err) {
-      throw new Error(`[ensureRange] Failed to fetch ${symbol} ${start.toISOString()}..${end.toISOString()}: ${err instanceof Error ? err.message : err}`);
+    // 3. Compute uncovered gaps — only fetch what's missing
+    const existingRanges = entry?.ranges ?? [];
+    const gaps = getUncoveredGaps(existingRanges, startMs, endMs);
+
+    if (gaps.length === 0) {
+      // Fully covered (multi-interval coverage that isRangeCovered missed)
+      return this.filterTicks(entry!.ticks, startMs, endMs);
     }
 
-    // 4. Don't cache empty results on trading days (transient API issue — force retry)
-    if (newTicks.length === 0 && isTradingDay(start)) {
-      if (!entry) return [];
-      return this.filterTicks(entry.ticks, startMs, endMs);
+    // 4. Fetch each gap from API
+    for (const [gapStart, gapEnd] of gaps) {
+      let newTicks: QuoteTick[];
+      try {
+        newTicks = await fetchTickWindow({
+          apiKey: this.apiKey,
+          dataset,
+          schema,
+          symbols: [symbol],
+          start: new Date(gapStart),
+          end: new Date(gapEnd),
+          stypeIn: isOccOptionSymbol(symbol) ? 'raw_symbol' : undefined,
+        });
+      } catch (err) {
+        throw new Error(`[ensureRange] Failed to fetch ${symbol} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}: ${err instanceof Error ? err.message : err}`);
+      }
+
+      // Skip caching empty results for recent trading days (data may still arrive).
+      // Historical dates (>48h old) are finalized — cache empty to prevent perpetual re-fetches.
+      if (newTicks.length === 0 && isTradingDay(new Date(gapStart)) && !isHistoricalDate(new Date(gapEnd))) {
+        continue;
+      }
+
+      // Merge this gap into cache immediately (so next gap sees updated state)
+      const existing = this.tickCache.get(memKey) ?? { ranges: [], ticks: [] };
+      const mergedRanges = mergeRanges(existing.ranges, [gapStart, gapEnd]);
+      const merged = this.mergeTicks(existing.ticks, newTicks);
+      const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
+      this.tickCache.set(memKey, updated);
+      await writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, newTicks, [gapStart, gapEnd]);
     }
 
-    // 5. Merge into memory cache + write DB
-    const existing = entry ?? { ranges: [], ticks: [] };
-    const mergedRanges = mergeRanges(existing.ranges, [startMs, endMs]);
-    const merged = this.mergeTicks(existing.ticks, newTicks);
-    const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
-    this.tickCache.set(memKey, updated);
-    await writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, newTicks, [startMs, endMs]);
-
-    return this.filterTicks(merged, startMs, endMs);
+    // 5. Return filtered ticks from (now-updated) cache
+    const final = this.tickCache.get(memKey);
+    if (!final) {
+      return entry ? this.filterTicks(entry.ticks, startMs, endMs) : [];
+    }
+    return this.filterTicks(final.ticks, startMs, endMs);
   }
 
   /**
@@ -471,8 +517,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     for (const [symbol, symTicks] of bySymbol) {
       const existing = this.tickCache.get(symbol) ?? { ranges: [], ticks: [] };
 
-      // Skip caching empty results on trading days (transient API issue)
-      if (symTicks.length === 0 && isTradingDay(start)) continue;
+      // Skip caching empty results for recent trading days (data may still arrive).
+      // Historical dates (>48h old) are finalized — cache empty to prevent perpetual re-fetches.
+      if (symTicks.length === 0 && isTradingDay(start) && !isHistoricalDate(end)) continue;
 
       const mergedRanges = mergeRanges(existing.ranges, [startMs, endMs]);
       const merged = this.mergeTicks(existing.ticks, symTicks);

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, AlertTriangle } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
@@ -8,19 +8,26 @@ import { buildHref } from '@/lib/run-scope';
 import type { Trade, CommissionSchedule, TradeLeg } from '../../../src/db/schema';
 import { safeParseFloat } from '../../../src/lib/numbers';
 import { computeTradeCommission } from '../../../src/lib/commission';
+import { notionalValue } from '../../../src/lib/trade';
+
+function notionalConcentrationColor(pct: number): string {
+  if (pct >= 0.25) return 'text-loss';
+  if (pct >= 0.15) return 'text-amber-500';
+  return 'text-muted-foreground';
+}
 
 export function TradeRow({
   trade,
   runId,
   commissionSchedule,
-  onSelect,
+  startingEquity,
   onExpand,
   isExpanded,
 }: {
   trade: Trade;
   runId?: string;
   commissionSchedule?: CommissionSchedule;
-  onSelect?: () => void;
+  startingEquity?: number;
   onExpand?: () => void;
   isExpanded?: boolean;
 }) {
@@ -32,34 +39,44 @@ export function TradeRow({
     : '';
 
   const realizedPnl = trade.realizedPnl != null ? safeParseFloat(trade.realizedPnl) : null;
+  const notional = notionalValue(trade.entryPrice, trade.quantity, trade.strategy);
+  const notionalPct = notional > 0 && startingEquity != null && startingEquity > 0
+    ? notional / startingEquity
+    : null;
 
   return (
     <TableRow
-      className={`hover:bg-accent/40 transition-colors ${onSelect ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''}`}
-      onClick={onSelect}
+      className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''}`}
+      onClick={onExpand}
     >
       {/* Expand chevron */}
       <TableCell className="w-6">
         {onExpand ? (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onExpand(); }}
-            className="p-0.5 rounded hover:bg-accent/60 transition-colors"
-          >
-            <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
-          </button>
+          <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
         ) : null}
       </TableCell>
 
       {/* Symbol */}
       <TableCell>
-        {onSelect ? (
-          <span className="text-foreground font-medium">{trade.symbol}</span>
-        ) : (
-          <Link href={buildHref(`/trades/${trade.id}`, runId)} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40">
-            {trade.symbol}
-          </Link>
-        )}
+        <Link
+          href={buildHref(`/trades/${trade.id}`, runId)}
+          className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {trade.symbol}
+        </Link>
+      </TableCell>
+
+      {/* Status */}
+      <TableCell>
+        <span className="inline-flex items-center gap-1">
+          <Badge label={trade.status} />
+          {trade.status === 'CLOSED' && !trade.closeMessageId && (
+            <span title="Auto-closed (no exit signal)">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+            </span>
+          )}
+        </span>
       </TableCell>
 
       {/* Legs */}
@@ -69,7 +86,11 @@ export function TradeRow({
 
       {/* Trader */}
       <TableCell>
-        <Link href={`/traders/${encodeURIComponent(trade.trader)}`} className="text-muted-foreground text-xs hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors">
+        <Link
+          href={`/traders/${encodeURIComponent(trade.trader)}`}
+          className="text-muted-foreground text-xs hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors"
+          onClick={(e) => e.stopPropagation()}
+        >
           {trade.trader}
         </Link>
       </TableCell>
@@ -95,6 +116,20 @@ export function TradeRow({
       {/* Exit */}
       <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.exitPrice)}</TableCell>
 
+      {/* Notional */}
+      <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs">
+        {notional > 0 ? (
+          <span className="flex flex-col items-end gap-0.5">
+            <span className="text-muted-foreground">{formatCurrency(notional)}</span>
+            {notionalPct != null && (
+              <span className={`text-[10px] ${notionalConcentrationColor(notionalPct)}`}>
+                {(notionalPct * 100).toFixed(1)}%
+              </span>
+            )}
+          </span>
+        ) : '--'}
+      </TableCell>
+
       {/* P&L */}
       <TableCell className={`text-right tabular-nums font-medium ${pnl != null && pnl >= 0 ? 'text-profit' : pnl != null && pnl < 0 ? 'text-loss' : ''} ${pnlBorder}`}>
         {formatCurrency(pnl)}
@@ -109,11 +144,6 @@ export function TradeRow({
       {/* Opened */}
       <TableCell className="text-muted-foreground text-xs">
         {formatDate(trade.openedAt)}
-      </TableCell>
-
-      {/* Status */}
-      <TableCell>
-        <Badge label={trade.status} />
       </TableCell>
     </TableRow>
   );

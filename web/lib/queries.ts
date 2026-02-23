@@ -119,21 +119,30 @@ export async function getNearbyMessages(
   author: string,
   timestamp: string,
   windowMinutes = 60,
+  symbol?: string,
 ) {
   const center = new Date(timestamp);
-  const start = new Date(center.getTime() - windowMinutes * 60 * 1000).toISOString();
-  const end = new Date(center.getTime() + windowMinutes * 60 * 1000).toISOString();
+  // Widen window when filtering by symbol — fewer results so cast a wider net
+  const effectiveWindow = symbol ? Math.max(windowMinutes, 240) : windowMinutes;
+  const start = new Date(center.getTime() - effectiveWindow * 60 * 1000).toISOString();
+  const end = new Date(center.getTime() + effectiveWindow * 60 * 1000).toISOString();
+
+  const conditions = [
+    eq(schema.messages.author, author),
+    gte(schema.messages.timestamp, start),
+    lte(schema.messages.timestamp, end),
+  ];
+
+  if (symbol) {
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${symbol})`,
+    );
+  }
 
   return db
     .select()
     .from(schema.messages)
-    .where(
-      and(
-        eq(schema.messages.author, author),
-        gte(schema.messages.timestamp, start),
-        lte(schema.messages.timestamp, end),
-      )
-    )
+    .where(and(...conditions))
     .orderBy(asc(schema.messages.timestamp))
     .limit(50);
 }
@@ -380,6 +389,16 @@ export async function getDistinctAuthors() {
 }
 
 // ─── Backtest Run Queries ────────────────────────────
+
+/** Load just the commission schedule from a backtest run's config. Returns undefined if run not found. */
+export async function getRunCommissionSchedule(runId: string) {
+  const [run] = await db
+    .select({ config: schema.backtestRuns.config })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, runId));
+  if (!run) return undefined;
+  return (run.config as BacktestRunConfig).commissionSchedule;
+}
 
 export async function getBacktestRuns(opts: { limit?: number; offset?: number } = {}) {
   return db

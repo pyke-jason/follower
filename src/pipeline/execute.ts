@@ -91,6 +91,15 @@ const ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; 
   PDS:   { stepAmount: 0.05, intervalSec: 5, cancelAfterSec: 60 },
 };
 
+/** Position-reducing orders: wider steps, no auto-cancel (cancelled at day boundary). */
+const CLOSE_ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; maxSteps: number }> = {
+  STOCK: { stepAmount: 0.05, intervalSec: 5, maxSteps: 24 },  // max movement: $1.20
+  CALL:  { stepAmount: 0.15, intervalSec: 5, maxSteps: 20 },  // max movement: $3.00
+  PUT:   { stepAmount: 0.15, intervalSec: 5, maxSteps: 20 },  // max movement: $3.00
+  CDS:   { stepAmount: 0.10, intervalSec: 5, maxSteps: 20 },  // max movement: $2.00
+  PDS:   { stepAmount: 0.10, intervalSec: 5, maxSteps: 20 },  // max movement: $2.00
+};
+
 // ─── Public helper ─────────────────────────────────
 
 /**
@@ -247,10 +256,20 @@ function buildOrderParams(
   signal: Signal,
   legs: OrderLeg[],
   limitPrice?: number,
+  isPositionReducing?: boolean,
 ): WorkingOrderParams {
-  const defaults = ORDER_DEFAULTS[signal.strategy] ?? ORDER_DEFAULTS.STOCK;
+  const isClose = isPositionReducing ?? false;
+  const defaults = isClose
+    ? (CLOSE_ORDER_DEFAULTS[signal.strategy] ?? CLOSE_ORDER_DEFAULTS.STOCK)
+    : (ORDER_DEFAULTS[signal.strategy] ?? ORDER_DEFAULTS.STOCK);
+
   const adjustmentRules: AdjustmentRule[] = limitPrice
-    ? [{ type: 'PRICE_CHASE', stepAmount: defaults.stepAmount, intervalSec: defaults.intervalSec }]
+    ? [{
+      type: 'PRICE_CHASE',
+      stepAmount: defaults.stepAmount,
+      intervalSec: defaults.intervalSec,
+      ...('maxSteps' in defaults ? { maxSteps: defaults.maxSteps } : {}),
+    }]
     : [];
 
   return {
@@ -261,7 +280,10 @@ function buildOrderParams(
     orderType: limitPrice ? 'LIMIT' : 'MARKET',
     limitPrice,
     adjustmentRules: adjustmentRules.length > 0 ? adjustmentRules : undefined,
-    cancelAfterSec: limitPrice ? defaults.cancelAfterSec : undefined,
+    // Position-reducing orders: no cancel timeout (cancelled at day boundary instead)
+    cancelAfterSec: limitPrice && !isClose
+      ? (ORDER_DEFAULTS[signal.strategy] ?? ORDER_DEFAULTS.STOCK).cancelAfterSec
+      : undefined,
   };
 }
 
@@ -399,6 +421,7 @@ async function executeClose(
     { ...signal, direction: closeDirection, strategy: existing.strategy },
     legs,
     mid,
+    true, // position-reducing: no cancel timeout, wider chase
   );
   params.isClosing = true;
 
@@ -551,10 +574,11 @@ async function executeTrim(
     { ...signal, direction: closeDirection, strategy: existing.strategy },
     legs,
     mid,
+    true, // position-reducing: no cancel timeout, wider chase
   );
   params.isClosing = true;
 
-  // 5. Place and record
+  // 4. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
     action: 'TRIM',
     tradeId: existing.id,
@@ -626,6 +650,7 @@ async function executeLegOff(
     { ...signal, direction: 'LONG' as const, strategy: existing.strategy },
     closingLegs,
     mid,
+    true, // position-reducing: no cancel timeout, wider chase
   );
   params.isClosing = true;
 

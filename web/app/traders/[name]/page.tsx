@@ -20,18 +20,21 @@ export const dynamic = 'force-dynamic';
 
 export default async function TraderDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ name: string }>;
+  searchParams: Promise<{ run?: string }>;
 }) {
   const { name } = await params;
+  const { run: runId } = await searchParams;
   const decodedName = decodeURIComponent(name);
 
   const [trader, summary, equityCurve, strategyBreakdown, recentTrades] = await Promise.all([
     getTraderDetail(decodedName),
-    getTradeHistorySummary({ trader: decodedName }),
-    getTraderEquityCurve(decodedName),
-    getTraderStrategyBreakdown(decodedName),
-    getClosedTrades({ trader: decodedName, limit: 20 }),
+    getTradeHistorySummary({ trader: decodedName, runId }),
+    getTraderEquityCurve(decodedName, runId),
+    getTraderStrategyBreakdown(decodedName, runId),
+    getClosedTrades({ trader: decodedName, limit: 20, runId }),
   ]);
 
   const equityData = equityCurve.map((pt) => ({
@@ -119,7 +122,7 @@ export default async function TraderDetailPage({
       {recentTrades.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-foreground mb-3">Recent Trades</h3>
-          <TradesTableClient trades={recentTrades} />
+          <TradesTableClient trades={recentTrades} runId={runId} />
         </div>
       )}
 

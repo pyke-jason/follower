@@ -19,3 +19,10 @@ export function assetType(strategy: string): 'EQ' | 'OP' {
 export function tradeQty(quantity: number | null | undefined): number {
   return quantity ?? 1;
 }
+
+/** Notional value of a position: |entryPrice| × qty × contractMultiplier. */
+export function notionalValue(entryPrice: string | number | null, quantity: number | null | undefined, strategy: string): number {
+  const entry = typeof entryPrice === 'number' ? entryPrice : parseFloat(entryPrice ?? '');
+  if (!isFinite(entry)) return 0;
+  return Math.abs(entry * tradeQty(quantity) * contractMultiplier(strategy));
+}

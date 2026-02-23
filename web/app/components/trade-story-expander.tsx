@@ -54,13 +54,26 @@ export function TradeStoryExpander({
                   taskId={story.task?.id}
                   runId={runId}
                 />
+
+                {story.closeMessage && (
+                  <div className="mt-3 pt-3 border-t border-border/50">
+                    <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Close Signal</h4>
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs font-medium">{story.closeMessage.author}</span>
+                        <span className="text-[10px] text-muted-foreground/60">{formatDate(story.closeMessage.timestamp)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-3">{story.closeMessage.cleanText}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Zone B: Event Timeline */}
               <div>
                 <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Events</h4>
                 {story.events.length > 0 ? (
-                  <CompactEventChain events={story.events} />
+                  <CompactEventChain events={story.events} closeMessageId={story.trade.closeMessageId} />
                 ) : (
                   <p className="text-xs text-muted-foreground/60">No events</p>
                 )}
