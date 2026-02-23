@@ -1,12 +1,8 @@
 /**
- * TDD tests for the backtest tradable-message filter predicate.
+ * Tests for the backtest tradable-message filter predicate.
  *
- * Current code (runner.ts:130-132) filters on `m.badges.length > 0`,
- * which drops badge-less messages even when they have valid symbols.
- * The CORRECT predicate is `m.symbols.length > 0 && !m.isPaperTrade`.
- *
- * These tests document the desired behavior. They will FAIL until
- * runner.ts is updated to use the symbols-based filter.
+ * runner.ts:130 filters on `m.symbols.length > 0 && !m.isPaperTrade`.
+ * This includes badge-less messages that have valid extracted symbols.
  */
 
 import { describe, test, expect } from 'vitest';
@@ -17,18 +13,15 @@ import type { HistoricalMessage } from './types.js';
 // The runner's filter is inline — we define both the OLD and NEW
 // versions here so we can assert the NEW one is correct.
 
-/** Current (BUGGY) predicate — badges-based */
+/** Previous predicate — badges-based (replaced) */
 const oldFilter = (m: Pick<HistoricalMessage, 'badges' | 'symbols' | 'isPaperTrade'>) =>
   m.badges.length > 0 && !m.isPaperTrade;
 
-/** Desired (CORRECT) predicate — symbols-based */
+/** Current predicate — symbols-based */
 const newFilter = (m: Pick<HistoricalMessage, 'badges' | 'symbols' | 'isPaperTrade'>) =>
   m.symbols.length > 0 && !m.isPaperTrade;
 
-// NOTE: After the fix, runner.ts:130 must match `newFilter`:
-//   const tradableMessages = allMessages.filter(
-//     (m) => m.symbols.length > 0 && !m.isPaperTrade,
-//   );
+// runner.ts:130 uses `newFilter` — the symbols-based predicate.
 
 // ── Arbitraries ───────────────────────────────────────────────────
 

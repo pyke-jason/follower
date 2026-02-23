@@ -15,9 +15,9 @@ import { getTrader } from '../config/traders.js';
 import { OrderManager } from '../orders/order-manager.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
-import { eq, and, sql, desc, isNull } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
-import { isClosed, forRun, forSymbol, forTrader, type PositionFilters } from '../trades/filters.js';
+import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
 import type { TaskContext } from '../db/schema.js';
@@ -731,31 +731,6 @@ async function processMessage(
     await recordSkip(ctx, 'intent', 'intent skip', reasoning, usage);
   }
 
-  // ── 9a. Retroactive closeMessageId linking ──
-  // When a CLOSE signal found no open position (e.g. sweepExpired already closed it),
-  // link this message to the most recently closed trade matching symbol+trader+run.
-  for (const r of pipelineResults) {
-    if (!r.executed && !r.orderId && r.signal.action === 'CLOSE') {
-      const [target] = await db.select()
-        .from(schema.trades)
-        .where(and(
-          isClosed,
-          forRun(btCtx.runId),
-          forSymbol(r.signal.symbol),
-          forTrader(msg.author),
-          isNull(schema.trades.closeMessageId),
-        ))
-        .orderBy(desc(schema.trades.closedAt))
-        .limit(1);
-      if (target) {
-        await db.update(schema.trades)
-          .set({ closeMessageId: msg.id })
-          .where(eq(schema.trades.id, target.id));
-        log.debug(`Linked closeMessageId to trade ${target.id.slice(0, 8)} (retroactive)`);
-      }
-    }
-  }
-
-  // ── 9b. Update stats ──
+  // ── 9. Update stats ──
   updateStats(stats);
 }

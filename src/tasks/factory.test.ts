@@ -1,14 +1,8 @@
 /**
- * TDD tests for task factory safety gates.
+ * Tests for task factory safety gates.
  *
- * Current code (factory.ts:15) rejects badge-less messages entirely:
- *   if (badges.length === 0) return null;
- *
- * The FIX will change this to:
- *   if (badges.length === 0 && symbols.length === 0) return null;
- * AND: badge-less messages with symbols always route to REVIEW_MESSAGE.
- *
- * Tests marked "FAILS currently" will fail until the fix is applied.
+ * factory.ts accepts messages with badges OR symbols.
+ * Badge-less messages with symbols always route to REVIEW_MESSAGE (safety gate).
  */
 
 import { describe, test, expect, vi, beforeAll, beforeEach } from 'vitest';
@@ -123,7 +117,7 @@ async function insertMessage(overrides: Partial<Message> = {}): Promise<Message>
 // ── Tests ─────────────────────────────────────────────────────────
 
 describe('createTaskFromMessage', () => {
-  test('badge-less with symbols creates REVIEW_MESSAGE task (FAILS currently - returns null)', async () => {
+  test('badge-less with symbols creates REVIEW_MESSAGE task', async () => {
     const msg = await insertMessage({
       badges: [],
       symbols: ['AAPL'],
@@ -192,7 +186,7 @@ describe('createTaskFromMessage', () => {
     expect(taskId).toBeNull();
   });
 
-  test('badge-less with symbols + high confidence still routes to REVIEW_MESSAGE (safety gate) (FAILS currently)', async () => {
+  test('badge-less with symbols + high confidence still routes to REVIEW_MESSAGE (safety gate)', async () => {
     // Even with confidence >= 0.7, badge-less messages must go to REVIEW_MESSAGE
     // because there's no badge to confirm the trade action.
     const msg = await insertMessage({
