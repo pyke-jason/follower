@@ -20,7 +20,7 @@ const etParts = new Intl.DateTimeFormat('en-US', {
 });
 
 /** Extract ET year/month/day/hours/minutes/seconds from any Date. */
-function getETComponents(d: Date) {
+export function getETComponents(d: Date) {
   const parts = etParts.formatToParts(d);
   const get = (type: Intl.DateTimeFormatPartTypes) =>
     parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
@@ -84,7 +84,7 @@ const EARLY_CLOSE_MINUTE = 780;    // 1:00 PM
 const MARKET_OPEN_MINUTE = 570;    // 9:30 AM
 
 /** Market close time in minutes-of-day for a given date (780 on early close, 960 normally). */
-function marketCloseMinute(d: Date): number {
+export function marketCloseMinute(d: Date): number {
   return MARKET_EARLY_CLOSES.has(toDateKeyET(d)) ? EARLY_CLOSE_MINUTE : REGULAR_CLOSE_MINUTE;
 }
 

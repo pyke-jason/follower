@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { spawn } from 'child_process';
-import { existsSync } from 'node:fs';
 import fs from 'fs';
 import path from 'path';
 import { eq } from 'drizzle-orm';
@@ -70,22 +69,12 @@ app.post('/spawn', async (c) => {
   fs.mkdirSync(PATHS.logs, { recursive: true });
   const logFd = fs.openSync(path.join(PATHS.logs, `${runId}.log`), 'w');
 
-  const prodScript = path.join(PROJECT_ROOT, 'dist', 'backtest', 'launch.js');
-  const useCompiled = existsSync(prodScript);
-
-  const child = useCompiled
-    ? spawn('node', [prodScript, ...args], {
-        cwd: PROJECT_ROOT,
-        stdio: ['ignore', logFd, logFd],
-        detached: true,
-        env: { ...process.env },
-      })
-    : spawn('npx', ['tsx', 'src/backtest/launch.ts', ...args], {
-        cwd: PROJECT_ROOT,
-        stdio: ['ignore', logFd, logFd],
-        detached: true,
-        env: { ...process.env },
-      });
+  const child = spawn('npx', ['tsx', 'src/backtest/launch.ts', ...args], {
+    cwd: PROJECT_ROOT,
+    stdio: ['ignore', logFd, logFd],
+    detached: true,
+    env: { ...process.env },
+  });
 
   const pid = child.pid ?? null;
   const logPath = path.join(PATHS.logs, `${runId}.log`);

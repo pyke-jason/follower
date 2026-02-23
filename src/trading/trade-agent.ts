@@ -16,10 +16,6 @@ import type { PrefetchedData } from '../agent/prefetch.js';
 import type { TaskContext } from '../db/schema.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
-import { createLogger } from '../lib/logger.js';
-
-const log = createLogger('TradeAgent');
-
 // ─── Value Objects ─────────────────────────────────
 
 export type PortfolioState = {
@@ -48,8 +44,6 @@ export interface TradeAgent {
     allowedStrategies?: string[],
   ): Promise<Action[]>;
 
-  /** Called at backtest end — force-close all remaining positions. */
-  onBacktestEnd(state: PortfolioState): Promise<Action[]>;
 }
 
 // ─── Rule-Based Implementation ─────────────────────
@@ -94,19 +88,7 @@ export class RuleBasedTradeAgent implements TradeAgent {
       return [{ type: 'NO_OP', reasoning: `[strategy] ${strategySkip.reason}` }];
     }
 
-    // 3. Risk checks (for position-increasing actions)
-    if (!this.config.disableRiskLimits && (signal.action === 'OPEN' || signal.action === 'ADD')) {
-      const risk = await checkRiskLimits(
-        { symbol: signal.symbol, strategy: signal.strategy, trader, action: signal.action },
-        this.config.riskDeps,
-        this.config.riskConfig,
-      );
-      if (!risk.allowed) {
-        return [{ type: 'NO_OP', reasoning: `Risk blocked: ${risk.reason}` }];
-      }
-    }
-
-    // 4. Position sizing (for OPEN/ADD) — skip when legs are missing
+    // 3. Position sizing (for OPEN/ADD) — skip when legs are missing
     //    (pipeline will re-size with broker quote and resolve legs)
     const hasLegs = signal.strategy === 'STOCK' || (signal.legs && signal.legs.length > 0);
     let quantity = 1;
@@ -123,16 +105,14 @@ export class RuleBasedTradeAgent implements TradeAgent {
       quantity = size.quantity;
     }
 
-    // 5. Build order from signal — skip preview when legs are missing (pipeline resolves them)
+    // 4. Build order from signal — skip preview when legs are missing (pipeline resolves them)
     const referenceDate = taskContext.messageTimestamp ? new Date(taskContext.messageTimestamp) : new Date();
     let order: OrderParams;
     if (hasLegs) {
       order = buildOrderFromSignal(signal, quantity, referenceDate);
     } else {
-      log.debug(`${signal.action} ${signal.strategy} ${signal.symbol}: legs missing, pipeline will infer`);
       order = { symbol: signal.symbol, strategy: signal.strategy, direction: signal.direction, legs: [], orderType: 'MARKET' };
     }
-    log.debug(`${signal.action} ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${quantity} legs=${order.legs.length}`);
     return [{
       type: 'PLACE_ORDER',
       order,
@@ -142,8 +122,4 @@ export class RuleBasedTradeAgent implements TradeAgent {
     }];
   }
 
-  async onBacktestEnd(_state: PortfolioState): Promise<Action[]> {
-    // Force-close is handled by SimBroker.forceCloseAll directly
-    return [{ type: 'NO_OP', reasoning: 'Backtest end — positions closed by broker' }];
-  }
 }

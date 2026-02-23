@@ -6,7 +6,7 @@
  * The LLM has no control over this flow.
  */
 import type { BrokerService } from '../broker/interface.js';
-import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule, OrderLeg } from '../broker/types.js';
+import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule, OrderLeg, Quote } from '../broker/types.js';
 import type { OrderManager } from '../orders/order-manager.js';
 import type { Trade } from '../db/schema.js';
 import type { PositionSize } from '../position-sizing/index.js';
@@ -21,8 +21,8 @@ import { createLogger } from '../lib/logger.js';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
 import { formatOccSymbol, normalizeExpiry, inferATMSpread, inferATMStrike } from '../backtest/occ-symbology.js';
-import { shouldSkipSignal } from '../agent/deterministic-skips.js';
 import { nextFriday } from '../lib/et-date.js';
+import { getSpreadMidpoint } from './spread-midpoint.js';
 
 const log = createLogger('Pipeline');
 
@@ -145,7 +145,7 @@ function buildOptionLegs(signal: Signal, quantity: number, referenceDate: Date):
     return true;
   });
   if (uniqueSignalLegs.length < signal.legs.length) {
-    log.warn(`${signal.symbol} ${signal.action}: deduped ${signal.legs.length} legs → ${uniqueSignalLegs.length}`);
+    log.info(`${signal.symbol} ${signal.action}: deduped ${signal.legs.length} legs → ${uniqueSignalLegs.length}`);
   }
 
   return uniqueSignalLegs.map(l => {
@@ -174,9 +174,9 @@ async function resolveSignalLegs(
   signal: Signal,
   broker: BrokerService,
   opts: PipelineOpts,
-): Promise<Signal> {
-  if (signal.strategy === 'STOCK') return signal;
-  if (signal.legs && signal.legs.length > 0) return signal;
+): Promise<{ signal: Signal; stockQuote: Quote | null }> {
+  if (signal.strategy === 'STOCK') return { signal, stockQuote: null };
+  if (signal.legs && signal.legs.length > 0) return { signal, stockQuote: null };
 
   const quote = await broker.getQuote(signal.symbol);
   const stockPrice = (quote.bid + quote.ask) / 2;
@@ -187,11 +187,14 @@ async function resolveSignalLegs(
     const spread = inferATMSpread(stockPrice, signal.strategy);
     const optionType = signal.strategy === 'CDS' ? 'CALL' as const : 'PUT' as const;
     return {
-      ...signal,
-      legs: [
-        { strike: spread.longStrike, expiry, optionType, action: 'BUY' as const },
-        { strike: spread.shortStrike, expiry, optionType, action: 'SELL' as const },
-      ],
+      signal: {
+        ...signal,
+        legs: [
+          { strike: spread.longStrike, expiry, optionType, action: 'BUY' as const },
+          { strike: spread.shortStrike, expiry, optionType, action: 'SELL' as const },
+        ],
+      },
+      stockQuote: quote,
     };
   }
 
@@ -199,13 +202,17 @@ async function resolveSignalLegs(
   const strike = inferATMStrike(stockPrice);
   const action = signal.direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
   return {
-    ...signal,
-    legs: [{ strike, expiry, optionType: signal.strategy as 'CALL' | 'PUT', action }],
+    signal: {
+      ...signal,
+      legs: [{ strike, expiry, optionType: signal.strategy as 'CALL' | 'PUT', action }],
+    },
+    stockQuote: quote,
   };
 }
 
 /** Fetch stock mid-price for position sizing entry price. */
-async function getEntryPriceEstimate(symbol: string, broker: BrokerService): Promise<number> {
+async function getEntryPriceEstimate(symbol: string, broker: BrokerService, prefetchedPrice?: number): Promise<number> {
+  if (prefetchedPrice != null) return prefetchedPrice;
   try {
     const quote = await broker.getQuote(symbol);
     return (quote.bid + quote.ask) / 2;
@@ -296,10 +303,11 @@ async function executeOpen(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   // 0. Resolve legs if missing (trader omitted strikes)
-  const resolved = await resolveSignalLegs(signal, deps.broker, opts);
+  const { signal: resolved, stockQuote } = await resolveSignalLegs(signal, deps.broker, opts);
 
-  // 1. Size — use broker quote for entry price, not LLM
-  const entryPrice = await getEntryPriceEstimate(resolved.symbol, deps.broker);
+  // 1. Size — use broker quote for entry price, not LLM (reuse quote from resolveSignalLegs if available)
+  const prefetchedMid = stockQuote ? (stockQuote.bid + stockQuote.ask) / 2 : undefined;
+  const entryPrice = await getEntryPriceEstimate(resolved.symbol, deps.broker, prefetchedMid);
   const size = await deps.calculatePositionSize({
     trader,
     symbol: resolved.symbol,
@@ -321,12 +329,13 @@ async function executeOpen(
     return { signal, executed: false, reason: `Risk blocked: ${risk.reason}` };
   }
 
-  // 3. Build order — always MARKET, pipeline controls pricing
+  // 3. Build order
   const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
   const legs = resolved.strategy === 'STOCK'
     ? buildStockLegs(resolved.symbol, resolved.direction, size.quantity)
     : buildOptionLegs(resolved, size.quantity, refDate);
-  const params = buildOrderParams(resolved, legs, undefined);
+  const mid = await getSpreadMidpoint(deps.broker, legs);
+  const params = buildOrderParams(resolved, legs, mid);
 
   // 4. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
@@ -356,7 +365,6 @@ async function executeOpen(
     },
   });
 
-  log.debug(`OPEN ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${size.quantity} → ${result.status}`);
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
   }
@@ -378,36 +386,29 @@ async function executeClose(
   // 2. Use current remaining quantity (accounts for prior TRIMs)
   const quantity = tradeQty(existing.quantity);
 
-  // 3. Risk check (always passes for CLOSE)
-  await deps.checkRiskLimits({
-    symbol: signal.symbol,
-    strategy: existing.strategy,
-    trader,
-    action: 'CLOSE',
-  });
-
-  // 4. Build order — reverse direction from existing position
+  // 3. Build order — reverse direction from existing position
   const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
   const legs = existing.strategy === 'STOCK'
-    ? buildStockLegs(existing.symbol, existing.direction as 'LONG' | 'SHORT', quantity)
+    ? buildStockLegs(existing.symbol, existing.direction, quantity)
     : existingLegs.map(l => ({ ...l, quantity, action: l.action === 'BUY' ? 'SELL' as const : 'BUY' as const }));
 
-  // Reverse direction for close order — always MARKET, pipeline controls pricing
+  // Reverse direction for close order
   const closeDirection: 'LONG' | 'SHORT' = existing.direction === 'LONG' ? 'SHORT' : 'LONG';
+  const mid = await getSpreadMidpoint(deps.broker, legs);
   const params = buildOrderParams(
-    { ...signal, direction: closeDirection, strategy: existing.strategy as Signal['strategy'] },
+    { ...signal, direction: closeDirection, strategy: existing.strategy },
     legs,
-    undefined,
+    mid,
   );
   params.isClosing = true;
 
-  // 5. Place and record
+  // 4. Place and record
   const buildRecordInput = (filledPrice: number, filledAt?: Date): RecordTradeInput => ({
     action: 'CLOSE',
     tradeId: existing.id,
     symbol: signal.symbol,
     trader,
-    direction: existing.direction as 'LONG' | 'SHORT',
+    direction: existing.direction,
     strategy: existing.strategy,
     exitPrice: filledPrice,
     quantity,
@@ -422,7 +423,7 @@ async function executeClose(
 
   let tradeId: string | undefined;
   const result = await placeOrder(deps, params, {
-    action: 'CLOSE', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    action: 'CLOSE', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity, legs, messageId: opts.messageId,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
@@ -431,7 +432,6 @@ async function executeClose(
     },
   });
 
-  log.debug(`CLOSE ${existing.direction} ${existing.strategy} ${signal.symbol} qty=${quantity} → ${result.status}`);
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
   }
@@ -445,7 +445,7 @@ async function executeAdd(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   // 0. Resolve legs if missing
-  const resolved = await resolveSignalLegs(signal, deps.broker, opts);
+  const { signal: resolved, stockQuote } = await resolveSignalLegs(signal, deps.broker, opts);
 
   // 1. Verify position exists; if not, fall through to OPEN
   const positions = await deps.getOpenPositions({ symbol: resolved.symbol, trader, strategy: resolved.strategy });
@@ -454,8 +454,9 @@ async function executeAdd(
     return executeOpen(resolved, trader, deps, opts);
   }
 
-  // 2. Size the add — use broker quote for entry price
-  const entryPrice = await getEntryPriceEstimate(resolved.symbol, deps.broker);
+  // 2. Size the add — use broker quote for entry price (reuse quote from resolveSignalLegs if available)
+  const prefetchedMid = stockQuote ? (stockQuote.bid + stockQuote.ask) / 2 : undefined;
+  const entryPrice = await getEntryPriceEstimate(resolved.symbol, deps.broker, prefetchedMid);
   const size = await deps.calculatePositionSize({
     trader,
     symbol: resolved.symbol,
@@ -477,12 +478,13 @@ async function executeAdd(
     return { signal, executed: false, reason: `Risk blocked: ${risk.reason}` };
   }
 
-  // 4. Build order — always MARKET
+  // 4. Build order
   const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
   const legs = resolved.strategy === 'STOCK'
     ? buildStockLegs(resolved.symbol, resolved.direction, size.quantity)
     : buildOptionLegs(resolved, size.quantity, refDate);
-  const params = buildOrderParams(resolved, legs, undefined);
+  const mid = await getSpreadMidpoint(deps.broker, legs);
+  const params = buildOrderParams(resolved, legs, mid);
 
   // 5. Place and record
   const existing = positions[0];
@@ -514,7 +516,6 @@ async function executeAdd(
     },
   });
 
-  log.debug(`ADD ${signal.direction} ${signal.strategy} ${signal.symbol} qty=${size.quantity} → ${result.status}`);
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
   }
@@ -538,25 +539,18 @@ async function executeTrim(
   const exitPct = signal.exitPercent ?? 0.5;
   const trimQty = Math.max(1, Math.min(currentQty, Math.floor(currentQty * exitPct)));
 
-  // 3. Risk check (always passes for TRIM)
-  await deps.checkRiskLimits({
-    symbol: signal.symbol,
-    strategy: existing.strategy,
-    trader,
-    action: 'TRIM',
-  });
-
-  // 4. Build order — reverse direction for the trim
+  // 3. Build order — reverse direction for the trim
   const existingLegs = Array.isArray(existing.legs) ? existing.legs as OrderLeg[] : [];
   const legs = existing.strategy === 'STOCK'
-    ? buildStockLegs(existing.symbol, existing.direction as 'LONG' | 'SHORT', trimQty)
+    ? buildStockLegs(existing.symbol, existing.direction, trimQty)
     : existingLegs.map(l => ({ ...l, quantity: trimQty, action: l.action === 'BUY' ? 'SELL' as const : 'BUY' as const }));
 
   const closeDirection: 'LONG' | 'SHORT' = existing.direction === 'LONG' ? 'SHORT' : 'LONG';
+  const mid = await getSpreadMidpoint(deps.broker, legs);
   const params = buildOrderParams(
-    { ...signal, direction: closeDirection, strategy: existing.strategy as Signal['strategy'] },
+    { ...signal, direction: closeDirection, strategy: existing.strategy },
     legs,
-    undefined,
+    mid,
   );
   params.isClosing = true;
 
@@ -566,7 +560,7 @@ async function executeTrim(
     tradeId: existing.id,
     symbol: signal.symbol,
     trader,
-    direction: existing.direction as 'LONG' | 'SHORT',
+    direction: existing.direction,
     strategy: existing.strategy,
     exitPrice: filledPrice,
     closeQuantity: trimQty,
@@ -582,7 +576,7 @@ async function executeTrim(
 
   let tradeId: string | undefined;
   const result = await placeOrder(deps, params, {
-    action: 'TRIM', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    action: 'TRIM', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity: trimQty, legs, messageId: opts.messageId,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
@@ -591,7 +585,6 @@ async function executeTrim(
     },
   });
 
-  log.debug(`TRIM ${existing.direction} ${existing.strategy} ${signal.symbol} qty=${trimQty}/${currentQty} → ${result.status}`);
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
   }
@@ -628,10 +621,11 @@ async function executeLegOff(
     action: 'BUY' as const,
   }];
 
+  const mid = await getSpreadMidpoint(deps.broker, closingLegs);
   const params = buildOrderParams(
-    { ...signal, direction: 'LONG' as const, strategy: existing.strategy as Signal['strategy'] },
+    { ...signal, direction: 'LONG' as const, strategy: existing.strategy },
     closingLegs,
-    undefined,
+    mid,
   );
   params.isClosing = true;
 
@@ -641,7 +635,7 @@ async function executeLegOff(
     tradeId: existing.id,
     symbol: signal.symbol,
     trader,
-    direction: existing.direction as 'LONG' | 'SHORT',
+    direction: existing.direction,
     strategy: existing.strategy,
     exitPrice: filledPrice,
     quantity,
@@ -661,7 +655,7 @@ async function executeLegOff(
 
   let tradeId: string | undefined;
   const result = await placeOrder(deps, params, {
-    action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction as 'LONG' | 'SHORT',
+    action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity, legs: closingLegs, messageId: opts.messageId,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
@@ -670,7 +664,6 @@ async function executeLegOff(
     },
   });
 
-  log.debug(`LEG_OFF ${existing.strategy}→${targetStrategy} ${signal.symbol} qty=${quantity} → ${result.status}`);
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
   }
@@ -686,13 +679,12 @@ export async function executeSignal(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
-  const strategySkip = shouldSkipSignal(signal, opts.allowedStrategies);
-  if (strategySkip) {
-    return { signal, executed: false, reason: strategySkip.reason };
-  }
-
   switch (signal.action) {
-    case 'OPEN':    return executeOpen(signal, trader, deps, opts);
+    case 'OPEN': {
+      const existing = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
+      if (existing.length > 0) return executeAdd(signal, trader, deps, opts);
+      return executeOpen(signal, trader, deps, opts);
+    }
     case 'CLOSE':   return executeClose(signal, trader, deps, opts);
     case 'ADD':     return executeAdd(signal, trader, deps, opts);
     case 'TRIM':    return executeTrim(signal, trader, deps, opts);
@@ -722,7 +714,7 @@ function deduplicateSignals(signals: Signal[]): Signal[] {
   const deduped: Signal[] = [];
   for (const [key, group] of groups) {
     if (group.length > 1) {
-      log.warn(`Deduped ${group.length} signals for ${key} → keeping best`);
+      log.info(`Deduped ${group.length} signals for ${key} → keeping best`);
       group.sort((a, b) => {
         // Prefer signal with statedPremium
         const aPrem = a.statedPremium != null ? 1 : 0;
@@ -761,7 +753,7 @@ export async function executeSignals(
       // instead of silently producing zero trades.
       if (err instanceof DrizzleQueryError) throw err;
       const reason = err instanceof Error ? err.message : String(err);
-      log.warn(`Signal ${signal.action} ${signal.symbol} failed: ${reason}`);
+      log.warn(`Signal ${signal.action} ${signal.symbol} failed: ${reason.slice(0, 200)}`);
       results.push({ signal, executed: false, reason });
     }
   }

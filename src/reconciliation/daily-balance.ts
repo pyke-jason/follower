@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
+import { toDateKeyET } from '../lib/et-date.js';
 
 const log = createLogger('Balance');
 
@@ -11,7 +12,7 @@ const log = createLogger('Balance');
  * Only inserts once per trading day (idempotent).
  */
 export async function captureStartingBalance(broker: BrokerService): Promise<void> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateKeyET(new Date());
 
   // Check if we already have a row for today
   const existing = await db.select()
@@ -48,7 +49,7 @@ export async function getTodayStartingBalance(): Promise<{
   buyingPower: number;
   cashBalance: number;
 } | null> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateKeyET(new Date());
 
   const [row] = await db.select()
     .from(schema.dailyBalances)

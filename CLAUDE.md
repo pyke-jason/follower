@@ -1,64 +1,63 @@
-Trade Follower 3
+<project_overview>
+  You are an expert AI assistant working on "Trade Follower 3".
+  Stack: Monorepo with Node.js backend (src/), Next.js frontend (web/), SQLite via Drizzle ORM.
+  Schema: `src/db/schema.ts`. Web imports from `src/` use relative paths.
+</project_overview>
 
-Monorepo: src/ (Node.js backend + backtest engine), web/ (Next.js frontend).
-SQLite via Drizzle ORM. Schema: src/db/schema.ts.
-Web imports from src/ via relative paths.
+<architecture_and_flow>
+  <signal_flow>
+    Chat message → intent extraction (LLM) → Signal → trade agent (skip/execute) → pipeline → broker → record trade.
+    Key pipeline: `extract-intent.ts` → `trade-agent.ts` → `execute.ts` → `record-trade.ts`.
+  </signal_flow>
 
-Signal flow:
-  Chat message → intent extraction (LLM) → Signal → trade agent (skip/execute) → pipeline → broker → record trade
-  Key files: src/intents/extract-intent.ts → src/trading/trade-agent.ts → src/pipeline/execute.ts → src/trades/record-trade.ts
+  <backtest_vs_live>
+    Both paths use the same `PipelineDeps` interface (`src/pipeline/execute.ts`) but with different implementations.
+    - Broker: `SimBroker` (backtest) vs `TradeStation liveService` (live).
+    - Positions: `broker.getOpenTrades` (backtest) vs direct DB query (live).
+    - Risk Limits: No-op in backtest vs full check in live.
+    - ALWAYS IDENTICAL: `recordTrade()`, `executeSignals()`, `computeTradePnl()`, `buildPositionSizer()`, and `filters.ts`. If adding a feature to one path, verify if the other needs it.
+  </backtest_vs_live>
 
-Shared utilities live in src/lib/. If something is used by more than one module, it goes here — not inline, not duplicated.
-  src/lib/numbers.ts — safeParseFloat (null-safe string→number), roundCents, round(val, decimals), pctDisplay (0.5 → "50.0%"), priceEq (epsilon comparison)
-  src/lib/et-date.ts — toDateKeyET (Date→"YYYY-MM-DD" in ET), dayBoundsUTC (ET day→UTC start/end), isTradingDay, isMarketHours, marketCloseMinute (handles early closes), getETComponents, MARKET_HOLIDAYS, MARKET_EARLY_CLOSES. All DST-aware.
-  src/lib/pnl.ts — computeTradePnl: direction-aware, contract-multiplied PnL from entry/exit/qty/strategy. Throws on NaN. Single source of truth.
-  src/lib/trade.ts — contractMultiplier (STOCK=1, options=100), assetType (EQ/OP), tradeQty (null→1 fallback for legacy rows)
-  src/lib/enums.ts — Zod schemas for Direction, Strategy, TradeAction (OPEN/CLOSE/ADD/TRIM/LEG_OFF), LegType, LegAction. Single source for all trading enums.
-  src/broker/order-schemas.ts — Zod schemas for OrderParams, WorkingOrderParams, OrderResult. Cross-field constraints via .refine(): LIMIT orders require limitPrice, FILLED results require filledPrice + fillTimestamp. Parsed at boundaries (OrderManager.submitOrder, OrderManager.tick, pipeline placeOrder).
-  src/trades/filters.ts — composable Drizzle query fragments (isOpen, isClosed, forSymbol, forTrader, forStrategy, PositionFilters type). Imports from db/schema (not db/client) so the web layer can use it without pulling in native libsql.
+  <data_model>
+    - `trades` table is a denormalized view.
+    - `trade_events` table is the append-only source of truth.
+    - `recordTrade()` is the SINGLE write path for all mutations. Pass `tradeId` if known to skip redundant queries.
+    - `computeCoreStats()` is the SINGLE source of truth for trade stats.
+  </data_model>
+</architecture_and_flow>
 
-Backtest vs live — shared infrastructure:
-  Both paths wire up the same PipelineDeps interface (src/pipeline/execute.ts) with different implementations:
-    broker:              SimBroker (backtest) vs TradeStation liveService (live)
-    getOpenPositions:    broker.getOpenTrades (backtest, scoped to run) vs direct DB query (live, scoped to notBacktest)
-    calculatePositionSize: both use buildPositionSizer() from src/position-sizing/index.ts with per-trader config
-    checkRiskLimits:     no-op in backtest (agent pre-checks) vs full risk check in live
-    recordTrade:         same function (src/trades/record-trade.ts), backtest adds backtestRunId + isBacktest flag
-  Shared code that MUST stay identical across both paths:
-    - recordTrade() — single write path for trades + trade_events
-    - executeSignals() / executeSignal() — deterministic pipeline, no backtest-specific branches
-    - computeTradePnl() — used by recordTrade and report
-    - buildPositionSizer() — same factory, per-trader config
-    - filters.ts — same composable fragments for position queries
-  If you add a feature to one path, check whether the other path needs it too.
+<directory_structure>
+  - `src/lib/`: ALL shared utilities (numbers, dates, PnL, enums). Never duplicate code; import from here.
+  - `src/position-sizing/`: Factory `buildPositionSizer()` (Discriminated union on strategy).
+  - `src/trades/filters.ts`: Composable Drizzle query fragments (imports from `db/schema`, not `db/client` for web compatibility).
+</directory_structure>
 
-Position sizing: src/position-sizing/index.ts — discriminated union on strategy field, factory buildPositionSizer(). Currently only ATR strategy. Per-trader config in trackedTraders.positionSizingConfig.
+<coding_standards>
+  - STRICT BOUNDARY VALIDATION: Validate cross-field constraints via Zod `.refine()` at entry points (e.g., limits require `limitPrice`). Do not use ad-hoc throws deep in business logic.
+  - NARROWED CALLBACK TYPES: If a callback fires in a narrowed state, type it narrowed (e.g., `onFill` gets `FilledWorkingOrder`, not `WorkingOrder`). No `!` assertions.
+  - NO BACKWARDS COMPATIBILITY: No optional fields for old runs, no shims, no deprecated exports. If a type changes, update all consumers. Internal tool only.
+  - CLEAN AS YOU GO: Fix dead exports, duplicate logic, and leaky abstractions in the files you are already touching. Do not go on refactor safaris outside current files.
+  - DRY / ONE CONCEPT, ONE PLACE: If two modules do the same thing, delete one. Do not abstract ahead of need.
+  - NO INLINE TYPE IMPORTS: Always use top-level `import type { Type } from 'path'`.
+  - DRIZZLE JSON TYPES: Use Drizzle `$type<>()` annotations for JSON columns. No type casts.
+  - ONE LOG LINE PER EVENT: When multiple layers handle the same event (e.g., broker fill → order manager → record-trade), only the authoritative layer logs at info level. Others use debug or stay silent. The authoritative layer is the one that owns the state change.
+  - WARN MEANS ACTIONABLE: `log.warn` is reserved for conditions a human should investigate. Expected behavior (dedup hits, API 206 responses, timing metrics) belongs at info or debug.
+</coding_standards>
 
-Trade data model: trades table is a denormalized view. trade_events table is the append-only source of truth. recordTrade() in src/trades/record-trade.ts is the single write path — all mutations go through it, including sim-broker closes. When the caller already knows which trade to target, pass tradeId to skip the redundant scope-filter query.
+<domain_rules>
+  - DATABENTO COSTS MONEY: They charge per byte. Fetch minimum columns, narrowest date ranges, prefer cache. Never mass-delete `.cache/databento/` files. Empty `[]` files are valid.
+  - TIMESTAMP STRICTNESS: Backtest trades MUST have explicit timestamps. Never fall back to wall-clock time.
+  - DYNAMIC TIMEZONES: `dayBoundsUTC()` dynamically detects EST/EDT. Never hardcode UTC offsets.
+</domain_rules>
 
-Rules:
-  - Validate at the boundary, not in orchestration. Cross-field constraints (e.g. LIMIT→limitPrice, FILLED→filledPrice+fillTimestamp) belong in Zod .refine() schemas parsed at entry points, not as ad-hoc throws deep in business logic. Pattern: Signal schemas (agent/schemas.ts), order schemas (broker/order-schemas.ts), API response schemas (broker/schemas.ts).
-  - When a callback only fires in a narrowed state, type the callback with the narrowed type. Example: onFill receives FilledWorkingOrder (filledPrice: number) not WorkingOrder (filledPrice?: number). This eliminates ! assertions in every consumer.
-  - Databento charges per byte transferred. Minimize data fetched: request only the columns/fields needed, use the narrowest date ranges possible, prefer cached data, and avoid redundant API calls. Never mass-delete .cache/databento/ files — they cost real money to re-fetch. Empty [] files are valid (weekends/holidays).
-  - computeCoreStats() in src/backtest/report.ts is the single source of truth for trade stats. Don't duplicate it.
-  - Backtest trades must have explicit timestamps — never fall back to wall-clock time.
-  - dayBoundsUTC() dynamically detects EST/EDT. Don't hardcode UTC offsets.
-  - Drizzle $type<>() annotations on JSON columns properly narrow types — don't add as casts.
-  - No inline type imports. Never use `import('path').Type` in type annotations — always use a top-level `import type { Type } from 'path'`. Inline imports are unreadable and hide dependencies.
-  - NO backwards compatibility. Ever. No optional fields for "older runs", no migration shims, no deprecated re-exports, no _unused vars. If a type changes, update all producers and consumers. This is an internal tool — there are no external clients to support.
-
-Debugging: use disposable test scripts.
-  When diagnosing issues, create temporary .ts scripts in scripts/ that directly call codebase components with real data.
-  Flow: observe DB state → hypothesize → write a script that isolates the suspect component → verify fix → delete script.
-  Use real data (actual DB records, actual cache files, actual configs), not mocks. Run with `npx tsx scripts/debug-xxx.ts`.
-  The .env file has secrets to use for making real API calls. e.g. DATABENTO_API_KEY. NEVER READ the file directly.
-  Clean up temp scripts after the fix is verified.
-
-Self-documentation:
-  After every implementation session, create a lesson file in docs/lessons/. Mandatory.
-  Filename: YYYY-MM-DD-slug.md
-  Use plain text, not markdown headers. Keep it scannable and flat.
-  Sections (2-3 sentences each): Problem, Decision, Key Files, Watch Out.
-  Qualifies: new features, non-obvious bug fixes, architectural decisions, schema changes.
-  Doesn't qualify: typos, comments, config tweaks, pure styling.
-  Why: the signal pipeline (intent → agent → pipeline → broker → recording) ripples across 3-5 files. Lessons capture the "why" that code comments can't.
+<workflows>
+  <debugging>
+    Use disposable scripts in `scripts/` to isolate suspects with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scripts/debug-xxx.ts`. Delete script when verified. Do not read `.env` directly; rely on environment variables.
+  </debugging>
+  
+  <self_documentation>
+    MANDATORY: Create a lesson file in `docs/lessons/` after every implementation session (new features, bugs, schema changes).
+    Format: `YYYY-MM-DD-slug.md`. Plain text, flat, scannable.
+    Sections: Problem, Decision, Key Files, Watch Out.
+  </self_documentation>
+</workflows>

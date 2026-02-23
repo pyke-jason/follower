@@ -1,18 +1,18 @@
 import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js';
 import {
-  loadChainDefinitions, toDateKey, getFetchMeta,
+  getFetchMeta,
   fetchTickWindow, defaultSchemaForDataset,
   mergeRanges, isRangeCovered,
 } from './databento-tape.js';
 import type { QuoteTick, TickCacheData } from './databento-tape.js';
 import {
   readCachedRanges, readCachedTicks, writeCachedTicks,
-  loadCachedChain, saveCachedChain,
 } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
-import { getPreviousTradingDayKey, dayBoundsUTC, isTradingDay } from '../lib/et-date.js';
+import { toDateKeyET, getPreviousTradingDayKey, dayBoundsUTC, isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
+import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('MarketData');
 
@@ -138,7 +138,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         const tickAgeMins = (atMs - foundTick.timestamp.getTime()) / 60_000;
         if (tickAgeMins <= mins) {
           if (tickAgeMins >= 1_440) {
-            log.warn(`Stale quote for "${symbol}" at ${at.toISOString()}: tick is ${tickAgeMins.toFixed(0)} min old`);
+            log.warn(`Stale quote for "${symbol}" at ${formatLogTimestampET(at)} ET: tick is ${tickAgeMins.toFixed(0)} min old`);
           }
           return this.makeQuote(symbol, foundTick);
         }
@@ -163,7 +163,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   }
 
   async getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]> {
-    const atDay = toDateKey(at);
+    const atDay = toDateKeyET(at);
 
     // Build list of trading days (oldest → newest), skipping weekends/holidays
     const tradingDays: string[] = [];
@@ -190,7 +190,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const tradingDaySet = new Set(tradingDays);
     const bestByDay = new Map<string, Bar>();
     for (const tick of entry.ticks) {
-      const tickDay = toDateKey(tick.timestamp);
+      const tickDay = toDateKeyET(tick.timestamp);
       if (!tradingDaySet.has(tickDay)) continue;
       const bar: Bar = {
         timestamp: tickDay,
@@ -209,7 +209,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       .map(d => bestByDay.get(d))
       .filter((b): b is Bar => b != null);
 
-    log.debug(`${symbol} bars: ${bars.length} daily bars for ${tradingDays.length} trading days`);
     return bars.slice(-barsBack);
   }
 
@@ -219,8 +218,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     optionType: 'CALL' | 'PUT',
     at: Date,
   ): Promise<OptionsChain> {
-    const day = toDateKey(at);
-
     // Return cached snapshot if same symbol/expiry/type/timestamp
     const chainKey = `${symbol}:${expiry}:${optionType}:${at.getTime()}`;
     const cachedChain = this.chainCache.get(chainKey);
@@ -289,28 +286,11 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     // Build latest tick per strike at or before `at`
     const strikes = this.buildStrikesFromTicks(allTicks, at);
 
+    const chain: OptionsChain = { symbol, expiry, optionType, strikes };
     if (strikes.length > 0) {
-      const chain: OptionsChain = { symbol, expiry, optionType, strikes };
       this.chainCache.set(chainKey, chain);
-      return chain;
     }
-
-    // Fallback: constructed symbols returned nothing — wrong expiry?
-    log.debug(`${symbol} chain: 0 strikes from constructed symbols, falling back to definition fetch`);
-    const definitions = await loadChainDefinitions({
-      apiKey: this.apiKey,
-      dataset: this.optionsDataset,
-      parentSymbol: `${symbol}.OPT`,
-      day,
-      refreshCache: this.refreshCache,
-      db: this.tickCacheDb,
-    });
-
-    const callPutFilter = optionType === 'CALL' ? 'C' as const : 'P' as const;
-    const expiries = new Set(definitions.filter(d => d.callPut === callPutFilter).map(d => d.expiry));
-    log.debug(`${symbol} available ${optionType} expiries: ${[...expiries].sort().slice(0, 10).join(', ')}`);
-    const emptyChain: OptionsChain = { symbol, expiry, optionType, strikes: [] };
-    return emptyChain;
+    return chain;
   }
 
   /** Extract latest bid/ask per strike from ticks at or before a timestamp. */

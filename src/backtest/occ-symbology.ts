@@ -84,6 +84,18 @@ export function normalizeExpiry(expiry: string, referenceDate: Date): string {
   // Already canonical
   if (/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return expiry;
 
+  // Semantic expiry strings the LLM sometimes emits instead of a real date.
+  // "next-expiry", "this-friday", "next-friday" → next Friday on or after referenceDate.
+  if (/^(next-expiry|this-friday|next-friday)$/i.test(expiry)) {
+    const refYear = referenceDate.getUTCFullYear();
+    const refMonth = referenceDate.getUTCMonth(); // 0-based
+    const refDay = referenceDate.getUTCDate();
+    const dow = referenceDate.getUTCDay(); // 0=Sun
+    const daysToFriday = (5 - dow + 7) % 7; // 0 if already Friday
+    const d = new Date(Date.UTC(refYear, refMonth, refDay + daysToFriday));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+
   // "Oct (10)" / "October (10)" → "Oct 10" (parenthesized day notation)
   expiry = expiry.replace(/^([A-Za-z]+)\s+\((\d{1,2})\)/, '$1 $2');
 

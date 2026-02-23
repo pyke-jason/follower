@@ -60,7 +60,7 @@ async function main() {
   const commissionOptionArg = parseArg(args, '--commission-option');
   const commissionStockArg = parseArg(args, '--commission-stock');
 
-  let logLevel: LogLevel = 'debug';
+  let logLevel: LogLevel = 'info';
   const logLevelArg = parseArg(args, '--log-level');
   if (logLevelArg) {
     if (!['debug', 'info', 'warn', 'error'].includes(logLevelArg)) {
@@ -114,7 +114,7 @@ async function main() {
     });
   }
 
-  const log = createLogger('Backtest');
+  const log = createLogger('BacktestLaunch');
   log.info(`Starting (run ${runId ?? 'no-id'})...`);
   const startTime = Date.now();
 
@@ -127,11 +127,11 @@ async function main() {
 }
 
 process.on('SIGTERM', () => {
-  createLogger('Backtest').info('Received SIGTERM, exiting.');
+  createLogger('BacktestLaunch').info('Received SIGTERM, exiting.');
   process.exit(0);
 });
 
 main().catch((err) => {
-  createLogger('Backtest').error('Fatal error:', err);
+  createLogger('BacktestLaunch').error('Fatal error:', err);
   process.exit(1);
 });

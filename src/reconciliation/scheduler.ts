@@ -3,7 +3,7 @@ import { runReconciliation, type ReconciliationAlertInput } from './reconciler.j
 import { sendSystemAlert } from '../lib/alert.js';
 import { createLogger } from '../lib/logger.js';
 
-const log = createLogger('Recon');
+const log = createLogger('ReconScheduler');
 
 export class ReconciliationScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;

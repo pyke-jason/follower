@@ -16,11 +16,7 @@
     "secrets:list": "tsx src/lib/secrets/manage.ts list",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:backend": "tsc",
-    "build": "npm run build:backend && cd web && npm run build",
-    "start": "node dist/index.js",
-    "local-api:prod": "node dist/local-api/server.js",
-    "db:migrate:prod": "node dist/db/migrate.js"
+    "build": "cd web && npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",

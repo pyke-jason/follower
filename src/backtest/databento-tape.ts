@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { zCoercePrice } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
 import { toDateKeyET, parseDateKey, isTradingDay, getPreviousTradingDayKey } from '../lib/et-date.js';
+import { formatLogTimeET } from '../lib/et-logging.js';
 import { parseOccSymbol } from './occ-symbology.js';
 import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
@@ -137,9 +138,6 @@ export type TickCacheData = {
   ticks: QuoteTick[];
 };
 
-/** Re-export for existing callers. */
-export const toDateKey = toDateKeyET;
-
 // ── Retry logic for Databento API calls ───────────────────────────────
 
 const RETRY_MAX_ATTEMPTS = 3;
@@ -160,7 +158,7 @@ async function fetchWithRetry(
 
       if (res.ok) {
         if (res.status !== 200) {
-          log.warn(
+          log.debug(
             `Databento ${res.status} (non-200 ok) | day=${context.day ?? '?'}` +
             ` symbols=${(context.symbols ?? []).join(',')}`,
           );
@@ -473,7 +471,7 @@ export async function fetchTickWindow(params: {
   const parts: string[] = [
     `tick-window ${params.symbols.length <= 3 ? params.symbols.join(',') : `${params.symbols.length} symbols`}`,
     `schema=${resolvedSchema}`,
-    `range=${params.start.toISOString().slice(11, 19)}..${params.end.toISOString().slice(11, 19)}`,
+    `range=${formatLogTimeET(params.start)}..${formatLogTimeET(params.end)} ET`,
     `status=${httpStatus}`,
     `bytes=${bytesRead}`,
     `records=${records}`,

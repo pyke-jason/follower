@@ -12,6 +12,7 @@ import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
 import type { TradeLeg } from '../db/schema.js';
+import type { Direction, Strategy } from '../lib/enums.js';
 
 const log = createLogger('RecordTrade');
 
@@ -19,8 +20,8 @@ export type RecordTradeInput = {
   action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
   symbol: string;
   trader: string;
-  direction?: 'LONG' | 'SHORT';
-  strategy?: string;
+  direction?: Direction;
+  strategy?: Strategy;
   /** When the caller already knows which trade to target (from a prior lookup),
    *  pass the ID here to skip the redundant scope-filter query. */
   tradeId?: string;
@@ -55,8 +56,8 @@ function emitEvent(params: {
   price?: number | null;
   quantity?: number | null;
   legs?: TradeLeg[];
-  strategy?: string | null;
-  direction?: string | null;
+  strategy?: Strategy | null;
+  direction?: Direction | null;
   messageId?: string | null;
   metadata?: Record<string, unknown>;
   timestamp: string;
@@ -177,7 +178,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const qty = tradeQty(existing.quantity);
     const closePnl = computeTradePnl({
       entryPrice: entry, exitPrice: exit,
-      direction: existing.direction as 'LONG' | 'SHORT',
+      direction: existing.direction,
       strategy: existing.strategy, quantity: qty,
     });
     // Total PnL includes any realized PnL accumulated from prior TRIMs
@@ -203,7 +204,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
         pnl: String(totalPnl),
         closedAt: ts,
         closeMessageId: closeMessageId ?? null,
-        ...(metadata ? { metadata: { ...(existing.metadata as Record<string, unknown> ?? {}), ...metadata } } : {}),
+        ...(metadata ? { metadata: { ...existing.metadata, ...metadata } } : {}),
       })
       .where(eq(schema.trades.id, existing.id));
 
@@ -264,7 +265,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const entry = safeParseFloat(existing.entryPrice);
     const trimPnl = computeTradePnl({
       entryPrice: entry, exitPrice: exit,
-      direction: existing.direction as 'LONG' | 'SHORT',
+      direction: existing.direction,
       strategy: existing.strategy, quantity: trimQty,
     });
     const ts = closedAt ?? now;
@@ -320,7 +321,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
 
-    const targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as string;
+    const targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as Strategy;
     const closedLeg = (metadata as Record<string, unknown>)?.closedLeg as TradeLeg | undefined;
     const keptLeg = (metadata as Record<string, unknown>)?.keptLeg as TradeLeg | undefined;
 
@@ -345,11 +346,13 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       timestamp: ts,
     });
 
+    const openLegCount = Array.isArray(existing.legs) ? existing.legs.length : 1;
     await db.update(schema.trades)
       .set({
         strategy: targetStrategy,
         legs: [keptLeg],
         entryPrice: String(newEntryPrice),
+        metadata: { ...existing.metadata, openLegCount },
       })
       .where(eq(schema.trades.id, existing.id));
 

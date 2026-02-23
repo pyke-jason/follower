@@ -39,6 +39,7 @@ export type { BarFetcher } from './atr.js';
 
 import { ATRPositionSizer } from './atr.js';
 import type { BarFetcher } from './atr.js';
+import { DEFAULT_SIZING_CONFIG } from '../config/risk-defaults.js';
 
 /**
  * Build a PositionSizingStrategy from a config using the discriminated union.
@@ -48,8 +49,7 @@ export function buildPositionSizer(
   config: PositionSizingConfig | null | undefined,
   fetchBars: BarFetcher,
 ): PositionSizingStrategy {
-  const defaultConfig: ATRSizingConfig = { strategy: 'atr', riskPercent: 0.05, atrMultiplier: 2.0 };
-  const resolved: PositionSizingConfig = config ?? defaultConfig;
+  const resolved: PositionSizingConfig = config ?? DEFAULT_SIZING_CONFIG;
 
   switch (resolved.strategy) {
     case 'atr':

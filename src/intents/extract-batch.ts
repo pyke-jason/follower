@@ -118,7 +118,7 @@ export async function extractBatchIntents(
 
       progress.processed++;
 
-      if (progress.processed % 10 === 0 || progress.processed === progress.total) {
+      if (progress.processed % 50 === 0 || progress.processed === progress.total) {
         log.info(`  Progress: ${progress.processed}/${progress.total} (cached=${progress.cached} fresh=${progress.fresh} errors=${progress.errors})`);
       }
 

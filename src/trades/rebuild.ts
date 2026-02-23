@@ -8,6 +8,7 @@ import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { contractMultiplier } from '../lib/trade.js';
 import type { TradeLeg } from '../db/schema.js';
+import type { Direction } from '../lib/enums.js';
 
 export type RebuiltState = {
   status: string;
@@ -92,7 +93,7 @@ export async function rebuildFromEvents(tradeId: string): Promise<RebuildResult>
         const trimPnl = computeTradePnl({
           entryPrice: state.entryPrice,
           exitPrice: price,
-          direction: state.direction as 'LONG' | 'SHORT',
+          direction: state.direction as Direction,
           strategy: state.strategy,
           quantity: qty,
         });
@@ -120,7 +121,7 @@ export async function rebuildFromEvents(tradeId: string): Promise<RebuildResult>
         const closePnl = computeTradePnl({
           entryPrice: state.entryPrice,
           exitPrice: price,
-          direction: state.direction as 'LONG' | 'SHORT',
+          direction: state.direction as Direction,
           strategy: state.strategy,
           quantity: state.quantity,
         });

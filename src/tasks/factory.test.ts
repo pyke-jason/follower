@@ -27,53 +27,8 @@ vi.mock('../config/traders.js', () => ({
 
 import { db, schema } from '../db/client.js';
 import { createTaskFromMessage } from './factory.js';
+import { CREATE_MESSAGES_SQL, CREATE_TASKS_SQL, CREATE_TASKS_UNIQUE_IDX } from '../backtest/test-fixtures.js';
 import type { Message } from '../db/schema.js';
-
-// ── DB setup ──────────────────────────────────────────────────────
-
-const CREATE_MESSAGES_SQL = sql`
-  CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    author TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    raw_html TEXT NOT NULL,
-    clean_text TEXT NOT NULL,
-    badges TEXT DEFAULT '[]',
-    symbols TEXT DEFAULT '[]',
-    action_hint TEXT,
-    direction_hint TEXT,
-    detected_strategies TEXT DEFAULT '[]',
-    is_paper_trade INTEGER DEFAULT 0,
-    confidence TEXT,
-    ingested_at TEXT
-  )
-`;
-
-const CREATE_TASKS_SQL = sql`
-  CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    message_id TEXT,
-    task_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    assignee TEXT NOT NULL DEFAULT 'agent',
-    priority INTEGER DEFAULT 0,
-    context TEXT DEFAULT '{}',
-    result TEXT,
-    created_at TEXT,
-    started_at TEXT,
-    completed_at TEXT,
-    error TEXT,
-    model_provider TEXT,
-    model_name TEXT,
-    backtest_run_id TEXT
-  )
-`;
-
-// Unique index on message_id WHERE message_id IS NOT NULL (mirrors schema.ts:73)
-const CREATE_TASKS_UNIQUE_IDX = sql`
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_message_unique
-  ON tasks(message_id) WHERE message_id IS NOT NULL
-`;
 
 beforeAll(async () => {
   await db.run(CREATE_MESSAGES_SQL);

@@ -334,6 +334,63 @@ describe('normalizeExpiry', () => {
     expect(normalizeExpiry('Oct 18', ref)).toBe('2026-10-18');
     expect(normalizeExpiry('10/18',  ref)).toBe('2026-10-18');
   });
+
+  // ── Semantic expiry strings (LLM fallback) ──
+
+  test('semantic strings resolve to next Friday on or after refDate', () => {
+    // Wednesday 2025-09-10 → next Friday is 2025-09-12
+    const wed = new Date(Date.UTC(2025, 8, 10));
+    expect(normalizeExpiry('next-expiry', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('this-friday', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('next-friday', wed)).toBe('2025-09-12');
+  });
+
+  test('semantic strings on Friday resolve to that same Friday', () => {
+    // Friday 2025-09-12
+    const fri = new Date(Date.UTC(2025, 8, 12));
+    expect(normalizeExpiry('next-expiry', fri)).toBe('2025-09-12');
+  });
+
+  test('semantic strings on Saturday resolve to next Friday', () => {
+    // Saturday 2025-09-13 → next Friday is 2025-09-19
+    const sat = new Date(Date.UTC(2025, 8, 13));
+    expect(normalizeExpiry('next-expiry', sat)).toBe('2025-09-19');
+  });
+
+  test('semantic strings on Sunday resolve to next Friday', () => {
+    // Sunday 2025-09-14 → next Friday is 2025-09-19
+    const sun = new Date(Date.UTC(2025, 8, 14));
+    expect(normalizeExpiry('next-expiry', sun)).toBe('2025-09-19');
+  });
+
+  test('semantic strings are case-insensitive', () => {
+    const wed = new Date(Date.UTC(2025, 8, 10));
+    expect(normalizeExpiry('NEXT-EXPIRY', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('Next-Expiry', wed)).toBe('2025-09-12');
+  });
+
+  test('semantic strings always output YYYY-MM-DD and land on a Friday', () => {
+    fc.assert(
+      fc.property(
+        // Random reference date within a few years
+        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }),
+        fc.constantFrom('next-expiry', 'this-friday', 'next-friday'),
+        (refDate, keyword) => {
+          const result = normalizeExpiry(keyword, refDate);
+          // Output format
+          expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+          // Actually a Friday
+          const [y, m, d] = result.split('-').map(Number);
+          const resolved = new Date(Date.UTC(y, m - 1, d));
+          expect(resolved.getUTCDay()).toBe(5); // Friday
+          // On or after reference date
+          expect(resolved.getTime()).toBeGreaterThanOrEqual(
+            Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate()),
+          );
+        },
+      ),
+    );
+  });
 });
 
 // ── buildOccSymbols ───────────────────────────────────────────────────

@@ -80,20 +80,21 @@ Only flag_for_review when:
 
 ## Signal Actions
 Pricing: the system computes all prices from market data. You never set prices.
-If the trader states a premium ("for $3.72", "for .09"), include it as statedPremium. Omit if no price stated.
+If the trader states a premium ("for $3.72", "for .09"), include it as statedPremium on OPEN signals only.
 
-- **OPEN**: New position entry. Include symbol, direction, strategy. Include legs when strikes are stated. Omit legs when strikes are not stated -- the system infers them.
-- **CLOSE**: Full exit. "Exit Long ATEC" → action CLOSE. Include symbol and direction.
-  Omit legs and statedPremium -- the system handles exit pricing.
-- **ADD**: Adding to existing position ("added more NVDA calls", "avg down on AAPL").
-  Use get_open_positions to verify position exists. Include same fields as OPEN.
+- **OPEN**: New position entry OR adding to an existing position. Always use OPEN for any entry -- the system detects whether a position already exists and handles add-to-position automatically.
+  Required: symbol, direction, strategy. Include legs when strikes are stated/inferred. statedPremium if price was stated.
+- **CLOSE**: Full exit. "Exit Long ATEC" → action CLOSE, symbol ATEC.
+  Required: symbol. Optional: direction, strategy (include as hints when the trader holds multiple positions on the same symbol). Omit legs and statedPremium.
 - **TRIM**: Partial exit ("Exit RKLB 1/2", "trim 80% of AEO").
-  Include exitPercent: 0.5 for half, 0.8 for 80%, etc.
-  Omit legs and statedPremium.
+  Required: symbol, exitPercent (0.5 = half, 0.8 = 80%). Optional: direction, strategy (same hint rule as CLOSE). Omit legs and statedPremium.
+- **LEG_OFF**: Close one leg of a spread, hold the other.
+  Required: symbol, targetStrategy (CALL or PUT -- the strategy after removing the closed leg). Optional: direction, strategy (same hint rule as CLOSE). Omit legs and statedPremium.
 
 ## Rules
 - Only classify trades for tracked traders in the whitelist.
 - Skip paper trades (tagged with "(paper)").
+- "Adding more", "avg down", "doubled down" = OPEN (the system detects existing positions automatically).
 - Inferring strikes/expiry from the options chain is NOT guessing — it's your job.
   Only use flag_for_review when the strategy type itself is truly ambiguous.
 - Always explain your reasoning. Your steps are audited.
@@ -101,7 +102,7 @@ If the trader states a premium ("for $3.72", "for .09"), include it as statedPre
 
 After using tools, call **submit_decision** with your classification. For EXECUTE, include a signals array. For SKIP or MANUAL_REVIEW, omit signals.
 
-**IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN or ADD, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE and TRIM, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
+**IMPORTANT**: For options trades (CALL, PUT, CDS, PDS) with action OPEN, the \`legs\` array is REQUIRED. Each leg must include \`strike\`, \`expiry\`, \`optionType\`, and \`action\`. Without legs, the signal will be rejected by the execution pipeline. For CLOSE, TRIM, and LEG_OFF, do NOT include \`legs\` — the system uses the existing position's legs automatically.`;
 
 
 /**

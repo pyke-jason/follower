@@ -6,6 +6,7 @@ import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics } from '../backtest/types.js';
 import { LegTypeSchema, LegActionSchema } from '../lib/enums.js';
+import type { Direction, Strategy } from '../lib/enums.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
 
@@ -97,8 +98,8 @@ export const trades = sqliteTable('trades', {
   sourceMessageId: text('source_message_id').references(() => messages.id),
   trader:          text('trader').notNull(),
   symbol:          text('symbol').notNull(),
-  direction:       text('direction').notNull(),    // LONG | SHORT
-  strategy:        text('strategy').notNull(),     // CDS, PDS, CALL, PUT, STOCK
+  direction:       text('direction').notNull().$type<Direction>(),    // LONG | SHORT
+  strategy:        text('strategy').notNull().$type<Strategy>(),     // CDS, PDS, CALL, PUT, STOCK
   legs:            text('legs', { mode: 'json' }).$type<TradeLeg[]>().notNull(),
   status:          text('status').notNull().default('OPEN'), // OPEN | CLOSED | CANCELLED
   entryPrice:      text('entry_price'),
@@ -134,8 +135,8 @@ export const tradeEvents = sqliteTable('trade_events', {
   price:      text('price'),                    // fill price for this action
   quantity:   integer('quantity'),               // contracts/shares involved
   legs:       text('legs', { mode: 'json' }).$type<TradeLeg[]>().default([]),
-  strategy:   text('strategy'),                 // strategy at time of event
-  direction:  text('direction'),                // direction at time of event
+  strategy:   text('strategy').$type<Strategy>(),                 // strategy at time of event
+  direction:  text('direction').$type<Direction>(),                // direction at time of event
   messageId:  text('message_id'),               // source message that triggered this
   metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>().default({}),
   timestamp:  text('timestamp').notNull(),       // ISO 8601 — when the action happened
@@ -422,6 +423,9 @@ export type TradeMetadata = {
   brokerOrderId?: string;
   fillEnriched?: boolean;
   fillEnrichedAt?: string;
+  /** Original leg count at open time. Set during LEG_OFF so commission
+   *  can compute the open-side cost correctly after legs shrink. */
+  openLegCount?: number;
   [key: string]: unknown;
 };
 

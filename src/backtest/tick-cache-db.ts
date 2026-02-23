@@ -1,4 +1,4 @@
-import { eq, and, gte, lte } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
 import type * as tickCacheSchema from '../db/tick-cache-schema.js';
 import { quoteTicks, tickCacheRanges, chainDefinitions, chainCacheMeta } from '../db/tick-cache-schema.js';
@@ -37,27 +37,6 @@ export async function readCachedTicks(
     .where(and(
       eq(quoteTicks.symbol, symbol),
       eq(quoteTicks.dbnSchema, dbnSchema),
-    ))
-    .orderBy(quoteTicks.timestamp);
-  return rows.map(rowToTick);
-}
-
-/** Read cached ticks within a specific time range. */
-export async function readCachedTicksInRange(
-  db: TickCacheDB,
-  symbol: string,
-  dbnSchema: string,
-  startMs: number,
-  endMs: number,
-): Promise<QuoteTick[]> {
-  const rows = await db
-    .select()
-    .from(quoteTicks)
-    .where(and(
-      eq(quoteTicks.symbol, symbol),
-      eq(quoteTicks.dbnSchema, dbnSchema),
-      gte(quoteTicks.timestamp, startMs),
-      lte(quoteTicks.timestamp, endMs),
     ))
     .orderBy(quoteTicks.timestamp);
   return rows.map(rowToTick);

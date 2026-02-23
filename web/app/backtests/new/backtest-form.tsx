@@ -64,7 +64,7 @@ export function BacktestForm({
             name="endDate"
             type="date"
             required
-            defaultValue={defaultConfig?.endDate?.split('T')[0] ?? '2025-12-27'}
+            defaultValue={defaultConfig?.endDate?.split('T')[0] ?? '2025-09-30'}
             className="h-9"
           />
         </div>

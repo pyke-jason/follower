@@ -34,9 +34,6 @@ export class OrderManager {
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
     WorkingOrderParamsSchema.parse(params);
-    const legCount = params.legs.length;
-    const ruleCount = params.adjustmentRules?.length ?? 0;
-    log.debug(`submit: ${params.orderType} ${params.symbol} legs=${legCount} limit=$${params.limitPrice ?? 'MKT'} cancelAfter=${params.cancelAfterSec ?? 'none'}s rules=${ruleCount}`);
 
     const hasRules = (params.adjustmentRules?.length ?? 0) > 0 || params.cancelAfterSec != null;
     const isLimit = params.orderType === 'LIMIT';
@@ -79,9 +76,15 @@ export class OrderManager {
 
       // 1. Check fill status FIRST — fills from advanceTo() must be detected
       //    before auto-cancel can fire, otherwise we lose recorded trades.
-      const status = OrderResultSchema.parse(await this.broker.getOrderStatus(orderId));
+      let rawStatus;
+      try {
+        rawStatus = await this.broker.getOrderStatus(orderId);
+      } catch (err) {
+        log.warn(`getOrderStatus failed for ${orderId}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      const status = OrderResultSchema.parse(rawStatus);
       if (status.status === 'FILLED') {
-        log.debug(`Fill confirmed: ${orderId} @ $${status.filledPrice}`);
         // Zod refines guarantee filledPrice + fillTimestamp are present for FILLED
         order.status = 'FILLED';
         order.filledPrice = status.filledPrice!;
@@ -91,6 +94,7 @@ export class OrderManager {
         order.fillTimestamp = status.fillTimestamp!;
         order.legFills = status.legFills;
         this.workingOrders.delete(orderId);
+        log.info(`Fill: ${orderId} ${order.params.symbol} @ $${status.filledPrice}`);
         await this.onFill?.(order as FilledWorkingOrder);
         this.stopTimerIfEmpty();
         continue;
@@ -107,7 +111,7 @@ export class OrderManager {
       if (order.params.cancelAfterSec != null) {
         const elapsed = (now.getTime() - order.placedAt.getTime()) / 1000;
         if (elapsed >= order.params.cancelAfterSec) {
-          log.debug(`Auto-cancel: ${orderId} after ${order.params.cancelAfterSec}s`);
+          log.info(`Auto-cancel: ${orderId} ${order.params.symbol} after ${order.params.cancelAfterSec}s`);
           await this.broker.cancelOrder(orderId);
           order.status = 'CANCELLED';
           order.cancelledAt = now;

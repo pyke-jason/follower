@@ -21,14 +21,14 @@ const arbSchedule: fc.Arbitrary<CommissionSchedule> = fc.record({
   }),
 });
 
-function makeTrade(strategy: string, quantity: number | null, legs: unknown[] | null) {
-  return { strategy, quantity, legs };
+function makeTrade(strategy: string, quantity: number | null, legs: unknown[] | null, openLegCount?: number) {
+  return { strategy, quantity, legs, metadata: openLegCount != null ? { openLegCount } : undefined };
 }
 
 // ── Property tests ───────────────────────────────────────────────────
 
 describe('commission property tests', () => {
-  test('round-trip = 2x entry: computeTradeCommission === roundCents(computeEntrySideCommission * 2)', () => {
+  test('without openLegCount: round-trip = 2x entry', () => {
     fc.assert(
       fc.property(arbStrategy, arbQuantity, arbLegs, arbSchedule, (strategy, qty, legs, schedule) => {
         const trade = makeTrade(strategy, qty, legs);
@@ -159,5 +159,55 @@ describe('commission deterministic tests', () => {
     };
     expect(() => computeEntrySideCommission(trade, schedule)).toThrow('minimum');
     expect(() => computeTradeCommission(trade, schedule)).toThrow('minimum');
+  });
+});
+
+// ── LEG_OFF asymmetric commission tests ──────────────────────────────
+
+describe('LEG_OFF openLegCount', () => {
+  const schedule: CommissionSchedule = {
+    option: { perContract: 0.50 },
+  };
+
+  test('PDS with LEG_OFF: open=2 legs, close=1 leg -> asymmetric commission', () => {
+    // UNH scenario: opened as PDS (2 legs), LEG_OFF removed one, closed as PUT (1 leg)
+    const trade = makeTrade('PUT', 5, [{}], 2);
+    // open side: 0.50 × 5 × 2 = $5.00
+    // close side: 0.50 × 5 × 1 = $2.50
+    // total: $7.50
+    expect(computeTradeCommission(trade, schedule)).toBe(7.5);
+    // entry side should use openLegCount
+    expect(computeEntrySideCommission(trade, schedule)).toBe(5.0);
+  });
+
+  test('without openLegCount metadata, falls back to current legs', () => {
+    const trade = makeTrade('PUT', 5, [{}]);
+    // Both sides use legs.length = 1
+    // 0.50 × 5 × 1 × 2 = $5.00
+    expect(computeTradeCommission(trade, schedule)).toBe(5.0);
+    expect(computeEntrySideCommission(trade, schedule)).toBe(2.5);
+  });
+
+  test('openLegCount same as current legs -> same as symmetric', () => {
+    const trade = makeTrade('CDS', 5, [{}, {}], 2);
+    // openLegCount=2, legs.length=2 -> symmetric
+    // 0.50 × 5 × 2 × 2 = $10.00
+    expect(computeTradeCommission(trade, schedule)).toBe(10.0);
+  });
+
+  test('open position after LEG_OFF uses openLegCount for entry commission', () => {
+    // WBD-like: opened as CDS (2 legs), LEG_OFF removed one, still open
+    const trade = makeTrade('CALL', 6, [{}], 2);
+    // entry side: 0.50 × 6 × 2 = $6.00
+    expect(computeEntrySideCommission(trade, schedule)).toBe(6.0);
+  });
+
+  test('stock ignores openLegCount (stocks have no legs)', () => {
+    const trade = makeTrade('STOCK', 100, null, 2);
+    const stockSchedule: CommissionSchedule = {
+      stock: { perShare: 0.005 },
+      option: { perContract: 0.50 },
+    };
+    expect(computeTradeCommission(trade, stockSchedule)).toBe(1.0);
   });
 });

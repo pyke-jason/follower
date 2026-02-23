@@ -1,9 +1,8 @@
 /**
- * Shared test fixtures for SimBroker property tests.
+ * Shared test fixtures: arbitraries, market-data stubs, DB DDL, and helpers.
  *
- * Consolidates arbitraries, market-data stubs, and DB helpers so the three
- * test files (sim-broker.test, sim-broker-db.test, sim-broker-temporal.test)
- * stay focused on properties rather than plumbing.
+ * Any test that needs in-memory SQLite tables or domain arbitraries should
+ * import from here rather than maintaining its own copies.
  */
 
 import fc from 'fast-check';
@@ -35,8 +34,6 @@ export const arbPrice = fc.double({ min: 0.01, max: 5000, noNaN: true, noDefault
 export const arbEntryPrice = fc.double({ min: 1, max: 500, noNaN: true, noDefaultInfinity: true });
 export const arbMarkPrice = fc.double({ min: 1, max: 500, noNaN: true, noDefaultInfinity: true });
 export const arbEquity = fc.double({ min: 10_000, max: 1_000_000, noNaN: true, noDefaultInfinity: true });
-export const arbSymbol = fc.constantFrom('SPY', 'QQQ', 'AAPL', 'TSLA', 'NVDA');
-export const arbTrader = fc.constantFrom('alice', 'bob', 'charlie');
 
 // ── Quote / order helpers ────────────────────────────────────────────
 
@@ -314,6 +311,52 @@ export const CREATE_TRADE_EVENTS_SQL = sql`
     timestamp TEXT NOT NULL,
     created_at TEXT
   )
+`;
+
+/** SQL to create the messages table for in-memory test databases. */
+export const CREATE_MESSAGES_SQL = sql`
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    author TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    raw_html TEXT NOT NULL,
+    clean_text TEXT NOT NULL,
+    badges TEXT DEFAULT '[]',
+    symbols TEXT DEFAULT '[]',
+    action_hint TEXT,
+    direction_hint TEXT,
+    detected_strategies TEXT DEFAULT '[]',
+    is_paper_trade INTEGER DEFAULT 0,
+    confidence TEXT,
+    ingested_at TEXT
+  )
+`;
+
+/** SQL to create the tasks table for in-memory test databases. */
+export const CREATE_TASKS_SQL = sql`
+  CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    message_id TEXT,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    assignee TEXT NOT NULL DEFAULT 'agent',
+    priority INTEGER DEFAULT 0,
+    context TEXT DEFAULT '{}',
+    result TEXT,
+    created_at TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    error TEXT,
+    model_provider TEXT,
+    model_name TEXT,
+    backtest_run_id TEXT
+  )
+`;
+
+/** Unique index on tasks.message_id (mirrors schema.ts). */
+export const CREATE_TASKS_UNIQUE_IDX = sql`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_message_unique
+  ON tasks(message_id) WHERE message_id IS NOT NULL
 `;
 
 export type InsertOpenTradeParams = {

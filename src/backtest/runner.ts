@@ -22,7 +22,7 @@ import type { BacktestConfig, BacktestReport, FillModel, HistoricalMessage } fro
 import { buildLiveMetrics } from './live-metrics.js';
 import type { TaskContext } from '../db/schema.js';
 import type { LLMUsage } from '../agent/providers.js';
-import { resetApiStats } from './databento-tape.js';
+import { resetApiStats, getApiStats } from './databento-tape.js';
 import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
@@ -333,6 +333,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   );
   const cachedIntents = batchResult.intents;
   log.info(`Phase 1 complete: ${batchResult.progress.cached} cached, ${batchResult.progress.fresh} fresh, ${batchResult.progress.errors} errors`);
+  const phase1Api = getApiStats();
+  if (phase1Api.fetches > 0) {
+    log.info(`Phase 1 API: ${phase1Api.fetches} fetches, ${(phase1Api.bytesRead / 1024).toFixed(0)} KB, ${phase1Api.records} records`);
+  }
   resetApiStats(); // start counting from Phase 1.5 onward (Phase 1 quote calls excluded)
 
   // ── Phase 1.5: Pre-seed daily bar cache for position sizing ──
@@ -374,12 +378,13 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
     // ── Day boundary: sweep expired options + MTM snapshot ──
     if (lastMsgDay && msgDay !== lastMsgDay) {
+      log.info(`Day ${lastMsgDay} → ${msgDay}`);
       const openCount = await broker.getOpenPositionCount();
       if (openCount > 0) {
         // 1. Sweep expired options first (they become closed trades)
         const expiredCount = await broker.sweepExpired(lastMsgDay);
         if (expiredCount > 0) {
-          log.debug(`Day ${lastMsgDay}: expired ${expiredCount} option position(s)`);
+          log.info(`Swept ${expiredCount} expired option(s) on ${lastMsgDay}`);
         }
 
         // 2. MTM snapshot for remaining open positions
@@ -463,7 +468,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     if (openCount > 0) {
       const expiredCount = await broker.sweepExpired(lastMsgDay);
       if (expiredCount > 0) {
-        log.debug(`Day ${lastMsgDay} (final): expired ${expiredCount} option position(s)`);
+        log.info(`Swept ${expiredCount} expired option(s) on ${lastMsgDay} (final)`);
       }
 
       const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
@@ -478,6 +483,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   }
 
   orderManager.destroy();
+
+  const phase2Api = getApiStats();
+  if (phase2Api.fetches > 0) {
+    log.info(`Phase 2 API: ${phase2Api.fetches} fetches, ${(phase2Api.bytesRead / 1024).toFixed(0)} KB, ${phase2Api.records} records`);
+  }
 
   // Print market data quality summary
   priceProvider.printDataSummary();
@@ -575,7 +585,6 @@ async function recordExecute(
   tradeId?: string,
   usage?: LLMUsage,
 ): Promise<void> {
-  log.debug(`  → EXECUTE: ${reasoning} (${Date.now() - ctx.decisionStart}ms)`);
   ctx.stats.agentTrades++;
   await db.insert(schema.runDecisions).values({
     backtestRunId: ctx.runId,
@@ -598,21 +607,7 @@ async function processMessage(
 ): Promise<void> {
   const ctx: MessageContext = { msg, runId: btCtx.runId, stats, updateStats, decisionStart: Date.now() };
 
-  // ── 1. Shared logging ──
-  log.debug(
-    `msg ${msg.id.slice(0, 8)} | ${msg.author} | ${msg.symbols.join(',')} | ` +
-    `action=${msg.actionHint ?? '?'} dir=${msg.directionHint ?? '?'} conf=${msg.confidence.toFixed(2)} ` +
-    `badges=[${msg.badges.join(',')}]`,
-  );
-  if (msg.detectedStrategies.length > 0) {
-    const stratStr = msg.detectedStrategies.map(s =>
-      `${s.strategy}${s.strikes?.length ? ` strikes=${s.strikes.join('/')}` : ''}${s.expiry ? ` exp=${s.expiry}` : ''}`,
-    ).join('; ');
-    log.debug(`  strategies: ${stratStr}`);
-  }
-  log.debug(`  text: "${msg.cleanText.slice(0, 200)}${msg.cleanText.length > 200 ? '...' : ''}"`);
-
-  // ── 2. Build TaskContext ──
+  // ── 1. Build TaskContext ──
   const taskContext: TaskContext = {
     messageId: msg.id,
     messageTimestamp: msg.timestamp.toISOString(),
@@ -671,8 +666,16 @@ async function processMessage(
   // Process each signal through the trade agent
   const allActions: Action[] = [];
   for (const signal of signals) {
-    const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched, allowedStrategies);
-    allActions.push(...actions);
+    try {
+      const actions = await btCtx.tradeAgent.onSignal(signal, msg.author, taskContext, prefetched, allowedStrategies);
+      allActions.push(...actions);
+    } catch (err) {
+      const reason = `${signal.action} ${signal.symbol}: ${err instanceof Error ? err.message : String(err)}`;
+      log.warn(`  pipeline failed: ${reason}`);
+      await recordSkip(ctx, 'intent', 'agent error', reason, usage);
+      updateStats(stats);
+      return;
+    }
   }
   const tAgent = Date.now() - tAgent0;
 
@@ -706,7 +709,7 @@ async function processMessage(
   );
   const tPipeline = Date.now() - tPipeline0;
   const tTotal = Date.now() - tPrefetch0;
-  if (tTotal > 500) {
+  if (tTotal > 2000) {
     log.warn(`  EXECUTE timing: total=${tTotal}ms prefetch=${tPrefetch}ms agent=${tAgent}ms pipeline=${tPipeline}ms`);
   }
 
@@ -725,7 +728,7 @@ async function processMessage(
     await recordExecute(ctx, 'intent', reasoning, firstTradeId, usage);
   } else if (pipelineFailures.length > 0) {
     const failReason = `[pipeline] ${pipelineFailures.join('; ')} | Intent: ${reasoning}`;
-    log.warn(`  intent: EXECUTE → pipeline failed: ${pipelineFailures.join('; ')}`);
+    log.warn(`  pipeline failed: ${pipelineFailures.map(f => f.slice(0, 100)).join('; ')}`);
     await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason, usage);
   } else {
     await recordSkip(ctx, 'intent', 'intent skip', reasoning, usage);

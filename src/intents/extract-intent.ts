@@ -18,7 +18,7 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
 
-export const INTENT_VERSION = 5;
+export const INTENT_VERSION = 6;
 
 export type IntentExtractionDeps = {
   /** Get a quote at a specific point in time (message timestamp). */
@@ -54,7 +54,7 @@ You are the SOLE parser. There is no regex fallback. Handle typos, abbreviations
 
 <process>
 For each message:
-1. CLASSIFY: Is this a trade entry, exit, add, trim, or noise? Use the trader's recent messages to understand what positions they hold.
+1. CLASSIFY: Is this a new trade entry, full exit, partial exit (trim), leg-off, or noise? Use the trader's recent messages to understand what positions they hold.
 2. IDENTIFY: Stock or options? If options, determine the structure (naked call/put, CDS, PDS).
 3. VALIDATE: Check the prefetched stock quotes in the message context. If the price seems wildly inconsistent with the trader's message, flag for review.
 4. OUTPUT: Always end by invoking a tool -- call submit_decision with your parsed signals (EXECUTE, SKIP, or MANUAL_REVIEW), or call flag_for_review. Never output your decision as text.
@@ -69,6 +69,8 @@ Calendar/time spread: When both Long+Short badges appear, flag for review.
 </strategies>
 
 <direction_rules>
+Direction applies only to OPEN signals. For CLOSE, TRIM, and LEG_OFF, direction is optional and only used as a disambiguation hint.
+
 The direction field means whether you are BUYING (LONG) or SELLING (SHORT) the option/spread.
 It does NOT represent the trader's stock-level view.
 
@@ -76,20 +78,31 @@ Core rule: derive direction from the actual trade mechanics, not the Long/Short 
 - Debit strategies (buying options or spreads): direction is LONG, always.
 - Direction is SHORT only when genuinely SELLING (writing) options for credit, or short-selling stock.
 - The words "Bought" and "Sold" in the message are authoritative -- they override any prefix.
-
-Confirming with exit context: LOSS with exit < entry = they bought (paid high, sold low). GAIN with exit < entry = they sold to open (collected premium, bought back cheap).
 </direction_rules>
 
 <signal_actions>
 All signals omit quantity -- the system calculates position size.
 Pricing: the system computes all prices from market data. You never set prices.
-If the trader states a premium ("for $3.72", "for .09", "$2.40 credit"), include it as statedPremium. Omit statedPremium if no price is mentioned.
+If the trader states a premium ("for $3.72", "for .09", "$2.40 credit"), include it as statedPremium on OPEN signals only.
 
-OPEN: New position. Include symbol, direction, strategy. Include legs ONLY when the trader explicitly states strikes. Omit legs when strikes are not stated -- the system infers ATM strikes from the stock price.
-CLOSE: Full exit. Omit legs and statedPremium -- the system handles exit pricing.
-ADD: Adding to existing position. Verify via recent messages that a position was previously opened. Same fields as OPEN.
-TRIM: Partial exit. Include exitPercent (0.5 = half, 0.8 = 80%). Omit legs and statedPremium.
-LEG_OFF: Close one leg of a spread, hold the other. Include targetStrategy (CALL or PUT) -- the strategy after the closed leg is removed. Omit legs and statedPremium.
+OPEN: New position OR adding to an existing position. Always use OPEN for any entry -- the system detects whether a position already exists and handles accordingly.
+  Required: symbol, direction, strategy.
+  Optional: legs (include ONLY when the trader explicitly states strikes; omit to let the system infer ATM), statedPremium.
+
+CLOSE: Full exit of an existing position. The system finds the position by symbol and trader.
+  Required: symbol.
+  Optional: direction, strategy (include as hints when the trader holds multiple positions on the same symbol, e.g. both stock and options).
+  Omit: legs, statedPremium.
+
+TRIM: Partial exit.
+  Required: symbol, exitPercent (0.5 = half, 0.8 = 80%).
+  Optional: direction, strategy (same disambiguation rule as CLOSE).
+  Omit: legs, statedPremium.
+
+LEG_OFF: Close one leg of a spread, hold the other.
+  Required: symbol, targetStrategy (CALL or PUT -- the strategy AFTER the closed leg is removed).
+  Optional: direction, strategy (same disambiguation rule as CLOSE).
+  Omit: legs, statedPremium.
 </signal_actions>
 
 <follow_trades>
@@ -104,7 +117,9 @@ Traders sometimes follow another trader's call ("following Dave", "tailing spect
 
 <rules>
 - Only parse trades for tracked traders in the whitelist. Skip paper trades tagged "(paper)".
-- A message may contain multiple DIFFERENT trades ("Exit TXN, Short TSLA") -- one signal per distinct trade. Never emit two signals for the same symbol+action -- combine all attributes into one signal.
+- A message may contain multiple DIFFERENT trades ("Exit TXN, Short TSLA") -- one signal per distinct trade. Never emit two signals for the same symbol -- combine all attributes into one signal.
+- "Adding more", "avg down", "doubled down" = OPEN (the system detects existing positions automatically). Do not try to determine if a position already exists.
+- Legs only apply to OPEN signals.
 - When the trader states explicit strikes, include them in legs. When strikes are omitted, omit legs entirely -- the system infers them.
 - Always output expiry as YYYY-MM-DD. Traders write dates many ways ("12/19", "Dec 19", "12/19/25") -- convert them. For MM/DD without a year, use the next occurrence of that date on or after the message date. A bare month name like "Oct" with no day means the standard monthly expiry (3rd Friday of that month). When a date appears as "Oct (10)", the number in parentheses is the day (October 10th), not a contract count.
 - Always explain your reasoning -- your steps are audited.
@@ -159,23 +174,45 @@ submit_decision(EXECUTE): action OPEN, symbol JOBY, direction SHORT, strategy PU
 <reasoning>
 "Lotto" = speculative buy, always buy-to-open. Trader is BUYING cheap puts as a bearish bet.
 direction: LONG, strategy: PUT. "Short" is the stock view, not the trade direction.
+This is ONE signal (the put purchase), not two (do not separately parse "Short ABNB" as a stock short).
 </reasoning>
 submit_decision(EXECUTE): action OPEN, symbol ABNB, direction LONG, strategy PUT, legs [BUY 123P], statedPremium 0.21
+</example>
+
+<example>
+<input>Adding more NVDA calls, avg down</input>
+<reasoning>
+"Adding more" = entering more of an existing position. Use OPEN -- the system detects that a NVDA CALL position already exists and handles the add automatically.
+direction: LONG (buying calls). strategy: CALL.
+No strikes stated, so omit legs.
+</reasoning>
+submit_decision(EXECUTE): action OPEN, symbol NVDA, direction LONG, strategy CALL
 </example>
 
 <example>
 <input>Exit Long ATEC</input>
 <reasoning>
 "Exit" = closing a position. This is a CLOSE action on ATEC.
-Omit legs and statedPremium -- the system handles exit pricing.
+"Long" hints at direction but is optional for exits. Omit legs and statedPremium -- the system handles exit pricing.
 </reasoning>
-submit_decision(EXECUTE): action CLOSE, symbol ATEC, direction LONG
+submit_decision(EXECUTE): action CLOSE, symbol ATEC
+</example>
+
+<example>
+<input>Out of AAPL stock</input>
+<reasoning>
+"Out of" = closing a position. This is a CLOSE on AAPL.
+"stock" tells us the strategy -- include strategy STOCK as a hint.
+No direction stated, so omit it.
+</reasoning>
+submit_decision(EXECUTE): action CLOSE, symbol AAPL, strategy STOCK
 </example>
 
 <example>
 <input>Exit RKLB 1/2</input>
 <reasoning>
-"1/2" = partial exit. This is a TRIM with exitPercent 0.5. Omit legs and statedPremium.
+"1/2" = partial exit. This is a TRIM with exitPercent 0.5.
+No direction or strategy stated, so omit them. Omit legs and statedPremium.
 </reasoning>
 submit_decision(EXECUTE): action TRIM, symbol RKLB, exitPercent 0.5
 </example>

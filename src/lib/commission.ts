@@ -9,6 +9,11 @@
  * For open positions, we compute entry-only commission (one side) since the exit
  * hasn't happened yet.
  *
+ * After a LEG_OFF, the trade's legs array shrinks (e.g., PDS 2-leg → CALL 1-leg).
+ * To correctly charge the open side, record-trade stores the original leg count in
+ * `metadata.openLegCount`. The commission functions use this for the open side when
+ * present, falling back to current `legs.length` for trades without LEG_OFF.
+ *
  * Stock min/max is applied per side (not per ticket). Negligible difference since
  * most users will use $0.00 for stocks (TradeStation is commission-free for equities).
  */
@@ -21,11 +26,17 @@ type CommissionableTrade = {
   strategy: string;
   quantity: number | null;
   legs: unknown[] | null;
+  metadata?: { openLegCount?: number } | null;
 };
 
-function computeOneSideCommission(
+function currentLegCount(trade: CommissionableTrade): number {
+  return Array.isArray(trade.legs) ? Math.max(trade.legs.length, 1) : 1;
+}
+
+function computeSideCommission(
   trade: CommissionableTrade,
   schedule: CommissionSchedule | undefined,
+  legCount: number,
 ): number {
   if (!schedule) return 0;
   const qty = tradeQty(trade.quantity);
@@ -44,24 +55,28 @@ function computeOneSideCommission(
   // Options: CALL, PUT, CDS, PDS, etc.
   const perContract = schedule.option?.perContract ?? 0;
   if (perContract === 0) return 0;
-  // Naked CALL/PUT always has legs.length >= 1 (execute.ts throws if empty).
-  // Spreads (CDS/PDS) have 2+ legs. Stock trades don't reach here.
-  const legCount = Array.isArray(trade.legs) ? Math.max(trade.legs.length, 1) : 1;
   return roundCents(perContract * qty * legCount);
 }
 
-/** Round-trip (open + close) commission for a closed trade. */
+/** Round-trip (open + close) commission for a closed trade.
+ *  Uses `metadata.openLegCount` for the open side when legs changed via LEG_OFF. */
 export function computeTradeCommission(
   trade: CommissionableTrade,
   schedule: CommissionSchedule | undefined,
 ): number {
-  return roundCents(computeOneSideCommission(trade, schedule) * 2);
+  const closeLegCount = currentLegCount(trade);
+  const openLegCount = trade.metadata?.openLegCount ?? closeLegCount;
+  const openSide = computeSideCommission(trade, schedule, openLegCount);
+  const closeSide = computeSideCommission(trade, schedule, closeLegCount);
+  return roundCents(openSide + closeSide);
 }
 
-/** Entry-only commission (for open positions that haven't exited yet). */
+/** Entry-only commission (for open positions that haven't exited yet).
+ *  Uses `metadata.openLegCount` when present (position already had a LEG_OFF). */
 export function computeEntrySideCommission(
   trade: CommissionableTrade,
   schedule: CommissionSchedule | undefined,
 ): number {
-  return computeOneSideCommission(trade, schedule);
+  const openLegCount = trade.metadata?.openLegCount ?? currentLegCount(trade);
+  return computeSideCommission(trade, schedule, openLegCount);
 }

@@ -1,5 +1,6 @@
 import type { Bar } from '../broker/types.js';
 import type { PositionSizingStrategy, SizingParams, PositionSize } from './index.js';
+import { ATR_FALLBACK_FACTOR } from '../config/risk-defaults.js';
 
 export type ATRConfig = {
   riskPercent: number;   // e.g. 0.02 = 2%
@@ -56,8 +57,8 @@ export class ATRPositionSizer implements PositionSizingStrategy {
     let atr: number;
     let atrFallback = false;
     if (bars.length < 2) {
-      // Insufficient data — use synthetic ATR of 2% of entry price
-      atr = entryPrice * 0.02;
+      // Insufficient data — use synthetic ATR of entry price * fallback factor
+      atr = entryPrice * ATR_FALLBACK_FACTOR;
       atrFallback = true;
     } else {
       atr = computeATR(bars, atrPeriod);
