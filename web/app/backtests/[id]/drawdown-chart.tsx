@@ -3,24 +3,15 @@
 import { useMemo } from 'react';
 import { AreaChartComponent } from '../../components/charts/area-chart';
 import { formatCurrency } from '@/lib/format';
-
-type EquityPoint = {
-  date: string;
-  cumPnl: number;
-};
+import type { EquityPoint } from '../../../../src/backtest/types';
 
 export function DrawdownChart({ data }: { data: EquityPoint[] }) {
-  const drawdownData = useMemo(() => {
-    let peak = 0;
-    return data.map((pt) => {
-      if (pt.cumPnl > peak) peak = pt.cumPnl;
-      const drawdown = peak - pt.cumPnl;
-      return { date: pt.date, drawdown: -drawdown };
-    });
-  }, [data]);
+  const drawdownData = useMemo(() =>
+    data.map((pt) => ({ date: pt.date, drawdown: -(pt.drawdown ?? 0) })),
+    [data],
+  );
 
-  const hasDrawdown = drawdownData.some((d) => d.drawdown < 0);
-  if (!hasDrawdown) return null;
+  if (!data.some((d) => (d.drawdown ?? 0) > 0)) return null;
 
   return (
     <AreaChartComponent

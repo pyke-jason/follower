@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { InfoChip } from '../../components/info-chip';
-import { formatCurrency, formatDateShort } from '@/lib/format';
+import { formatBytes, formatCurrency, formatDateShort, isoToDateKey } from '@/lib/format';
 import { estimateLlmCost } from '../../../../src/lib/llm-cost';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain } from 'lucide-react';
@@ -24,17 +24,6 @@ interface RunProgressProps {
   rangeEnd: string;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** Extract YYYY-MM-DD from an ISO string or pass through if already a date key */
-function toDateKey(iso: string): string {
-  return iso.split('T')[0];
-}
-
 export function RunProgress({
   processedMessages,
   totalMessages,
@@ -52,9 +41,9 @@ export function RunProgress({
   const isExtracting = isActive && liveMetrics?.phase === 'EXTRACTING';
   const isCompleted = status === 'COMPLETED';
 
-  const startKey = toDateKey(rangeStart);
-  const endKey = toDateKey(rangeEnd);
-  const currentKey = lastMessageDate ? toDateKey(lastMessageDate) : null;
+  const startKey = isoToDateKey(rangeStart);
+  const endKey = isoToDateKey(rangeEnd);
+  const currentKey = lastMessageDate ? isoToDateKey(lastMessageDate) : null;
 
   // Elapsed timer based on actual run startedAt
   const startMs = startedAt ? new Date(startedAt).getTime() : null;

@@ -14,14 +14,7 @@ import {
   Cell,
 } from 'recharts';
 import { formatCurrency } from '@/lib/format';
-
-type EquityPoint = {
-  date: string;
-  pnl: number;
-  cumPnl: number;
-  trades: number;
-  equity?: number;
-};
+import type { EquityPoint } from '../../../../src/backtest/types';
 
 export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
   const hasEquity = data.some((d) => d.equity != null);

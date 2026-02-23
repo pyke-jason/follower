@@ -95,15 +95,7 @@ export default async function BacktestDetailPage({
 
 
   // --- Performance Tab content ---
-  const hasDrawdown = (() => {
-    if (!equityCurve) return false;
-    let peak = 0;
-    for (const pt of equityCurve) {
-      if (pt.cumPnl > peak) peak = pt.cumPnl;
-      if (peak - pt.cumPnl > 0) return true;
-    }
-    return false;
-  })();
+  const hasDrawdown = (summary?.maxDrawdown ?? 0) > 0;
 
   const noData = (h = 200) => (
     <div className={`flex items-center justify-center text-xs text-muted-foreground`} style={{ height: h }}>

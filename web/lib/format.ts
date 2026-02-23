@@ -53,6 +53,18 @@ export function formatDuration(startIso: string, endIso: string): string {
   return `${mins}m ${secs}s`;
 }
 
+/** "1.2 KB", "3.4 MB" — human-readable byte sizes */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Extract YYYY-MM-DD from an ISO timestamp, or pass through if already a date key */
+export function isoToDateKey(iso: string): string {
+  return iso.split('T')[0];
+}
+
 export function pnlColor(value: number | string | null | undefined): string {
   if (value == null) return 'text-zinc-400';
   const num = typeof value === 'string' ? parseFloat(value) : value;
