@@ -703,6 +703,43 @@ export async function executeSignal(
 }
 
 /**
+ * Deduplicate signals by symbol|action|strategy.
+ * When the LLM emits two signals for the same trade (e.g. "Short ABNB using $127 Puts"
+ * → one STOCK signal + one PUT signal), keep the best one:
+ *   1. Prefer the signal with statedPremium (more complete).
+ *   2. Tiebreak: fewer legs (simpler = less likely to be the duplicate).
+ *   3. Final tiebreak: later position in the array (LLMs tend to self-correct).
+ */
+function deduplicateSignals(signals: Signal[]): Signal[] {
+  const groups = new Map<string, Signal[]>();
+  for (const signal of signals) {
+    const key = `${signal.symbol}|${signal.action}|${signal.strategy}`;
+    const group = groups.get(key);
+    if (group) group.push(signal);
+    else groups.set(key, [signal]);
+  }
+
+  const deduped: Signal[] = [];
+  for (const [key, group] of groups) {
+    if (group.length > 1) {
+      log.warn(`Deduped ${group.length} signals for ${key} → keeping best`);
+      group.sort((a, b) => {
+        // Prefer signal with statedPremium
+        const aPrem = a.statedPremium != null ? 1 : 0;
+        const bPrem = b.statedPremium != null ? 1 : 0;
+        if (aPrem !== bPrem) return bPrem - aPrem;
+        // Tiebreak: fewer legs
+        const aLegs = a.legs?.length ?? 0;
+        const bLegs = b.legs?.length ?? 0;
+        return aLegs - bLegs;
+      });
+    }
+    deduped.push(group[0]);
+  }
+  return deduped;
+}
+
+/**
  * Execute an array of signals sequentially.
  * Each signal is independent — a failure on signal N does not prevent signal N+1.
  */
@@ -712,8 +749,9 @@ export async function executeSignals(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult[]> {
+  const deduped = deduplicateSignals(signals);
   const results: PipelineResult[] = [];
-  for (const signal of signals) {
+  for (const signal of deduped) {
     try {
       const result = await executeSignal(signal, trader, deps, opts);
       results.push(result);

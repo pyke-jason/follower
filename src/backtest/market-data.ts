@@ -117,32 +117,30 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
     const isOption = isOccOptionSymbol(symbol);
     let lastCheckedMins = 0;
+    let foundTick: QuoteTick | null = null;
     for (const mins of DatabentoMarketDataProvider.LOOKBACK_MINUTES) {
       if (isOption && mins > optionCap) break;
       lastCheckedMins = mins;
-      const windowStart = new Date(atMs - mins * 60_000);
-      const windowEnd = new Date(atMs + 60_000);
-      // ensureRange fetches+caches data for this window
-      await this.ensureRange(symbol, windowStart, windowEnd);
-      // Search ALL cached ticks, not just the window-filtered subset.
-      // Databento cbbo-1s reports ts_event = when the quote was established, not the
-      // snapshot second. For illiquid options the BBO may persist for hours, so a tick
-      // timestamped well before the window can still be the best available quote.
-      // The expanding lookback still controls staleness: we only accept a tick if its
-      // age is within the current window (so execution paths with 5-min cap won't use
-      // a 60-min-old tick, but valuation paths with 60-min cap will).
-      const entry = this.tickCache.get(symbol);
-      if (entry) {
-        const tick = this.findLastTickBefore(entry.ticks, at);
-        if (tick) {
-          const tickAgeMins = (atMs - tick.timestamp.getTime()) / 60_000;
-          if (tickAgeMins <= mins) {
-            if (tickAgeMins >= 1_440) {
-              log.warn(`Stale quote for "${symbol}" at ${at.toISOString()}: tick is ${tickAgeMins.toFixed(0)} min old`);
-            }
-            return this.makeQuote(symbol, tick);
+
+      // Only fetch if we haven't found a tick yet. Once a tick is found,
+      // wider windows won't discover a newer one — just widen staleness acceptance.
+      if (!foundTick) {
+        const windowStart = new Date(atMs - mins * 60_000);
+        const windowEnd = new Date(atMs + 60_000);
+        await this.ensureRange(symbol, windowStart, windowEnd);
+        const entry = this.tickCache.get(symbol);
+        if (entry) {
+          foundTick = this.findLastTickBefore(entry.ticks, at);
+        }
+      }
+
+      if (foundTick) {
+        const tickAgeMins = (atMs - foundTick.timestamp.getTime()) / 60_000;
+        if (tickAgeMins <= mins) {
+          if (tickAgeMins >= 1_440) {
+            log.warn(`Stale quote for "${symbol}" at ${at.toISOString()}: tick is ${tickAgeMins.toFixed(0)} min old`);
           }
-          // tick exists but too stale for this window — try wider window
+          return this.makeQuote(symbol, foundTick);
         }
       }
     }

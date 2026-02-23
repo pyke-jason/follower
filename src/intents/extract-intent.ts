@@ -18,7 +18,7 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
 
-export const INTENT_VERSION = 4;
+export const INTENT_VERSION = 5;
 
 export type IntentExtractionDeps = {
   /** Get a quote at a specific point in time (message timestamp). */
@@ -64,7 +64,7 @@ For each message:
 CDS (Call Debit Spread): 2 legs, both CALL. BUY lower strike, SELL higher strike. Default expiry: this Friday.
 PDS (Put Debit Spread): 2 legs, both PUT. BUY higher strike, SELL lower strike. Default expiry: this Friday.
 PCS (Put Credit Spread): SELL the spread for credit. Map to direction: SHORT, strategy: PDS. Legs reversed from long PDS: SELL higher strike put, BUY lower strike put. If the message says "credit" or "for X credit", it confirms PCS. PCS is bullish; PDS is bearish.
-Naked call/put: 1 leg, BUY only.
+Naked call/put: exactly 1 element in the legs array, action BUY only.
 Calendar/time spread: When both Long+Short badges appear, flag for review.
 </strategies>
 
@@ -104,7 +104,7 @@ Traders sometimes follow another trader's call ("following Dave", "tailing spect
 
 <rules>
 - Only parse trades for tracked traders in the whitelist. Skip paper trades tagged "(paper)".
-- Messages may contain multiple signals ("Exit TXN, Short TSLA") -- return ALL in the signals array.
+- A message may contain multiple DIFFERENT trades ("Exit TXN, Short TSLA") -- one signal per distinct trade. Never emit two signals for the same symbol+action -- combine all attributes into one signal.
 - When the trader states explicit strikes, include them in legs. When strikes are omitted, omit legs entirely -- the system infers them.
 - Always output expiry as YYYY-MM-DD. Traders write dates many ways ("12/19", "Dec 19", "12/19/25") -- convert them. For MM/DD without a year, use the next occurrence of that date on or after the message date. A bare month name like "Oct" with no day means the standard monthly expiry (3rd Friday of that month). When a date appears as "Oct (10)", the number in parentheses is the day (October 10th), not a contract count.
 - Always explain your reasoning -- your steps are audited.
@@ -196,6 +196,15 @@ Explicit follow trade. I need to call get_recent_chat to find Dave's original MS
 and use its details (strategy, strikes, expiry) for this signal.
 </reasoning>
 get_recent_chat first, then submit_decision(EXECUTE) mirroring Dave's MSTR signal
+</example>
+
+<example>
+<input>Long AAPL 180/185 cds for $2.10</input>
+<reasoning>
+Single CDS trade on AAPL. The spread has 2 legs (BUY 180C, SELL 185C) but this is ONE signal, not two.
+direction: LONG (debit strategy). statedPremium: 2.10.
+</reasoning>
+submit_decision(EXECUTE): action OPEN, symbol AAPL, direction LONG, strategy CDS, legs [BUY 180C, SELL 185C], statedPremium 2.10
 </example>
 
 <example>

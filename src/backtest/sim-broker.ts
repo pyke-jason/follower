@@ -109,6 +109,9 @@ export class SimBroker implements BrokerService {
   /** Last time advanceTo() was called — used to determine tick range for next call. */
   private lastAdvanceTime: Date | null = null;
 
+  /** Cached getAccountBalance() result keyed on sim-clock ms. Invalidated on state changes. */
+  private balanceCache: { key: number; value: AccountBalance } | null = null;
+
   constructor(
     private marketData: BacktestPriceProvider,
     private clock: SimClock,
@@ -291,6 +294,7 @@ export class SimBroker implements BrokerService {
           : Math.max(params.limitPrice, quote.bid);
         const filledPrice = roundCents(improved);
         log.debug(`  LIMIT filled immediately @ $${filledPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
+        this.balanceCache = null;
         return { orderId, status: 'FILLED', filledPrice, fillTimestamp: this.clock.now().toISOString() };
       }
 
@@ -301,6 +305,7 @@ export class SimBroker implements BrokerService {
         status: 'OPEN',
         isOptionOrder: isOptions,
       });
+      this.balanceCache = null;
       log.debug(`  LIMIT queued as working ${orderId} @ $${params.limitPrice} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)}${isOptions ? ' [options]' : ''})`);
       return { orderId, status: 'OPEN' };
     }
@@ -326,6 +331,7 @@ export class SimBroker implements BrokerService {
 
     log.debug(`  MARKET filled @ $${roundedFill} (bid=${quote.bid.toFixed(2)} ask=${quote.ask.toFixed(2)} model=${this.fillModel}${isOptions ? ' [options]' : ''})`);
 
+    this.balanceCache = null;
     return {
       orderId,
       status: 'FILLED',
@@ -583,6 +589,11 @@ export class SimBroker implements BrokerService {
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
+    const nowMs = this.clock.now().getTime();
+    if (this.balanceCache && this.balanceCache.key === nowMs) {
+      return this.balanceCache.value;
+    }
+
     const t0 = Date.now();
     const now = this.clock.now();
     const [realizedRow] = await db
@@ -689,7 +700,7 @@ export class SimBroker implements BrokerService {
       log.warn(`getAccountBalance SLOW: ${total}ms (db1=${tDb1 - t0}ms db2=${tDb2 - tDb1}ms quotes=${quoteMs}ms open=${openTrades.length})`);
     }
 
-    return {
+    const result: AccountBalance = {
       accountId: 'SIM',
       cashBalance: roundCents(cash),
       buyingPower,
@@ -700,6 +711,8 @@ export class SimBroker implements BrokerService {
       timestamp: now.toISOString(),
       maintenanceMargin: roundCents(totalMaintenanceMargin),
     };
+    this.balanceCache = { key: nowMs, value: result };
+    return result;
   }
 
   async getBars(params: GetBarsParams): Promise<Bar[]> {
@@ -741,6 +754,8 @@ export class SimBroker implements BrokerService {
    * Option orders: re-quote net spread at target time via getOptionSpreadQuote().
    */
   async advanceTo(time: Date): Promise<SimFillEvent[]> {
+    this.balanceCache = null;
+
     if (this.workingOrders.size === 0) {
       this.lastAdvanceTime = time;
       return [];

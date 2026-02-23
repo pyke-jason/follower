@@ -82,6 +82,7 @@ export function submitDecisionTool(): ToolDef {
               targetStrategy: { type: 'string', enum: ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS'], description: 'For LEG_OFF: strategy after removing the leg' },
               legs: {
                 type: 'array',
+                maxItems: 2,
                 items: {
                   type: 'object',
                   properties: {

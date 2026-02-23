@@ -39,7 +39,7 @@ export const SignalSchema = z.object({
   statedPremium: zPrice.optional(),
   exitPercent: zPct01.optional(),     // for TRIM: 0.5 = half
   /** Present when trader explicitly states strikes. Absent when strikes need inferring by pipeline. */
-  legs: z.array(SignalLegSchema).optional(),
+  legs: z.array(SignalLegSchema).max(2).optional(),
   /** For LEG_OFF: the strategy the position becomes after removing a leg. */
   targetStrategy: StrategySchema.optional(),
 }).refine(

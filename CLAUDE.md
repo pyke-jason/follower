@@ -39,7 +39,7 @@ Trade data model: trades table is a denormalized view. trade_events table is the
 Rules:
   - Validate at the boundary, not in orchestration. Cross-field constraints (e.g. LIMIT→limitPrice, FILLED→filledPrice+fillTimestamp) belong in Zod .refine() schemas parsed at entry points, not as ad-hoc throws deep in business logic. Pattern: Signal schemas (agent/schemas.ts), order schemas (broker/order-schemas.ts), API response schemas (broker/schemas.ts).
   - When a callback only fires in a narrowed state, type the callback with the narrowed type. Example: onFill receives FilledWorkingOrder (filledPrice: number) not WorkingOrder (filledPrice?: number). This eliminates ! assertions in every consumer.
-  - Never mass-delete .cache/databento/ files. They cost real money to re-fetch. Empty [] files are valid (weekends/holidays).
+  - Databento charges per byte transferred. Minimize data fetched: request only the columns/fields needed, use the narrowest date ranges possible, prefer cached data, and avoid redundant API calls. Never mass-delete .cache/databento/ files — they cost real money to re-fetch. Empty [] files are valid (weekends/holidays).
   - computeCoreStats() in src/backtest/report.ts is the single source of truth for trade stats. Don't duplicate it.
   - Backtest trades must have explicit timestamps — never fall back to wall-clock time.
   - dayBoundsUTC() dynamically detects EST/EDT. Don't hardcode UTC offsets.
