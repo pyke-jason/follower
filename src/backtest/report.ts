@@ -153,17 +153,10 @@ export function computeCoreStats<T extends {
   const grossLosses = Math.abs(losses.reduce((sum, t) => sum + netPnlOf(t), 0));
   const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? PROFIT_FACTOR_INF : 0;
 
-  // Max drawdown from closed trades in chronological order (using net PnL)
   const sortedClosed = [...closed].sort(
     (a, b) => (a.closedAt ?? '').localeCompare(b.closedAt ?? ''),
   );
-  let peak = 0, maxDrawdown = 0, running = 0;
-  for (const t of sortedClosed) {
-    running += netPnlOf(t);
-    if (running > peak) peak = running;
-    const dd = peak - running;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
+  let maxDrawdown = 0;
 
   // By-trader stats (net)
   const byTrader: Record<string, TraderStats> = {};
@@ -210,17 +203,23 @@ export function computeCoreStats<T extends {
   }
   const equityCurve: EquityPoint[] = [];
   let cumPnl = 0;
+  let eqPeak = 0;
   for (const [date, data] of [...dailyMap.entries()].sort()) {
     cumPnl += data.pnl;
     const unrealizedPnl = mtmByDate.get(date) ?? 0;
     const hasUnrealized = mtmByDate.has(date);
+    const eq = hasUnrealized ? roundCents(cumPnl + unrealizedPnl) : roundCents(cumPnl);
+    if (eq > eqPeak) eqPeak = eq;
+    const dd = roundCents(eqPeak - eq);
+    if (dd > maxDrawdown) maxDrawdown = dd;
     equityCurve.push({
       date,
       pnl: roundCents(data.pnl),
       cumPnl: roundCents(cumPnl),
       trades: data.trades,
       unrealizedPnl: hasUnrealized ? roundCents(unrealizedPnl) : undefined,
-      equity: hasUnrealized ? roundCents(cumPnl + unrealizedPnl) : undefined,
+      equity: hasUnrealized ? eq : undefined,
+      drawdown: dd,
     });
   }
 

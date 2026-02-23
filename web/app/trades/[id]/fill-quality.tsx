@@ -24,7 +24,7 @@ export function FillQuality({ trade }: { trade: Trade }) {
     }
   }
 
-  const legFills = trade.brokerLegFills as { symbol: string; fillPrice: number; fillQty: number; side: string }[] | null;
+  const legFills = trade.brokerLegFills;
 
   return (
     <Card className="py-0 gap-0">
@@ -78,8 +78,10 @@ export function FillQuality({ trade }: { trade: Trade }) {
                 {legFills.map((leg, i) => (
                   <div key={i} className="flex items-center gap-3 text-xs">
                     <span className="font-medium text-foreground">{leg.symbol}</span>
-                    <span className="text-muted-foreground">{leg.side}</span>
-                    <span className="tabular-nums">{leg.fillQty} @ {formatCurrency(leg.fillPrice)}</span>
+                    <span className="tabular-nums">{leg.filledQuantity} @ {formatCurrency(leg.filledPrice)}</span>
+                    {leg.commission != null && (
+                      <span className="text-muted-foreground">comm {formatCurrency(leg.commission)}</span>
+                    )}
                   </div>
                 ))}
               </div>

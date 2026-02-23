@@ -91,6 +91,7 @@ export type EquityPoint = {
   trades: number;
   unrealizedPnl?: number;  // total unrealized PnL of open positions at EOD
   equity?: number;          // cumPnl + unrealizedPnl (total P&L including unrealized)
+  drawdown?: number;        // peak-to-current equity drawdown (always >= 0)
 };
 
 /**

@@ -1,7 +1,7 @@
 'use server';
 
 import { db, schema } from '@/lib/db';
-import type { TradeLeg, Trade, TradeEvent, Task, Message } from '@db/schema';
+import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, TaskResult } from '@db/schema';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import {
@@ -65,6 +65,8 @@ export type TradeStory = {
   trade: Trade;
   events: TradeEvent[];
   task: Task | null;
+  taskContext: TaskContext | null;
+  taskResult: TaskResult | null;
   sourceMessage: Message | null;
   nearbyMessages: Message[];
   decision: {
@@ -112,7 +114,10 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
     };
   }
 
-  return { trade, events, task, sourceMessage, nearbyMessages, decision };
+  const taskContext = task?.context ?? null;
+  const taskResult = task?.result ?? null;
+
+  return { trade, events, task, taskContext, taskResult, sourceMessage, nearbyMessages, decision };
 }
 
 // ─── Trade Linked Messages ──────────────────────────

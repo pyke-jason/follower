@@ -431,13 +431,17 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     if (shouldRecomputeMtm) {
       try {
         lastMtmValue = await broker.getUnrealizedPnl();
-        lastOpenCount = await broker.getOpenPositionCount();
         lastMtmTime = Date.now();
       } catch {
         // Failed to compute MTM — carry forward last known value.
         // This prevents an unexpected Databento fetch from slowing the loop.
       }
     }
+
+    // Cheap DB count — always fresh (no price lookups, just SELECT COUNT)
+    try {
+      lastOpenCount = await broker.getOpenPositionCount();
+    } catch { /* carry forward */ }
 
     await db.update(schema.backtestRuns)
       .set({

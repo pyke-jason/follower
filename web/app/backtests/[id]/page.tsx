@@ -352,6 +352,12 @@ export default async function BacktestDetailPage({
           status={run.status}
           startedAt={run.startedAt}
           completedAt={run.completedAt}
+          lastMessageDate={
+            liveMetrics?.lastProcessedMessageTs
+            ?? (decisions.length > 0 ? decisions[0].message.timestamp : null)
+          }
+          rangeStart={config.startDate}
+          rangeEnd={config.endDate}
         />
 
         {/* Error — only when there is one (hide for cancelled runs) */}

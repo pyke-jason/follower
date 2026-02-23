@@ -38,6 +38,12 @@ export function formatDayHeader(iso: string): string {
   });
 }
 
+/** "Jan 15" — compact date-only for timelines and chips */
+export function formatDateShort(iso: string): string {
+  const d = new Date(iso.includes('T') ? iso : iso + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function formatDuration(startIso: string, endIso: string): string {
   const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
   if (ms < 1000) return `${ms}ms`;

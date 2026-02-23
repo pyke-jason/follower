@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages } from '@/lib/queries';
+import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
@@ -12,7 +12,8 @@ import { ArrowLeft } from 'lucide-react';
 import { ChatPreview } from '../../messages/chat-preview';
 import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
-import type { TradeLeg } from '../../../../src/db/schema';
+import { DecisionReasoning } from './decision-reasoning';
+import { ParsedContext } from './parsed-context';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,30 +22,56 @@ export default async function TradeDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ run?: string }>;
+  searchParams: Promise<{ run?: string; from?: string }>;
 }) {
   const { id } = await params;
-  const { run: runId } = await searchParams;
+  const { run: runId, from } = await searchParams;
   const trade = await getTradeById(id);
   if (!trade) notFound();
 
-  const [steps, sourceMessage, tradeEvents] = await Promise.all([
+  const [steps, sourceMessage, tradeEvents, task] = await Promise.all([
     trade.taskId ? getTradeSteps(trade.taskId) : Promise.resolve([]),
     trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
     getTradeEvents(trade.id),
+    trade.taskId ? getTaskById(trade.taskId) : Promise.resolve(null),
   ]);
 
-  const nearbyMessages = sourceMessage
-    ? await getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60)
-    : [];
+  const [nearbyMessages, runDecision] = await Promise.all([
+    sourceMessage
+      ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60)
+      : Promise.resolve([]),
+    sourceMessage && trade.backtestRunId
+      ? getRunDecisionForTask(sourceMessage.id, trade.backtestRunId)
+      : Promise.resolve(null),
+  ]);
 
-  const legs = (trade.legs as TradeLeg[]) || [];
+  let decision: { decision: string; reasoning: string | null; path: string | null; durationMs: number | null; pnl: string | null } | null = null;
+  if (runDecision) {
+    decision = {
+      decision: runDecision.decision,
+      reasoning: runDecision.reasoning,
+      path: runDecision.path,
+      durationMs: runDecision.durationMs,
+      pnl: runDecision.pnl,
+    };
+  } else if (task?.result) {
+    decision = {
+      decision: task.result.decision ?? '',
+      reasoning: task.result.reasoning ?? null,
+      path: null,
+      durationMs: null,
+      pnl: null,
+    };
+  }
+
+  const context = task?.context;
+  const legs = trade.legs;
 
   return (
     <div className="space-y-6 animate-in-up">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link href={buildHref('/trades', runId)} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <Link href={buildHref(from === 'tasks' ? '/tasks' : '/trades', runId)} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <h2 className="text-lg font-bold text-foreground tracking-tight">{trade.symbol}</h2>
@@ -53,14 +80,6 @@ export default async function TradeDetailPage({
           <Badge label={trade.strategy} />
           <Badge label={trade.status} />
         </div>
-        {trade.taskId && (
-          <Link
-            href={buildHref(`/tasks/${trade.taskId}`, runId)}
-            className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors ml-auto"
-          >
-            View Decision &rarr;
-          </Link>
-        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6">
@@ -121,6 +140,18 @@ export default async function TradeDetailPage({
           {tradeEvents.length > 1 && (
             <EventTimeline events={tradeEvents} />
           )}
+
+          {/* Signal Decision */}
+          {decision && (
+            <DecisionReasoning
+              decision={decision}
+              taskStartedAt={task?.startedAt}
+              taskCompletedAt={task?.completedAt}
+            />
+          )}
+
+          {/* Parsed Context */}
+          {context && <ParsedContext context={context} />}
         </div>
 
         {/* ── Right Column (sticky) ────────────────────── */}

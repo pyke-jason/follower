@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import fc from 'fast-check';
-import { computeCoreStats } from './report.js';
+import { computeCoreStats, type MtmSnapshot } from './report.js';
 import { roundCents, PROFIT_FACTOR_INF } from '../lib/numbers.js';
 import type { CommissionSchedule } from '../db/schema.js';
 
@@ -251,5 +251,179 @@ describe('computeCoreStats deterministic tests', () => {
     expect(summary.totalCommissions).toBe(3.5);
     // netPnl = 150 - 3.50 = 146.50
     expect(summary.netPnl).toBe(146.5);
+  });
+});
+
+// ── MTM-aware drawdown tests ────────────────────────────────────────
+
+describe('computeCoreStats MTM-aware drawdown', () => {
+  test('maxDrawdown reflects unrealized dip when MTM snapshots are provided', () => {
+    // Scenario: Position opens, drops $5k unrealized mid-run, recovers, closes at +$100.
+    // Realized-only drawdown = $0 (only one winning trade).
+    // True MTM-aware drawdown = $5,000 (the unrealized dip).
+    //
+    // Day 1: trade opens (no close yet), MTM shows -$5000 unrealized
+    // Day 2: MTM shows -$2000 unrealized (recovering)
+    // Day 3: trade closes at +$100
+    const trades = [
+      makeTrade({ pnl: '100', status: 'CLOSED',
+        openedAt: '2025-01-01T10:00:00Z', closedAt: '2025-01-03T15:00:00Z' }),
+    ];
+    const mtmSnapshots: MtmSnapshot[] = [
+      { date: '2025-01-01', unrealizedPnl: -5000 },
+      { date: '2025-01-02', unrealizedPnl: -2000 },
+      { date: '2025-01-03', unrealizedPnl: 0 },
+    ];
+
+    const { summary, equityCurve } = computeCoreStats(trades, mtmSnapshots);
+
+    // Equity curve should have MTM data
+    expect(equityCurve.some((pt) => pt.equity != null)).toBe(true);
+
+    // Day 1: cumPnl=0, unrealized=-5000, equity=-5000
+    // Day 2: cumPnl=0, unrealized=-2000, equity=-2000
+    // Day 3: cumPnl=100, unrealized=0, equity=100
+    // Peak starts at 0. On day 1: equity=-5000, dd=0-(-5000)=5000.
+    // maxDrawdown must be 5000, NOT 0 (realized-only).
+    expect(summary.maxDrawdown).toBe(5000);
+  });
+
+  test('maxDrawdown uses realized PnL when no MTM snapshots provided', () => {
+    // This tests the existing fallback behavior: three trades, realized drawdown = $300.
+    const trades = [
+      makeTrade({ pnl: '100', closedAt: '2025-01-01T15:00:00Z' }),
+      makeTrade({ pnl: '-300', closedAt: '2025-01-02T15:00:00Z' }),
+      makeTrade({ pnl: '50', closedAt: '2025-01-03T15:00:00Z' }),
+    ];
+
+    const { summary } = computeCoreStats(trades);
+
+    // Running: 100, -200, -150. Peak=100. After -300: dd=100-(-200)=300
+    expect(summary.maxDrawdown).toBe(300);
+  });
+
+  test('maxDrawdown uses realized PnL when MTM snapshots are empty', () => {
+    const trades = [
+      makeTrade({ pnl: '200', closedAt: '2025-01-01T15:00:00Z' }),
+      makeTrade({ pnl: '-150', closedAt: '2025-01-02T15:00:00Z' }),
+    ];
+
+    const { summary } = computeCoreStats(trades, []);
+
+    // Running: 200, 50. Peak=200. After -150: dd=200-50=150
+    expect(summary.maxDrawdown).toBe(150);
+  });
+
+  test('MTM drawdown exceeds realized drawdown with multiple trades', () => {
+    // Two trades close profitably, but MTM shows a big unrealized dip between them.
+    // Day 1: first trade closes +$500
+    // Day 2: new position tanks unrealized -$3000 (equity = 500 + (-3000) = -2500)
+    // Day 3: recovers, second trade closes +$200
+    const trades = [
+      makeTrade({ pnl: '500', closedAt: '2025-01-01T15:00:00Z' }),
+      makeTrade({ pnl: '200', closedAt: '2025-01-03T15:00:00Z' }),
+    ];
+    const mtmSnapshots: MtmSnapshot[] = [
+      { date: '2025-01-01', unrealizedPnl: 0 },
+      { date: '2025-01-02', unrealizedPnl: -3000 },
+      { date: '2025-01-03', unrealizedPnl: 0 },
+    ];
+
+    const { summary } = computeCoreStats(trades, mtmSnapshots);
+
+    // Realized-only drawdown = $0 (both trades are winners, running cumPnl: 500, 700)
+    // Equity curve:
+    //   Day 1: cumPnl=500, unrealized=0, equity=500 (new peak=500)
+    //   Day 2: cumPnl=500, unrealized=-3000, equity=-2500 (dd=500-(-2500)=3000)
+    //   Day 3: cumPnl=700, unrealized=0, equity=700 (new peak=700)
+    // maxDrawdown = 3000
+    expect(summary.maxDrawdown).toBe(3000);
+  });
+});
+
+// ── MTM edge cases ──────────────────────────────────────────────────
+
+describe('computeCoreStats MTM edge cases', () => {
+  test('all-open trades with MTM losses (no closed trades)', () => {
+    // No closed trades at all — only open positions with unrealized losses.
+    // The MTM snapshots alone should produce a drawdown.
+    const trades = [
+      makeTrade({ pnl: null, status: 'OPEN',
+        openedAt: '2025-01-01T10:00:00Z', closedAt: null }),
+    ];
+    const mtmSnapshots: MtmSnapshot[] = [
+      { date: '2025-01-01', unrealizedPnl: -2000 },
+      { date: '2025-01-02', unrealizedPnl: -5000 },
+      { date: '2025-01-03', unrealizedPnl: -1000 },
+    ];
+
+    const { summary, equityCurve } = computeCoreStats(trades, mtmSnapshots);
+
+    // Equity curve should have 3 points (one per MTM day)
+    expect(equityCurve).toHaveLength(3);
+
+    // cumPnl=0 throughout (no closed trades), so equity = 0 + unrealized
+    expect(equityCurve[0]).toMatchObject({ date: '2025-01-01', cumPnl: 0, equity: -2000 });
+    expect(equityCurve[1]).toMatchObject({ date: '2025-01-02', cumPnl: 0, equity: -5000 });
+    expect(equityCurve[2]).toMatchObject({ date: '2025-01-03', cumPnl: 0, equity: -1000 });
+
+    // Peak starts at 0, deepest equity = -5000, so maxDrawdown = 0 - (-5000) = 5000
+    expect(summary.maxDrawdown).toBe(5000);
+  });
+
+  test('multi-day gap with peak carry-forward', () => {
+    // Trade closed on Jan 2 at +$500, another on Jan 6 (Monday) at -$200.
+    // MTM on Jan 2: unrealized=+100 → equity peak = 500+100 = 600
+    // Weekend gap: no data for Jan 3-5
+    // MTM on Jan 6: unrealized=-300 → equity = (500-200) + (-300) = 0
+    // Peak (600) must carry across the gap. maxDrawdown = 600 - 0 = 600.
+    const trades = [
+      makeTrade({ pnl: '500', closedAt: '2025-01-02T15:00:00Z' }),
+      makeTrade({ pnl: '-200', closedAt: '2025-01-06T15:00:00Z' }),
+    ];
+    const mtmSnapshots: MtmSnapshot[] = [
+      { date: '2025-01-02', unrealizedPnl: 100 },
+      { date: '2025-01-06', unrealizedPnl: -300 },
+    ];
+
+    const { summary, equityCurve } = computeCoreStats(trades, mtmSnapshots);
+
+    // Day 2025-01-02: cumPnl=500, unrealized=100, equity=600 (peak)
+    expect(equityCurve[0]).toMatchObject({ date: '2025-01-02', cumPnl: 500, equity: 600 });
+    // Day 2025-01-06: cumPnl=500-200=300, unrealized=-300, equity=0
+    expect(equityCurve[1]).toMatchObject({ date: '2025-01-06', cumPnl: 300, equity: 0 });
+
+    // maxDrawdown = peak(600) - trough(0) = 600
+    expect(summary.maxDrawdown).toBe(600);
+  });
+
+  test('mixed MTM and non-MTM days in same curve', () => {
+    // Day 1: trade closes at +$300, MTM snapshot unrealized=-100 → equity = 300 + (-100) = 200
+    // Day 2: trade closes at -$500, NO MTM snapshot → equity fallback to cumPnl = 300-500 = -200
+    // Day 3: trade closes at +$100, MTM snapshot unrealized=+50 → equity = -200+100+50 = -50
+    const trades = [
+      makeTrade({ pnl: '300', closedAt: '2025-01-01T15:00:00Z' }),
+      makeTrade({ pnl: '-500', closedAt: '2025-01-02T15:00:00Z' }),
+      makeTrade({ pnl: '100', closedAt: '2025-01-03T15:00:00Z' }),
+    ];
+    const mtmSnapshots: MtmSnapshot[] = [
+      { date: '2025-01-01', unrealizedPnl: -100 },
+      // No snapshot for 2025-01-02 — tests the fallback path
+      { date: '2025-01-03', unrealizedPnl: 50 },
+    ];
+
+    const { summary, equityCurve } = computeCoreStats(trades, mtmSnapshots);
+
+    // Day 1: cumPnl=300, unrealized=-100, equity=200
+    expect(equityCurve[0]).toMatchObject({ date: '2025-01-01', cumPnl: 300, equity: 200 });
+    // Day 2: cumPnl=-200, no MTM → equity undefined, fallback uses cumPnl=-200
+    expect(equityCurve[1]).toMatchObject({ date: '2025-01-02', cumPnl: -200 });
+    expect(equityCurve[1].equity).toBeUndefined();
+    // Day 3: cumPnl=-100, unrealized=50, equity=-50
+    expect(equityCurve[2]).toMatchObject({ date: '2025-01-03', cumPnl: -100, equity: -50 });
+
+    // Equity sequence (with fallback): 200, -200, -50
+    // Peak = 200 (day 1). Trough = -200 (day 2). maxDrawdown = 200 - (-200) = 400
+    expect(summary.maxDrawdown).toBe(400);
   });
 });

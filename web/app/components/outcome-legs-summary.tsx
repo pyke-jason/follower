@@ -94,14 +94,6 @@ export function OutcomeLegsSummary({
         >
           Full Detail &rarr;
         </Link>
-        {trade.taskId && (
-          <Link
-            href={buildHref(`/tasks/${trade.taskId}`, runId)}
-            className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors"
-          >
-            View Decision &rarr;
-          </Link>
-        )}
       </div>
     </div>
   );
