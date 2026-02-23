@@ -84,6 +84,13 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     }
   }
 
+  /** Pre-seed ohlcv-1d daily bars for the full backtest date range.
+   *  Call after Phase 1 to warm the bar cache before replay starts. */
+  async preSeedDailyBars(symbols: string[], start: Date, end: Date): Promise<void> {
+    const equitySyms = symbols.filter(s => !isOccOptionSymbol(s));
+    await Promise.all(equitySyms.map(sym => this.ensureRange(sym, start, end, 'ohlcv-1d')));
+  }
+
   /** Return latest known mid prices from prefetch/getQuote calls. */
   getPriceSnapshot(symbols: string[]): Record<string, number> {
     const result: Record<string, number> = {};

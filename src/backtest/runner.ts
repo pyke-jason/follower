@@ -5,7 +5,7 @@ import { SimBroker } from './sim-broker.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import { toDateKeyET } from '../lib/et-date.js';
+import { toDateKeyET, dayBoundsUTC, getPreviousTradingDayKey } from '../lib/et-date.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
 import { prefetchForAgent, type PrefetchedData } from '../agent/prefetch.js';
@@ -333,6 +333,22 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   );
   const cachedIntents = batchResult.intents;
   log.info(`Phase 1 complete: ${batchResult.progress.cached} cached, ${batchResult.progress.fresh} fresh, ${batchResult.progress.errors} errors`);
+  resetApiStats(); // start counting from Phase 1.5 onward (Phase 1 quote calls excluded)
+
+  // ── Phase 1.5: Pre-seed daily bar cache for position sizing ──
+  // Warms ohlcv-1d bars for all equity symbols across the full date range so
+  // getBars() calls during replay hit cache instead of making per-trade API calls.
+  const preSeedSymbols = [...new Set(tradableMessages.flatMap(m => m.symbols))];
+  if (preSeedSymbols.length > 0) {
+    const barsBack = 15; // ATR(14) period + 1 for true range calculation (mirrors atr.ts:54)
+    let seedStartKey = toDateKeyET(startDate);
+    for (let i = 0; i < barsBack; i++) seedStartKey = getPreviousTradingDayKey(seedStartKey) ?? seedStartKey;
+    const seedStart = dayBoundsUTC(seedStartKey).start;
+    const seedEnd = dayBoundsUTC(toDateKeyET(endDate)).end;
+    log.info(`Phase 1.5: Pre-seeding daily bars for ${preSeedSymbols.length} symbols (${barsBack} trading days back)...`);
+    await priceProvider.preSeedDailyBars(preSeedSymbols, seedStart, seedEnd);
+    log.info(`Phase 1.5 complete`);
+  }
 
   // Stats tracking
   let agentCallsUsed = 0;
@@ -344,7 +360,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   let lastMsgDay = '';
 
   // Live metrics tracking — written to DB after every message
-  resetApiStats();
   const MTM_INTERVAL_MS = 30_000;
   const MTM_INTERVAL_MSGS = 100;
   let lastMtmTime = 0;

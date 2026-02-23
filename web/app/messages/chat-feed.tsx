@@ -167,7 +167,7 @@ export function ChatFeed({
         startReached={handleStartReached}
         atBottomStateChange={(atBottom) => setShowScrollBtn(!atBottom)}
         followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
-        estimatedItemHeight={60}
+        defaultItemHeight={60}
         increaseViewportBy={{ top: 300, bottom: 100 }}
         itemContent={renderItemContent}
         computeItemKey={(_index, item) => item.key}

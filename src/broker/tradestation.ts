@@ -2,6 +2,7 @@ import type { Quote, OptionsChain, OrderResult, OrderParams, OrderStatus, Broker
 import type { BrokerService } from './interface.js';
 import { getAccessToken } from './auth.js';
 import { safeParseFloat } from '../lib/numbers.js';
+import { formatOccSymbol } from '../backtest/occ-symbology.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, tsClassify } from '../lib/resilient.js';
 import {
   TsQuotesResponseSchema,
@@ -86,7 +87,7 @@ export async function placeOrder(params: OrderParams): Promise<OrderResult> {
   const tsLegs = params.legs.map((leg) => ({
     Symbol: leg.type === 'STOCK'
       ? params.symbol
-      : buildOccSymbol(params.symbol, leg.expiry, leg.type as 'CALL' | 'PUT', leg.strike),
+      : formatOccSymbol({ underlying: params.symbol, expiration: leg.expiry, type: leg.type as 'CALL' | 'PUT', strike: leg.strike }),
     Quantity: String(leg.quantity),
     TradeAction: resolveTradeAction(leg.action, leg.type),
   }));
@@ -289,20 +290,4 @@ function resolveTradeAction(action: 'BUY' | 'SELL', type: string): string {
   // Options: use BUY_TO_OPEN / SELL_TO_OPEN for now.
   // The agent can specify SELL_TO_CLOSE via the action field when closing.
   return action === 'BUY' ? 'BUY_TO_OPEN' : 'SELL_TO_OPEN';
-}
-
-function buildOccSymbol(
-  underlying: string,
-  expiry: string,
-  type: 'CALL' | 'PUT',
-  strike: number
-): string {
-  const padded = underlying.toUpperCase().padEnd(6, ' ');
-  const d = new Date(expiry);
-  const yy = String(d.getFullYear()).slice(2);
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const t = type === 'CALL' ? 'C' : 'P';
-  const s = String(Math.round(strike * 1000)).padStart(8, '0');
-  return `${padded}${yy}${mm}${dd}${t}${s}`;
 }

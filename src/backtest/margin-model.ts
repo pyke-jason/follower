@@ -14,6 +14,7 @@
  */
 
 import type { TradeLeg } from '../db/schema.js';
+import { contractMultiplier } from '../lib/trade.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -87,7 +88,7 @@ function nakedPutMarginPerContract(
 
 export function computeMarginRequirement(params: MarginParams): MarginRequirement {
   const { strategy, direction, entryPrice, quantity, legs, underlyingPrice } = params;
-  const contractMult = 100;
+  const contractMult = contractMultiplier(strategy);
 
   switch (strategy) {
     // ── Equities ──────────────────────────────────────

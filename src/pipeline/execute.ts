@@ -135,7 +135,20 @@ function buildOptionLegs(signal: Signal, quantity: number, referenceDate: Date):
   if (!signal.legs || signal.legs.length === 0) {
     throw new Error(`Options signal for ${signal.symbol} (${signal.action} ${signal.strategy}) missing legs`);
   }
-  return signal.legs.map(l => {
+
+  // Deduplicate legs by identity (LLM v4 sometimes emits duplicates)
+  const seen = new Set<string>();
+  const uniqueSignalLegs = signal.legs.filter(l => {
+    const key = `${l.strike}|${l.expiry}|${l.optionType}|${l.action}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (uniqueSignalLegs.length < signal.legs.length) {
+    log.warn(`${signal.symbol} ${signal.action}: deduped ${signal.legs.length} legs → ${uniqueSignalLegs.length}`);
+  }
+
+  return uniqueSignalLegs.map(l => {
     const expiry = normalizeExpiry(l.expiry, referenceDate);
     return {
       symbol: formatOccSymbol({
@@ -199,6 +212,27 @@ async function getEntryPriceEstimate(symbol: string, broker: BrokerService): Pro
   } catch {
     return 0; // ATR sizer handles this via bar data
   }
+}
+
+/** Find an open position, with fuzzy fallback for CLOSE/TRIM/LEG_OFF when strategy doesn't match. */
+async function findPosition(
+  signal: Signal,
+  trader: string,
+  deps: PipelineDeps,
+): Promise<{ position: Trade | undefined; fuzzyMatch: boolean }> {
+  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
+  if (positions[0]) return { position: positions[0], fuzzyMatch: false };
+
+  // Fuzzy fallback: drop strategy filter for mutation actions
+  if (signal.action === 'CLOSE' || signal.action === 'TRIM' || signal.action === 'LEG_OFF') {
+    const bySymbol = await deps.getOpenPositions({ symbol: signal.symbol, trader });
+    if (bySymbol.length === 1) {
+      log.warn(`${signal.action} ${signal.symbol}: fuzzy match — signal strategy ${signal.strategy} ≠ position strategy ${bySymbol[0].strategy}`);
+      return { position: bySymbol[0], fuzzyMatch: true };
+    }
+  }
+
+  return { position: undefined, fuzzyMatch: false };
 }
 
 /** Build order params with strategy-appropriate defaults. */
@@ -335,9 +369,8 @@ async function executeClose(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
-  // 1. Find existing position (strategy filter prevents matching e.g. STOCK when signal says PDS)
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
-  const existing = positions[0];
+  // 1. Find existing position (with fuzzy fallback if strategy doesn't match)
+  const { position: existing } = await findPosition(signal, trader, deps);
   if (!existing) {
     return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
@@ -494,9 +527,8 @@ async function executeTrim(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
-  // 1. Find existing position
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
-  const existing = positions[0];
+  // 1. Find existing position (with fuzzy fallback if strategy doesn't match)
+  const { position: existing } = await findPosition(signal, trader, deps);
   if (!existing) {
     return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
@@ -572,9 +604,8 @@ async function executeLegOff(
   deps: PipelineDeps,
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
-  // 1. Find existing position (use signal.strategy — the pre-mutation strategy)
-  const positions = await deps.getOpenPositions({ symbol: signal.symbol, trader, strategy: signal.strategy });
-  const existing = positions[0];
+  // 1. Find existing position (with fuzzy fallback if strategy doesn't match)
+  const { position: existing } = await findPosition(signal, trader, deps);
   if (!existing) {
     return { signal, executed: false, reason: `No open position for ${signal.symbol}/${trader} (${signal.strategy})` };
   }
