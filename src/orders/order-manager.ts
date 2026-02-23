@@ -84,7 +84,6 @@ export class OrderManager {
       //    before auto-cancel can fire, otherwise we lose recorded trades.
       const status = OrderResultSchema.parse(await this.broker.getOrderStatus(orderId));
       if (status.status === 'FILLED') {
-        // Zod refines guarantee filledPrice + fillTimestamp are present for FILLED
         if (status.filledPrice == null || status.fillTimestamp == null) {
           throw new Error(`OrderResultSchema.parse passed but FILLED order ${orderId} is missing price/timestamp`);
         }

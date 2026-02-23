@@ -143,9 +143,10 @@ app.post('/spawn', async (c) => {
   return c.json({ pid });
 });
 
+const PidSchema = z.coerce.number().int().positive();
+
 app.post('/:id/cancel', async (c) => {
-  const pidSchema = z.coerce.number().int().positive();
-  const pidResult = pidSchema.safeParse(c.req.query('pid'));
+  const pidResult = PidSchema.safeParse(c.req.query('pid'));
   if (!pidResult.success) {
     return c.json({ error: 'Invalid pid parameter' }, 400);
   }

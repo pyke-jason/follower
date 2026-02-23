@@ -14,19 +14,9 @@ import {
   parseApiResponse,
 } from './schemas.js';
 
-const TsEnvSchema = z.object({
+const tsEnv = z.object({
   TS_ACCOUNT_ID: z.string().min(1, 'Missing TS_ACCOUNT_ID'),
-  TS_CLIENT_ID: z.string().min(1, 'Missing TS_CLIENT_ID'),
-  TS_CLIENT_SECRET: z.string().min(1, 'Missing TS_CLIENT_SECRET'),
-  TS_REFRESH_TOKEN: z.string().min(1, 'Missing TS_REFRESH_TOKEN'),
-});
-
-const tsEnv = TsEnvSchema.parse({
-  TS_ACCOUNT_ID: process.env.TS_ACCOUNT_ID,
-  TS_CLIENT_ID: process.env.TS_CLIENT_ID,
-  TS_CLIENT_SECRET: process.env.TS_CLIENT_SECRET,
-  TS_REFRESH_TOKEN: process.env.TS_REFRESH_TOKEN,
-});
+}).parse({ TS_ACCOUNT_ID: process.env.TS_ACCOUNT_ID });
 
 const BASE = process.env.TS_BASE_URL || 'https://api.tradestation.com/v3';
 
