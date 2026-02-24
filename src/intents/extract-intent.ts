@@ -3,16 +3,11 @@ import { eq, and } from 'drizzle-orm';
 import type { TaskContext, Message, MessageIntent, IntentStep } from '../db/schema.js';
 import type { TaskResult } from '../agent/schemas.js';
 import type { ToolDef } from '../agent/tool-factory.js';
-import {
-  flagForReviewTool,
-  submitDecisionTool,
-} from '../agent/tool-factory.js';
 import type { Quote } from '../broker/types.js';
 import type { TrackedTrader } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { runAgentLoop } from '../agent/agent-loop.js';
 import type { AgentStep } from '../agent/agent-loop.js';
-import { FlagForReviewInput, SubmitDecisionInput } from '../agent/schemas.js';
 import { getRecentTraderMessages, getRecentChatMessages, formatTraderContext, formatChatContext } from './trader-context.js';
 import { formatTimestampForLLM } from '../lib/et-date.js';
 import { htmlToLLMText } from '../parsing/html.js';
@@ -20,6 +15,10 @@ import { createLogger } from '../lib/logger.js';
 import { DEFAULT_VERSION } from './versions.js';
 import type { IntentPipelineVersion } from './versions.js';
 import type { SignalContext } from './postprocess.js';
+// Re-export shared tools from intent-tools.ts (canonical location)
+import { createIntentTools, intentOnToolCall } from './intent-tools.js';
+export { createIntentTools, intentOnToolCall };
+export type { ChatLookup } from './intent-tools.js';
 
 const log = createLogger('IntentExtract');
 
@@ -39,33 +38,6 @@ export type IntentResult = {
 };
 
 export const INTENT_SYSTEM_PROMPT = DEFAULT_VERSION.systemPrompt;
-
-/** Callback for the get_recent_chat tool. */
-export type ChatLookup = (author: string | undefined, limit: number) => Promise<string>;
-
-/** Create the standard intent extraction tools with a pluggable chat lookup. */
-export function createIntentTools(chat: ChatLookup): ToolDef[] {
-  return [
-    flagForReviewTool(),
-    submitDecisionTool(),
-    {
-      name: 'get_recent_chat',
-      description: 'Get recent chat room messages before this message. Use to resolve follow-trades: when a trader references another trader ("following Dave", "@spectre", "ty Hari") or posts a bare entry that might follow someone else\'s call. Optionally filter by author.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          author: { type: 'string', description: 'Filter to a specific author (optional). Omit to get all authors.' },
-          limit: { type: 'number', description: 'Number of messages to return (default 20, max 50)' },
-        },
-      },
-      execute: async (input) => {
-        const author = (input as { author?: string }).author;
-        const limit = Math.min((input as { limit?: number }).limit ?? 20, 50);
-        return chat(author, limit);
-      },
-    },
-  ];
-}
 
 /**
  * Build a user prompt for intent extraction.
@@ -138,23 +110,6 @@ export type IntentPipelineResult = {
   outputTokens: number;
   steps: AgentStep[];
 };
-
-/** Shared onToolCall handler for submit_decision and flag_for_review. */
-export function intentOnToolCall(name: string, input: Record<string, unknown>): TaskResult | null {
-  if (name === 'submit_decision') {
-    const parsed = SubmitDecisionInput.safeParse(input);
-    if (parsed.success) return parsed.data satisfies TaskResult;
-    return null;
-  }
-  if (name === 'flag_for_review') {
-    const flagParsed = FlagForReviewInput.safeParse(input);
-    return {
-      decision: 'MANUAL_REVIEW',
-      reasoning: flagParsed.success ? flagParsed.data.reason : 'Flagged by agent',
-    } satisfies TaskResult;
-  }
-  return null;
-}
 
 /** Core intent pipeline: preprocess → agent loop → postprocess. No DB I/O. */
 export async function runIntentPipeline(

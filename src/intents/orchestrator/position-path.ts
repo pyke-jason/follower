@@ -324,6 +324,8 @@ export async function resolvePositionPath(
   const signal: ResolvedSignal = {
     orderType: orderTypeFromLegs(legs),
     legs,
+    tradeId: position.id,
+    ...(action === 'TRIM' && { exitPercent: parse.exitPercent ?? 0.5 }),
   };
 
   return { outcome: 'EXECUTE', signals: [signal] };

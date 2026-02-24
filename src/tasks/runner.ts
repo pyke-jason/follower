@@ -1,15 +1,16 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql, asc } from 'drizzle-orm';
 import { prefetchForAgent } from '../agent/prefetch.js';
-import { shouldSkipDeterministic, shouldSkipSignal } from '../agent/deterministic-skips.js';
-import { completeTask, failTask, recordStep } from './recorder.js';
-import type { Task, TaskContext, Message, IntentStep, TaskResult } from '../db/schema.js';
-import { extractIntent } from '../intents/extract-intent.js';
-import type { IntentExtractionDeps } from '../intents/extract-intent.js';
+import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
+import { completeTask, failTask } from './recorder.js';
+import type { Task, TaskContext, Message } from '../db/schema.js';
+import type { TradeLeg } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
-import { executeSignals } from '../pipeline/execute.js';
-import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
+import { resolveOrchestrator } from '../intents/orchestrator/index.js';
+import type { OrchestratorContext, OpenPosition } from '../intents/orchestrator/types.js';
+import { executeResolvedSignals } from '../pipeline/execute-resolved.js';
+import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import { OrderManager } from '../orders/order-manager.js';
 import { liveService } from '../broker/tradestation.js';
 import { getTrader } from '../config/traders.js';
@@ -22,6 +23,7 @@ import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { isOpen, isClosed, notBacktest, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { recordTrade } from '../trades/record-trade.js';
+import { getRecentChatMessages, formatChatContext } from '../intents/trader-context.js';
 import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
 
 const riskConfig: RiskCheckConfig = { ...LIVE_RISK_DEFAULTS };
@@ -36,7 +38,7 @@ async function getProvider(): Promise<LLMProvider> {
 
 // ─── Order Manager (shared across tasks, persists working orders) ───
 
-const pendingIntents = new Map<string, PendingOrderContext>();
+const pendingIntents = new Map<string, ResolvedPendingContext>();
 
 const orderManager = new OrderManager({
   broker: liveService,
@@ -184,7 +186,7 @@ async function processTask(task: Task): Promise<void> {
       return;
     }
 
-    // Fetch Message row for extractIntent
+    // Fetch Message row for orchestrator
     const [message] = await db.select().from(schema.messages)
       .where(eq(schema.messages.id, task.messageId!))
       .limit(1) as Message[];
@@ -195,159 +197,176 @@ async function processTask(task: Task): Promise<void> {
       return;
     }
 
-    // Build deps for intent extraction (live broker for quotes)
-    const intentDeps: IntentExtractionDeps = {
-      getQuote: (symbol, _at) => liveService.getQuote(symbol),
-      getTraderConfig: getTrader,
+    // Build orchestrator context from message + live providers
+    const traderConfig = await getTrader(context.author ?? '');
+    const orchCtx: OrchestratorContext = {
+      messageId: message.id,
+      rawHtml: message.rawHtml,
+      cleanText: message.cleanText,
+      badges: (message.badges as string[]) ?? [],
+      symbols: (message.symbols as string[]) ?? [],
+      timestamp: message.timestamp,
+      author: message.author,
+      marketData: {
+        getQuote: (symbol) => liveService.getQuote(symbol),
+        getOptionChain: async () => null, // live chain not yet wired
+        getExpiryDates: async () => [],   // live expiry dates not yet wired
+      },
+      positions: {
+        getPositions: async (symbol) => {
+          const filters: PositionFilters = symbol ? { symbol } : {};
+          const rows = await getOpenPositions({ ...filters, trader: context.author ?? undefined });
+          return rows.map(tradeToOpenPosition);
+        },
+      },
+      chatHistory: {
+        getRecentMessages: async (author, limit) => {
+          const messages = await getRecentChatMessages(message.timestamp, author, limit);
+          return formatChatContext(messages);
+        },
+      },
+      traderConfig: {
+        strategies: traderConfig?.strategies ?? [],
+        notes: traderConfig?.notes ?? null,
+      },
     };
 
-    // Extract intent (uses same prompt + tools as backtest)
+    // Resolve via orchestrator
     const provider = await getProvider();
-    const { intent } = await extractIntent(
-      message,
-      DEFAULT_TRADE_MODEL.model,
-      provider,
-      intentDeps,
-    );
+    const orchResult = await resolveOrchestrator(orchCtx, provider);
 
     // Write model info to task
     await db.update(schema.tasks)
-      .set({ modelProvider: DEFAULT_TRADE_MODEL.provider, modelName: intent.model })
+      .set({ modelProvider: DEFAULT_TRADE_MODEL.provider, modelName: DEFAULT_TRADE_MODEL.model })
       .where(eq(schema.tasks.id, task.id));
 
-    // Record intent steps
-    const intentSteps = (intent.steps ?? []) as IntentStep[];
-    for (let i = 0; i < intentSteps.length; i++) {
-      const step = intentSteps[i];
-      await recordStep(task.id, i + 1, {
-        toolName: step.toolName ?? undefined,
-        toolInput: step.toolInput ?? undefined,
-        toolOutput: step.toolOutput ?? undefined,
-        reasoning: step.reasoning ?? undefined,
-        durationMs: step.durationMs ?? undefined,
-      });
+    if (orchResult.outcome === 'SKIP') {
+      alertIfSkippedWithActivePosition({
+        context,
+        prefetched,
+        skipReason: orchResult.reason,
+        messageId: task.messageId ?? '',
+        taskId: task.id,
+      }).catch(() => {});
+      await completeTask(task.id, { decision: 'SKIP', reasoning: orchResult.reason });
+      console.log(`[Runner] Task ${task.id} skipped (orchestrator): ${orchResult.reason}`);
+      return;
     }
 
-    // Build TaskResult from intent
-    const result: TaskResult = {
-      decision: intent.decision as TaskResult['decision'],
-      reasoning: intent.reasoning ?? 'No reasoning from agent',
-      signals: intent.signals ?? undefined,
+    if (orchResult.outcome === 'FLAG_FOR_REVIEW') {
+      await completeTask(task.id, { decision: 'MANUAL_REVIEW', reasoning: orchResult.reason });
+      console.log(`[Runner] Task ${task.id} flagged: ${orchResult.reason}`);
+      return;
+    }
+
+    // EXECUTE path — resolved signals from orchestrator
+    const resolvedSignals = orchResult.signals;
+    if (resolvedSignals.length === 0) {
+      await completeTask(task.id, { decision: 'SKIP', reasoning: 'Orchestrator returned empty signals' });
+      console.log(`[Runner] Task ${task.id} completed: no signals`);
+      return;
+    }
+
+    const riskDeps: RiskCheckDeps = {
+      getOpenTrades: getOpenPositions,
+      getDailyClosedPnl: async () => {
+        const res = await db.select({
+          total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
+        }).from(schema.trades).where(and(
+          isClosed, notBacktest,
+          sql`closed_at >= date('now')`,
+        ));
+        return safeParseFloat(res[0]?.total);
+      },
+      getStartingEquity: async () => {
+        const bal = await getTodayStartingBalance();
+        return bal?.equity ?? null;
+      },
+      getCurrentEquity: async () => {
+        const balance = await liveService.getAccountBalance();
+        return balance.equity;
+      },
+      getReconciliationAlertCount: async () => {
+        const alerts = await db.select({ count: sql<number>`COUNT(*)` })
+          .from(schema.reconciliationAlerts)
+          .where(and(
+            eq(schema.reconciliationAlerts.resolved, false),
+            eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
+          ));
+        return alerts[0]?.count ?? 0;
+      },
     };
 
-    // Execute signals through the deterministic pipeline
-    if (result.decision === 'EXECUTE' && result.signals && result.signals.length > 0) {
-      // Strategy gate: filter signals through shouldSkipSignal (aligns with backtest)
-      const traderConfig = await getTrader(context.author ?? '');
-      const allowedStrategies = traderConfig?.strategies;
-      const signals = result.signals.filter(signal => {
-        const skipResult = shouldSkipSignal(signal, allowedStrategies);
-        if (skipResult) {
-          console.log(`[Runner] Signal ${signal.action} ${signal.symbol} ${signal.strategy} skipped: ${skipResult.reason}`);
-          return false;
-        }
-        return true;
-      });
+    const pipelineDeps: ResolvedPipelineDeps = {
+      broker: liveService,
+      orderManager,
+      calculatePositionSize: async (input) => {
+        const tc = await getTrader(input.trader);
+        const balance = await liveService.getAccountBalance();
+        const sizer = buildPositionSizer(tc?.positionSizingConfig);
+        return sizer.calculateSize({
+          symbol: input.symbol,
+          entryPrice: input.entryPrice,
+          equity: balance.equity,
+          maxQuantity: MAX_CONTRACTS[input.strategy],
+        });
+      },
+      checkRiskLimits: (input) => checkRiskLimits(input, riskDeps, riskConfig),
+      recordTrade: (input) => recordTrade({
+        ...input,
+        taskId: task.id,
+        isBacktest: false,
+      }),
+      onPending: (orderId, ctx) => {
+        pendingIntents.set(orderId, ctx);
+      },
+    };
 
-      if (signals.length === 0) {
-        await completeTask(task.id, { decision: 'SKIP', reasoning: 'All signals filtered by strategy gate' });
-        console.log(`[Runner] Task ${task.id} completed: all signals filtered by strategy gate`);
-        return;
-      }
-      const riskDeps: RiskCheckDeps = {
-        getOpenTrades: getOpenPositions,
-        getDailyClosedPnl: async () => {
-          const res = await db.select({
-            total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
-          }).from(schema.trades).where(and(
-            isClosed, notBacktest,
-            sql`closed_at >= date('now')`,
-          ));
-          return safeParseFloat(res[0]?.total);
-        },
-        getStartingEquity: async () => {
-          const bal = await getTodayStartingBalance();
-          return bal?.equity ?? null;
-        },
-        getCurrentEquity: async () => {
-          const balance = await liveService.getAccountBalance();
-          return balance.equity;
-        },
-        getReconciliationAlertCount: async () => {
-          const alerts = await db.select({ count: sql<number>`COUNT(*)` })
-            .from(schema.reconciliationAlerts)
-            .where(and(
-              eq(schema.reconciliationAlerts.resolved, false),
-              eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
-            ));
-          return alerts[0]?.count ?? 0;
-        },
-      };
+    const pipelineResults = await executeResolvedSignals(
+      resolvedSignals,
+      context.author ?? 'unknown',
+      pipelineDeps,
+      {
+        messageId: task.messageId ?? undefined,
+        taskId: task.id,
+      },
+    );
 
-      const pipelineDeps: PipelineDeps = {
-        broker: liveService,
-        orderManager,
-        getOpenPositions,
-        calculatePositionSize: async (input) => {
-          const traderConfig = await getTrader(input.trader);
-          const balance = await liveService.getAccountBalance();
-          const sizer = buildPositionSizer(traderConfig?.positionSizingConfig);
-          return sizer.calculateSize({
-            symbol: input.symbol,
-            entryPrice: input.entryPrice,
-            equity: balance.equity,
-            spreadMaxRisk: input.spreadMaxRisk,
-            maxQuantity: MAX_CONTRACTS[input.strategy],
-          });
-        },
-        checkRiskLimits: (input) => checkRiskLimits(input, riskDeps, riskConfig),
-        recordTrade: (input) => recordTrade({
-          ...input,
-          taskId: task.id,
-          isBacktest: false,
-        }),
-        onPending: (orderId, context) => {
-          pendingIntents.set(orderId, context);
-        },
-      };
+    const executedTrades = pipelineResults.filter(r => r.executed);
+    const tradeIds = executedTrades.map(r => r.tradeId).filter(Boolean);
 
-      const pipelineResults = await executeSignals(
-        signals,
-        context.author ?? 'unknown',
-        pipelineDeps,
-        {
-          messageId: task.messageId ?? undefined,
-          messageTimestamp: context.messageTimestamp,
-          taskId: task.id,
-        },
-      );
-
-      const executedTrades = pipelineResults.filter(r => r.executed);
-      const tradeIds = executedTrades.map(r => r.tradeId).filter(Boolean);
-
-      await completeTask(task.id, result);
-      console.log(
-        `[Runner] Task ${task.id} completed: ${result.decision}` +
-        (tradeIds.length > 0 ? ` (trades: ${tradeIds.map(id => id!.slice(0, 8)).join(', ')})` : '') +
-        (pipelineResults.some(r => !r.executed) ? ` (some signals skipped)` : ''),
-      );
-    } else {
-      // Layer 2: Alert if agent SKIPs a message where trader has an active position
-      if (result.decision === 'SKIP') {
-        alertIfSkippedWithActivePosition({
-          context,
-          prefetched,
-          skipReason: result.reasoning ?? 'Agent returned SKIP',
-          messageId: task.messageId ?? '',
-          taskId: task.id,
-        }).catch(() => {});
-      }
-      await completeTask(task.id, result);
-      console.log(`[Runner] Task ${task.id} completed: ${result.decision}`);
-    }
+    await completeTask(task.id, { decision: 'EXECUTE', reasoning: `${resolvedSignals.length} signal(s) resolved` });
+    console.log(
+      `[Runner] Task ${task.id} completed: EXECUTE` +
+      (tradeIds.length > 0 ? ` (trades: ${tradeIds.map(id => id!.slice(0, 8)).join(', ')})` : '') +
+      (pipelineResults.some(r => !r.executed) ? ` (some signals skipped)` : ''),
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await failTask(task.id, msg);
     console.error(`[Runner] Task ${task.id} failed:`, msg);
   }
+}
+
+// ─── Adapter: DB Trade → OpenPosition for orchestrator ───
+
+function tradeToOpenPosition(row: typeof schema.trades.$inferSelect): OpenPosition {
+  const legs = (row.legs as TradeLeg[]).map(leg => ({
+    symbol: leg.symbol,
+    side: leg.action as 'BUY' | 'SELL',
+    quantity: leg.quantity ?? 1,
+    expiry: leg.expiry ?? '',
+    strike: leg.strike ?? 0,
+    type: (leg.type === 'STOCK' ? 'stock' : 'option') as 'stock' | 'option',
+    ...(leg.type !== 'STOCK' && { optionType: leg.type as 'CALL' | 'PUT' }),
+  }));
+
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    strategy: row.strategy,
+    direction: row.direction,
+    legs,
+    quantity: row.quantity ?? 1,
+  };
 }

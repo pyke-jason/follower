@@ -17,7 +17,7 @@ import { htmlToLLMText } from '../../parsing/html.js';
 import { formatTimestampForLLM } from '../../lib/et-date.js';
 import { runAgentLoop } from '../../agent/agent-loop.js';
 import type { LLMProvider } from '../../agent/providers.js';
-import { createIntentTools, intentOnToolCall } from '../extract-intent.js';
+import { createIntentTools, intentOnToolCall } from '../intent-tools.js';
 import type { Signal } from '../../agent/schemas.js';
 import type { TaskResult } from '../../agent/schemas.js';
 import { createLogger } from '../../lib/logger.js';
