@@ -18,7 +18,7 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
 
-export const INTENT_VERSION = 7;
+export const INTENT_VERSION = 8;
 
 export type IntentExtractionDeps = {
   /** Get a quote at a specific point in time (message timestamp). */
@@ -136,7 +136,7 @@ When ambiguous AND the trader's recent messages show an open position on that sy
 - "Adding more", "avg down", "doubled down" = OPEN (the system detects existing positions automatically). Do not try to determine if a position already exists.
 - Legs only apply to OPEN signals.
 - When the trader states explicit strikes, include them in legs. When strikes are omitted, omit legs entirely -- the system infers them.
-- Always output expiry as YYYY-MM-DD. Traders write dates many ways ("12/19", "Dec 19", "12/19/25") -- convert them. For MM/DD without a year, use the next occurrence of that date on or after the message date. A bare month name like "Oct" with no day means the standard monthly expiry (3rd Friday of that month). When a date appears as "Oct (10)", the number in parentheses is the day (October 10th), not a contract count.
+- For expiry: extract the exact text the trader used (e.g. "next Friday", "Oct (10)", "12/19", "1DTE"). Do not reformat or do calendar math. The downstream system normalizes the date. If no expiry is stated, omit it.
 - Always explain your reasoning -- your steps are audited.
 - If you don't understand a financial concept, say so. Never fabricate mechanics.
 </rules>
@@ -169,19 +169,18 @@ submit_decision(EXECUTE): action OPEN, symbol GLW, direction SHORT, strategy PDS
 <reasoning>
 "sold" is authoritative -- the trader SOLD a put. direction: SHORT, strategy: PUT.
 "Long" is the stock view (bullish, willing to be assigned). "Happy to own below X" confirms cash-secured put sale.
-"Oct" with no day = standard monthly expiry = 3rd Friday of October. Output as YYYY-MM-DD.
+"Oct" with no day = bare month name. Extract the raw text "Oct" — the downstream system resolves it to the 3rd Friday of October.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol BE, direction SHORT, strategy PUT, legs [SELL 59P expiry=3rd-Friday-of-Oct as YYYY-MM-DD], statedPremium 2.40
+submit_decision(EXECUTE): action OPEN, symbol BE, direction SHORT, strategy PUT, legs [SELL 59P expiry=Oct], statedPremium 2.40
 </example>
 
 <example>
 <input>Long JOBY sold Oct (10) $15 put @ $.60. I only did one contract. You can still get this trade off.</input>
 <reasoning>
 "sold" is authoritative -- the trader SOLD a put. direction: SHORT, strategy: PUT.
-"Long" is the stock view. "Oct (10)" = October 10th -- the number in parentheses is the day, not a contract count (quantity is handled separately).
-Output expiry as 2025-10-10.
+"Long" is the stock view. "Oct (10)" = October 10th -- the number in parentheses is the day, not a contract count. Extract the raw text "Oct (10)" — the downstream system normalizes it.
 </reasoning>
-submit_decision(EXECUTE): action OPEN, symbol JOBY, direction SHORT, strategy PUT, legs [SELL 15P expiry=2025-10-10], statedPremium 0.60
+submit_decision(EXECUTE): action OPEN, symbol JOBY, direction SHORT, strategy PUT, legs [SELL 15P expiry=Oct (10)], statedPremium 0.60
 </example>
 
 <example>

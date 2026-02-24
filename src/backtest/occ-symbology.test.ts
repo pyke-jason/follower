@@ -391,6 +391,38 @@ describe('normalizeExpiry', () => {
       ),
     );
   });
+
+  // ── New relative-date keywords ──
+
+  test('tomorrow resolves to referenceDate + 1 day', () => {
+    const ref = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10
+    expect(normalizeExpiry('tomorrow', ref)).toBe('2025-09-11');
+    expect(normalizeExpiry('TOMORROW', ref)).toBe('2025-09-11');
+  });
+
+  test('1DTE variants resolve to referenceDate + 1 day', () => {
+    const ref = new Date(Date.UTC(2025, 9, 16)); // Thu Oct 16
+    expect(normalizeExpiry('1DTE', ref)).toBe('2025-10-17');
+    expect(normalizeExpiry('1 DTE', ref)).toBe('2025-10-17');
+    expect(normalizeExpiry('1-DTE', ref)).toBe('2025-10-17');
+    expect(normalizeExpiry('1dte', ref)).toBe('2025-10-17');
+  });
+
+  test('this week / this friday resolve to next Friday on or after refDate', () => {
+    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → Fri Sep 12
+    expect(normalizeExpiry('this week', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('this-week', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('this friday', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('this Friday', wed)).toBe('2025-09-12');
+  });
+
+  test('next week / next friday resolve to next Friday on or after refDate', () => {
+    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → Fri Sep 12
+    expect(normalizeExpiry('next week', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('next-week', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('next friday', wed)).toBe('2025-09-12');
+    expect(normalizeExpiry('next Friday', wed)).toBe('2025-09-12');
+  });
 });
 
 // ── buildOccSymbols ───────────────────────────────────────────────────
