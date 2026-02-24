@@ -48,6 +48,14 @@
   - DATABENTO COSTS MONEY: They charge per byte. Fetch minimum columns, narrowest date ranges, prefer cache. Never mass-delete `.cache/databento/` files. Empty `[]` files are valid.
   - TIMESTAMP STRICTNESS: Backtest trades MUST have explicit timestamps. Never fall back to wall-clock time.
   - DYNAMIC TIMEZONES: `dayBoundsUTC()` dynamically detects EST/EDT. Never hardcode UTC offsets.
+  - DIRECTION SEMANTICS: The `direction` field (LONG/SHORT) means whether the trader is BUYING or SELLING the instrument. It does NOT represent their bullish/bearish stock view. Key mappings:
+    - "Short [ticker] puts/calls" = bearish/bullish VIEW, but BUYING options → direction: LONG.
+    - "Sold [ticker] puts" = SELLING puts for premium (bullish) → direction: SHORT. "Sold" is authoritative.
+    - "Long [ticker] pcs 68/67 for credit" = bullish VIEW, SELLING a put credit spread → direction: SHORT, strategy: PDS.
+    - Debit strategies (CDS, PDS bought, naked long options) = always direction: LONG.
+    - Credit strategies (PCS, sold/written options) = always direction: SHORT.
+    - "Lotto"/"Yolo" = speculative BUY, always direction: LONG, never sell-to-open.
+    - "Bought"/"Sold" in the message are authoritative — they override any Long/Short prefix badge.
   - NEVER USE MARKET ORDERS ON OPTIONS: Options have massive bid-ask spreads (often $1-3+). MARKET orders fill at the worst side of the spread, costing $0.50+/contract — on a 12-contract position that's $600+ of avoidable slippage. ALWAYS use LIMIT orders with price-chase logic for options. This applies to ALL order types: OPEN, CLOSE, TRIM, LEG_OFF. The chase mechanism (`OrderManager` + `PRICE_CHASE` adjustment rules) widens the limit incrementally until filled. Position-reducing orders (CLOSE/TRIM/LEG_OFF) use `CLOSE_ORDER_DEFAULTS` with wider chase steps, no `cancelAfterSec`, and `maxSteps` caps — they persist until filled or day boundary. NEVER propose MARKET as a "simpler" alternative.
 </domain_rules>
 
