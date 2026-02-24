@@ -461,22 +461,12 @@ export async function resolveOpenPath(
     }
 
     if (strikeSelection.method === 'atm') {
-      let stockPrice: number;
-      try {
-        const quote = await ctx.marketData.getQuote(symbol);
-        stockPrice = (quote.bid + quote.ask) / 2;
-      } catch (err) {
-        return { error: `Failed to get quote for ${symbol}: ${String(err)}` };
-      }
+      const quote = await ctx.marketData.getQuote(symbol);
+      const stockPrice = (quote.bid + quote.ask) / 2;
 
       // Try to get chain to detect interval
-      let chainStrikes: number[] | undefined;
-      try {
-        const chain = await ctx.marketData.getOptionChain(symbol, expiry, optType);
-        if (chain) chainStrikes = chain.strikes.map(s => s.strike);
-      } catch {
-        // non-fatal
-      }
+      const chainForInterval = await ctx.marketData.getOptionChain(symbol, expiry, optType);
+      const chainStrikes = chainForInterval?.strikes.map(s => s.strike);
 
       const interval = detectStrikeInterval(stockPrice, chainStrikes);
       const atmStrike = roundToInterval(stockPrice, interval);
@@ -515,12 +505,7 @@ export async function resolveOpenPath(
     }
 
     if (strikeSelection.method === 'delta') {
-      let chain;
-      try {
-        chain = await ctx.marketData.getOptionChain(symbol, expiry, optType);
-      } catch (err) {
-        return { error: `Failed to get chain for delta selection: ${String(err)}` };
-      }
+      const chain = await ctx.marketData.getOptionChain(symbol, expiry, optType);
       if (!chain || !chain.strikes.length) {
         return { error: `No chain data available for ${symbol} ${expiry} delta selection` };
       }
@@ -539,13 +524,8 @@ export async function resolveOpenPath(
       }
       if (bestStrike === null) {
         // Fallback: no delta data — use ATM
-        let stockPrice: number;
-        try {
-          const quote = await ctx.marketData.getQuote(symbol);
-          stockPrice = (quote.bid + quote.ask) / 2;
-        } catch (err) {
-          return { error: `Failed to get quote for delta fallback: ${String(err)}` };
-        }
+        const quote = await ctx.marketData.getQuote(symbol);
+        const stockPrice = (quote.bid + quote.ask) / 2;
         const interval = detectStrikeInterval(stockPrice, chain.strikes.map(s => s.strike));
         bestStrike = roundToInterval(stockPrice, interval);
       }
@@ -565,12 +545,7 @@ export async function resolveOpenPath(
 
     if (strikeSelection.method === 'premium_match') {
       const statedPremium = strikeSelection.statedPremium;
-      let chain;
-      try {
-        chain = await ctx.marketData.getOptionChain(symbol, expiry, optType);
-      } catch (err) {
-        return { error: `Failed to get chain for premium match: ${String(err)}` };
-      }
+      const chain = await ctx.marketData.getOptionChain(symbol, expiry, optType);
       if (!chain || !chain.strikes.length) {
         return { error: `No chain data for ${symbol} ${expiry}` };
       }
@@ -663,12 +638,7 @@ export async function resolveOpenPath(
   // ── Premium-match scan (expiry unknown, scanning multiple expiries) ──────────
 
   if (strikeSelection.method === 'premium_match' && resolvedExpiry === null) {
-    let candidateExpiries: string[];
-    try {
-      candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
-    } catch {
-      candidateExpiries = [];
-    }
+    let candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
     if (!candidateExpiries.length) {
       candidateExpiries = generateWeeklyExpiries(messageDate, 6);
     }
@@ -708,30 +678,12 @@ export async function resolveOpenPath(
     return { outcome: 'FLAG_FOR_REVIEW', reason: 'No expiry resolved' };
   }
 
-  let buildResult: ResolvedLegs | { error: string };
-  if (strikeSelection.method === 'delta') {
-    buildResult = await buildLegsForExpiry(resolvedExpiry);
-    if ('error' in buildResult) {
-      return {
-        outcome: 'FLAG_FOR_REVIEW',
-        reason: buildResult.error,
-      };
-    }
-  } else {
-    try {
-      buildResult = await buildLegsForExpiry(resolvedExpiry);
-    } catch (err) {
-      return {
-        outcome: 'FLAG_FOR_REVIEW',
-        reason: `Market data error: ${String(err)}`,
-      };
-    }
-    if ('error' in buildResult) {
-      return {
-        outcome: 'FLAG_FOR_REVIEW',
-        reason: buildResult.error,
-      };
-    }
+  const buildResult = await buildLegsForExpiry(resolvedExpiry);
+  if ('error' in buildResult) {
+    return {
+      outcome: 'FLAG_FOR_REVIEW',
+      reason: buildResult.error,
+    };
   }
 
   const resolvedLegs = buildResult as ResolvedLegs;
@@ -746,12 +698,7 @@ export async function resolveOpenPath(
     const optionLegs = resolvedLegs.legs.filter((l): l is OptionLeg => l.type === 'option');
     if (optionLegs.length > 0) {
       const optType = optionLegs[0].optionType;
-      let chain;
-      try {
-        chain = await ctx.marketData.getOptionChain(symbol, resolvedExpiry, optType);
-      } catch {
-        chain = null;
-      }
+      const chain = await ctx.marketData.getOptionChain(symbol, resolvedExpiry, optType);
 
       if (chain && chain.strikes.length > 0) {
         let computedMid: number | null = null;

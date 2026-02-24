@@ -261,12 +261,8 @@ async function placeOrder(
 // ─── Entry price estimate ───────────────────────────
 
 async function getEntryPriceEstimate(symbol: string, broker: BrokerService): Promise<number> {
-  try {
-    const quote = await broker.getQuote(symbol);
-    return (quote.bid + quote.ask) / 2;
-  } catch {
-    return 0;
-  }
+  const quote = await broker.getQuote(symbol);
+  return (quote.bid + quote.ask) / 2;
 }
 
 // ─── Single signal executor ─────────────────────────
@@ -417,14 +413,8 @@ export async function executeResolvedSignals(
 ): Promise<ResolvedPipelineResult[]> {
   const results: ResolvedPipelineResult[] = [];
   for (const signal of signals) {
-    try {
-      const result = await executeResolvedSignal(signal, trader, deps, opts);
-      results.push(result);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      log.warn(`Signal ${deriveSymbol(signal.legs)} failed: ${reason.slice(0, 200)}`);
-      results.push({ signal, executed: false, reason });
-    }
+    const result = await executeResolvedSignal(signal, trader, deps, opts);
+    results.push(result);
   }
   return results;
 }

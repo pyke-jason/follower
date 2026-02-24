@@ -362,17 +362,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       (Date.now() - lastMtmTime > MTM_INTERVAL_MS);
 
     if (shouldRecomputeMtm) {
-      try {
-        lastMtmValue = await broker.getUnrealizedPnl();
-        lastMtmTime = Date.now();
-      } catch {
-        // Failed to compute MTM — carry forward last known value.
-      }
+      lastMtmValue = await broker.getUnrealizedPnl();
+      lastMtmTime = Date.now();
     }
 
-    try {
-      lastOpenCount = await broker.getOpenPositionCount();
-    } catch { /* carry forward */ }
+    lastOpenCount = await broker.getOpenPositionCount();
 
     await db.update(schema.backtestRuns)
       .set({
