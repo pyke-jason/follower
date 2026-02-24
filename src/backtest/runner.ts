@@ -1,13 +1,13 @@
 import { SimClock } from './clock.js';
 import { DatabentoMarketDataProvider } from './market-data.js';
 import type { BacktestPriceProvider } from './market-data.js';
-import { SimBroker } from './sim-broker.js';
+import { SimBroker, cutoffMinus15Min } from './sim-broker.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
 import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import { toDateKeyET, dayBoundsUTC, getPreviousTradingDayKey, parseDateKey } from '../lib/et-date.js';
+import { toDateKeyET, parseDateKey, getETMinuteOfDay } from '../lib/et-date.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
 import { prefetchForAgent, type PrefetchedData } from '../agent/prefetch.js';
@@ -36,6 +36,9 @@ import type { MessageIntent, Message } from '../db/schema.js';
 import { inArray } from 'drizzle-orm';
 import { RuleBasedTradeAgent } from '../trading/trade-agent.js';
 import type { TradeAgent, Action } from '../trading/trade-agent.js';
+import { buildSkipPositionContext, formatSkipPositionContext } from '../lib/skip-position-alert.js';
+import { normalizeExpiry } from '../backtest/occ-symbology.js';
+import { getRecentTraderMessages } from '../intents/trader-context.js';
 
 /**
  * Bundles all backtest-scoped dependencies so processMessage and
@@ -159,13 +162,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const startingEquity = config.startingEquity ?? DEFAULT_STARTING_EQUITY;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
 
-  const fetchBars = (symbol: string, barsBack: number) =>
-    broker.getBars({ symbol, interval: '1', barsBack });
-
   const sizingService = {
     async calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }) {
       const traderConfig = await getTrader(input.trader);
-      const sizer = buildPositionSizer(traderConfig?.positionSizingConfig, fetchBars);
+      const sizer = buildPositionSizer(traderConfig?.positionSizingConfig);
       const balance = await broker.getAccountBalance();
       return sizer.calculateSize({
         symbol: input.symbol,
@@ -324,28 +324,16 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   if (phase1Api.fetches > 0) {
     log.info(`Phase 1 API: ${phase1Api.fetches} fetches, ${(phase1Api.bytesRead / 1024).toFixed(0)} KB, ${phase1Api.records} records`);
   }
-  resetApiStats(); // start counting from Phase 1.5 onward (Phase 1 quote calls excluded)
-
-  // ── Phase 1.5: Pre-seed daily bar cache for position sizing ──
-  // Warms ohlcv-1d bars for all equity symbols across the full date range so
-  // getBars() calls during replay hit cache instead of making per-trade API calls.
-  const preSeedSymbols = [...new Set(tradableMessages.flatMap(m => m.symbols))];
-  if (preSeedSymbols.length > 0) {
-    const barsBack = 15; // ATR(14) period + 1 for true range calculation (mirrors atr.ts:54)
-    let seedStartKey = toDateKeyET(startDate);
-    for (let i = 0; i < barsBack; i++) seedStartKey = getPreviousTradingDayKey(seedStartKey) ?? seedStartKey;
-    const seedStart = dayBoundsUTC(seedStartKey).start;
-    const seedEnd = dayBoundsUTC(toDateKeyET(endDate)).end;
-    log.info(`Phase 1.5: Pre-seeding daily bars for ${preSeedSymbols.length} symbols (${barsBack} trading days back)...`);
-    await priceProvider.preSeedDailyBars(preSeedSymbols, seedStart, seedEnd);
-    log.info(`Phase 1.5 complete`);
-  }
+  resetApiStats(); // start counting from Phase 2 onward (Phase 1 quote calls excluded)
 
   // Stats tracking
   let agentCallsUsed = 0;
   let agentTrades = 0;
   let skipped = 0;
   const skipReasons = new Map<string, number>();
+  let failedEntrySignals = 0;
+  let failedExitSignals = 0;
+  let expiredWithoutSignal = 0;
 
   // Day-boundary tracking for MTM snapshots and option expiration sweeps
   let lastMsgDay = '';
@@ -367,15 +355,37 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     if (lastMsgDay && msgDay !== lastMsgDay) {
       log.info(`Day ${lastMsgDay} → ${msgDay}`);
 
-      // 0. Cancel surviving close/trim working orders from previous day.
-      //    These orders had all day to fill; if they didn't, the position
-      //    stays open (matches real market behavior for unfilled day orders).
+      // 0. Cancel surviving working orders from previous day.
+      //    Close orders: position stays open (matches real market behavior for unfilled day orders).
+      //    Open orders with expired legs: can't fill on a later date (option no longer exists).
+      //
+      //    For close orders: save the pending context keyed by tradeId before cancelling.
+      //    autoCloseExpiring (below) will use recordFill when it closes the same position,
+      //    preserving closeMessageId instead of showing as an auto-close.
+      const cancelledCloseCallbacks = new Map<string, (price: number, at: Date) => Promise<void>>();
       const workingOrders = orderManager.getWorkingOrders();
       for (const wo of workingOrders) {
-        if (wo.params.isClosing && wo.status === 'OPEN') {
+        if (wo.status !== 'OPEN') continue;
+
+        if (wo.params.isClosing) {
+          const ctx = pendingIntents.get(wo.orderId);
+          if (ctx?.tradeId) {
+            cancelledCloseCallbacks.set(ctx.tradeId, (price, at) => ctx.recordFill(price, at).then(() => undefined));
+          }
           log.info(`Day boundary: cancelling unfilled close order ${wo.orderId} ${wo.params.symbol}`);
           await broker.cancelOrder(wo.orderId);
           pendingIntents.delete(wo.orderId);
+        } else {
+          // Cancel open orders whose option legs expired before today —
+          // a 9/05 expiry option can't fill on 9/08.
+          const hasExpiredLeg = wo.params.legs.some(leg =>
+            leg.type !== 'STOCK' && leg.expiry && leg.expiry < msgDay
+          );
+          if (hasExpiredLeg) {
+            log.info(`Day boundary: cancelling expired-leg order ${wo.orderId} ${wo.params.symbol} (legs expired before ${msgDay})`);
+            await broker.cancelOrder(wo.orderId);
+            pendingIntents.delete(wo.orderId);
+          }
         }
       }
       // Tick so the order manager processes the cancellations
@@ -386,12 +396,30 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         // 1. Sweep expired options first (they become closed trades).
         //    Use the day before msgDay (not lastMsgDay) so multi-day gaps
         //    (weekends, holidays, message-less days) don't skip expiries.
+        // sweepThrough = day before msgDay (intentionally prevDay, not lastMsgDay).
+        // Using currentDay would sweep before intraday CLOSE signals are processed on
+        // expiry day, forcing intrinsic instead of market price for same-day exits.
         const sweepThrough = new Date(parseDateKey(msgDay).getTime() - 86_400_000)
           .toISOString().slice(0, 10);
+
+        // Auto-close positions expiring on lastMsgDay at 15 min before cutoff.
+        // Prices at last available mid-price — more realistic than intrinsic-at-expiry.
+        // sweepExpired below catches anything autoCloseExpiring couldn't price.
+        const autoClosedCount = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min, cancelledCloseCallbacks);
+        if (autoClosedCount > 0) {
+          log.info(`Auto-closed ${autoClosedCount} expiring position(s) on ${lastMsgDay} at market price`);
+        }
 
         // Layer 3: Log expiry notices BEFORE sweeping
         const openPositions = await broker.getOpenTrades();
         logExpiryNotices(openPositions, sweepThrough);
+
+        // Count positions about to expire that had no close signal
+        for (const pos of openPositions) {
+          if (pos.strategy === 'STOCK') continue;
+          const hasExpiredLeg = (pos.legs ?? []).some(l => l.expiry <= sweepThrough);
+          if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
+        }
 
         const expiredCount = await broker.sweepExpired(sweepThrough);
         if (expiredCount > 0) {
@@ -431,8 +459,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     // Unified: processMessage handles both cached intent and live agent paths
     await processMessage(
       msg, btCtx,
-      { agentCallsUsed, agentTrades, skipped, skipReasons },
-      (stats) => { agentCallsUsed = stats.agentCallsUsed; agentTrades = stats.agentTrades; skipped = stats.skipped; },
+      { agentCallsUsed, agentTrades, skipped, skipReasons, failedEntrySignals, failedExitSignals },
+      (stats) => { agentCallsUsed = stats.agentCallsUsed; agentTrades = stats.agentTrades; skipped = stats.skipped; failedEntrySignals = stats.failedEntrySignals; failedExitSignals = stats.failedExitSignals; },
       cachedIntents.get(msg.id),
     );
 
@@ -477,9 +505,21 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   if (lastMsgDay) {
     const openCount = await broker.getOpenPositionCount();
     if (openCount > 0) {
+      const autoClosedFinal = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min);
+      if (autoClosedFinal > 0) {
+        log.info(`Auto-closed ${autoClosedFinal} expiring position(s) on ${lastMsgDay} at market price (final)`);
+      }
+
       // Layer 3: Log expiry notices BEFORE final sweep
       const finalOpenPositions = await broker.getOpenTrades();
       logExpiryNotices(finalOpenPositions, lastMsgDay);
+
+      // Count positions about to expire that had no close signal
+      for (const pos of finalOpenPositions) {
+        if (pos.strategy === 'STOCK') continue;
+        const hasExpiredLeg = (pos.legs ?? []).some(l => l.expiry <= lastMsgDay);
+        if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
+      }
 
       const expiredCount = await broker.sweepExpired(lastMsgDay);
       if (expiredCount > 0) {
@@ -513,6 +553,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const finalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
   const totalPnl = safeParseFloat(finalPnlResult[0].total);
   log.info(`Done. trades=${agentTrades} skipped=${skipped} open=${finalOpenCount} closed=${finalClosedCount[0].count} PnL=$${totalPnl.toFixed(2)}`);
+  if (failedEntrySignals > 0 || failedExitSignals > 0) {
+    log.info(`Pipeline failures: entry=${failedEntrySignals} exit=${failedExitSignals}`);
+  }
+  if (expiredWithoutSignal > 0) {
+    log.info(`Expired without close signal: ${expiredWithoutSignal}`);
+  }
   if (skipReasons.size > 0) {
     const sorted = Array.from(skipReasons.entries()).sort((a, b) => b[1] - a[1]);
     log.info(`Skip reasons: ${sorted.map(([r, n]) => `${r}=${n}`).join(', ')}`);
@@ -524,6 +570,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
 
   const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots: mtmRows, startingEquity, commissionSchedule: config.commissionSchedule });
+
+  // Add breakdown counters to skipReasons for the report
+  if (failedEntrySignals > 0) skipReasons.set('failed entry signals', failedEntrySignals);
+  if (failedExitSignals > 0) skipReasons.set('failed exit signals', failedExitSignals);
+  if (expiredWithoutSignal > 0) skipReasons.set('expired without signal', expiredWithoutSignal);
+
   const report: BacktestReport = {
     config,
     ...reportData,
@@ -560,6 +612,8 @@ type Stats = {
   agentTrades: number;
   skipped: number;
   skipReasons: Map<string, number>;
+  failedEntrySignals: number;
+  failedExitSignals: number;
 };
 
 
@@ -628,6 +682,7 @@ async function processMessage(
     messageTimestamp: msg.timestamp.toISOString(),
     author: msg.author,
     cleanText: msg.cleanText,
+    rawHtml: msg.rawHtml,
     badges: msg.badges,
     symbols: msg.symbols,
     actionHint: msg.actionHint,
@@ -655,6 +710,30 @@ async function processMessage(
     await recordSkip(ctx, 'intent', 'intent skip', reasoning, usage);
     updateStats(stats);
     return;
+  }
+
+  // ── 4.5 Deterministic skip: after-hours same-day-expiry options ──
+  // Reject OPEN signals for options expiring today after the market cutoff.
+  // SPY/QQQ/IWM expire at 4:15pm ET; all others at 4:00pm ET.
+  // Prevents phantom positions that can't be closed (OCC symbol already expired).
+  const BROAD_INDEX_ETFS_P0A = new Set(['SPY', 'QQQ', 'IWM']);
+  const todayET = toDateKeyET(msg.timestamp);
+  const msgMinuteET = getETMinuteOfDay(msg.timestamp);
+  for (const signal of signals) {
+    if (signal.action !== 'OPEN') continue;
+    if (!signal.legs?.length) continue;
+    for (const leg of signal.legs) {
+      if (!leg.expiry || leg.expiry === '-') continue;
+      const legExpiry = normalizeExpiry(leg.expiry, msg.timestamp);
+      if (legExpiry !== todayET) continue;
+      const cutoffMinute = BROAD_INDEX_ETFS_P0A.has(signal.symbol) ? 975 : 960;
+      if (msgMinuteET >= cutoffMinute) {
+        const reason = `After-hours OPEN rejected: ${signal.symbol} expiry ${legExpiry} is today but message arrived at ${msgMinuteET}min ET (cutoff ${cutoffMinute}min ET)`;
+        await recordSkip(ctx, 'deterministic', 'after_hours_same_day_expiry', reason, usage);
+        updateStats(stats);
+        return;
+      }
+    }
   }
 
   // ── 5. Prefetch quotes + positions for deterministic skip checks ──
@@ -705,7 +784,19 @@ async function processMessage(
     const noOpReason = noOps.length > 0
       ? noOps.map(a => a.reasoning).join('; ')
       : reasoning;
-    await recordSkip(ctx, 'intent', 'agent skip', noOpReason, usage);
+
+    // Enrich with position context when trader has active positions on these symbols
+    let enrichedReason = noOpReason;
+    const posCtx = await buildSkipPositionContext(
+      taskContext, prefetched, noOpReason, msg.timestamp,
+      { getRecentTraderMessages },
+    );
+    if (posCtx) {
+      log.debug(`  skip-position-context: ${posCtx.matchingPositions.length} matching positions for ${posCtx.messageSymbols.join(', ')}`);
+      enrichedReason = `${noOpReason}\n\n${formatSkipPositionContext(posCtx)}`;
+    }
+
+    await recordSkip(ctx, 'intent', 'agent skip', enrichedReason, usage);
     updateStats(stats);
     return;
   }
@@ -733,9 +824,15 @@ async function processMessage(
   const pendingResults = pipelineResults.filter(r => !r.executed && r.orderId);
   const firstTradeId = executedResults[0]?.tradeId;
 
-  const pipelineFailures = pipelineResults
-    .filter(r => !r.executed && !r.orderId && r.reason)
-    .map(r => `${r.signal.action} ${r.signal.symbol}: ${r.reason}`);
+  const failedResults = pipelineResults.filter(r => !r.executed && !r.orderId && r.reason);
+  const pipelineFailures = failedResults.map(r => `${r.signal.action} ${r.signal.symbol}: ${r.reason}`);
+
+  // Classify pipeline failures as entry vs exit
+  const EXIT_ACTIONS = new Set(['CLOSE', 'TRIM', 'LEG_OFF']);
+  for (const r of failedResults) {
+    if (EXIT_ACTIONS.has(r.signal.action)) stats.failedExitSignals++;
+    else stats.failedEntrySignals++;
+  }
 
   // ── 8. Record result ──
   // Working orders (pendingResults) count as executions — they'll fill via
@@ -745,7 +842,19 @@ async function processMessage(
   } else if (pipelineFailures.length > 0) {
     const failReason = `[pipeline] ${pipelineFailures.join('; ')} | Intent: ${reasoning}`;
     log.warn(`  pipeline failed: ${pipelineFailures.map(f => f.slice(0, 100)).join('; ')}`);
-    await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason, usage);
+
+    // Enrich with position context
+    let enrichedFailReason = failReason;
+    const posCtx = await buildSkipPositionContext(
+      taskContext, prefetched, failReason, msg.timestamp,
+      { getRecentTraderMessages },
+    );
+    if (posCtx) {
+      log.debug(`  skip-position-context: ${posCtx.matchingPositions.length} matching positions for ${posCtx.messageSymbols.join(', ')}`);
+      enrichedFailReason = `${failReason}\n\n${formatSkipPositionContext(posCtx)}`;
+    }
+
+    await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', enrichedFailReason, usage);
   } else {
     await recordSkip(ctx, 'intent', 'intent skip', reasoning, usage);
   }

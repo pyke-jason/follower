@@ -12,21 +12,21 @@ async function seed() {
       enabled: true,
       strategies: ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'],
       notes: '',
-      positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
+      positionSizingConfig: { strategy: 'notional', maxNotionalPct: 0.05 },
     },
     {
       name: 'Hariseldon',
       enabled: true,
       strategies: ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'],
       notes: '',
-      positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
+      positionSizingConfig: { strategy: 'notional', maxNotionalPct: 0.05 },
     },
     {
       name: 'Pete',
       enabled: true,
       strategies: ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'],
       notes: '',
-      positionSizingConfig: { strategy: 'atr', riskPercent: 0.02, atrMultiplier: 2.0 },
+      positionSizingConfig: { strategy: 'notional', maxNotionalPct: 0.05 },
     },
   ]).onConflictDoNothing();
 

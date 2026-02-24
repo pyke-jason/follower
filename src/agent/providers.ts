@@ -43,6 +43,7 @@ export type ChatParams = {
   system?: string;
   messages: unknown[]; // provider-native message array
   maxTokens: number;
+  temperature?: number; // 0 = deterministic, default varies by provider (~1.0)
 };
 
 export type ChatWithToolsParams = ChatParams & {

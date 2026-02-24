@@ -6,7 +6,7 @@
  * The LLM has no control over this flow.
  */
 import type { BrokerService } from '../broker/interface.js';
-import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule, OrderLeg, Quote } from '../broker/types.js';
+import type { OrderParams, OrderResult, WorkingOrderParams, AdjustmentRule, OrderLeg } from '../broker/types.js';
 import type { OrderManager } from '../orders/order-manager.js';
 import type { Trade } from '../db/schema.js';
 import type { PositionSize } from '../position-sizing/index.js';
@@ -20,9 +20,8 @@ import { OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { tradeQty } from '../lib/trade.js';
-import { formatOccSymbol, normalizeExpiry, inferATMSpread, inferATMStrike } from '../backtest/occ-symbology.js';
-import { nextFriday } from '../lib/et-date.js';
 import { getSpreadMidpoint } from './spread-midpoint.js';
+import { buildOrderLegs, resolveSignalLegs } from './signal-legs.js';
 
 const log = createLogger('Pipeline');
 
@@ -36,6 +35,9 @@ export type PendingOrderContext = {
   quantity: number;
   legs: OrderLeg[];
   messageId?: string;
+  /** For close/trim/leg-off orders: the trade being closed. Used by the backtest
+   *  runner to preserve closeMessageId when auto-close fires after day-boundary cancel. */
+  tradeId?: string;
   /** Record the trade when the working order fills. Captures all pipeline metadata
    *  (backtestRunId, agentModel, etc.) so callers don't reconstruct recording payloads. */
   recordFill: (filledPrice: number, filledAt?: Date) => Promise<RecordTradeResult | null>;
@@ -111,12 +113,9 @@ export function buildOrderFromSignal(signal: Signal, quantity: number, reference
   // them from the existing position.  Pass an empty legs array; the
   // pipeline's executeClose / executeTrim will replace it.
   const needsLegs = signal.action === 'OPEN' || signal.action === 'ADD';
-  const isStock = signal.strategy === 'STOCK';
   const legs: OrderLeg[] = !needsLegs
     ? []
-    : isStock
-      ? buildStockLegs(signal.symbol, signal.direction, quantity)
-      : buildOptionLegs(signal, quantity, referenceDate);
+    : buildOrderLegs(signal, quantity, referenceDate);
   return {
     symbol: signal.symbol,
     strategy: signal.strategy,
@@ -138,85 +137,6 @@ function buildStockLegs(underlying: string, direction: 'LONG' | 'SHORT', quantit
     action: direction === 'LONG' ? 'BUY' as const : 'SELL' as const,
     quantity,
   }];
-}
-
-function buildOptionLegs(signal: Signal, quantity: number, referenceDate: Date): OrderLeg[] {
-  if (!signal.legs || signal.legs.length === 0) {
-    throw new Error(`Options signal for ${signal.symbol} (${signal.action} ${signal.strategy}) missing legs`);
-  }
-
-  // Deduplicate legs by identity (LLM v4 sometimes emits duplicates)
-  const seen = new Set<string>();
-  const uniqueSignalLegs = signal.legs.filter(l => {
-    const key = `${l.strike}|${l.expiry}|${l.optionType}|${l.action}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  if (uniqueSignalLegs.length < signal.legs.length) {
-    log.info(`${signal.symbol} ${signal.action}: deduped ${signal.legs.length} legs → ${uniqueSignalLegs.length}`);
-  }
-
-  return uniqueSignalLegs.map(l => {
-    const expiry = normalizeExpiry(l.expiry, referenceDate);
-    return {
-      symbol: formatOccSymbol({
-        underlying: signal.symbol,
-        expiration: expiry,
-        type: l.optionType,
-        strike: l.strike,
-      }),
-      strike: l.strike,
-      expiry,
-      type: l.optionType as 'CALL' | 'PUT',
-      action: l.action as 'BUY' | 'SELL',
-      quantity,
-    };
-  });
-}
-
-/**
- * Resolve signal legs: if the LLM omitted legs (trader didn't state strikes),
- * infer them deterministically from the stock price.
- */
-async function resolveSignalLegs(
-  signal: Signal,
-  broker: BrokerService,
-  opts: PipelineOpts,
-): Promise<{ signal: Signal; stockQuote: Quote | null }> {
-  if (signal.strategy === 'STOCK') return { signal, stockQuote: null };
-  if (signal.legs && signal.legs.length > 0) return { signal, stockQuote: null };
-
-  const quote = await broker.getQuote(signal.symbol);
-  const stockPrice = (quote.bid + quote.ask) / 2;
-  const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
-  const expiry = nextFriday(refDate);
-
-  if (signal.strategy === 'CDS' || signal.strategy === 'PDS') {
-    const spread = inferATMSpread(stockPrice, signal.strategy);
-    const optionType = signal.strategy === 'CDS' ? 'CALL' as const : 'PUT' as const;
-    return {
-      signal: {
-        ...signal,
-        legs: [
-          { strike: spread.longStrike, expiry, optionType, action: 'BUY' as const },
-          { strike: spread.shortStrike, expiry, optionType, action: 'SELL' as const },
-        ],
-      },
-      stockQuote: quote,
-    };
-  }
-
-  // Naked CALL or PUT
-  const strike = inferATMStrike(stockPrice);
-  const action = signal.direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
-  return {
-    signal: {
-      ...signal,
-      legs: [{ strike, expiry, optionType: signal.strategy as 'CALL' | 'PUT', action }],
-    },
-    stockQuote: quote,
-  };
 }
 
 /** Fetch stock mid-price for position sizing entry price. */
@@ -243,8 +163,16 @@ async function findPosition(
   if (signal.action === 'CLOSE' || signal.action === 'TRIM' || signal.action === 'LEG_OFF') {
     const bySymbol = await deps.getOpenPositions({ symbol: signal.symbol, trader });
     if (bySymbol.length === 1) {
-      log.warn(`${signal.action} ${signal.symbol}: fuzzy match — signal strategy ${signal.strategy} ≠ position strategy ${bySymbol[0].strategy}`);
+      log.info(`${signal.action} ${signal.symbol}: fuzzy match — signal strategy ${signal.strategy} ≠ position strategy ${bySymbol[0].strategy}`);
       return { position: bySymbol[0], fuzzyMatch: true };
+    }
+    // Multiple positions: narrow by direction when available
+    if (bySymbol.length > 1 && signal.direction) {
+      const byDirection = bySymbol.filter(p => p.direction === signal.direction);
+      if (byDirection.length === 1) {
+        log.info(`${signal.action} ${signal.symbol}: fuzzy match by direction ${signal.direction} — position ${byDirection[0].strategy}/${byDirection[0].direction}`);
+        return { position: byDirection[0], fuzzyMatch: true };
+      }
     }
   }
 
@@ -325,7 +253,7 @@ async function executeOpen(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   // 0. Resolve legs if missing (trader omitted strikes)
-  const { signal: resolved, stockQuote } = await resolveSignalLegs(signal, deps.broker, opts);
+  const { signal: resolved, stockQuote } = await resolveSignalLegs(signal, deps.broker, opts.messageTimestamp);
 
   // 1. Size — use broker quote for entry price, not LLM (reuse quote from resolveSignalLegs if available)
   const prefetchedMid = stockQuote ? (stockQuote.bid + stockQuote.ask) / 2 : undefined;
@@ -353,9 +281,7 @@ async function executeOpen(
 
   // 3. Build order
   const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
-  const legs = resolved.strategy === 'STOCK'
-    ? buildStockLegs(resolved.symbol, resolved.direction, size.quantity)
-    : buildOptionLegs(resolved, size.quantity, refDate);
+  const legs = buildOrderLegs(resolved, size.quantity, refDate);
   const mid = await getSpreadMidpoint(deps.broker, legs);
   const params = buildOrderParams(resolved, legs, mid);
 
@@ -448,6 +374,7 @@ async function executeClose(
   const result = await placeOrder(deps, params, {
     action: 'CLOSE', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity, legs, messageId: opts.messageId,
+    tradeId: existing.id,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
       if (recorded) tradeId = recorded.tradeId;
@@ -468,7 +395,7 @@ async function executeAdd(
   opts: PipelineOpts,
 ): Promise<PipelineResult> {
   // 0. Resolve legs if missing
-  const { signal: resolved, stockQuote } = await resolveSignalLegs(signal, deps.broker, opts);
+  const { signal: resolved, stockQuote } = await resolveSignalLegs(signal, deps.broker, opts.messageTimestamp);
 
   // 1. Verify position exists; if not, fall through to OPEN
   const positions = await deps.getOpenPositions({ symbol: resolved.symbol, trader, strategy: resolved.strategy });
@@ -503,9 +430,7 @@ async function executeAdd(
 
   // 4. Build order
   const refDate = opts.messageTimestamp ? new Date(opts.messageTimestamp) : new Date();
-  const legs = resolved.strategy === 'STOCK'
-    ? buildStockLegs(resolved.symbol, resolved.direction, size.quantity)
-    : buildOptionLegs(resolved, size.quantity, refDate);
+  const legs = buildOrderLegs(resolved, size.quantity, refDate);
   const mid = await getSpreadMidpoint(deps.broker, legs);
   const params = buildOrderParams(resolved, legs, mid);
 
@@ -602,6 +527,7 @@ async function executeTrim(
   const result = await placeOrder(deps, params, {
     action: 'TRIM', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity: trimQty, legs, messageId: opts.messageId,
+    tradeId: existing.id,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
       if (recorded) tradeId = recorded.tradeId;
@@ -633,7 +559,7 @@ async function executeLegOff(
 
   const legToClose = existingLegs.find(l => l.action === 'SELL');
   if (!legToClose) {
-    return { signal, executed: false, reason: `No SELL leg found to close on ${existing.strategy}` };
+    return { signal, executed: false, reason: `LEG_OFF requires a spread (BUY+SELL legs), but ${existing.symbol} has only BUY leg(s). Use CLOSE instead.` };
   }
   const legToKeep = existingLegs.find(l => l.action === 'BUY');
 
@@ -682,6 +608,7 @@ async function executeLegOff(
   const result = await placeOrder(deps, params, {
     action: 'LEG_OFF', symbol: signal.symbol, direction: existing.direction,
     strategy: existing.strategy, quantity, legs: closingLegs, messageId: opts.messageId,
+    tradeId: existing.id,
     recordFill: async (fp, fa) => {
       const recorded = await deps.recordTrade(buildRecordInput(fp, fa));
       if (recorded) tradeId = recorded.tradeId;
@@ -721,10 +648,11 @@ export async function executeSignal(
 
 /**
  * Deduplicate signals by symbol|action|strategy.
- * When the LLM emits two signals for the same trade (e.g. "Short ABNB using $127 Puts"
- * → one STOCK signal + one PUT signal), keep the best one:
- *   1. Prefer the signal with statedPremium (more complete).
- *   2. Tiebreak: fewer legs (simpler = less likely to be the duplicate).
+ * When the LLM emits two signals for the same trade, keep the best one:
+ *   1. Prefer the signal with valid legs — legs carry execution data (strikes, expiry).
+ *      statedPremium is "informational only, never used for order placement" and must
+ *      not override a signal that has concrete leg information.
+ *   2. Tiebreak: prefer signal with statedPremium (more complete).
  *   3. Final tiebreak: later position in the array (LLMs tend to self-correct).
  */
 function deduplicateSignals(signals: Signal[]): Signal[] {
@@ -741,14 +669,14 @@ function deduplicateSignals(signals: Signal[]): Signal[] {
     if (group.length > 1) {
       log.info(`Deduped ${group.length} signals for ${key} → keeping best`);
       group.sort((a, b) => {
-        // Prefer signal with statedPremium
+        // Prefer signal with valid legs (execution data beats pricing info)
+        const aLegs = (a.legs?.filter(l => l.strike > 0).length ?? 0) > 0 ? 1 : 0;
+        const bLegs = (b.legs?.filter(l => l.strike > 0).length ?? 0) > 0 ? 1 : 0;
+        if (aLegs !== bLegs) return bLegs - aLegs;
+        // Tiebreak: prefer signal with statedPremium
         const aPrem = a.statedPremium != null ? 1 : 0;
         const bPrem = b.statedPremium != null ? 1 : 0;
-        if (aPrem !== bPrem) return bPrem - aPrem;
-        // Tiebreak: fewer legs
-        const aLegs = a.legs?.length ?? 0;
-        const bLegs = b.legs?.length ?? 0;
-        return aLegs - bLegs;
+        return bPrem - aPrem;
       });
     }
     deduped.push(group[0]);

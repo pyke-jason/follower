@@ -69,7 +69,7 @@ export function submitDecisionTool(): ToolDef {
                     optionType: { type: 'string', enum: ['CALL', 'PUT'] },
                     action: { type: 'string', enum: ['BUY', 'SELL'] },
                   },
-                  required: ['strike', 'expiry', 'optionType', 'action'],
+                  required: ['strike', 'optionType', 'action'],
                 },
               },
             },

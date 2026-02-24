@@ -8,36 +8,35 @@ import { CompactEventChain } from './compact-event-chain';
 import { OutcomeLegsSummary } from './outcome-legs-summary';
 import { formatDate } from '@/lib/format';
 import { TableRow, TableCell } from '@/components/ui/table';
-import { MessageSquare } from 'lucide-react';
 import type { Trade, CommissionSchedule, Message } from '../../../src/db/schema';
 
-function NearbyMessages({ messages, sourceMessageId }: { messages: Message[]; sourceMessageId?: string | null }) {
+const INITIAL_VISIBLE = 3; // source + 2 after
+
+function NearbyMessages({
+  messages,
+  sourceMessageId,
+}: {
+  messages: Message[];
+  sourceMessageId?: string | null;
+}) {
+  const [showAll, setShowAll] = useState(false);
+
   if (messages.length === 0) return null;
 
-  // Show up to 5 messages centered around the source message
   const sourceIdx = messages.findIndex((m) => m.id === sourceMessageId);
-  let start = 0;
-  let end = messages.length;
-  if (messages.length > 5) {
-    const center = sourceIdx >= 0 ? sourceIdx : Math.floor(messages.length / 2);
-    start = Math.max(0, center - 2);
-    end = Math.min(messages.length, start + 5);
-    if (end - start < 5) start = Math.max(0, end - 5);
-  }
-  const slice = messages.slice(start, end);
+  const cutoff = sourceIdx >= 0 ? sourceIdx + INITIAL_VISIBLE : INITIAL_VISIBLE;
+  const visible = showAll ? messages : messages.slice(0, cutoff);
+  const hiddenCount = messages.length - visible.length;
 
   return (
     <div className="space-y-0.5">
-      {slice.map((m) => {
+      {visible.map((m) => {
         const isSource = m.id === sourceMessageId;
         return (
           <div
             key={m.id}
             className={`flex items-baseline gap-2 text-xs px-2 py-1 rounded ${isSource ? 'bg-accent/40 border-l-2 border-l-foreground/30' : ''}`}
           >
-            <span className={`shrink-0 font-medium ${isSource ? 'text-foreground' : 'text-muted-foreground'}`}>
-              {m.author}
-            </span>
             <span className="text-[10px] text-muted-foreground/50 shrink-0 tabular-nums">
               {formatDate(m.timestamp)}
             </span>
@@ -47,10 +46,14 @@ function NearbyMessages({ messages, sourceMessageId }: { messages: Message[]; so
           </div>
         );
       })}
-      {messages.length > 5 && (
-        <p className="text-[10px] text-muted-foreground/40 px-2">
-          +{messages.length - 5} more messages
-        </p>
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
+          className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground px-2 py-0.5 transition-colors"
+        >
+          +{hiddenCount} more
+        </button>
       )}
     </div>
   );
@@ -68,7 +71,6 @@ export function TradeStoryExpander({
   colSpan: number;
 }) {
   const [story, setStory] = useState<TradeStory | null>(null);
-  const [showChat, setShowChat] = useState(false);
   const [isLoading, startTransition] = useTransition();
 
   useEffect(() => {
@@ -138,22 +140,11 @@ export function TradeStoryExpander({
                 </div>
               </div>
 
-              {/* Zone D: Nearby chat messages (collapsible) */}
+              {/* Zone D: Trader messages for this symbol */}
               {story.nearbyMessages.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-border/50">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setShowChat(!showChat); }}
-                    className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <MessageSquare className="h-3 w-3" />
-                    {showChat ? 'Hide' : 'Show'} chat context ({story.nearbyMessages.length})
-                  </button>
-                  {showChat && (
-                    <div className="mt-2">
-                      <NearbyMessages messages={story.nearbyMessages} sourceMessageId={trade.sourceMessageId} />
-                    </div>
-                  )}
+                  <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Trader messages</h4>
+                  <NearbyMessages messages={story.nearbyMessages} sourceMessageId={trade.sourceMessageId} />
                 </div>
               )}
             </div>

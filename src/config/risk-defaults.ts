@@ -1,5 +1,5 @@
 import type { RiskCheckConfig } from '../orders/risk-check.js';
-import type { ATRSizingConfig } from '../position-sizing/index.js';
+import type { NotionalSizingConfig } from '../position-sizing/index.js';
 
 export const BACKTEST_RISK_DEFAULTS: RiskCheckConfig = {
   maxOnSymbol: 3,
@@ -15,14 +15,10 @@ export const LIVE_RISK_DEFAULTS: RiskCheckConfig = {
   maxNotionalMultiplier: 2,
 };
 
-export const DEFAULT_SIZING_CONFIG: ATRSizingConfig = {
-  strategy: 'atr',
-  riskPercent: 0.05,
-  atrMultiplier: 2.0,
-  atrPeriod: 14,
+export const DEFAULT_SIZING_CONFIG: NotionalSizingConfig = {
+  strategy: 'notional',
+  maxNotionalPct: 0.05,
 };
-
-export const ATR_FALLBACK_FACTOR = 0.02;
 
 export const MAX_CONTRACTS: Record<string, number> = {
   CALL: 20, PUT: 20, CDS: 20, PDS: 20,

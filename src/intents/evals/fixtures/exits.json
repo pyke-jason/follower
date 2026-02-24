@@ -1,0 +1,206 @@
+{
+  "cases": [
+    {
+      "id": "exits-001",
+      "description": "'Took profits on CRWV calls' — exit language → CLOSE",
+      "input": {
+        "message": "Took profits on CRWV calls this morning",
+        "symbols": ["CRWV"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "CRWV",
+            "strategy": "CALL"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"]
+    },
+    {
+      "id": "exits-002",
+      "description": "'Sold half my TSLA puts' — partial exit → TRIM exitPercent 0.5",
+      "input": {
+        "message": "Sold half my TSLA puts, letting the rest ride",
+        "symbols": ["TSLA"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "TRIM",
+            "symbol": "TSLA",
+            "strategy": "PUT",
+            "exitPercent": 0.5
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].exitPercent"],
+      "tags": ["exits", "trim"]
+    },
+    {
+      "id": "exits-003",
+      "description": "'Done with the MSTR position, booked a small gain' → CLOSE",
+      "input": {
+        "message": "Done with the MSTR position, booked a small gain",
+        "symbols": ["MSTR"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "MSTR"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"]
+    },
+    {
+      "id": "exits-004",
+      "description": "'Out of AAPL stock' → CLOSE STOCK position",
+      "input": {
+        "message": "Out of AAPL stock",
+        "symbols": ["AAPL"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "AAPL",
+            "strategy": "STOCK"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"]
+    },
+    {
+      "id": "exits-005",
+      "description": "'Got stopped on SPY puts' → CLOSE SPY PUT",
+      "input": {
+        "message": "Got stopped on SPY puts",
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "SPY",
+            "strategy": "PUT"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"]
+    },
+    {
+      "id": "exits-006",
+      "description": "'Exit RKLB 1/2' — fraction notation → TRIM exitPercent 0.5",
+      "input": {
+        "message": "Exit RKLB 1/2",
+        "symbols": ["RKLB"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "TRIM",
+            "symbol": "RKLB",
+            "exitPercent": 0.5
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].exitPercent"],
+      "tags": ["exits", "trim"]
+    },
+    {
+      "id": "exits-007",
+      "description": "'Exit Long UNH cds took small profit hold straight calls' → LEG_OFF targetStrategy CALL",
+      "input": {
+        "message": "Exit Long UNH cds took small profit hold straight calls",
+        "symbols": ["UNH"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "LEG_OFF",
+            "symbol": "UNH",
+            "targetStrategy": "CALL"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].targetStrategy"],
+      "tags": ["exits", "leg-off"],
+      "notes": "Close short leg, keep long calls → targetStrategy CALL."
+    },
+    {
+      "id": "exits-008",
+      "description": "'Locked in AMZN gains' — exit action, no entry details → CLOSE",
+      "input": {
+        "message": "Locked in AMZN gains",
+        "symbols": ["AMZN"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "AMZN"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"],
+      "notes": "Locked in = exit action (no entry details). Contrast with 'Locked in AMZN 200/210 CDS for 3.50' which is an OPEN."
+    },
+    {
+      "id": "exits-009",
+      "description": "'Exit NFLX with .12 loss per contract (15)' — exit with explicit loss amount → CLOSE PUT",
+      "input": {
+        "message": "Exit NFLX with .12 loss per contract (15)",
+        "symbols": ["NFLX"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "NFLX"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"],
+      "notes": "'.12 loss per contract (15)' is P&L context, not an entry price. The open was 'Short NFLX Lotto Puts' so strategy is PUT."
+    },
+    {
+      "id": "exits-010",
+      "description": "'Exit Long UNH took nice profits' — bare exit with profit language → CLOSE",
+      "input": {
+        "message": "Exit Long UNH took nice profits",
+        "symbols": ["UNH"],
+        "badges": ["Long"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "UNH"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].symbol"],
+      "tags": ["exits"],
+      "notes": "Bug: LLM emitted strategy STOCK by default. Bare exit 'took nice profits' should CLOSE without assuming STOCK strategy. Pipeline fuzzy matching handles position lookup."
+    }
+  ]
+}

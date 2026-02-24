@@ -1,0 +1,146 @@
+{
+  "cases": [
+    {
+      "id": "spreads-001",
+      "description": "CDS with explicit strikes — BUY lower, SELL higher call",
+      "input": {
+        "message": "Long AAPL 180/185 cds for $2.10",
+        "symbols": ["AAPL"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "AAPL",
+            "direction": "LONG",
+            "strategy": "CDS",
+            "statedPremium": 2.10,
+            "legs": [
+              { "action": "BUY", "strike": 180, "optionType": "CALL" },
+              { "action": "SELL", "strike": 185, "optionType": "CALL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].direction",
+        "signals[0].strategy",
+        "signals[0].legs[0].action",
+        "signals[0].legs[1].action"
+      ],
+      "tags": ["spreads"]
+    },
+    {
+      "id": "spreads-002",
+      "description": "PCS with strikes — SELL higher strike, BUY lower strike, direction SHORT",
+      "input": {
+        "message": "Long GLW pcs 68/67 for .63 credit",
+        "symbols": ["GLW"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "GLW",
+            "direction": "SHORT",
+            "strategy": "PDS",
+            "statedPremium": 0.63,
+            "legs": [
+              { "action": "SELL", "strike": 68, "optionType": "PUT" },
+              { "action": "BUY", "strike": 67, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].direction",
+        "signals[0].strategy",
+        "signals[0].legs[0].action"
+      ],
+      "tags": ["spreads", "pcs"],
+      "notes": "PCS legs are REVERSED from PDS: SELL higher, BUY lower."
+    },
+    {
+      "id": "spreads-003",
+      "description": "PCS without credit price — direction SHORT, strikes stated",
+      "input": {
+        "message": "Long NVDA pcs 900/895",
+        "symbols": ["NVDA"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "NVDA",
+            "direction": "SHORT",
+            "strategy": "PDS",
+            "legs": [
+              { "action": "SELL", "strike": 900, "optionType": "PUT" },
+              { "action": "BUY", "strike": 895, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["spreads", "pcs"]
+    },
+    {
+      "id": "spreads-004",
+      "description": "'Short ALGN pds 260/255' — bearish debit spread, direction LONG, BUY higher, SELL lower",
+      "input": {
+        "message": "Short ALGN pds 260/255",
+        "symbols": ["ALGN"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "ALGN",
+            "direction": "LONG",
+            "strategy": "PDS",
+            "legs": [
+              { "action": "BUY", "strike": 260, "optionType": "PUT" },
+              { "action": "SELL", "strike": 255, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].direction",
+        "signals[0].strategy",
+        "signals[0].legs[0].action"
+      ],
+      "tags": ["spreads"]
+    },
+    {
+      "id": "spreads-005",
+      "description": "'Adding AAPL 190/200 cds' — add-on is still OPEN, legs BUY/SELL",
+      "input": {
+        "message": "Adding AAPL 190/200 cds",
+        "symbols": ["AAPL"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "AAPL",
+            "direction": "LONG",
+            "strategy": "CDS",
+            "legs": [
+              { "action": "BUY", "strike": 190, "optionType": "CALL" },
+              { "action": "SELL", "strike": 200, "optionType": "CALL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["spreads"],
+      "notes": "'Adding' = OPEN (system handles existing position detection)."
+    }
+  ]
+}

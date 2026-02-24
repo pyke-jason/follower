@@ -30,6 +30,7 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
     messageTimestamp: message.timestamp,
     author: message.author,
     cleanText: message.cleanText,
+    rawHtml: message.rawHtml,
     badges,
     symbols: (message.symbols as string[]) || [],
     actionHint: message.actionHint,

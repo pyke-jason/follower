@@ -1,0 +1,304 @@
+{
+  "cases": [
+    {
+      "id": "direction-001",
+      "description": "'Short ALGN pds' — bearish view buying a debit spread, direction LONG",
+      "input": {
+        "message": "Short ALGN pds",
+        "symbols": ["ALGN"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "ALGN",
+            "direction": "LONG",
+            "strategy": "PDS"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction"]
+    },
+    {
+      "id": "direction-002",
+      "description": "'Short TSLA puts' — bearish view buying puts, direction LONG",
+      "input": {
+        "message": "Short TSLA puts",
+        "symbols": ["TSLA"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "TSLA",
+            "direction": "LONG",
+            "strategy": "PUT"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction"]
+    },
+    {
+      "id": "direction-003",
+      "description": "'Short NVDA Lotto puts' — Lotto = always buy, direction LONG",
+      "input": {
+        "message": "Short NVDA Lotto puts",
+        "symbols": ["NVDA"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "NVDA",
+            "direction": "LONG",
+            "strategy": "PUT"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction", "lotto"],
+      "notes": "Lotto = always buy, regardless of Short prefix."
+    },
+    {
+      "id": "direction-004",
+      "description": "'Long GLW pcs 68/67' — PCS with strikes, direction SHORT, legs SELL/BUY",
+      "input": {
+        "message": "Long GLW pcs 68/67 for .63 credit",
+        "symbols": ["GLW"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "GLW",
+            "direction": "SHORT",
+            "strategy": "PDS",
+            "legs": [
+              { "action": "SELL", "strike": 68, "optionType": "PUT" },
+              { "action": "BUY", "strike": 67, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction", "pcs"]
+    },
+    {
+      "id": "direction-005",
+      "description": "'Long BE sold Oct $59 put' — 'sold' overrides 'Long', direction SHORT",
+      "input": {
+        "message": "Long BE sold Oct $59 put $2.40",
+        "symbols": ["BE"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "BE",
+            "direction": "SHORT",
+            "strategy": "PUT"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction"],
+      "tags": ["direction", "sold-authoritative"]
+    },
+    {
+      "id": "direction-006",
+      "description": "'Long JOBY sold Oct (10) $15 put' — 'sold' authoritative, leg with strike 15",
+      "input": {
+        "message": "Long JOBY sold Oct (10) $15 put @ $.60",
+        "symbols": ["JOBY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "JOBY",
+            "direction": "SHORT",
+            "strategy": "PUT",
+            "legs": [
+              { "action": "SELL", "strike": 15, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction"],
+      "tags": ["direction", "sold-authoritative"]
+    },
+    {
+      "id": "direction-007",
+      "description": "'Sold CRWV calls' — sell-to-open, direction SHORT",
+      "input": {
+        "message": "Sold CRWV calls for 0.45",
+        "symbols": ["CRWV"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "CRWV",
+            "direction": "SHORT",
+            "strategy": "CALL"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction"],
+      "tags": ["direction"]
+    },
+    {
+      "id": "direction-008",
+      "description": "'Short AMZN cds' — bearish view, debit spread = LONG",
+      "input": {
+        "message": "Short AMZN cds",
+        "symbols": ["AMZN"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "AMZN",
+            "direction": "LONG",
+            "strategy": "CDS"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction"],
+      "notes": "Short = bearish view, debit spread = LONG."
+    },
+    {
+      "id": "direction-009",
+      "description": "'Wrote SPY 580 puts' — wrote = sold-to-open, direction SHORT with leg",
+      "input": {
+        "message": "Wrote SPY 580 puts",
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "SPY",
+            "direction": "SHORT",
+            "strategy": "PUT",
+            "legs": [
+              { "action": "SELL", "strike": 580, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction"],
+      "tags": ["direction", "sold-authoritative"]
+    },
+    {
+      "id": "direction-010",
+      "description": "'Short ABNB Lotto $123 Puts' — Lotto = buy, direction LONG, leg BUY with strike",
+      "input": {
+        "message": "Short ABNB Lotto $123 Puts for .21",
+        "symbols": ["ABNB"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "ABNB",
+            "direction": "LONG",
+            "strategy": "PUT",
+            "statedPremium": 0.21,
+            "legs": [
+              { "action": "BUY", "strike": 123, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction"],
+      "tags": ["direction", "lotto"]
+    },
+    {
+      "id": "direction-011",
+      "description": "'Bought TSLA pcs 300/295' — PCS is selling puts for credit, direction SHORT",
+      "input": {
+        "message": "Bought TSLA pcs 300/295 for 1.20 credit",
+        "symbols": ["TSLA"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "TSLA",
+            "direction": "SHORT",
+            "strategy": "PDS",
+            "legs": [
+              { "action": "SELL", "strike": 300, "optionType": "PUT" },
+              { "action": "BUY", "strike": 295, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction", "pcs"],
+      "notes": "PCS = selling puts for credit, even though message says 'bought' the spread."
+    },
+    {
+      "id": "direction-013",
+      "description": "'Short NFLX Lotto Puts $1182.5 - for $1.21' — Lotto overrides Short, strike+premium, direction LONG",
+      "input": {
+        "message": "Short NFLX Lotto Puts $1182.5 - for $1.21 - 15 Contracts",
+        "symbols": ["NFLX"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "NFLX",
+            "direction": "LONG",
+            "strategy": "PUT",
+            "statedPremium": 1.21,
+            "legs": [
+              { "action": "BUY", "strike": 1182.5, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction", "lotto"],
+      "notes": "Lotto = speculative buy regardless of 'Short' prefix. Strike $1182.5 is a high-priced name (NFLX). '15 Contracts' is qty hint, not a direction signal."
+    },
+    {
+      "id": "direction-012",
+      "description": "'Long AAPL calls for 2.50' — straightforward buy, direction LONG",
+      "input": {
+        "message": "Long AAPL calls for 2.50",
+        "symbols": ["AAPL"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "AAPL",
+            "direction": "LONG",
+            "strategy": "CALL",
+            "statedPremium": 2.50
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["direction"]
+    }
+  ]
+}

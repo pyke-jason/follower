@@ -291,11 +291,8 @@ async function processTask(task: Task): Promise<void> {
         calculatePositionSize: async (input) => {
           const traderConfig = await getTrader(input.trader);
           const balance = await liveService.getAccountBalance();
-          const sizer = buildPositionSizer(
-            traderConfig?.positionSizingConfig,
-            (symbol, barsBack) => liveService.getBars({ symbol, interval: '1', barsBack }),
-          );
-          return await sizer.calculateSize({
+          const sizer = buildPositionSizer(traderConfig?.positionSizingConfig);
+          return sizer.calculateSize({
             symbol: input.symbol,
             entryPrice: input.entryPrice,
             equity: balance.equity,

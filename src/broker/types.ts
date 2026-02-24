@@ -3,21 +3,6 @@ import type { TradeLeg } from '../db/schema.js';
 /** A leg before fill — same shape as TradeLeg without fillPrice. */
 export type OrderLeg = Omit<TradeLeg, 'fillPrice'>;
 
-export type Bar = {
-  timestamp: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-};
-
-export type GetBarsParams = {
-  symbol: string;
-  interval: string;
-  barsBack: number;
-};
-
 export type Quote = {
   symbol: string;
   bid: number;

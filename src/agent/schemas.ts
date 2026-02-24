@@ -15,8 +15,8 @@ export const FlagForReviewInput = z.object({
 // --- Signal schema (classification-only agent output) ---
 
 const SignalLegSchema = z.object({
-  strike: zPrice,
-  expiry: z.string().min(1),
+  strike: z.number().nonnegative(),
+  expiry: z.string().min(1).optional(),
   optionType: z.enum(['CALL', 'PUT']),
   action: LegActionSchema,
 });

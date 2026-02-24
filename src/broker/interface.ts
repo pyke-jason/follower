@@ -1,4 +1,4 @@
-import type { Quote, OrderResult, OrderParams, BrokerPosition, AccountBalance, Bar, GetBarsParams } from './types.js';
+import type { Quote, OrderResult, OrderParams, BrokerPosition, AccountBalance } from './types.js';
 
 export interface BrokerService {
   getQuote(symbol: string): Promise<Quote>;
@@ -8,5 +8,4 @@ export interface BrokerService {
   getOrderStatus(orderId: string): Promise<OrderResult>;
   getPositions(): Promise<BrokerPosition[]>;
   getAccountBalance(): Promise<AccountBalance>;
-  getBars(params: GetBarsParams): Promise<Bar[]>;
 }

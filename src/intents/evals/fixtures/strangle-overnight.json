@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "id": "strangle-overnight-001",
+      "description": "'SPY right on 15 ema' — pure TA commentary → SKIP",
+      "input": {
+        "message": "SPY right on 15 ema",
+        "author": "Dave W",
+        "timestamp": "2025-09-03T16:59:21.000Z",
+        "badges": [],
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "SKIP"
+      },
+      "mustMatch": [],
+      "tags": ["skip", "commentary"]
+    },
+    {
+      "id": "strangle-overnight-002",
+      "description": "'Long Short SPY strangle for overnight' — strangle = two separate LONG positions (CALL + PUT)",
+      "input": {
+        "message": "Long Short SPY strangle for overnight",
+        "author": "Dave W",
+        "timestamp": "2025-09-04T19:04:46.000Z",
+        "badges": ["Long", "Short"],
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "SPY",
+            "direction": "LONG",
+            "strategy": "CALL"
+          },
+          {
+            "action": "OPEN",
+            "symbol": "SPY",
+            "direction": "LONG",
+            "strategy": "PUT"
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].action",
+        "signals[0].direction",
+        "signals[1].action",
+        "signals[1].direction"
+      ],
+      "tags": ["strangle", "overnight"],
+      "notes": "Strangle = two separate LONG positions (CALL + PUT). Both direction LONG (buying options). Long+Short badges = bullish+bearish VIEW, not trade direction."
+    },
+    {
+      "id": "strangle-overnight-003",
+      "description": "'Exit Short Long SPY took partial profits in overnight strangle' — close PUT leg of strangle",
+      "input": {
+        "message": "Exit Short Long SPY took partial profits in \"overnight\" strangle",
+        "author": "Dave W",
+        "timestamp": "2025-09-04T20:12:25.000Z",
+        "badges": ["Exit", "Short", "Long"],
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "SPY",
+            "strategy": "PUT"
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].action",
+        "signals[0].symbol",
+        "signals[0].strategy"
+      ],
+      "tags": ["exits", "strangle"],
+      "notes": "Exit+Short badge first = exiting the bearish (PUT) side. 'Partial profits' refers to partial strangle, not partial position — this is a full CLOSE of the PUT leg."
+    },
+    {
+      "id": "strangle-overnight-004",
+      "description": "'Exit Long Short SPY took remaining profits in strangle' — close CALL leg of strangle",
+      "input": {
+        "message": "Exit Long Short SPY took remaining profits in strangle",
+        "author": "Dave W",
+        "timestamp": "2025-09-05T13:31:56.000Z",
+        "badges": ["Exit", "Long", "Short"],
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "SPY",
+            "strategy": "CALL"
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].action",
+        "signals[0].symbol",
+        "signals[0].strategy"
+      ],
+      "tags": ["exits", "strangle"],
+      "notes": "Exit+Long badge first = exiting the bullish (CALL) side. 'Remaining profits' = closing the last leg of the strangle."
+    },
+    {
+      "id": "strangle-overnight-007",
+      "description": "'Exit Long SPY took profits in overnight calls' — close CALL leg of overnight position",
+      "input": {
+        "message": "Exit Long SPY took profits in overnight calls",
+        "author": "Dave W",
+        "timestamp": "2025-09-08T13:31:00.000Z",
+        "badges": ["Exit", "Long"],
+        "symbols": ["SPY"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "CLOSE",
+            "symbol": "SPY",
+            "strategy": "CALL"
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].action",
+        "signals[0].symbol",
+        "signals[0].strategy"
+      ],
+      "tags": ["exits", "overnight"],
+      "notes": "Exit+Long badge = exiting the bullish (CALL) side. 'Overnight calls' explicitly states CALL strategy. This is the Sep 8 exit that was silently skipped because the Sep 5 entry was given 0DTE expiry and auto-closed. The intent classification itself is correct — the bug was upstream in expiry resolution."
+    }
+  ]
+}

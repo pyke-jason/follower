@@ -1,5 +1,5 @@
 import type { BrokerService } from '../broker/interface.js';
-import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, Bar, GetBarsParams } from '../broker/types.js';
+import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
@@ -16,7 +16,7 @@ import { parseLegs, parseDirection } from '../db/parse.js';
 import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
 import { recordTrade } from '../trades/record-trade.js';
-import { isMarketHours, lastMarketCloseUTC } from '../lib/et-date.js';
+import { isMarketHours, lastMarketCloseUTC, dayBoundsUTC } from '../lib/et-date.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('SimBroker');
@@ -94,6 +94,31 @@ export function computeModelFillPrice(params: FillPriceParams): number {
 /** Tight options lookback for trade execution (fills, limit checks).
  *  Valuation paths use the wider default (60 min) in MarketDataProvider.getQuote(). */
 const EXECUTION_LOOKBACK_MINS = 5;
+
+/**
+ * Strategy for auto-closing expiring positions before the options cutoff.
+ * Swappable: implement to change when/how positions are priced on expiry day.
+ */
+export type ExpiryAutoCloseStrategy = {
+  /** Returns the UTC timestamp to use for the closing quote. */
+  getCloseTimestamp(expiryDateKey: string, symbol: string): Date;
+};
+
+/** Symbols whose options trade until 4:15pm ET (vs 4:00pm for all others). */
+const BROAD_INDEX_ETFS = new Set(['SPY', 'QQQ', 'IWM']);
+
+/**
+ * Default strategy: close 15 minutes before the options cutoff.
+ * - SPY/QQQ/IWM: cutoff 4:15pm ET → close at 4:00pm ET (960 min)
+ * - All others:  cutoff 4:00pm ET → close at 3:45pm ET (945 min)
+ */
+export const cutoffMinus15Min: ExpiryAutoCloseStrategy = {
+  getCloseTimestamp(expiryDateKey: string, symbol: string): Date {
+    const { start } = dayBoundsUTC(expiryDateKey);
+    const minuteOfDay = BROAD_INDEX_ETFS.has(symbol) ? 960 : 945;
+    return new Date(start.getTime() + minuteOfDay * 60 * 1000);
+  },
+};
 
 /**
  * SimBroker: Simulated broker for backtesting.
@@ -518,6 +543,59 @@ export class SimBroker implements BrokerService {
     return closedCount;
   }
 
+  /**
+   * Auto-close positions expiring on `expiryDate` using the strategy's pricing
+   * timestamp. More realistic than intrinsic-at-expiry: uses the last available
+   * mid-price before the options cutoff.
+   *
+   * Positions that can't be quoted at the strategy's timestamp are skipped —
+   * sweepExpired() handles them as a fallback (closes at intrinsic).
+   *
+   * Returns the count of positions closed.
+   */
+  async autoCloseExpiring(
+    expiryDate: string,
+    strategy: ExpiryAutoCloseStrategy,
+    closeCallbacks?: Map<string, (price: number, at: Date) => Promise<void>>,
+  ): Promise<number> {
+    let closedCount = 0;
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+
+    for (const t of openTrades) {
+      if (t.strategy === 'STOCK') continue;
+      const legs = parseLegs(t.legs, t.id);
+      if (legs.length === 0) continue;
+
+      const hasExpiringLeg = legs.some(leg => leg.expiry === expiryDate);
+      if (!hasExpiringLeg) continue;
+
+      const closeAt = strategy.getCloseTimestamp(expiryDate, t.symbol);
+      let price: number;
+      try {
+        const quote = await this.getTradeQuote(t, closeAt);
+        price = (quote.bid + quote.ask) / 2;
+      } catch {
+        // No quote at auto-close time — defer to sweepExpired fallback
+        log.debug(`autoCloseExpiring: no quote for ${t.symbol} ${t.strategy} at ${closeAt.toISOString()}, deferring to sweepExpired`);
+        continue;
+      }
+
+      const callback = closeCallbacks?.get(t.id);
+      if (callback) {
+        // Preserve closeMessageId from the original exit signal by using recordFill
+        // instead of closePositionAtPrice (which has no message context).
+        await callback(Math.max(0, roundCents(price)), closeAt);
+        log.debug(`AUTO-CLOSE: ${t.id} ${t.symbol} ${t.strategy} at $${price.toFixed(2)} (${closeAt.toISOString()}) [close signal preserved]`);
+      } else {
+        await this.closePositionAtPrice(t.id, Math.max(0, roundCents(price)), closeAt.toISOString());
+        log.debug(`AUTO-CLOSE: ${t.id} ${t.symbol} ${t.strategy} at $${price.toFixed(2)} (${closeAt.toISOString()})`);
+      }
+      closedCount++;
+    }
+
+    return closedCount;
+  }
+
   /** Force-close all open positions at current mark prices. Throws if any position has no mark. */
   async forceCloseAll(at: Date): Promise<number> {
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
@@ -709,10 +787,6 @@ export class SimBroker implements BrokerService {
     };
     this.balanceCache = { key: nowMs, value: result };
     return result;
-  }
-
-  async getBars(params: GetBarsParams): Promise<Bar[]> {
-    return this.marketData.getBars(params.symbol, params.barsBack, this.clock.now());
   }
 
   /**

@@ -115,6 +115,19 @@ export async function getRunDecisionForTask(messageId: string, backtestRunId: st
   return decision ?? null;
 }
 
+/** All messages from a specific author mentioning a specific symbol, ordered by time. */
+export async function getMessagesByAuthorAndSymbol(author: string, symbol: string) {
+  return db
+    .select()
+    .from(schema.messages)
+    .where(and(
+      eq(schema.messages.author, author),
+      sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${symbol})`,
+    ))
+    .orderBy(asc(schema.messages.timestamp))
+    .limit(100);
+}
+
 export async function getNearbyMessages(
   author: string | null,
   timestamp: string,

@@ -1,6 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, lt, desc } from 'drizzle-orm';
 import type { Message } from '../db/schema.js';
+import { htmlToLLMText } from '../parsing/html.js';
 
 /**
  * Fetch the last N messages from a trader before a given timestamp.
@@ -68,9 +69,8 @@ export function formatTraderContext(messages: Message[]): string {
   const lines = messages.map((m) => {
     const time = m.timestamp.split('T')[1]?.slice(0, 5) ?? '';
     const date = m.timestamp.split('T')[0];
-    const badges = (m.badges as string[] | null) ?? [];
-    const badgeStr = badges.length > 0 ? ` [${badges.join(', ')}]` : '';
-    return `  ${date} ${time} | ${m.cleanText.slice(0, 200)}${badgeStr}`;
+    const text = (htmlToLLMText(m.rawHtml)).slice(0, 200);
+    return `  ${date} ${time} | ${text}`;
   });
 
   return `Recent messages from ${messages[0].author} (${messages.length} messages, oldest first):\n${lines.join('\n')}`;
@@ -84,9 +84,8 @@ export function formatChatContext(messages: Message[]): string {
 
   const lines = messages.map((m) => {
     const time = m.timestamp.split('T')[1]?.slice(0, 5) ?? '';
-    const badges = (m.badges as string[] | null) ?? [];
-    const badgeStr = badges.length > 0 ? ` [${badges.join(', ')}]` : '';
-    return `  ${time} | ${m.author}: ${m.cleanText.slice(0, 200)}${badgeStr}`;
+    const text = (htmlToLLMText(m.rawHtml)).slice(0, 200);
+    return `  ${time} | ${m.author}: ${text}`;
   });
 
   return `Recent chat messages (${messages.length} messages, oldest first):\n${lines.join('\n')}`;

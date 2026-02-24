@@ -58,6 +58,11 @@ const MONTH_ABBREVS: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
+// Maps 3-char lowercase day-of-week abbreviation → JS day number (0=Sun).
+const DOW_NAMES: Record<string, number> = {
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+};
+
 /** Returns the day-of-month of the Nth Friday in a given month. */
 function nthFriday(year: number, month: number, n: number): number {
   // month is 1-based
@@ -76,15 +81,56 @@ function nthFriday(year: number, month: number, n: number): number {
  *   "18 Oct", "18th Oct", "18 October", "18 October 2025" (day first)
  *   "Oct (10)", "October (10)" (parenthesized day — LLM sometimes emits this)
  *   "Oct", "October" (bare month → 3rd Friday, standard monthly expiry)
+ *   "Friday", "Wednesday", etc. (day-of-week → next occurrence on or after referenceDate)
+ *   "tomorrow", "tomorrow's", "1DTE", "1 DTE", "1-DTE" (relative → referenceDate + 1 day)
  * For formats without a year: uses the next occurrence on or after referenceDate.
  */
 export function normalizeExpiry(expiry: string, referenceDate: Date): string {
   expiry = expiry.trim();
 
+  // Strip possessive suffix so "tomorrow's" → "tomorrow" (ASCII and curly apostrophes)
+  expiry = expiry.replace(/['\u2018\u2019]s$/i, '');
+
+  // Strip trailing "expiration"/"expiry"/"exp" — LLM may include these with the date text
+  expiry = expiry.replace(/\s+(expiration|expiry|exp)$/i, '');
+
+  // Junk placeholder the LLM emits when no expiry is stated
+  if (expiry === '-' || expiry === '') {
+    throw new Error('normalizeExpiry: expiry placeholder — no date stated');
+  }
+
+  // "weekly" / "weeklies" — short-dated option, same as "this week" (nearest Friday).
+  if (/^weekl(y|ies)$/i.test(expiry)) {
+    const dow = referenceDate.getUTCDay();
+    const daysToFriday = (5 - dow + 7) % 7;
+    const d = new Date(Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate() + daysToFriday,
+    ));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+
+  // "LEAP" / "Leaps" / "LEAPS" — long-dated option, 1+ year out.
+  // Return referenceDate + 1 year as a canonical proxy for a standard LEAPS expiry.
+  if (/^leaps?$/i.test(expiry)) {
+    const d = new Date(Date.UTC(
+      referenceDate.getUTCFullYear() + 1,
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate(),
+    ));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+
   // Already canonical
   if (/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return expiry;
 
-  // "tomorrow" / "1DTE" / "1 DTE" / "1-DTE" → referenceDate + 1 day.
+  // "today" / "0DTE" / "0 DTE" / "0-DTE" → referenceDate itself.
+  if (/^(today|0[\s-]?DTE)$/i.test(expiry)) {
+    return `${referenceDate.getUTCFullYear()}-${String(referenceDate.getUTCMonth() + 1).padStart(2, '0')}-${String(referenceDate.getUTCDate()).padStart(2, '0')}`;
+  }
+
+  // "tomorrow" / "1DTE" / "1 DTE" / "1-DTE" → referenceDate + 1 calendar day.
   if (/^(tomorrow|1[\s-]?DTE)$/i.test(expiry)) {
     const d = new Date(Date.UTC(
       referenceDate.getUTCFullYear(),
@@ -94,14 +140,35 @@ export function normalizeExpiry(expiry: string, referenceDate: Date): string {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   }
 
+  // "overnight" → next trading day (skips weekends).
+  // Used when a trader says "for overnight" — position must expire on or after the next session.
+  // A Friday message → Monday; Mon–Thu → next calendar day.
+  if (/^overnight$/i.test(expiry)) {
+    let d = new Date(Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate() + 1,
+    ));
+    while (d.getUTCDay() === 6 || d.getUTCDay() === 0) {
+      d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1));
+    }
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+
   // Semantic expiry strings the LLM emits instead of a real date.
-  // "this week/friday", "next week/friday", "next-expiry" → next Friday on or after referenceDate.
-  if (/^(next-expiry|this[\s-]friday|this[\s-]week|next[\s-]friday|next[\s-]week)$/i.test(expiry)) {
+  // "this week/friday", "next-expiry" → nearest Friday on or after referenceDate.
+  // "next week/friday" → Friday of the FOLLOWING week (always >0 days forward from current Friday).
+  // Bare "next" = following Friday (LLM strips "week" from "next week"; only real occurrence means next week).
+  const isNextWeek = /^next([\s-](friday|week))?$/i.test(expiry);
+  if (isNextWeek || /^(next-expiry|this[\s-]friday|this[\s-]week)$/i.test(expiry)) {
     const refYear = referenceDate.getUTCFullYear();
     const refMonth = referenceDate.getUTCMonth(); // 0-based
     const refDay = referenceDate.getUTCDate();
     const dow = referenceDate.getUTCDay(); // 0=Sun
-    const daysToFriday = (5 - dow + 7) % 7; // 0 if already Friday
+    let daysToFriday = (5 - dow + 7) % 7; // 0 if already Friday
+    // "next week/friday" means at least 7 days out when already on Friday,
+    // and the following week's Friday when mid-week.
+    if (isNextWeek) daysToFriday = daysToFriday === 0 ? 7 : daysToFriday + 7;
     const d = new Date(Date.UTC(refYear, refMonth, refDay + daysToFriday));
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   }
@@ -122,10 +189,26 @@ export function normalizeExpiry(expiry: string, referenceDate: Date): string {
     // falls through to the slash-parsing logic below
   }
 
-  // Bare month name: "Oct", "October" → 3rd Friday of that month (standard monthly expiry)
-  const bareMonth = expiry.match(/^([A-Za-z]{3,9})$/i);
-  if (bareMonth) {
-    const monthNum = MONTH_ABBREVS[bareMonth[1].toLowerCase().slice(0, 3)];
+  // Bare word: day-of-week name OR month name.
+  const bareWord = expiry.match(/^([A-Za-z]{3,9})$/i);
+  if (bareWord) {
+    const word = bareWord[1].toLowerCase().slice(0, 3);
+
+    // Day-of-week: "Friday", "Wednesday", etc. → next occurrence on or after referenceDate.
+    const dowNum = DOW_NAMES[word];
+    if (dowNum !== undefined) {
+      const dow = referenceDate.getUTCDay();
+      const daysToTarget = (dowNum - dow + 7) % 7;
+      const d = new Date(Date.UTC(
+        referenceDate.getUTCFullYear(),
+        referenceDate.getUTCMonth(),
+        referenceDate.getUTCDate() + daysToTarget,
+      ));
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    }
+
+    // Bare month name: "Oct", "October" → 3rd Friday of that month (standard monthly expiry).
+    const monthNum = MONTH_ABBREVS[word];
     if (!monthNum) throw new Error(`normalizeExpiry: unrecognized month name "${expiry}"`);
     const refYear = referenceDate.getFullYear();
     let year = refYear;

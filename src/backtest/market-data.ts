@@ -1,4 +1,4 @@
-import type { Quote, OptionsChain, OptionsStrike, Bar } from '../broker/types.js';
+import type { Quote, OptionsChain, OptionsStrike } from '../broker/types.js';
 import {
   getFetchMeta,
   fetchTickWindow, defaultSchemaForDataset,
@@ -11,7 +11,7 @@ import {
 } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
-import { toDateKeyET, getPreviousTradingDayKey, dayBoundsUTC, isTradingDay } from '../lib/et-date.js';
+import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
@@ -41,7 +41,6 @@ export interface MarketDataProvider {
    *  optionsMaxLookbackMins overrides the default 300-min cap for option lookback.
    *  Execution paths pass 5 for tight freshness; valuation uses the wide default. */
   getQuote(symbol: string, at: Date, optionsMaxLookbackMins?: number): Promise<Quote>;
-  getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]>;
 }
 
 /** Backtest price provider backed by real market data. */
@@ -102,13 +101,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         this.latestQuotes.set(sym, (tick.bid + tick.ask) / 2);
       }
     }
-  }
-
-  /** Pre-seed ohlcv-1d daily bars for the full backtest date range.
-   *  Call after Phase 1 to warm the bar cache before replay starts. */
-  async preSeedDailyBars(symbols: string[], start: Date, end: Date): Promise<void> {
-    const equitySyms = symbols.filter(s => !isOccOptionSymbol(s));
-    await Promise.all(equitySyms.map(sym => this.ensureRange(sym, start, end, 'ohlcv-1d')));
   }
 
   /** Return latest known mid prices from prefetch/getQuote calls. */
@@ -193,56 +185,6 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const mid = (tick.bid + tick.ask) / 2;
     this.latestQuotes.set(symbol, mid);
     return { symbol, bid: tick.bid, ask: tick.ask, last: mid, volume: 0, timestamp: tick.timestamp.toISOString() };
-  }
-
-  async getBars(symbol: string, barsBack: number, at: Date): Promise<Bar[]> {
-    const atDay = toDateKeyET(at);
-
-    // Build list of trading days (oldest → newest), skipping weekends/holidays
-    const tradingDays: string[] = [];
-    let dayKey: string | null = atDay;
-    const needed = barsBack + 1; // +1 for current day
-    for (let i = 0; i < needed && dayKey; i++) {
-      tradingDays.unshift(dayKey);
-      dayKey = getPreviousTradingDayKey(dayKey);
-    }
-    if (tradingDays.length === 0) return [];
-
-    // Fetch via unified cache with ohlcv-1d schema.
-    // dayBoundsUTC range covers all ts_event values (next-day midnight UTC convention).
-    const { start } = dayBoundsUTC(tradingDays[0]);
-    const end = dayBoundsUTC(tradingDays[tradingDays.length - 1]).end;
-    await this.ensureRange(symbol, start, end, 'ohlcv-1d');
-
-    // Map cached QuoteTicks → Bars for matching trading days
-    const entry = this.tickCache.get(`${symbol}:ohlcv-1d`);
-    if (!entry) return [];
-
-    // Deduplicate: DBEQ.BASIC may return multiple ohlcv-1d records per day
-    // (different exchange feeds). Keep the highest-volume bar per trading day.
-    const tradingDaySet = new Set(tradingDays);
-    const bestByDay = new Map<string, Bar>();
-    for (const tick of entry.ticks) {
-      const tickDay = toDateKeyET(tick.timestamp);
-      if (!tradingDaySet.has(tickDay)) continue;
-      const bar: Bar = {
-        timestamp: tickDay,
-        open: tick.open ?? tick.bid,
-        high: tick.ask,
-        low: tick.bid,
-        close: tick.close ?? (tick.bid + tick.ask) / 2,
-        volume: tick.volume ?? 0,
-      };
-      const existing = bestByDay.get(tickDay);
-      if (!existing || bar.volume > existing.volume) {
-        bestByDay.set(tickDay, bar);
-      }
-    }
-    const bars = tradingDays
-      .map(d => bestByDay.get(d))
-      .filter((b): b is Bar => b != null);
-
-    return bars.slice(-barsBack);
   }
 
   async getOptionsChain(

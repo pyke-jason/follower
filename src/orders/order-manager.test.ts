@@ -42,7 +42,6 @@ function makeMockBroker(overrides: {
     getQuote: vi.fn(),
     getPositions: vi.fn(),
     getAccountBalance: vi.fn(),
-    getBars: vi.fn(),
   };
 
   return { broker, statusMap };

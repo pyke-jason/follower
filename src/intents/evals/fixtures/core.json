@@ -1,0 +1,105 @@
+{
+  "cases": [
+    {
+      "id": "core-001",
+      "description": "Pure social commentary — must produce SKIP, not EXECUTE",
+      "input": {
+        "message": "great day out there everyone, enjoy the weekend",
+        "symbols": []
+      },
+      "expected": {
+        "decision": "SKIP"
+      },
+      "mustMatch": [],
+      "tags": ["core", "skip"]
+    },
+    {
+      "id": "core-002",
+      "description": "'Adding more NVDA calls' — add-on with no strikes, OPEN LONG CALL",
+      "input": {
+        "message": "Adding more NVDA calls, avg down",
+        "symbols": ["NVDA"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "NVDA",
+            "direction": "LONG",
+            "strategy": "CALL"
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
+      "tags": ["core"],
+      "notes": "'Adding more' = OPEN, system detects existing position."
+    },
+    {
+      "id": "core-003",
+      "description": "'Locked in AMZN 200/210 CDS for 3.50' — entry details mean OPEN not CLOSE",
+      "input": {
+        "message": "Locked in AMZN 200/210 CDS for 3.50",
+        "symbols": ["AMZN"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "AMZN",
+            "direction": "LONG",
+            "strategy": "CDS",
+            "statedPremium": 3.50,
+            "legs": [
+              { "action": "BUY", "strike": 200, "optionType": "CALL" },
+              { "action": "SELL", "strike": 210, "optionType": "CALL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].action", "signals[0].direction"],
+      "tags": ["core"],
+      "notes": "'Locked in' + entry details (strikes + premium + strategy) = OPEN not CLOSE."
+    },
+    {
+      "id": "core-004",
+      "description": "'NVDA having a great day, wish I had more' — sentiment commentary, not a signal",
+      "input": {
+        "message": "NVDA having a great day, wish I had more",
+        "symbols": ["NVDA"]
+      },
+      "expected": {
+        "decision": "SKIP"
+      },
+      "mustMatch": [],
+      "tags": ["core", "skip"]
+    },
+    {
+      "id": "core-005",
+      "description": "'Short ABNB Lotto $123 Puts' — Lotto always = buy, Short = bearish view",
+      "input": {
+        "message": "Short ABNB Lotto $123 Puts for .21",
+        "symbols": ["ABNB"]
+      },
+      "expected": {
+        "decision": "EXECUTE",
+        "signals": [
+          {
+            "action": "OPEN",
+            "symbol": "ABNB",
+            "direction": "LONG",
+            "strategy": "PUT",
+            "statedPremium": 0.21,
+            "legs": [
+              { "action": "BUY", "strike": 123, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].direction"],
+      "tags": ["core", "lotto"],
+      "notes": "Lotto = speculative buy always. Short = bearish stock view."
+    }
+  ]
+}

@@ -1,68 +1,65 @@
-export interface PositionSizingStrategy {
-  name: string;
-  calculateSize(params: SizingParams): Promise<PositionSize>;
-}
+import { DEFAULT_SIZING_CONFIG, MAX_CONTRACTS } from '../config/risk-defaults.js';
+
+export type NotionalSizingConfig = {
+  strategy: 'notional';
+  maxNotionalPct: number; // e.g. 0.05 = 5% of equity per position
+};
+
+export type PositionSizingConfig = NotionalSizingConfig;
 
 export interface SizingParams {
   symbol: string;
   entryPrice: number;
   equity: number;
-  spreadMaxRisk?: number; // For options spreads: width - credit received
-  maxQuantity?: number;   // Hard cap on quantity (e.g., 20 contracts for options)
+  spreadMaxRisk?: number;
+  maxQuantity?: number;
 }
 
 export interface PositionSize {
   quantity: number;
   reasoning: string;
   riskPerTrade: number;
-  atr: number;
-  effectiveRisk: number;
 }
 
-// --- Discriminated union for position sizing configs ---
+const OPTIONS_MULTIPLIER = 100;
 
-export type ATRSizingConfig = {
-  strategy: 'atr';
-  riskPercent: number;   // e.g. 0.02 = 2%
-  atrMultiplier: number; // e.g. 2.0
-  atrPeriod?: number;    // default 14
-};
+function calculateNotionalSize(config: NotionalSizingConfig, params: SizingParams): PositionSize {
+  const { entryPrice, equity, maxQuantity } = params;
+  const { maxNotionalPct } = config;
 
-// Add new strategy config types here as the union grows:
-// export type FixedSizingConfig = { strategy: 'fixed'; quantity: number };
+  const targetNotional = equity * maxNotionalPct;
+  const riskPerTrade = targetNotional;
 
-export type PositionSizingConfig = ATRSizingConfig;
-// When adding strategies: PositionSizingConfig = ATRSizingConfig | FixedSizingConfig;
-
-// Re-export for convenience
-export type { BarFetcher } from './atr.js';
-
-import { ATRPositionSizer } from './atr.js';
-import type { BarFetcher } from './atr.js';
-import { DEFAULT_SIZING_CONFIG } from '../config/risk-defaults.js';
-
-/**
- * Build a PositionSizingStrategy from a config using the discriminated union.
- * Falls back to ATR defaults if no config is provided.
- */
-export function buildPositionSizer(
-  config: PositionSizingConfig | null | undefined,
-  fetchBars: BarFetcher,
-): PositionSizingStrategy {
-  const resolved: PositionSizingConfig = config ?? DEFAULT_SIZING_CONFIG;
-
-  switch (resolved.strategy) {
-    case 'atr':
-      return new ATRPositionSizer(
-        {
-          riskPercent: resolved.riskPercent,
-          atrMultiplier: resolved.atrMultiplier,
-          atrPeriod: resolved.atrPeriod ?? 14,
-        },
-        fetchBars,
-      );
+  if (entryPrice <= 0) {
+    return { quantity: 0, reasoning: `Entry price $${entryPrice} <= 0, cannot size`, riskPerTrade: 0 };
   }
 
-  // Exhaustive check — TS will error here if a new union member isn't handled above
+  const rawQty = Math.floor(targetNotional / (entryPrice * OPTIONS_MULTIPLIER));
+  const quantity = maxQuantity ? Math.min(Math.max(rawQty, 1), maxQuantity) : Math.max(rawQty, 1);
+  const actualNotional = quantity * entryPrice * OPTIONS_MULTIPLIER;
+
+  const reasoning = [
+    `Target notional = $${targetNotional.toFixed(0)} (${(maxNotionalPct * 100).toFixed(1)}% of $${equity.toFixed(0)})`,
+    `Per-contract = $${(entryPrice * OPTIONS_MULTIPLIER).toFixed(0)}`,
+    `Raw qty: ${rawQty}`,
+    maxQuantity ? `Max cap: ${maxQuantity}` : null,
+    `Final: ${quantity} contracts ($${actualNotional.toFixed(0)} = ${((actualNotional / equity) * 100).toFixed(1)}%)`,
+  ].filter(Boolean).join('; ');
+
+  return { quantity, reasoning, riskPerTrade };
+}
+
+export function buildPositionSizer(
+  config: PositionSizingConfig | null | undefined,
+): { calculateSize(params: SizingParams): PositionSize } {
+  const resolved = config ?? DEFAULT_SIZING_CONFIG;
+
+  switch (resolved.strategy) {
+    case 'notional':
+      return {
+        calculateSize: (params: SizingParams) => calculateNotionalSize(resolved, params),
+      };
+  }
+
   throw new Error(`Unknown position sizing strategy: ${(resolved as { strategy: string }).strategy}`);
 }

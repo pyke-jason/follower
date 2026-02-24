@@ -401,6 +401,7 @@ export type TaskContext = {
   messageTimestamp?: string;  // ISO 8601 — when the chat message was posted
   author?: string;
   cleanText?: string;
+  rawHtml?: string;           // original HTML — used to derive llmText with inline badge markers
   badges?: string[];
   symbols?: string[];
   actionHint?: string | null;

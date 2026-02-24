@@ -26,6 +26,7 @@ export type AgentConfig = {
   onToolCall?: (name: string, input: Record<string, unknown>, output: unknown) => unknown | null;
   maxTurns?: number;  // default 10
   maxTokens?: number; // default 2048
+  temperature?: number; // 0 = deterministic, default varies by provider
 };
 
 /** Produce a short one-line summary of a tool's output for logging. */
@@ -63,6 +64,7 @@ export async function runAgentLoop(
     systemPrompt, tools, onToolCall,
     maxTurns = parseInt(process.env.AGENT_MAX_TURNS ?? '10', 10),
     maxTokens = parseInt(process.env.AGENT_MAX_TOKENS ?? '2048', 10),
+    temperature,
   } = config;
 
   const steps: AgentStep[] = [];
@@ -80,6 +82,7 @@ export async function runAgentLoop(
       messages,
       maxTokens,
       tools,
+      temperature,
     });
 
     const durationMs = Date.now() - startTime;

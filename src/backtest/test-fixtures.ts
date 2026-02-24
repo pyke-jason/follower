@@ -8,7 +8,7 @@
 import fc from 'fast-check';
 import { sql } from 'drizzle-orm';
 import { parseOccSymbol } from './occ-symbology.js';
-import type { Quote, OrderParams, Bar } from '../broker/types.js';
+import type { Quote, OrderParams } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
 import type { FillModel } from './types.js';
@@ -71,7 +71,6 @@ export function makeStockSellOrder(overrides: Partial<OrderParams> = {}): OrderP
 export function stubMarketDataFromQuote(quote: Quote): BacktestPriceProvider {
   return {
     getQuote: async () => quote,
-    getBars: async () => [] as Bar[],
     getPriceSnapshot: () => ({}),
     getTicksInRange: async () => [] as QuoteTick[],
     prefetch: async () => {},
@@ -109,7 +108,6 @@ export function stubMarketData(prices: Record<string, number> | number): Backtes
       }
       throw new Error(`No quote for ${symbol}`);
     },
-    getBars: async () => [] as Bar[],
     getPriceSnapshot: () => ({}),
     getTicksInRange: async () => [] as QuoteTick[],
     prefetch: async () => {},
@@ -178,7 +176,6 @@ export function makeTimeAwareStub(config: TimeAwareStubConfig): BacktestPricePro
 
       throw new Error(`No quote for ${symbol}`);
     },
-    getBars: async () => [] as Bar[],
     getPriceSnapshot: () => ({}),
     getTicksInRange: async (symbol: string, from: Date, to: Date) => {
       const n = config.ticksPerRange ?? 0;

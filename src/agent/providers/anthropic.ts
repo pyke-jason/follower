@@ -23,6 +23,7 @@ export class AnthropicProvider implements LLMProvider {
       max_tokens: params.maxTokens,
       system: params.system,
       messages: params.messages as Anthropic.MessageParam[],
+      ...(params.temperature != null ? { temperature: params.temperature } : {}),
     });
     return this.parseResponse(response);
   }
@@ -44,6 +45,7 @@ export class AnthropicProvider implements LLMProvider {
       system: params.system,
       tools,
       messages: params.messages as Anthropic.MessageParam[],
+      ...(params.temperature != null ? { temperature: params.temperature } : {}),
     });
     return this.parseResponse(response);
   }

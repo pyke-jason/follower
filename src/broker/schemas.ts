@@ -85,19 +85,6 @@ export const TsBalancesResponseSchema = z.object({
   Balances: z.array(TsBalanceSchema).min(1),
 });
 
-export const TsBarSchema = z.object({
-  TimeStamp: z.string(),
-  Open: zNonNegPrice,
-  High: zNonNegPrice,
-  Low: zNonNegPrice,
-  Close: zNonNegPrice,
-  TotalVolume: z.number(),
-});
-
-export const TsBarsResponseSchema = z.object({
-  Bars: z.array(TsBarSchema),
-});
-
 // --- Validation helper ---
 
 /**

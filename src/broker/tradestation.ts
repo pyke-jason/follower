@@ -1,4 +1,4 @@
-import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill, Bar, GetBarsParams } from './types.js';
+import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill } from './types.js';
 import type { BrokerService } from './interface.js';
 import { getAccessToken } from './auth.js';
 import { safeParseFloat } from '../lib/numbers.js';
@@ -9,7 +9,6 @@ import {
   TsOrdersResponseSchema,
   TsPositionsResponseSchema,
   TsBalancesResponseSchema,
-  TsBarsResponseSchema,
   parseApiResponse,
 } from './schemas.js';
 
@@ -192,28 +191,6 @@ export async function getPositions(): Promise<BrokerPosition[]> {
   }, { ...READ_DEFAULTS, classify: tsClassify }, 'getPositions');
 }
 
-export async function getBars(params: GetBarsParams): Promise<Bar[]> {
-  return withRetry(async (signal) => {
-    const data = await ts(
-      `/marketdata/barcharts/${encodeURIComponent(params.symbol)}?interval=${params.interval}&barsback=${params.barsBack}`,
-      { signal },
-    );
-    const validated = parseApiResponse(
-      TsBarsResponseSchema,
-      data,
-      `GET /marketdata/barcharts/${params.symbol}`,
-    );
-    return validated.Bars.map((b) => ({
-      timestamp: b.TimeStamp,
-      open: b.Open,
-      high: b.High,
-      low: b.Low,
-      close: b.Close,
-      volume: b.TotalVolume,
-    }));
-  }, { ...READ_DEFAULTS, classify: tsClassify }, `getBars(${params.symbol})`);
-}
-
 export async function getAccountBalance(): Promise<AccountBalance> {
   const accountId = process.env.TS_ACCOUNT_ID;
   if (!accountId) throw new Error('Missing TS_ACCOUNT_ID');
@@ -249,7 +226,7 @@ function mapTsStatus(tsStatus: string | undefined): OrderStatus {
 
 export const liveService: BrokerService = {
   getQuote, placeOrder, modifyOrder, cancelOrder, getOrderStatus,
-  getPositions, getAccountBalance, getBars,
+  getPositions, getAccountBalance,
 };
 
 function resolveTradeAction(action: 'BUY' | 'SELL', type: string): string {
