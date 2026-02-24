@@ -116,7 +116,7 @@ export async function getRunDecisionForTask(messageId: string, backtestRunId: st
 }
 
 export async function getNearbyMessages(
-  author: string,
+  author: string | null,
   timestamp: string,
   windowMinutes = 60,
   symbol?: string,
@@ -128,10 +128,10 @@ export async function getNearbyMessages(
   const end = new Date(center.getTime() + effectiveWindow * 60 * 1000).toISOString();
 
   const conditions = [
-    eq(schema.messages.author, author),
     gte(schema.messages.timestamp, start),
     lte(schema.messages.timestamp, end),
   ];
+  if (author) conditions.push(eq(schema.messages.author, author));
 
   if (symbol) {
     conditions.push(

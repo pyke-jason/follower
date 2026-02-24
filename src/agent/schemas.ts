@@ -7,15 +7,6 @@ import {
 
 // --- Tool input schemas (classification tools) ---
 
-export const GetQuoteInput = z.object({
-  symbol: z.string().min(1),
-});
-
-export const GetOpenPositionsInput = z.object({
-  symbol: z.string().optional(),
-  trader: z.string().optional(),
-});
-
 export const FlagForReviewInput = z.object({
   reason: z.string().min(1),
   uncertainty: z.string().optional(),

@@ -28,6 +28,7 @@ import { resetApiStats, getApiStats } from './databento-tape.js';
 import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
+import { logExpiryNotices } from '../lib/expiry-warning.js';
 import { extractBatchIntents } from '../intents/extract-batch.js';
 import type { IntentExtractionDeps } from '../intents/extract-intent.js';
 import { INTENT_VERSION } from '../intents/extract-intent.js';
@@ -387,6 +388,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         //    (weekends, holidays, message-less days) don't skip expiries.
         const sweepThrough = new Date(parseDateKey(msgDay).getTime() - 86_400_000)
           .toISOString().slice(0, 10);
+
+        // Layer 3: Log expiry notices BEFORE sweeping
+        const openPositions = await broker.getOpenTrades();
+        logExpiryNotices(openPositions, sweepThrough);
+
         const expiredCount = await broker.sweepExpired(sweepThrough);
         if (expiredCount > 0) {
           log.info(`Swept ${expiredCount} expired option(s) through ${sweepThrough}`);
@@ -471,6 +477,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   if (lastMsgDay) {
     const openCount = await broker.getOpenPositionCount();
     if (openCount > 0) {
+      // Layer 3: Log expiry notices BEFORE final sweep
+      const finalOpenPositions = await broker.getOpenTrades();
+      logExpiryNotices(finalOpenPositions, lastMsgDay);
+
       const expiredCount = await broker.sweepExpired(lastMsgDay);
       if (expiredCount > 0) {
         log.info(`Swept ${expiredCount} expired option(s) on ${lastMsgDay} (final)`);

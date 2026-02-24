@@ -9,6 +9,18 @@ import { parseOccSymbol } from './occ-symbology.js';
 import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
 
+/** Typed error for Databento 4xx client errors. Identifies deterministic failures
+ *  that should not be retried and can safely populate a negative cache. */
+export class DatabentoClientError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DatabentoClientError';
+  }
+}
+
 const log = createLogger('QuoteTape');
 
 /**
@@ -191,7 +203,7 @@ async function fetchWithRetry(
       // 4xx (non-429) — not transient, don't retry
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
         const text = await res.text();
-        throw new Error(`Databento ${res.status}: ${text.slice(0, 500)}`);
+        throw new DatabentoClientError(res.status, `Databento ${res.status}: ${text.slice(0, 500)}`);
       }
 
       // 5xx or 429 — retryable

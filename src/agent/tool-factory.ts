@@ -1,9 +1,4 @@
-import type { Quote } from '../broker/types.js';
-import type { Trade } from '../db/schema.js';
-import type { PositionFilters } from '../trades/filters.js';
 import {
-  GetQuoteInput,
-  GetOpenPositionsInput,
   FlagForReviewInput,
   SubmitDecisionInput,
 } from './schemas.js';
@@ -16,24 +11,6 @@ export type ToolDef = {
 };
 
 // ─── Individual tool builders ────────────────────────────────────────
-
-export function getQuoteTool(getQuote: (symbol: string) => Promise<Quote>): ToolDef {
-  return {
-    name: 'get_quote',
-    description: 'Get current bid/ask/last for a stock or ETF.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        symbol: { type: 'string', description: 'Ticker symbol' },
-      },
-      required: ['symbol'],
-    },
-    execute: async (input) => {
-      const { symbol } = GetQuoteInput.parse(input);
-      return await getQuote(symbol);
-    },
-  };
-}
 
 export function flagForReviewTool(): ToolDef {
   return {
@@ -105,29 +82,6 @@ export function submitDecisionTool(): ToolDef {
     execute: async (input) => {
       SubmitDecisionInput.parse(input);
       return { accepted: true };
-    },
-  };
-}
-
-export function getOpenPositionsTool(
-  getOpenPositions: (filters: PositionFilters) => Promise<Trade[]>,
-): ToolDef {
-  return {
-    name: 'get_open_positions',
-    description: 'Get all currently open trade positions, optionally filtered by symbol or trader.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        symbol: { type: 'string', description: 'Filter by symbol' },
-        trader: { type: 'string', description: 'Filter by trader name' },
-      },
-    },
-    execute: async (input) => {
-      const parsed = GetOpenPositionsInput.parse(input);
-      return await getOpenPositions({
-        symbol: parsed.symbol,
-        trader: parsed.trader,
-      });
     },
   };
 }

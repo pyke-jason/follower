@@ -1,16 +1,13 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql, asc } from 'drizzle-orm';
-import { runAgent } from '../agent/trade-agent.js';
 import { prefetchForAgent } from '../agent/prefetch.js';
-import { shouldSkipDeterministic } from '../agent/deterministic-skips.js';
+import { shouldSkipDeterministic, shouldSkipSignal } from '../agent/deterministic-skips.js';
 import { completeTask, failTask, recordStep } from './recorder.js';
-import type { Task, TaskContext } from '../db/schema.js';
-import {
-  getQuoteTool,
-  flagForReviewTool,
-  submitDecisionTool,
-  getOpenPositionsTool,
-} from '../agent/tool-factory.js';
+import type { Task, TaskContext, Message, IntentStep, TaskResult } from '../db/schema.js';
+import { extractIntent } from '../intents/extract-intent.js';
+import type { IntentExtractionDeps } from '../intents/extract-intent.js';
+import type { LLMProvider } from '../agent/providers.js';
+import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { executeSignals } from '../pipeline/execute.js';
 import type { PipelineDeps, PendingOrderContext } from '../pipeline/execute.js';
 import { OrderManager } from '../orders/order-manager.js';
@@ -18,6 +15,8 @@ import { liveService } from '../broker/tradestation.js';
 import { getTrader } from '../config/traders.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { sendSystemAlert } from '../lib/alert.js';
+import { alertIfSkippedWithActivePosition } from '../lib/skip-position-alert.js';
+import { checkExpiryWarnings } from '../lib/expiry-warning.js';
 import { checkRiskLimits, type RiskCheckConfig, type RiskCheckDeps } from '../orders/risk-check.js';
 import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
@@ -26,6 +25,14 @@ import { recordTrade } from '../trades/record-trade.js';
 import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
 
 const riskConfig: RiskCheckConfig = { ...LIVE_RISK_DEFAULTS };
+
+// ─── Lazy LLM provider (single instance reused across tasks) ───
+
+let _provider: LLMProvider | null = null;
+async function getProvider(): Promise<LLMProvider> {
+  if (!_provider) _provider = await createProvider(DEFAULT_TRADE_MODEL);
+  return _provider;
+}
 
 // ─── Order Manager (shared across tasks, persists working orders) ───
 
@@ -105,7 +112,17 @@ export async function awaitCurrentTask(): Promise<void> {
   if (currentTaskPromise) await currentTaskPromise;
 }
 
+/** Throttle expiry checks to once per 5 minutes. */
+let lastExpiryCheck = 0;
+const EXPIRY_CHECK_INTERVAL = 5 * 60 * 1000;
+
 async function processPendingTasks(): Promise<void> {
+  // Layer 3: Periodically check for positions approaching expiration
+  if (Date.now() - lastExpiryCheck > EXPIRY_CHECK_INTERVAL) {
+    lastExpiryCheck = Date.now();
+    checkExpiryWarnings(() => getOpenPositions()).catch(() => {});
+  }
+
   // Phase 2: Atomic task claim — transaction SELECT+UPDATE avoids race
   const claimed = await db.transaction(async (tx) => {
     const [pending] = await tx.select()
@@ -154,48 +171,89 @@ async function processTask(task: Task): Promise<void> {
       maxTotalPositions: riskConfig.maxTotalPositions,
     });
     if (skip) {
+      // Layer 2: Alert if skipping a message where trader has an active position
+      alertIfSkippedWithActivePosition({
+        context,
+        prefetched,
+        skipReason: `[deterministic] ${skip.reason}`,
+        messageId: task.messageId ?? '',
+        taskId: task.id,
+      }).catch(() => {});
       await completeTask(task.id, { decision: 'SKIP', reasoning: `[deterministic] ${skip.reason}` });
       console.log(`[Runner] Task ${task.id} skipped (deterministic): ${skip.reason}`);
       return;
     }
 
-    // Classification-only tools — no execution capabilities
-    const classificationTools = [
-      getQuoteTool((s) => liveService.getQuote(s)),
-      flagForReviewTool(),
-      submitDecisionTool(),
-      getOpenPositionsTool(getOpenPositions),
-    ];
+    // Fetch Message row for extractIntent
+    const [message] = await db.select().from(schema.messages)
+      .where(eq(schema.messages.id, task.messageId!))
+      .limit(1) as Message[];
 
-    // Run classification agent
-    const traderConfig = await getTrader(context.author ?? '');
-    const { steps, result, model } = await runAgent(context, classificationTools, undefined, prefetched, traderConfig);
+    if (!message) {
+      await failTask(task.id, `Message ${task.messageId} not found`);
+      console.log(`[Runner] Task ${task.id} failed: message not found`);
+      return;
+    }
+
+    // Build deps for intent extraction (live broker for quotes)
+    const intentDeps: IntentExtractionDeps = {
+      getQuote: (symbol, _at) => liveService.getQuote(symbol),
+      getTraderConfig: getTrader,
+    };
+
+    // Extract intent (uses same prompt + tools as backtest)
+    const provider = await getProvider();
+    const { intent } = await extractIntent(
+      message,
+      DEFAULT_TRADE_MODEL.model,
+      provider,
+      intentDeps,
+    );
 
     // Write model info to task
     await db.update(schema.tasks)
-      .set({ modelProvider: model.provider, modelName: model.model })
+      .set({ modelProvider: DEFAULT_TRADE_MODEL.provider, modelName: intent.model })
       .where(eq(schema.tasks.id, task.id));
 
-    // Record each agent step
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
+    // Record intent steps
+    const intentSteps = (intent.steps ?? []) as IntentStep[];
+    for (let i = 0; i < intentSteps.length; i++) {
+      const step = intentSteps[i];
       await recordStep(task.id, i + 1, {
-        toolName: step.tool ?? undefined,
-        toolInput: step.input ?? undefined,
-        toolOutput: step.output ?? undefined,
+        toolName: step.toolName ?? undefined,
+        toolInput: step.toolInput ?? undefined,
+        toolOutput: step.toolOutput ?? undefined,
         reasoning: step.reasoning ?? undefined,
         durationMs: step.durationMs ?? undefined,
       });
     }
 
-    if (!result) {
-      await failTask(task.id, 'Agent returned no result');
-      console.log(`[Runner] Task ${task.id} failed: no result from agent`);
-      return;
-    }
+    // Build TaskResult from intent
+    const result: TaskResult = {
+      decision: intent.decision as TaskResult['decision'],
+      reasoning: intent.reasoning ?? 'No reasoning from agent',
+      signals: intent.signals ?? undefined,
+    };
 
     // Execute signals through the deterministic pipeline
     if (result.decision === 'EXECUTE' && result.signals && result.signals.length > 0) {
+      // Strategy gate: filter signals through shouldSkipSignal (aligns with backtest)
+      const traderConfig = await getTrader(context.author ?? '');
+      const allowedStrategies = traderConfig?.strategies;
+      const signals = result.signals.filter(signal => {
+        const skipResult = shouldSkipSignal(signal, allowedStrategies);
+        if (skipResult) {
+          console.log(`[Runner] Signal ${signal.action} ${signal.symbol} ${signal.strategy} skipped: ${skipResult.reason}`);
+          return false;
+        }
+        return true;
+      });
+
+      if (signals.length === 0) {
+        await completeTask(task.id, { decision: 'SKIP', reasoning: 'All signals filtered by strategy gate' });
+        console.log(`[Runner] Task ${task.id} completed: all signals filtered by strategy gate`);
+        return;
+      }
       const riskDeps: RiskCheckDeps = {
         getOpenTrades: getOpenPositions,
         getDailyClosedPnl: async () => {
@@ -257,13 +315,13 @@ async function processTask(task: Task): Promise<void> {
       };
 
       const pipelineResults = await executeSignals(
-        result.signals,
+        signals,
         context.author ?? 'unknown',
         pipelineDeps,
         {
           messageId: task.messageId ?? undefined,
+          messageTimestamp: context.messageTimestamp,
           taskId: task.id,
-          allowedStrategies: (await getTrader(context.author ?? ''))?.strategies ?? undefined,
         },
       );
 
@@ -277,6 +335,16 @@ async function processTask(task: Task): Promise<void> {
         (pipelineResults.some(r => !r.executed) ? ` (some signals skipped)` : ''),
       );
     } else {
+      // Layer 2: Alert if agent SKIPs a message where trader has an active position
+      if (result.decision === 'SKIP') {
+        alertIfSkippedWithActivePosition({
+          context,
+          prefetched,
+          skipReason: result.reasoning ?? 'Agent returned SKIP',
+          messageId: task.messageId ?? '',
+          taskId: task.id,
+        }).catch(() => {});
+      }
       await completeTask(task.id, result);
       console.log(`[Runner] Task ${task.id} completed: ${result.decision}`);
     }

@@ -18,7 +18,7 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentExtract');
 
-export const INTENT_VERSION = 6;
+export const INTENT_VERSION = 7;
 
 export type IntentExtractionDeps = {
   /** Get a quote at a specific point in time (message timestamp). */
@@ -114,6 +114,21 @@ Traders sometimes follow another trader's call ("following Dave", "tailing spect
 "Scalp" = short-duration trade, no effect on direction or strategy parsing.
 "Short [ticker] puts" = bearish, BUYING puts (direction: LONG).
 </slang>
+
+<exit_language>
+Traders rarely say "Exit" in casual chat. Recognize these as CLOSE (or TRIM if partial):
+- Completed action: "took profits on X", "sold X", "closed X", "booked profits on X", "banked gains on X", "locked in profits on X", "done with X", "off the table on X"
+- Stopped out: "got stopped on X", "stopped out of X", "hit my stop on X"
+- Forced/auto exit: "got assigned on X", "called away on X"
+- Trim variants: "sold half X", "trimmed X", "took some off X", "lightened X", "peeled off some X", "cut X in half"
+- Leg-off variants: "sold the short leg of X", "closed the spread side of X", "holding just calls/puts now"
+
+Key distinction -- action vs. commentary:
+- ACTION (parse as signal): The trader describes what THEY DID ("I took profits on CRWV", "sold my AAPL calls", "out of the TXN position"). First person, past tense, specific position referenced.
+- COMMENTARY (SKIP): The trader describes market conditions or someone else's results ("CRWV had great profits today", "anyone taking profits here?", "that was a nice move on AAPL"). No first-person action, or phrased as question/observation.
+
+When ambiguous AND the trader's recent messages show an open position on that symbol, bias toward CLOSE. A false CLOSE on a held position is caught downstream (the system finds the position and closes it -- correct if the trader did exit). A false SKIP on a real exit means the position stays open indefinitely -- much worse.
+</exit_language>
 
 <rules>
 - Only parse trades for tracked traders in the whitelist. Skip paper trades tagged "(paper)".
@@ -250,6 +265,51 @@ submit_decision(EXECUTE): action OPEN, symbol AAPL, direction LONG, strategy CDS
 This is commentary, not a trade signal.
 </reasoning>
 submit_decision(SKIP)
+</example>
+
+<example>
+<input>Took profits on CRWV calls this morning</input>
+<reasoning>
+"Took profits" = completed exit action. First person, past tense. This is a CLOSE on CRWV.
+"calls" hints at strategy CALL. "this morning" is timing context, not actionable.
+</reasoning>
+submit_decision(EXECUTE): action CLOSE, symbol CRWV, strategy CALL
+</example>
+
+<example>
+<input>Sold half my TSLA puts, letting the rest ride</input>
+<reasoning>
+"Sold half" = partial exit. This is a TRIM on TSLA with exitPercent 0.5.
+"puts" hints at strategy PUT. "letting the rest ride" confirms this is partial, not full exit.
+</reasoning>
+submit_decision(EXECUTE): action TRIM, symbol TSLA, strategy PUT, exitPercent 0.5
+</example>
+
+<example>
+<input>Done with the MSTR position, booked a small gain</input>
+<reasoning>
+"Done with" = exit action. "booked a small gain" confirms a completed trade. First person, past tense. CLOSE on MSTR.
+No strategy or direction stated, so omit them.
+</reasoning>
+submit_decision(EXECUTE): action CLOSE, symbol MSTR
+</example>
+
+<example>
+<input>NVDA having a great day, wish I had more</input>
+<reasoning>
+This is commentary about NVDA's price action. "wish I had more" suggests the trader is still long, not exiting.
+No first-person exit action described. This is noise.
+</reasoning>
+submit_decision(SKIP)
+</example>
+
+<example>
+<input>Locked in AMZN 200/210 CDS for 3.50</input>
+<reasoning>
+"Locked in" can sound like an exit, but the trader specifies full entry details (strikes 200/210, strategy CDS, premium 3.50). This is an OPEN, not a CLOSE. Entry details (strikes + premium + strategy) override exit-like keywords.
+direction: LONG (debit spread). statedPremium: 3.50.
+</reasoning>
+submit_decision(EXECUTE): action OPEN, symbol AMZN, direction LONG, strategy CDS, legs [BUY 200C, SELL 210C], statedPremium 3.50
 </example>
 </examples>`;
 

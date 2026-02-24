@@ -89,7 +89,7 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
 
   // Fetch nearby messages and run decision in parallel (depend on sourceMessage/trade)
   const [nearbyMessages, runDecisionRow] = await Promise.all([
-    sourceMessage ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60, trade.symbol) : Promise.resolve([]),
+    sourceMessage ? getNearbyMessages(null, sourceMessage.timestamp, 60) : Promise.resolve([]),
     runId && trade.sourceMessageId ? getRunDecisionForTask(trade.sourceMessageId, runId) : Promise.resolve(null),
   ]);
 

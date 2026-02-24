@@ -3,6 +3,7 @@ import {
   getFetchMeta,
   fetchTickWindow, defaultSchemaForDataset,
   mergeRanges, isRangeCovered, getUncoveredGaps,
+  DatabentoClientError,
 } from './databento-tape.js';
 import type { QuoteTick, TickCacheData } from './databento-tape.js';
 import {
@@ -64,6 +65,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   private latestQuotes = new Map<string, number>();
   /** "SYMBOL:EXPIRY:TYPE:TIMESTAMP_MS" -> assembled chain snapshot */
   private chainCache = new Map<string, OptionsChain>();
+  /** Symbols that returned a Databento 4xx — skip for the rest of this backtest run. */
+  private deadSymbols = new Set<string>();
 
   constructor(
     private apiKey: string,
@@ -369,6 +372,10 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
    * Returns ticks filtered to [start, end].
    */
   private async ensureRange(symbol: string, start: Date, end: Date, schemaOverride?: string): Promise<QuoteTick[]> {
+    if (this.deadSymbols.has(symbol)) {
+      throw new Error(`[MarketData] "${symbol}" skipped — prior 4xx blacklisted it this run`);
+    }
+
     const startMs = start.getTime();
     const endMs = end.getTime();
 
@@ -421,6 +428,10 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
           stypeIn: isOccOptionSymbol(symbol) ? 'raw_symbol' : undefined,
         });
       } catch (err) {
+        if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
+          this.deadSymbols.add(symbol);
+          log.warn(`[MarketData] Blacklisting "${symbol}" after HTTP ${err.status} — won't retry this run`);
+        }
         throw new Error(`[ensureRange] Failed to fetch ${symbol} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}: ${err instanceof Error ? err.message : err}`);
       }
 
@@ -465,6 +476,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     // Find which symbols need fetching
     const uncached: string[] = [];
     for (const symbol of symbols) {
+      if (this.deadSymbols.has(symbol)) continue;
+
       // Check in-memory
       const memEntry = this.tickCache.get(symbol);
       if (memEntry && isRangeCovered(memEntry.ranges, startMs, endMs)) continue;
@@ -500,6 +513,13 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         stypeIn,
       });
     } catch (err) {
+      if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
+        // Batch 4xx: one bad symbol poisons the whole request. Fall back to per-symbol
+        // fetches so good symbols still get cached and bad ones get blacklisted.
+        log.warn(`[ensureRangeBatch] Batch HTTP ${err.status} on ${uncached.length} symbols — falling back to per-symbol fetch`);
+        await Promise.allSettled(uncached.map(sym => this.ensureRange(sym, start, end)));
+        return;
+      }
       log.warn(`[ensureRangeBatch] Failed: ${uncached.join(',')} — ${err instanceof Error ? err.message : err}`);
       return;
     }

@@ -90,6 +90,7 @@ export function OutcomeLegsSummary({
       <div className="flex items-center gap-3 border-t border-border pt-2">
         <Link
           href={buildHref(`/trades/${trade.id}`, runId)}
+          target="_blank"
           className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors"
         >
           Full Detail &rarr;
