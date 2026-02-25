@@ -58,7 +58,14 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     resolved.signals,
     message.author,
     env.pipeline,
-    { messageId: message.id },
+    {
+      messageId: message.id,
+      resolveRetry: async (failureContext) => {
+        const retryCtx: OrchestratorContext = { ...orchCtx, failureContext };
+        const retryResolved = await resolveOrchestrator(retryCtx, env.llm);
+        return retryResolved.outcome === 'EXECUTE' ? retryResolved.signals : null;
+      },
+    },
   );
 
   await env.onResult({

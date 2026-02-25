@@ -13,6 +13,7 @@ import type { TickCacheDB } from './tick-cache-db.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from './occ-symbology.js';
 import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
+import { QuoteResolutionError } from '../lib/errors.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('MarketData');
@@ -366,6 +367,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
           this.deadSymbols.add(symbol);
           log.warn(`[MarketData] Blacklisting "${symbol}" after HTTP ${err.status} — won't retry this run`);
+          if (err.status === 422) {
+            throw new QuoteResolutionError(`[ensureRange] Failed to fetch ${symbol}: ${err.message}`);
+          }
         }
         throw new Error(`[ensureRange] Failed to fetch ${symbol} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}: ${err instanceof Error ? err.message : err}`);
       }

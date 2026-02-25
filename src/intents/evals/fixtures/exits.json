@@ -539,6 +539,79 @@
       "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[0].legs[1].side", "signals[0].legs[1].strike"],
       "tags": ["exits", "close"],
       "notes": "No badges. 'Closed' verb = EXIT_VERB_RE → action=CLOSE. PCS with explicit strikes (40/35) and expiry. Direction is SHORT (credit spread). Chilled Chilly is a less common trader."
+    },
+    {
+      "id": "exits-017",
+      "description": "'Exit DG Short for break-even - no need to swing it' — Hariseldon CLOSE PUT LONG (Short in text = position ref, not badge; no puts keyword → strategy=null → fuzzy symbol match)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/DG\" target=\"os\" data-symbol=\"DG\" data-criteria=\"Bear\"><b>DG</b></a> Short for break-even - no need to swing it&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-12T19:38:26.000Z",
+        "positions": [
+          {
+            "id": "pos-dg-put-1",
+            "symbol": "DG",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "DG   250919P00109000", "side": "BUY", "quantity": 1, "expiry": "2025-09-19", "strike": 109, "type": "option", "optionType": "PUT" }],
+            "quantity": 15
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "DG",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 109 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close"],
+      "notes": "Exit badge only (no Short badge). 'Short' in text refers to the open position ('DG Short'), not a new trade direction. No 'puts'/'calls' keyword → strategy=null → position-path fuzzy-matches the single DG position by symbol alone. Original open: 'Short DG using $109 Puts 9/19 for $4.95 - 15 Contracts' (msg 465162). Actual backtest (54b1783c) showed pipeline_failure 'No market data for DG' at execution time — trade auto-closed at expiration Sep 19 instead. DB message id: 466413."
+    },
+    {
+      "id": "exits-016",
+      "description": "Exit badge + AAPL with $1 profit per contract (20 Contracts) — Hariseldon close 230C position",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\"><b>AAPL</b></a> with $1 profit per contract (20 Contracts)&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-05T13:33:02.000Z",
+        "positions": [
+          {
+            "id": "pos-aapl-call-1",
+            "symbol": "AAPL",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "AAPL  250912C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-09-12", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "quantity": 20
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "AAPL",
+            "legs": [
+              { "side": "SELL", "optionType": "CALL", "strike": 230 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].symbol",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": ["exits", "close", "call", "hariseldon"],
+      "notes": "Exit badge with profit mention. Single AAPL CALL position open (230C 9/12). Should close by selling the call. DB message id: 464283."
     }
   ]
 }

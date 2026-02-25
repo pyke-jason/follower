@@ -20,6 +20,7 @@ import type { Direction, Strategy, TradeAction } from '../lib/enums.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
 import { formatOccSymbol } from '../backtest/occ-symbology.js';
 import { getSpreadMidpoint } from './spread-midpoint.js';
+import { QuoteResolutionError } from '../lib/errors.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('ExecuteResolved');
@@ -60,6 +61,12 @@ export type ResolvedPipelineDeps = {
 
 export type ResolvedPipelineOpts = {
   messageId?: string;
+  /**
+   * Called when execution fails in a way that might be correctable (e.g. a 422
+   * symbol-not-found due to a misread strike). If provided, the returned signals
+   * are executed in place of the original. Return null to skip the signal.
+   */
+  resolveRetry?: (failureContext: { error: string }) => Promise<ResolvedSignal[] | null>;
 };
 
 export type ResolvedPipelineResult = {
@@ -310,7 +317,7 @@ async function executeResolvedSignal(
     // 3. Build order
     const orderLegs = legsToOrderLegs(signal.legs, size.quantity);
     const mid = await getSpreadMidpoint(deps.broker, orderLegs);
-    const limitPrice = signal.limitPrice != null ? Math.abs(signal.limitPrice) : mid;
+    const limitPrice = signal.limitPrice != null ? Math.min(Math.abs(signal.limitPrice), mid) : mid;
     const params = buildOrderParams(strategy, direction, symbol, orderLegs, limitPrice, false);
 
     // 4. Place and record
@@ -403,6 +410,10 @@ async function executeResolvedSignal(
 /**
  * Execute an array of ResolvedSignals sequentially.
  * Each signal is independent — a failure on signal N does not prevent signal N+1.
+ *
+ * If opts.resolveRetry is provided and a signal throws QuoteResolutionError,
+ * the callback is called once to get corrected signals. Those are executed without
+ * retry (preventing loops). If the callback returns null, the signal is skipped.
  */
 export async function executeResolvedSignals(
   signals: ResolvedSignal[],
@@ -411,9 +422,31 @@ export async function executeResolvedSignals(
   opts: ResolvedPipelineOpts,
 ): Promise<ResolvedPipelineResult[]> {
   const results: ResolvedPipelineResult[] = [];
+  const optsNoRetry: ResolvedPipelineOpts = { messageId: opts.messageId };
+
   for (const signal of signals) {
-    const result = await executeResolvedSignal(signal, trader, deps, opts);
-    results.push(result);
+    try {
+      results.push(await executeResolvedSignal(signal, trader, deps, optsNoRetry));
+    } catch (err) {
+      if (err instanceof QuoteResolutionError && opts.resolveRetry) {
+        log.info(`Quote resolution failed — retrying via LLM: ${err.originalMessage.slice(0, 120)}`);
+        const corrected = await opts.resolveRetry({ error: err.originalMessage });
+        if (!corrected || corrected.length === 0) {
+          results.push({ signal, executed: false, reason: 'Quote resolution failed — LLM could not correct' });
+        } else {
+          for (const s of corrected) {
+            try {
+              results.push(await executeResolvedSignal(s, trader, deps, optsNoRetry));
+            } catch (retryErr) {
+              const msg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              results.push({ signal: s, executed: false, reason: `Quote resolution retry failed: ${msg}` });
+            }
+          }
+        }
+      } else {
+        throw err;
+      }
+    }
   }
   return results;
 }

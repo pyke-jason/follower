@@ -102,6 +102,8 @@ export type OpenPosition = {
     optionType?: 'CALL' | 'PUT';
   }>;
   quantity: number;    // lot count
+  /** Average fill price at which this position was opened (per-contract or per-share). */
+  entryPrice?: number;
 };
 
 export interface PositionProvider {
@@ -136,6 +138,11 @@ export type OrchestratorContext = {
   positions: PositionProvider;
   chatHistory: ChatHistoryProvider;
   traderConfig: TraderConfig;
+  /**
+   * Set when retrying after a 422 symbol-not-found error at execution time.
+   * Presence of this field forces the LLM path so it can correct the bad strike.
+   */
+  failureContext?: { error: string };
 };
 
 // ── Internal parse types ──────────────────────────────────────────────────────

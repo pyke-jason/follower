@@ -180,6 +180,15 @@ function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): string {
     lines.push(`Complexity: ${Array.from(parse.complexityFlags).join(', ')}`);
   }
 
+  if (ctx.failureContext) {
+    lines.push(
+      ``,
+      `⚠️ Previous execution attempt failed: ${ctx.failureContext.error}`,
+      `This usually means a strike was misread from the message (e.g. "$342/5" typed instead of "$342.5", or a typo).`,
+      `Re-examine the original message text and provide corrected strike(s).`,
+    );
+  }
+
   lines.push(``, `Classify and call submit_decision.`);
   return lines.join('\n');
 }

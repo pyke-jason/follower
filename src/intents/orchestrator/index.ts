@@ -85,8 +85,9 @@ export async function resolveOrchestrator(
 
   // ── 3 & 4. Deterministic paths ──────────────────────────────────────────────
   // Only take the fast path when there are no complexity flags and the action
-  // was unambiguously determined.
-  const needsLLM = parse.complexityFlags.size > 0 || parse.action === null;
+  // was unambiguously determined. A failureContext means execution already tried
+  // the deterministic result and got a 422 — force LLM to correct the strike.
+  const needsLLM = parse.complexityFlags.size > 0 || parse.action === null || ctx.failureContext != null;
 
   if (!needsLLM) {
     if (parse.action === 'ADD') {
@@ -116,9 +117,11 @@ export async function resolveOrchestrator(
   }
 
   // ── 5. LLM path ─────────────────────────────────────────────────────────────
-  const flagDetail = parse.complexityFlags.size > 0
-    ? `flags: [${Array.from(parse.complexityFlags).join(', ')}]`
-    : 'action=null';
+  const flagDetail = ctx.failureContext != null
+    ? '422-retry'
+    : parse.complexityFlags.size > 0
+      ? `flags: [${Array.from(parse.complexityFlags).join(', ')}]`
+      : 'action=null';
   log.debug(`[${ctx.messageId}] → LLM path (${flagDetail})`);
 
   if (!provider) {
@@ -145,7 +148,7 @@ function logResult(ctx: OrchestratorContext, parse: ParseResult, result: Orchest
   const who = ctx.author;
 
   if (result.outcome === 'SKIP') {
-    log.info(`${id} ${who} | SKIP ${result.reason}`);
+    log.info(`${id} ${who} | SKIP ${result.reason}\n  msg: ${ctx.cleanText}`);
     return;
   }
 
@@ -165,9 +168,9 @@ function logResult(ctx: OrchestratorContext, parse: ParseResult, result: Orchest
 
   if (result.outcome === 'EXECUTE') {
     const legCount = result.signals.reduce((n, s) => n + s.legs.length, 0);
-    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)`);
+    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)\n  msg: ${ctx.cleanText}`);
   } else {
-    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}`);
+    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}\n  msg: ${ctx.cleanText}`);
   }
 }
 

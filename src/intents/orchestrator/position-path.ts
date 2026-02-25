@@ -122,17 +122,11 @@ function matchPosition(
     return { position: candidates[0] };
   }
 
-  // Multiple candidates — try direction tie-breaking
+  // Multiple candidates — try direction tie-breaking only when direction was explicitly parsed
   if (parse.direction !== null) {
     const byDirection = candidates.filter((p) => p.direction === parse.direction);
     if (byDirection.length === 1) {
       return { position: byDirection[0] };
-    }
-  } else {
-    // Default: prefer LONG positions (most common open position type)
-    const longPositions = candidates.filter((p) => p.direction === 'LONG');
-    if (longPositions.length === 1) {
-      return { position: longPositions[0] };
     }
   }
 

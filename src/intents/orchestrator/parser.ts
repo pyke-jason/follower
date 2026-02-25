@@ -143,8 +143,8 @@ function overlaps(a: Token, b: Token): boolean {
 
 /** Remove tokens that overlap with a higher-priority token (longer span wins). */
 function dedupeTokens(tokens: Token[]): Token[] {
-  // Sort by start position, then by span length descending (longer wins ties)
-  const sorted = [...tokens].sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  // Sort by span length descending (longer wins overlaps), then by start position
+  const sorted = [...tokens].sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
   const kept: Token[] = [];
   for (const tok of sorted) {
     if (kept.some(k => overlaps(k, tok))) continue;
@@ -404,9 +404,25 @@ function extractTradeFields(
         consumed.add(tok);
       }
     } else if (context.isSpread && !expiryHint) {
-      // Spread + no other expiry → ambiguous
-      ambiguousSlashPair = true;
-      consumed.add(tok);
+      // Strikes already found from another pair → this date-like pair IS the expiry
+      if (strikes) {
+        expiryHint = tok.value.replace(/\s/g, '');
+        consumed.add(tok);
+      } else {
+        // Check if another slash pair exists that is clearly strikes (not date-like)
+        const otherStrikePairs = allTokens.filter(t =>
+          t.type === 'slash_pair' && !consumed.has(t) && t !== tok &&
+          !looksLikeDate(t.parsed[0], t.parsed[1]));
+        if (otherStrikePairs.length > 0) {
+          // Another pair is clearly strikes → this date-like pair IS the expiry
+          expiryHint = tok.value.replace(/\s/g, '');
+          consumed.add(tok);
+        } else {
+          // Genuinely ambiguous — could be dates or cheap-stock strikes
+          ambiguousSlashPair = true;
+          consumed.add(tok);
+        }
+      }
     } else {
       // Non-spread + date-like → it's a date
       if (!expiryHint) {
@@ -747,9 +763,18 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   if (ambiguousSlashPair) complexityFlags.add('ambiguous_strikes');
 
   // ── Complexity: extra_text ────────────────────────────────────────────────
+  // Skip extra_text flag when all core trade fields are resolved — commentary
+  // after a fully-parsed trade shouldn't force the LLM path.
 
   if (action !== null && strategy !== null && wordCount(cleanText) > 25) {
-    complexityFlags.add('extra_text');
+    const fullyResolved = symbol !== null && (
+      strategy === 'STOCK' ||
+      (isSpread && strikes !== null && strikes.length >= 2) ||
+      (!isSpread && (strikes !== null || premiumHint !== null))
+    );
+    if (!fullyResolved) {
+      complexityFlags.add('extra_text');
+    }
   }
 
   // When lotto + extra_text, the context is too complex for the lotto=LONG default.
