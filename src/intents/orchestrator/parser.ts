@@ -240,13 +240,7 @@ function extractTradeFields(
   );
 
   // Bare numbers after "for"/"at" (no $ prefix): "for .63", "for 1.80", "at 2.10"
-  // These are premium candidates; we don't tokenize "for" itself, just the number
-  const forAtBareTokens = collectTokens(
-    /(?:for|at)\s+\.(\d+)/gi, 'bare_num', text,
-    m => [parseFloat('0.' + m[1])],
-  );
-  // Adjust: the regex above captures "for .63" but the token position should be just the number
-  // Let's re-collect with position adjustment
+  // These are premium candidates; tokenize just the number portion
   const forAtBareTokensFixed: Token[] = [];
   {
     const re = /\b(?:for|at)\s+(\.?\d+(?:\.\d+)?)/gi;
