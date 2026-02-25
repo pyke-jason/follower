@@ -1,0 +1,123 @@
+{
+  "cases": [
+    {
+      "id": "timespread-001",
+      "description": "Dave W opens RH time spread using $155 calls — Long+Short badges, explicit strike",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/RH\" target=\"os\" data-symbol=\"RH\"><b>RH</b></a> &nbsp;time spread using $155 calls&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-11T20:48:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [{ "optionType": "CALL", "strike": 155 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["time-spread"],
+      "notes": "Canonical Dave W time spread open. Long+Short badges = bullish+bearish STOCK VIEW, not direction. 'time spread' keyword disambiguates from strangle: this is a CALL-only position (buy longer-dated, sell shorter-dated), not two separate CALL+PUT legs. Strike 155 is explicit. System must not decompose into a strangle."
+    },
+    {
+      "id": "timespread-002",
+      "description": "Dave W opens KR time spread using $67 calls for .28 — Long+Short badges, price stated",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/KR\" target=\"os\" data-symbol=\"KR\"><b>KR</b></a> &nbsp; time spread using $67 calls for .28&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-03T17:09:39.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [{ "optionType": "CALL", "strike": 67 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["time-spread"],
+      "notes": "Time spread open with stated entry price (.28) and explicit strike ($67). Long+Short badges are stock-view badges, not an instruction to BUY both a CALL and a PUT. 'calls for .28' confirms single CALL option type. Must emit EXECUTE (not SKIP), capture strike=67."
+    },
+    {
+      "id": "timespread-003",
+      "description": "Hariseldon opens TTD time spread — no badges, explicit legs (sold this week / bought next week), $47 calls",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Time Spread for <a href=\"/option-stalker/chart/TTD\" target=\"os\" data-symbol=\"TTD\" data-criteria=\"Bear\"><b>TTD</b></a> Sold the $47 Calls for this week, bought the $47 Calls for next week - .45 - 40 Contracts&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-11-06T19:44:06.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [{ "optionType": "CALL", "strike": 47 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["time-spread"],
+      "notes": "Hariseldon uses explicit leg language: 'Sold $47 Calls for this week, bought $47 Calls for next week'. No badges. This is a net debit calendar spread (long dated > short dated). 40 contracts. Strike 47 is explicit. The 'sold'/'bought' verbs describe the individual legs of the spread, not an instruction to go SHORT — overall position is LONG a time spread."
+    },
+    {
+      "id": "timespread-004",
+      "description": "Dave W exits RH time spread for 40% profit — Exit+Short+Long badges, no strike in exit message",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/RH\" target=\"os\" data-symbol=\"RH\"><b>RH</b></a> time spread&nbsp; for 40% profit&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-12T14:35:38.000Z",
+        "positions": [
+          {
+            "id": "pos-rh-call",
+            "symbol": "RH",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "RH    251226C00155000", "side": "BUY", "quantity": 1, "expiry": "2025-12-26", "strike": 155, "type": "option", "optionType": "CALL" }],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["time-spread", "exits"],
+      "notes": "Exit badge + Short+Long badges together = time spread close. Matching the RH open from timespread-001 (message 486703 the day before). No strike in this exit message — must match by symbol. Position is modeled as a CALL LONG since a time spread is net-long the far-dated call. Position match should find the RH CALL position."
+    },
+    {
+      "id": "timespread-005",
+      "description": "Dave W exits HPQ time spread from last week for 100% profit — verbose exit with narrative",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/HPQ\" target=\"os\" data-symbol=\"HPQ\"><b>HPQ</b></a> time spread from last week got in for .12 let last weeks short calls expire worthless and just sold this weeks calls for .24&nbsp; &nbsp;100% profit&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-01T15:54:39.000Z",
+        "positions": [
+          {
+            "id": "pos-hpq-call",
+            "symbol": "HPQ",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "HPQ   251205C00030000", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 30, "type": "option", "optionType": "CALL" }],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["time-spread", "exits"],
+      "notes": "Verbose exit narrative explains the mechanics: short-dated calls expired worthless, now selling the longer-dated calls for .24 (double the .12 entry). Exit+Long+Short badges with 'time spread' keyword. The 'sold this weeks calls' phrase describes the exit leg action, not a new SHORT signal. extra_text complexity flag expected. Must emit EXECUTE + match the HPQ CALL position."
+    }
+  ]
+}

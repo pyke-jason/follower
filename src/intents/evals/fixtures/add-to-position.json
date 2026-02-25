@@ -1,0 +1,336 @@
+{
+  "cases": [
+    {
+      "id": "add-001",
+      "description": "Hariseldon adds to SOFI Calls — no badge, avg price and contract count given",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Added to <a href=\"/option-stalker/chart/SOFI\" target=\"os\" data-symbol=\"SOFI\" data-criteria=\"Bear\"><b>SOFI</b></a> Calls - avg. now $2.10 - 50 Contracts&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-05T19:41:43.000Z",
+        "positions": [
+          {
+            "id": "pos-sofi-call-1",
+            "symbol": "SOFI",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [
+              {
+                "symbol": "SOFI  251220C00015000",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "2025-12-20",
+                "strike": 15,
+                "type": "option",
+                "optionType": "CALL"
+              }
+            ],
+            "quantity": 30
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "SOFI",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["add", "call", "options"],
+      "notes": "Unambiguous ADD — 'Added to ... Calls'. No badge to misinterpret. Avg price ($2.10) and running total (50 contracts) confirm this is adding to an existing position, not a fresh open. Must match existing SOFI CALL LONG position."
+    },
+    {
+      "id": "add-002",
+      "description": "Hariseldon Exit MSTR (loss) then ADD to NVDA stock — two signals in one message",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> with the loss ($21) - added to <a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> - avg. $177.87 - 2,000 Shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-01T15:28:19.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-stock-1",
+            "symbol": "MSTR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [
+              {
+                "symbol": "MSTR",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "0000-00-00",
+                "strike": 0,
+                "type": "stock"
+              }
+            ],
+            "quantity": 1000
+          },
+          {
+            "id": "pos-nvda-stock-1",
+            "symbol": "NVDA",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [
+              {
+                "symbol": "NVDA",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "0000-00-00",
+                "strike": 0,
+                "type": "stock"
+              }
+            ],
+            "quantity": 1000
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "MSTR",
+            "hasTradeId": true
+          },
+          {
+            "orderType": "STOCK",
+            "symbol": "NVDA",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["add", "stock", "multi-signal", "mixed-action"],
+      "notes": "Exit badge triggers CLOSE on MSTR; 'added to NVDA' triggers ADD on NVDA — both in one message. The avg price ($177.87) and '2,000 Shares' confirm the NVDA signal is adding to an existing position, not a new open. Both signals must resolve to matching positions (hasTradeId). Critical case for mixed-action parsing."
+    },
+    {
+      "id": "add-003",
+      "description": "Hariseldon adds to AMD short stock — 'Added to AMD short', direction SHORT from 'short' noun",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Added to <a href=\"/option-stalker/chart/AMD\" target=\"os\" data-symbol=\"AMD\"><b>AMD</b></a> short - avg. is now $230.84 - 2,000 total shares</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-11-18T19:41:47.000Z",
+        "positions": [
+          {
+            "id": "pos-amd-stock-short-1",
+            "symbol": "AMD",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [
+              {
+                "symbol": "AMD",
+                "side": "SELL",
+                "quantity": 1,
+                "expiry": "0000-00-00",
+                "strike": 0,
+                "type": "stock"
+              }
+            ],
+            "quantity": 1000
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "AMD",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["add", "stock", "short"],
+      "notes": "The word 'short' in 'AMD short' identifies this as adding to a SHORT stock position (SELL shares). The avg price ($230.84) and running total (2,000 shares) are the confirming ADD signals. Position matching must look for the SHORT AMD STOCK position, not a LONG one."
+    },
+    {
+      "id": "add-004",
+      "description": "Dave W Long MSFT badge with 'added to my pcs' — Long badge is stock view, PCS is always SHORT",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/MSFT\" target=\"os\" data-symbol=\"MSFT\" data-criteria=\"Bear\"><b>MSFT</b></a> &nbsp;added to my pcs&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-10-31T19:36:51.000Z",
+        "positions": [
+          {
+            "id": "pos-msft-pcs-1",
+            "symbol": "MSFT",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              {
+                "symbol": "MSFT  251121P00410000",
+                "side": "SELL",
+                "quantity": 1,
+                "expiry": "2025-11-21",
+                "strike": 410,
+                "type": "option",
+                "optionType": "PUT"
+              },
+              {
+                "symbol": "MSFT  251121P00405000",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "2025-11-21",
+                "strike": 405,
+                "type": "option",
+                "optionType": "PUT"
+              }
+            ],
+            "quantity": 3
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "MSFT",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["add", "pcs", "spread", "badge-override"],
+      "notes": "Long badge = Dave W's bullish stock VIEW on MSFT, NOT the trade direction. PCS (put credit spread) is always direction SHORT regardless of any badge. The LLM must not let the Long badge flip PCS to LONG direction. 'My pcs' implies an existing position — hasTradeId required. See also add-007 (sister message 477909) for the same pattern with a credit stated."
+    },
+    {
+      "id": "add-005",
+      "description": "Hariseldon adds to MSTR Lotto — 'Added to MSTR Lotto', lotto always LONG direction (buying options)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Added to <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> Lotto (just having fun here) - .67 avg. 20 Contracts&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-11-21T19:48:16.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-put-lotto-1",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [
+              {
+                "symbol": "MSTR  251122P00480000",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "2025-11-22",
+                "strike": 480,
+                "type": "option",
+                "optionType": "PUT"
+              }
+            ],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["add", "lotto", "options"],
+      "notes": "Lotto = speculative BUY, always direction LONG regardless of underlying direction. The '(just having fun here)' parenthetical is commentary noise. Avg price ($0.67) and total (20 contracts) confirm ADD. No badge to confuse direction. Must match existing MSTR lotto (PUT LONG) position."
+    },
+    {
+      "id": "add-006",
+      "description": "Dave W Long GOOGL badge with 'added to swing calls' — Long badge is stock view, CALL is LONG direction",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/GOOGL\" target=\"os\" data-symbol=\"GOOGL\"><b>GOOGL</b></a> added to swing calls&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-04T15:11:08.000Z",
+        "positions": [
+          {
+            "id": "pos-googl-call-swing-1",
+            "symbol": "GOOGL",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [
+              {
+                "symbol": "GOOGL 251219C00195000",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "2025-12-19",
+                "strike": 195,
+                "type": "option",
+                "optionType": "CALL"
+              }
+            ],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "GOOGL",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["add", "call", "options", "swing"],
+      "notes": "Long badge and CALL direction coincidentally agree here (bullish view + buying calls), but the direction must be derived from the CALL strategy, not the badge. 'Swing calls' is Dave W's standard swing-trade options terminology. 'Added to' with no strike/expiry = ADD to existing GOOGL CALL position. hasTradeId required."
+    },
+    {
+      "id": "add-007",
+      "description": "Dave W Long MSFT badge 'added to pcs for 1.25 credit' — credit value confirms credit spread ADD",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/MSFT\" target=\"os\" data-symbol=\"MSFT\" data-criteria=\"Bear\"><b>MSFT</b></a> added to pcs for 1.25 credit&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-10-30T15:30:46.000Z",
+        "positions": [
+          {
+            "id": "pos-msft-pcs-2",
+            "symbol": "MSFT",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              {
+                "symbol": "MSFT  251121P00415000",
+                "side": "SELL",
+                "quantity": 1,
+                "expiry": "2025-11-21",
+                "strike": 415,
+                "type": "option",
+                "optionType": "PUT"
+              },
+              {
+                "symbol": "MSFT  251121P00410000",
+                "side": "BUY",
+                "quantity": 1,
+                "expiry": "2025-11-21",
+                "strike": 410,
+                "type": "option",
+                "optionType": "PUT"
+              }
+            ],
+            "quantity": 2
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "MSFT",
+            "hasTradeId": true
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["add", "pcs", "spread", "badge-override"],
+      "notes": "Companion to add-004 (message 478375, one day earlier). Long badge = bullish stock view, irrelevant for direction. '1.25 credit' confirms this is a credit spread (PCS = SHORT). 'added to pcs' without the possessive 'my' is slightly more ambiguous than add-004 but still an ADD — no strike/expiry given, and price is a credit value consistent with adding to an existing spread at the same strikes."
+    }
+  ]
+}

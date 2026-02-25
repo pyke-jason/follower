@@ -79,7 +79,7 @@ function orderTypeFromLegs(legs: Leg[]): 'SINGLE' | 'SPREAD' | 'STOCK' {
  * Match an open position from the candidate list using fuzzy matching rules.
  *
  * Returns the matched position or null if no unambiguous match is found, along
- * with a reason string for FLAG_FOR_REVIEW cases.
+ * with a reason string for MANUAL_REVIEW cases.
  */
 function matchPosition(
   positions: OpenPosition[],
@@ -241,7 +241,7 @@ export async function resolvePositionPath(
   // Step 1: Validate required fields
   if (parse.symbol === null) {
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: 'position path requires a symbol but none was parsed',
     };
   }
@@ -252,7 +252,7 @@ export async function resolvePositionPath(
     parse.action !== 'LEG_OFF'
   ) {
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: `resolvePositionPath called with invalid action: ${parse.action ?? 'null'}`,
     };
   }
@@ -267,7 +267,7 @@ export async function resolvePositionPath(
   } catch (err) {
     log.error('getPositions failed for', symbol, err);
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: `failed to fetch positions for ${symbol}: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -276,7 +276,7 @@ export async function resolvePositionPath(
   const matchResult = matchPosition(positions, parse);
 
   if ('flagReason' in matchResult) {
-    return { outcome: 'FLAG_FOR_REVIEW', reason: matchResult.flagReason };
+    return { outcome: 'MANUAL_REVIEW', reason: matchResult.flagReason };
   }
 
   const { position } = matchResult;
@@ -294,27 +294,27 @@ export async function resolvePositionPath(
     const exitPercent = parse.exitPercent ?? 0.5;
     const result = buildTrimLegs(position, symbol, exitPercent);
     if ('flagReason' in result) {
-      return { outcome: 'FLAG_FOR_REVIEW', reason: result.flagReason };
+      return { outcome: 'MANUAL_REVIEW', reason: result.flagReason };
     }
     legs = result;
   } else {
     // LEG_OFF
     if (parse.targetStrategy === null) {
       return {
-        outcome: 'FLAG_FOR_REVIEW',
+        outcome: 'MANUAL_REVIEW',
         reason: 'LEG_OFF requires knowing which leg to keep (targetStrategy is null)',
       };
     }
     const result = buildLegOffLegs(position, symbol, parse.targetStrategy);
     if ('flagReason' in result) {
-      return { outcome: 'FLAG_FOR_REVIEW', reason: result.flagReason };
+      return { outcome: 'MANUAL_REVIEW', reason: result.flagReason };
     }
     legs = result;
   }
 
   if (legs.length === 0) {
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: `no reversal legs could be built for ${symbol} (position has ${position.legs.length} legs)`,
     };
   }

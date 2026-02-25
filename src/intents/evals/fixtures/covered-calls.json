@@ -1,0 +1,162 @@
+{
+  "cases": [
+    {
+      "id": "cc-001",
+      "description": "Hariseldon sells MSTR $210 covered calls — 10 contracts, parenthetical '(covered calls)' suffix",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Sold 10 Contracts of the $210 Calls on <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> for $1.76 (covered calls)</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-11-17T19:58:12.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "SELL", "optionType": "CALL", "strike": 210 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["covered-call", "sell-to-open"],
+      "notes": "'Sold' verb is authoritative: direction SHORT, leg side=SELL. '(covered calls)' suffix confirms sell-to-open against stock position. No badge present. Strike $210, 10 contracts, premium $1.76."
+    },
+    {
+      "id": "cc-002",
+      "description": "Hariseldon sells AAPL $255 'Covered Calls' — noun phrase identifies sell-to-open CALL",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Sold the $255 Covered Calls on <a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\" data-criteria=\"Bear\"><b>AAPL</b></a> for $1.03 - 10 Contracts&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-10-09T19:56:40.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "AAPL",
+            "legs": [
+              { "side": "SELL", "optionType": "CALL", "strike": 255 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["covered-call", "sell-to-open"],
+      "notes": "'Sold' verb + 'Covered Calls' noun phrase = sell-to-open CALL, direction SHORT, leg side=SELL. The word 'Covered' describes strategy context, not a spread. Strike $255, 10 contracts, premium $1.03."
+    },
+    {
+      "id": "cc-003",
+      "description": "Hariseldon sells OSCR $22 calls 'to cover my shares' — implicit covered call without the phrase",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Sold 35 Contracts of the the $22 Calls on <a href=\"/option-stalker/chart/OSCR\" target=\"os\" data-symbol=\"OSCR\"><b>OSCR</b></a> to cover my shares at .32 a Call&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-10-13T18:32:34.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "OSCR",
+            "legs": [
+              { "side": "SELL", "optionType": "CALL", "strike": 22 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["covered-call", "sell-to-open"],
+      "notes": "'Sold' verb is authoritative: direction SHORT, leg side=SELL. 'to cover my shares' = selling calls against stock, but not required to parse correctly — 'Sold' alone determines SHORT. 35 contracts, strike $22, $0.32 premium."
+    },
+    {
+      "id": "cc-004",
+      "description": "Hariseldon buys back AAPL covered call — 'Bought back' = CLOSE on existing SHORT CALL position",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the <a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\" data-criteria=\"Bear\"><b>AAPL</b></a> covered call for a .70 profit&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-10-09T14:11:04.000Z",
+        "positions": [
+          {
+            "id": "pos-aapl-cc-1",
+            "symbol": "AAPL",
+            "strategy": "CALL",
+            "direction": "SHORT",
+            "legs": [
+              {
+                "symbol": "AAPL  251010C00260000",
+                "side": "SELL",
+                "quantity": 1,
+                "expiry": "2025-10-10",
+                "strike": 260,
+                "type": "option",
+                "optionType": "CALL"
+              }
+            ],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "tags": ["covered-call", "close"],
+      "notes": "'Bought back' = closing a previously sold (SHORT) CALL position. Must match the open SHORT CALL position by symbol. hasTradeId=true confirms the signal resolves against an open position rather than opening a new one."
+    },
+    {
+      "id": "cc-005",
+      "description": "Hariseldon rolls MSTR covered call — 'Bought back $210...sold the $200 Calls' = CLOSE + OPEN in one message",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the $210 Covered Calls on <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> for $1 profit, sold the $200 Calls for $2.03</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-11-19T18:27:25.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-cc-1",
+            "symbol": "MSTR",
+            "strategy": "CALL",
+            "direction": "SHORT",
+            "legs": [
+              {
+                "symbol": "MSTR  251122C00210000",
+                "side": "SELL",
+                "quantity": 1,
+                "expiry": "2025-11-22",
+                "strike": 210,
+                "type": "option",
+                "optionType": "CALL"
+              }
+            ],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "hasTradeId": true,
+            "symbol": "MSTR"
+          },
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "SELL", "optionType": "CALL", "strike": 200 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].hasTradeId", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike"],
+      "tags": ["covered-call", "roll", "multi-signal"],
+      "notes": "Roll = two actions in one message. Signal 0: close existing $210 SHORT CALL (hasTradeId=true). Signal 1: new sell-to-open $200 CALL (side=SELL). 'Bought back' = close; 'sold' = new open. Both on MSTR. The $200 strike is lower than $210, a classic downward roll when stock is falling."
+    }
+  ]
+}

@@ -1,140 +1,215 @@
 {
   "cases": [
     {
-      "id": "strangle-overnight-001",
-      "description": "'SPY right on 15 ema' — pure TA commentary → SKIP",
+      "id": "strangle-001",
+      "description": "SPY strangle OPEN — Long+Short badges, bought $673 calls and $670 puts, 20 contracts",
       "input": {
-        "message": "SPY right on 15 ema",
-        "author": "Dave W",
-        "timestamp": "2025-09-03T16:59:21.000Z",
-        "badges": [],
-        "symbols": ["SPY"]
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/SPY\" target=\"os\" data-symbol=\"SPY\"><b>SPY</b></a> Strangle - Bought the $673 Calls and $670 Puts expires tomorrow - for $2.26 - 20 Contracts - thanks to&nbsp;<b data-user=\"Dave W\">@Dave W</b>&nbsp;on the idea&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-10-21T17:23:34.000Z"
       },
       "expected": {
-        "decision": "SKIP"
-      },
-      "mustMatch": [],
-      "tags": ["skip", "commentary"]
-    },
-    {
-      "id": "strangle-overnight-002",
-      "description": "'Long Short SPY strangle for overnight' — strangle = two separate LONG positions (CALL + PUT)",
-      "input": {
-        "message": "Long Short SPY strangle for overnight",
-        "author": "Dave W",
-        "timestamp": "2025-09-04T19:04:46.000Z",
-        "badges": ["Long", "Short"],
-        "symbols": ["SPY"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "SPY",
-            "direction": "LONG",
-            "strategy": "CALL"
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 673 }
+            ]
           },
           {
-            "action": "OPEN",
-            "symbol": "SPY",
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "optionType": "PUT", "strike": 670 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[1].legs[0].side"
+      ],
+      "tags": ["strangle"],
+      "notes": "Strangle decomposes into two OPEN signals: one CALL and one PUT. Both direction LONG (buying). Long+Short badges = bullish+bearish VIEW, not trade direction. 'Bought' is authoritative verb confirming BUY side."
+    },
+    {
+      "id": "strangle-002",
+      "description": "MSTR straddle OPEN — Long+Short badges, single strike 182.5 for both call and put, 'joined Hari'",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>'<span class=\"badge bg-success\">Long</span><span>&nbsp;</span><span class=\"badge bg-danger\">Short</span><span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> straddle 182.5 for 7.55&nbsp; joined Hari&nbsp;</span></div></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-04T19:21:35.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 182.5 }
+            ]
+          },
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "optionType": "PUT", "strike": 182.5 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[1].legs[0].side"
+      ],
+      "tags": ["straddle"],
+      "notes": "Straddle with single strike 182.5 for both CALL and PUT. 'joined Hari' is relational context (copying another trader's position) — triggers relational complexity flag but strangle path should still work."
+    },
+    {
+      "id": "strangle-003",
+      "description": "MSTR straddle OPEN — only Long badge (no Short), 'Straddle' keyword, needs LLM path",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;Straddle on <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> using $182.5 Calls and Puts for $7.66 - 15 Contracts&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-04T19:18:19.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 182.5 }
+            ]
+          },
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "optionType": "PUT", "strike": 182.5 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[1].legs[0].side"
+      ],
+      "tags": ["straddle"],
+      "notes": "Edge case: only Long badge present (no Short badge). The parser's isStrangle check requires BOTH badges (hasLongBadge && hasShortBadge && STRANGLE_RE.test(cleanText)), so isStrangle=false. Deterministic path may only produce 1 signal (CALL) since it sees 'Calls' first. Needs LLM path to correctly decompose into 2 signals."
+    },
+    {
+      "id": "strangle-004",
+      "description": "GOOGL strangle EXIT — Exit+Long+Short badges, close both legs for small profit",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/GOOGL\" target=\"os\" data-symbol=\"GOOGL\" data-criteria=\"Bear\"><b>GOOGL</b></a> strangle took small profit&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-11T20:00:39.000Z",
+        "positions": [
+          {
+            "id": "pos-googl-call",
+            "symbol": "GOOGL",
+            "strategy": "CALL",
             "direction": "LONG",
-            "strategy": "PUT"
+            "legs": [{ "symbol": "GOOGL 251219C00195000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 195, "type": "option", "optionType": "CALL" }],
+            "quantity": 5
+          },
+          {
+            "id": "pos-googl-put",
+            "symbol": "GOOGL",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "GOOGL 251219P00190000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 190, "type": "option", "optionType": "PUT" }],
+            "quantity": 5
           }
         ]
-      },
-      "mustMatch": [
-        "signals[0].action",
-        "signals[0].direction",
-        "signals[1].action",
-        "signals[1].direction"
-      ],
-      "tags": ["strangle", "overnight"],
-      "notes": "Strangle = two separate LONG positions (CALL + PUT). Both direction LONG (buying options). Long+Short badges = bullish+bearish VIEW, not trade direction."
-    },
-    {
-      "id": "strangle-overnight-003",
-      "description": "'Exit Short Long SPY took partial profits in overnight strangle' — close PUT leg of strangle",
-      "input": {
-        "message": "Exit Short Long SPY took partial profits in \"overnight\" strangle",
-        "author": "Dave W",
-        "timestamp": "2025-09-04T20:12:25.000Z",
-        "badges": ["Exit", "Short", "Long"],
-        "symbols": ["SPY"]
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
-          {
-            "action": "CLOSE",
-            "symbol": "SPY",
-            "strategy": "PUT"
-          }
+          { "hasTradeId": true },
+          { "hasTradeId": true }
         ]
       },
       "mustMatch": [
-        "signals[0].action",
-        "signals[0].symbol",
-        "signals[0].strategy"
+        "signals[0].hasTradeId"
       ],
-      "tags": ["exits", "strangle"],
-      "notes": "Exit+Short badge first = exiting the bearish (PUT) side. 'Partial profits' refers to partial strangle, not partial position — this is a full CLOSE of the PUT leg."
+      "tags": ["strangle", "exits"],
+      "notes": "Exit all strangle legs. Exit+Long+Short badges together with 'strangle' keyword. Has mixed_action complexity flag (Exit badge + Long+Short badges) so goes to LLM. Ideally produces 2 close signals (one for each leg)."
     },
     {
-      "id": "strangle-overnight-004",
-      "description": "'Exit Long Short SPY took remaining profits in strangle' — close CALL leg of strangle",
+      "id": "strangle-005",
+      "description": "MSTR straddle full EXIT — Exit badge only, 'completely' = full close of both legs",
       "input": {
-        "message": "Exit Long Short SPY took remaining profits in strangle",
-        "author": "Dave W",
-        "timestamp": "2025-09-05T13:31:56.000Z",
-        "badges": ["Exit", "Long", "Short"],
-        "symbols": ["SPY"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> Straddle completely with a .30 cent loss per contract total&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-05T15:07:17.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "SPY",
-            "strategy": "CALL"
+            "id": "pos-mstr-call-3",
+            "symbol": "MSTR",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205C00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "CALL" }],
+            "quantity": 15
+          },
+          {
+            "id": "pos-mstr-put-3",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205P00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 15
           }
         ]
       },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
       "mustMatch": [
-        "signals[0].action",
-        "signals[0].symbol",
-        "signals[0].strategy"
+        "signals[0].hasTradeId"
       ],
-      "tags": ["exits", "strangle"],
-      "notes": "Exit+Long badge first = exiting the bullish (CALL) side. 'Remaining profits' = closing the last leg of the strangle."
+      "tags": ["straddle", "exits"],
+      "notes": "Full CLOSE of straddle. Only Exit badge (no Long/Short). 'completely' confirms full close. 'Straddle' keyword with Exit badge sets action=CLOSE. Position matching should find one or both MSTR positions."
     },
     {
-      "id": "strangle-overnight-007",
-      "description": "'Exit Long SPY took profits in overnight calls' — close CALL leg of overnight position",
+      "id": "strangle-006",
+      "description": "MSTR partial straddle close — close PUT leg only, keep CALL, no badges",
       "input": {
-        "message": "Exit Long SPY took profits in overnight calls",
-        "author": "Dave W",
-        "timestamp": "2025-09-08T13:31:00.000Z",
-        "badges": ["Exit", "Long"],
-        "symbols": ["SPY"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><div>Close <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> Puts on the straddle for a profit - holding the calls now&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-05T14:42:48.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "SPY",
-            "strategy": "CALL"
+            "id": "pos-mstr-call-4",
+            "symbol": "MSTR",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205C00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "CALL" }],
+            "quantity": 15
+          },
+          {
+            "id": "pos-mstr-put-4",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205P00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 15
           }
         ]
       },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
       "mustMatch": [
-        "signals[0].action",
-        "signals[0].symbol",
-        "signals[0].strategy"
+        "signals[0].hasTradeId"
       ],
-      "tags": ["exits", "overnight"],
-      "notes": "Exit+Long badge = exiting the bullish (CALL) side. 'Overnight calls' explicitly states CALL strategy. This is the Sep 8 exit that was silently skipped because the Sep 5 entry was given 0DTE expiry and auto-closed. The intent classification itself is correct — the bug was upstream in expiry resolution."
+      "tags": ["straddle", "exits"],
+      "notes": "Partial straddle close — close PUT leg specifically, keep CALL. No badges present. 'Close' verb sets action=CLOSE, 'Puts' narrows to strategy=PUT. 'holding the calls now' confirms only PUT leg is being closed. Position matching should find the PUT position."
     }
   ]
 }

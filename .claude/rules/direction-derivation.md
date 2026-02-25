@@ -92,21 +92,3 @@ badges: ["Exit","Long","Exit","Short"]
 
 When both patterns are possible, the instrument noun disambiguates:
 "strangle"/"straddle"/"time spread" → Pattern 1 (one position). Two distinct symbols → Pattern 2.
-
----
-
-## Implementation
-
-| Rule | Location |
-|---|---|
-| Badge → `<X BADGE />` marker | `htmlToLLMText()` in `src/parsing/html.ts` |
-| `PCS → {PDS, SHORT}` normalization | `pcsNormalize` in `src/intents/postprocess.ts` (TODO) |
-| `lotto/yolo → LONG` override | `lottoDirectionFix` in `src/intents/postprocess.ts` |
-| `wrote/writing → SHORT` override | `soldWroteDirectionFix` in `src/intents/postprocess.ts` |
-| Spread legs from strategy+direction | `spreadLegs()` in `src/lib/spread-legs.ts` |
-
-The LLM only needs to determine direction for:
-1. **Naked PUT**: look for sell verbs → SHORT; default LONG
-2. **STOCK**: read `<LONG BADGE />` / `<SHORT BADGE />` or authoritative verb
-
-For all spread strategies and CALL, direction is either postprocessed or defaults to LONG.

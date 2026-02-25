@@ -1,11 +1,8 @@
-import type { EvalCase, EvalResult, FieldScore } from './types.js';
-import type { Signal } from '../../agent/schemas.js';
+import type { EvalCase, EvalResult, FieldScore, ExpectedSignal, ExpectedLeg } from './types.js';
+import type { OrchestratorResult, ResolvedSignal, OptionLeg } from '../orchestrator/types.js';
 import { normalizeExpiry } from '../../backtest/occ-symbology.js';
 
 export const PASS_THRESHOLD = 0.8;
-
-type ActualLeg = { strike: number; expiry?: string; optionType: 'CALL' | 'PUT'; action: 'BUY' | 'SELL' };
-type ExpectedLeg = { strike?: number; expiry?: string; optionType?: 'CALL' | 'PUT'; action?: 'BUY' | 'SELL' };
 
 /** Compare two expiry strings using normalizeExpiry semantics. */
 function compareExpiry(
@@ -41,16 +38,21 @@ function compareExpiry(
   }
 }
 
+/** Extract option legs from a ResolvedSignal (filters out stock legs). */
+function getOptionLegs(signal: ResolvedSignal): OptionLeg[] {
+  return signal.legs.filter((l): l is OptionLeg => l.type === 'option');
+}
+
 /** Resolve a mustMatch path to a { matched, expected, actual } tuple. */
 function resolveMustMatchPath(
   path: string,
   evalCase: EvalCase,
-  actual: { decision: string; signals?: Signal[] },
+  result: OrchestratorResult,
   refDate: Date,
 ): { matched: boolean; expected: unknown; actual: unknown } {
-  if (path === 'decision') {
-    const exp = evalCase.expected.decision;
-    const act = actual.decision;
+  if (path === 'outcome') {
+    const exp = evalCase.expected.outcome;
+    const act = result.outcome;
     return { matched: exp === act, expected: exp, actual: act };
   }
 
@@ -62,14 +64,32 @@ function resolveMustMatchPath(
   const signalIdx = parseInt(signalMatch[1], 10);
   const rest = signalMatch[2];
   const expectedSignal = evalCase.expected.signals?.[signalIdx];
-  const actualSignal = actual.signals?.[signalIdx];
+  const actualSignal = result.outcome === 'EXECUTE' ? result.signals[signalIdx] : undefined;
+
+  // hasTradeId: expected is boolean, actual is tradeId != null
+  if (rest === 'hasTradeId') {
+    const expVal = expectedSignal?.hasTradeId;
+    const actVal = actualSignal ? actualSignal.tradeId != null : undefined;
+    if (expVal == null) return { matched: true, expected: expVal, actual: actVal };
+    return { matched: expVal === actVal, expected: expVal, actual: actVal };
+  }
+
+  // symbol: verify correct underlying ticker
+  if (rest === 'symbol') {
+    const expVal = expectedSignal?.symbol;
+    const actVal = actualSignal?.legs[0]?.symbol;
+    if (expVal == null) return { matched: true, expected: expVal, actual: actVal };
+    const matched = expVal.toUpperCase() === actVal?.toUpperCase();
+    return { matched, expected: expVal, actual: actVal };
+  }
 
   const legMatch = rest.match(/^legs\[(\d+)\]\.(.+)$/);
   if (legMatch) {
     const legIdx = parseInt(legMatch[1], 10);
     const field = legMatch[2];
     const expectedLeg = expectedSignal?.legs?.[legIdx];
-    const actualLeg = actualSignal?.legs?.[legIdx] as ActualLeg | undefined;
+    const actualLegs = actualSignal ? getOptionLegs(actualSignal) : [];
+    const actualLeg = actualLegs[legIdx];
 
     if (field === 'expiry') {
       const expExpiry = expectedLeg?.expiry;
@@ -79,12 +99,28 @@ function resolveMustMatchPath(
       return { matched, expected: expExpiry, actual: actExpiry };
     }
 
+    if (field === 'strike') {
+      const expStrike = expectedLeg?.strike;
+      const actStrike = actualLeg?.strike;
+      if (expStrike == null) return { matched: true, expected: expStrike, actual: actStrike };
+      const matched = actStrike != null && Math.abs(actStrike - expStrike) < 0.5;
+      return { matched, expected: expStrike, actual: actStrike };
+    }
+
     const expVal = expectedLeg ? (expectedLeg as Record<string, unknown>)[field] : undefined;
     const actVal = actualLeg ? (actualLeg as Record<string, unknown>)[field] : undefined;
     return { matched: expVal === actVal, expected: expVal, actual: actVal };
   }
 
   // signals[N].field (top-level signal field)
+  if (rest === 'exitPercent') {
+    const expVal = expectedSignal?.exitPercent;
+    const actVal = actualSignal?.exitPercent;
+    if (expVal == null) return { matched: true, expected: expVal, actual: actVal };
+    const matched = actVal != null && Math.abs(actVal - expVal) < 0.01;
+    return { matched, expected: expVal, actual: actVal };
+  }
+
   const expVal = expectedSignal ? (expectedSignal as Record<string, unknown>)[rest] : undefined;
   const actVal = actualSignal ? (actualSignal as Record<string, unknown>)[rest] : undefined;
   return { matched: expVal === actVal, expected: expVal, actual: actVal };
@@ -94,7 +130,7 @@ function resolveMustMatchPath(
 function scoreLeg(
   prefix: string,
   expectedLeg: ExpectedLeg,
-  actualLeg: ActualLeg | undefined,
+  actualLeg: OptionLeg | undefined,
   refDate: Date,
 ): FieldScore[] {
   const scores: FieldScore[] = [];
@@ -108,12 +144,12 @@ function scoreLeg(
     });
   }
 
-  if (expectedLeg.action != null) {
+  if (expectedLeg.side != null) {
     scores.push({
-      field: `${prefix}.action`,
-      matched: expectedLeg.action === actualLeg?.action,
-      expected: expectedLeg.action,
-      actual: actualLeg?.action,
+      field: `${prefix}.side`,
+      matched: expectedLeg.side === actualLeg?.side,
+      expected: expectedLeg.side,
+      actual: actualLeg?.side,
     });
   }
 
@@ -141,22 +177,18 @@ function scoreLeg(
   return scores;
 }
 
-type ExpectedSignal = NonNullable<EvalCase['expected']['signals']>[number];
-
 /** Count the number of scored fields for an expected signal (for scoring misses). */
 function countExpectedFields(expectedSig: ExpectedSignal): number {
-  let count = 1; // action always scored
-  if (expectedSig.symbol != null) count++;
-  if (expectedSig.direction != null) count++;
-  if (expectedSig.strategy != null) count++;
+  let count = 0;
+  if (expectedSig.orderType != null) count++;
+  if (expectedSig.hasTradeId != null) count++;
   if (expectedSig.exitPercent != null) count++;
-  if (expectedSig.targetStrategy != null) count++;
-  if (expectedSig.statedPremium != null) count++;
+  if (expectedSig.symbol != null) count++;
   if (expectedSig.legs != null) {
     count++; // legs.count
     for (const leg of expectedSig.legs) {
       if (leg.optionType != null) count++;
-      if (leg.action != null) count++;
+      if (leg.side != null) count++;
       if (leg.strike != null) count++;
       if (leg.expiry != null) count++;
     }
@@ -168,42 +200,27 @@ function countExpectedFields(expectedSig: ExpectedSignal): number {
 function scoreSignal(
   sigPrefix: string,
   expectedSig: ExpectedSignal,
-  actualSig: Signal,
+  actualSig: ResolvedSignal,
   refDate: Date,
 ): FieldScore[] {
   const scores: FieldScore[] = [];
 
-  scores.push({
-    field: `${sigPrefix}.action`,
-    matched: expectedSig.action === actualSig.action,
-    expected: expectedSig.action,
-    actual: actualSig.action,
-  });
-
-  if (expectedSig.symbol != null) {
+  if (expectedSig.orderType != null) {
     scores.push({
-      field: `${sigPrefix}.symbol`,
-      matched: expectedSig.symbol.toLowerCase() === actualSig.symbol.toLowerCase(),
-      expected: expectedSig.symbol,
-      actual: actualSig.symbol,
+      field: `${sigPrefix}.orderType`,
+      matched: expectedSig.orderType === actualSig.orderType,
+      expected: expectedSig.orderType,
+      actual: actualSig.orderType,
     });
   }
 
-  if (expectedSig.direction != null) {
+  if (expectedSig.hasTradeId != null) {
+    const actualHasTradeId = actualSig.tradeId != null;
     scores.push({
-      field: `${sigPrefix}.direction`,
-      matched: expectedSig.direction === actualSig.direction,
-      expected: expectedSig.direction,
-      actual: actualSig.direction,
-    });
-  }
-
-  if (expectedSig.strategy != null) {
-    scores.push({
-      field: `${sigPrefix}.strategy`,
-      matched: expectedSig.strategy === actualSig.strategy,
-      expected: expectedSig.strategy,
-      actual: actualSig.strategy,
+      field: `${sigPrefix}.hasTradeId`,
+      matched: expectedSig.hasTradeId === actualHasTradeId,
+      expected: expectedSig.hasTradeId,
+      actual: actualHasTradeId,
     });
   }
 
@@ -218,42 +235,33 @@ function scoreSignal(
     });
   }
 
-  if (expectedSig.targetStrategy != null) {
+  if (expectedSig.symbol != null) {
+    const actualSymbol = actualSig.legs[0]?.symbol;
     scores.push({
-      field: `${sigPrefix}.targetStrategy`,
-      matched: expectedSig.targetStrategy === actualSig.targetStrategy,
-      expected: expectedSig.targetStrategy,
-      actual: actualSig.targetStrategy,
-    });
-  }
-
-  if (expectedSig.statedPremium != null) {
-    const actualPremium = actualSig.statedPremium;
-    const matched = actualPremium != null && Math.abs(actualPremium - expectedSig.statedPremium) < 0.01;
-    scores.push({
-      field: `${sigPrefix}.statedPremium`,
-      matched,
-      expected: expectedSig.statedPremium,
-      actual: actualPremium,
+      field: `${sigPrefix}.symbol`,
+      matched: expectedSig.symbol.toUpperCase() === actualSymbol?.toUpperCase(),
+      expected: expectedSig.symbol,
+      actual: actualSymbol,
     });
   }
 
   if (expectedSig.legs != null) {
+    const actualLegs = getOptionLegs(actualSig);
+
     scores.push({
       field: `${sigPrefix}.legs.count`,
-      matched: expectedSig.legs.length === (actualSig.legs?.length ?? 0),
+      matched: expectedSig.legs.length === actualLegs.length,
       expected: expectedSig.legs.length,
-      actual: actualSig.legs?.length ?? 0,
+      actual: actualLegs.length,
     });
 
-    const actualLegs = (actualSig.legs ?? []) as ActualLeg[];
     const usedActualIndices = new Set<number>();
 
     for (let j = 0; j < expectedSig.legs.length; j++) {
       const expectedLeg = expectedSig.legs[j];
       const legPrefix = `${sigPrefix}.legs[${j}]`;
 
-      // Try to find matching actual leg by optionType+action first
+      // Try to find matching actual leg by optionType first
       let matchedActualIndex = -1;
       if (expectedLeg.optionType != null) {
         for (let k = 0; k < actualLegs.length; k++) {
@@ -286,14 +294,14 @@ function scoreSignal(
 
 export function scoreCase(
   evalCase: EvalCase,
-  actual: { decision: string; signals?: Signal[] },
+  orchestratorResult: OrchestratorResult,
   refDate: Date,
 ): EvalResult {
   const { expected } = evalCase;
   const fieldScores: FieldScore[] = [];
 
-  // Gate: decision mismatch → score 0 (not a hard fail, just wrong classification)
-  if (actual.decision !== expected.decision) {
+  // Gate: outcome mismatch -> score 0
+  if (orchestratorResult.outcome !== expected.outcome) {
     return {
       caseId: evalCase.id,
       description: evalCase.description,
@@ -302,15 +310,15 @@ export function scoreCase(
       score: 0,
       fieldScores: [],
       hardFailFields: [],
-      actualDecision: actual.decision,
-      expectedDecision: expected.decision,
-      actualSignals: actual.signals ?? [],
+      actualDecision: orchestratorResult.outcome,
+      expectedDecision: expected.outcome,
+      actualSignals: orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [],
       durationMs: 0,
       tags: evalCase.tags ?? [],
     };
   }
 
-  // Decision matches with no expected signals → perfect score
+  // Outcome matches with no expected signals -> perfect score
   if (!expected.signals || expected.signals.length === 0) {
     return {
       caseId: evalCase.id,
@@ -320,28 +328,47 @@ export function scoreCase(
       score: 1.0,
       fieldScores: [],
       hardFailFields: [],
-      actualDecision: actual.decision,
-      expectedDecision: expected.decision,
-      actualSignals: actual.signals ?? [],
+      actualDecision: orchestratorResult.outcome,
+      expectedDecision: expected.outcome,
+      actualSignals: orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [],
       durationMs: 0,
       tags: evalCase.tags ?? [],
     };
   }
+
+  const actualSignals = orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [];
 
   // Score each expected signal
   for (let i = 0; i < expected.signals.length; i++) {
     const expectedSig = expected.signals[i];
     const sigPrefix = `signals[${i}]`;
 
-    const actualSig = actual.signals?.find(
-      s =>
-        s.action === expectedSig.action &&
-        (expectedSig.symbol == null ||
-          s.symbol.toLowerCase() === expectedSig.symbol.toLowerCase()),
-    );
+    // Match expected signal to actual by leg optionTypes
+    let actualSig: ResolvedSignal | undefined;
+    if (actualSignals.length > 0) {
+      // Try matching by leg optionType composition
+      const expectedOptionTypes = expectedSig.legs
+        ?.map(l => l.optionType)
+        .filter(Boolean)
+        .sort() ?? [];
+
+      if (expectedOptionTypes.length > 0) {
+        actualSig = actualSignals.find(s => {
+          const actualOptionTypes = getOptionLegs(s)
+            .map(l => l.optionType)
+            .sort();
+          if (actualOptionTypes.length !== expectedOptionTypes.length) return false;
+          return actualOptionTypes.every((t, idx) => t === expectedOptionTypes[idx]);
+        });
+      }
+
+      // Fall back to positional match
+      if (!actualSig && i < actualSignals.length) {
+        actualSig = actualSignals[i];
+      }
+    }
 
     if (!actualSig) {
-      // No matching actual signal — count all expected fields as misses
       const missCount = countExpectedFields(expectedSig);
       for (let k = 0; k < missCount; k++) {
         fieldScores.push({
@@ -364,7 +391,7 @@ export function scoreCase(
   // Check mustMatch paths
   const hardFailFields: string[] = [];
   for (const path of (evalCase.mustMatch ?? [])) {
-    const { matched } = resolveMustMatchPath(path, evalCase, actual, refDate);
+    const { matched } = resolveMustMatchPath(path, evalCase, orchestratorResult, refDate);
     if (!matched) hardFailFields.push(path);
   }
 
@@ -379,9 +406,9 @@ export function scoreCase(
     score,
     fieldScores,
     hardFailFields,
-    actualDecision: actual.decision,
-    expectedDecision: expected.decision,
-    actualSignals: actual.signals ?? [],
+    actualDecision: orchestratorResult.outcome,
+    expectedDecision: expected.outcome,
+    actualSignals,
     durationMs: 0,
     tags: evalCase.tags ?? [],
   };

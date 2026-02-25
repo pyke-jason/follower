@@ -22,10 +22,18 @@ import type {
   StockLeg,
   Leg,
 } from './types.js';
+import type { Strategy } from '../../lib/enums.js';
 import { spreadLegs } from '../../lib/spread-legs.js';
+import { strikesFromParse } from './parser.js';
 import { createLogger } from '../../lib/logger.js';
 
 const log = createLogger('Orchestrator:OpenPath');
+
+type SpreadStrategy = 'CDS' | 'PDS' | 'PCS';
+const SPREAD_STRATEGIES = new Set<Strategy>(['CDS', 'PDS', 'PCS']);
+function isSpread(s: Strategy): s is SpreadStrategy { return SPREAD_STRATEGIES.has(s); }
+/** Credit strategies receive premium (negative limit price). */
+function isCreditStrategy(s: Strategy): boolean { return s === 'PCS'; }
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
@@ -179,8 +187,11 @@ function resolveExpiryHint(hint: string, messageDate: Date): string | null {
   // Explicit slash date: "3/6", "3/6/26", "3/6/2026"
   const slashMatch = hint.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
   if (slashMatch) {
-    const month = parseInt(slashMatch[1], 10) - 1; // 0-indexed
+    const rawMonth = parseInt(slashMatch[1], 10);
     const day = parseInt(slashMatch[2], 10);
+    // Validate ranges — reject impossible dates (e.g. strike pairs "68/67")
+    if (rawMonth < 1 || rawMonth > 12 || day < 1 || day > 31) return null;
+    const month = rawMonth - 1; // 0-indexed for Date constructor
     let year: number;
     if (slashMatch[3]) {
       const rawYear = parseInt(slashMatch[3], 10);
@@ -314,29 +325,9 @@ function generateWeeklyExpiries(from: Date, count = 6): string[] {
   return expiries;
 }
 
-// ── Strike selection derivation ────────────────────────────────────────────────
-
-function strikeSelectionFromParse(parse: ParseResult, cleanText: string): StrikeSelection {
-  if (parse.strikes && parse.strikes.length > 0) {
-    return { method: 'explicit', strikes: parse.strikes };
-  }
-
-  // Lotto/yolo context → buy cheap OTM (high delta from pricing perspective = price ~0.70)
-  const isLotto = /lotto|yolo/i.test(cleanText);
-  if (isLotto) {
-    return { method: 'delta', target: 0.70, bias: 'nearest' };
-  }
-
-  if (parse.premiumHint !== null) {
-    return { method: 'premium_match', statedPremium: parse.premiumHint };
-  }
-
-  return { method: 'atm' };
-}
-
 // ── Option type from strategy ──────────────────────────────────────────────────
 
-function optionTypeFromStrategy(strategy: 'CALL' | 'PUT' | 'CDS' | 'PDS'): 'CALL' | 'PUT' {
+function optionTypeFromStrategy(strategy: Strategy): 'CALL' | 'PUT' {
   return (strategy === 'CALL' || strategy === 'CDS') ? 'CALL' : 'PUT';
 }
 
@@ -350,31 +341,34 @@ export async function resolveOpenPath(
 
   if (!parse.symbol) {
     log.debug('open-path: missing symbol');
-    return { outcome: 'FLAG_FOR_REVIEW', reason: 'OPEN signal missing symbol' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'OPEN signal missing symbol' };
   }
 
   if (!parse.strategy) {
     log.debug('open-path: missing strategy');
-    return { outcome: 'FLAG_FOR_REVIEW', reason: 'OPEN signal missing strategy' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'OPEN signal missing strategy' };
   }
 
   const symbol = parse.symbol;
   const strategy = parse.strategy;
 
-  // Direction required for STOCK, CALL, PUT; for CDS/PDS direction is always known
-  if (strategy === 'STOCK' || strategy === 'CALL' || strategy === 'PUT') {
+  const spreadStrategy = isSpread(strategy);
+
+  // Direction required for STOCK, CALL, PUT; spreads derive it from legs
+  if (!spreadStrategy) {
     if (!parse.direction) {
       log.debug('open-path: missing direction for %s', strategy);
-      return { outcome: 'FLAG_FOR_REVIEW', reason: `OPEN signal missing direction for strategy ${strategy}` };
+      return { outcome: 'MANUAL_REVIEW', reason: `OPEN signal missing direction for strategy ${strategy}` };
     }
   }
 
-  const direction = parse.direction ?? (strategy === 'CDS' ? 'LONG' : 'LONG');
+  // For non-spread strategies, direction comes from parse. For spreads it's unused.
+  const direction = parse.direction ?? 'LONG';
 
   // ── Step 2: Resolve expiry ───────────────────────────────────────────────────
 
   const messageDate = parseMessageDate(ctx.timestamp);
-  const strikeSelection = strikeSelectionFromParse(parse, ctx.cleanText);
+  const strikeSelection = strikesFromParse(parse);
 
   let resolvedExpiry: string | null = null;
 
@@ -386,21 +380,30 @@ export async function resolveOpenPath(
     if (!resolvedExpiry) {
       log.debug('open-path: could not parse expiryHint "%s"', parse.expiryHint);
       return {
-        outcome: 'FLAG_FOR_REVIEW',
+        outcome: 'MANUAL_REVIEW',
         reason: `Could not interpret expiryHint: "${parse.expiryHint}"`,
       };
     }
     log.debug('open-path: resolved expiry %s from hint "%s"', resolvedExpiry, parse.expiryHint);
   } else {
-    // No expiryHint
+    // No expiryHint — try to find nearest real expiry via market data
     if (strikeSelection.method === 'premium_match') {
       // Will scan expiries — resolvedExpiry stays null until scan below
       resolvedExpiry = null;
     } else {
-      return {
-        outcome: 'FLAG_FOR_REVIEW',
-        reason: 'No expiry or premium to infer from',
-      };
+      let candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
+      if (!candidateExpiries.length) {
+        candidateExpiries = generateWeeklyExpiries(messageDate, 6);
+      }
+      if (candidateExpiries.length > 0) {
+        resolvedExpiry = candidateExpiries[0];
+        log.debug('open-path: defaulted to nearest expiry %s for %s (no hint)', resolvedExpiry, symbol);
+      } else {
+        return {
+          outcome: 'MANUAL_REVIEW',
+          reason: 'No expiry or premium to infer from',
+        };
+      }
     }
   }
 
@@ -418,21 +421,15 @@ export async function resolveOpenPath(
       return { error: 'stock handled separately' };
     }
 
-    const isSpread = strategy === 'CDS' || strategy === 'PDS';
-    const optType = optionTypeFromStrategy(strategy as 'CALL' | 'PUT' | 'CDS' | 'PDS');
+    const optType = optionTypeFromStrategy(strategy);
 
     if (strikeSelection.method === 'explicit') {
       const strikes = strikeSelection.strikes;
-      if (isSpread) {
+      if (spreadStrategy) {
         if (strikes.length < 2) {
           return { error: `Spread strategy ${strategy} requires 2 strikes, got ${strikes.length}` };
         }
-        const spreadLegsResult = spreadLegs(
-          strategy as 'CDS' | 'PDS',
-          direction as 'LONG' | 'SHORT',
-          strikes[0],
-          strikes[1],
-        );
+        const spreadLegsResult = spreadLegs(strategy as SpreadStrategy, strikes[0], strikes[1]);
         const legs: OptionLeg[] = spreadLegsResult.map(sl => ({
           type: 'option' as const,
           symbol,
@@ -471,14 +468,9 @@ export async function resolveOpenPath(
       const interval = detectStrikeInterval(stockPrice, chainStrikes);
       const atmStrike = roundToInterval(stockPrice, interval);
 
-      if (isSpread) {
+      if (spreadStrategy) {
         const otmStrike = optType === 'PUT' ? atmStrike - interval : atmStrike + interval;
-        const spreadLegsResult = spreadLegs(
-          strategy as 'CDS' | 'PDS',
-          direction as 'LONG' | 'SHORT',
-          atmStrike,
-          otmStrike,
-        );
+        const spreadLegsResult = spreadLegs(strategy as SpreadStrategy, atmStrike, otmStrike);
         const legs: OptionLeg[] = spreadLegsResult.map(sl => ({
           type: 'option' as const,
           symbol,
@@ -550,7 +542,7 @@ export async function resolveOpenPath(
         return { error: `No chain data for ${symbol} ${expiry}` };
       }
 
-      if (isSpread) {
+      if (spreadStrategy) {
         // For spreads: we need to find the combination of two strikes whose spread mid
         // is closest to stated premium. We'll pick the best matching pair.
         const sorted = [...chain.strikes].sort((a, b) => a.strike - b.strike);
@@ -579,12 +571,7 @@ export async function resolveOpenPath(
           return { error: `premium_mismatch: best spread diff ${bestDiff.toFixed(2)} > tolerance ${tolerance.toFixed(2)}` };
         }
 
-        const spreadLegsResult = spreadLegs(
-          strategy as 'CDS' | 'PDS',
-          direction as 'LONG' | 'SHORT',
-          bestStrikes[0],
-          bestStrikes[1],
-        );
+        const spreadLegsResult = spreadLegs(strategy as SpreadStrategy, bestStrikes[0], bestStrikes[1]);
         const legs: OptionLeg[] = spreadLegsResult.map(sl => ({
           type: 'option' as const,
           symbol,
@@ -657,7 +644,7 @@ export async function resolveOpenPath(
       }
       // Found a matching expiry
       log.debug('open-path: premium scan matched expiry %s for %s', expiry, symbol);
-      const limitPrice = buildLimitPrice(result.limitPrice, direction);
+      const limitPrice = buildLimitPrice(result.limitPrice, strategy, direction);
       const signal: ResolvedSignal = {
         orderType: result.legs.length > 1 ? 'SPREAD' : 'SINGLE',
         legs: result.legs,
@@ -667,7 +654,7 @@ export async function resolveOpenPath(
     }
 
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: `premium mismatch: no expiry found matching stated premium of ${(strikeSelection as { statedPremium: number }).statedPremium} for ${symbol}`,
     };
   }
@@ -675,13 +662,13 @@ export async function resolveOpenPath(
   // ── Single expiry path ───────────────────────────────────────────────────────
 
   if (!resolvedExpiry) {
-    return { outcome: 'FLAG_FOR_REVIEW', reason: 'No expiry resolved' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'No expiry resolved' };
   }
 
   const buildResult = await buildLegsForExpiry(resolvedExpiry);
   if ('error' in buildResult) {
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: buildResult.error,
     };
   }
@@ -724,7 +711,7 @@ export async function resolveOpenPath(
             );
             const orderType = resolvedLegs.legs.length > 1 ? 'SPREAD' : 'SINGLE';
             return {
-              outcome: 'FLAG_FOR_REVIEW',
+              outcome: 'MANUAL_REVIEW',
               reason: `Premium mismatch: stated ${parse.premiumHint} vs market mid ${computedMid.toFixed(2)}`,
               partial: [{ orderType, legs: resolvedLegs.legs }],
             };
@@ -739,6 +726,7 @@ export async function resolveOpenPath(
   const isSpreadSignal = resolvedLegs.legs.length > 1;
   const limitPrice = buildLimitPrice(
     resolvedLegs.limitPrice ?? parse.premiumHint ?? undefined,
+    strategy,
     direction,
   );
 
@@ -764,14 +752,16 @@ export async function resolveOpenPath(
 
 /**
  * Apply sign convention to limitPrice:
- * - LONG / debit strategies → positive (paying premium)
- * - SHORT / credit strategies → negative (receiving premium)
+ * - Debit strategies → positive (paying premium)
+ * - Credit strategies (PCS, sold options) → negative (receiving premium)
  */
 function buildLimitPrice(
   price: number | undefined,
+  strategy: Strategy,
   direction: string,
 ): number | undefined {
   if (price === undefined || price === null) return undefined;
   const abs = Math.abs(price);
-  return direction === 'SHORT' ? -abs : abs;
+  const credit = isCreditStrategy(strategy) || direction === 'SHORT';
+  return credit ? -abs : abs;
 }

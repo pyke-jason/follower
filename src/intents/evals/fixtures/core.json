@@ -2,104 +2,171 @@
   "cases": [
     {
       "id": "core-001",
-      "description": "Pure social commentary — must produce SKIP, not EXECUTE",
+      "description": "Pure market commentary about lotto opportunities — no actionable signal",
       "input": {
-        "message": "great day out there everyone, enjoy the weekend",
-        "symbols": []
+        "rawHtml": "<html><head></head><body><div>A VWAP rejection here would give some good lotto opportunities&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-12T17:49:12.000Z"
       },
       "expected": {
-        "decision": "SKIP"
+        "outcome": "SKIP"
       },
-      "mustMatch": [],
-      "tags": ["core", "skip"]
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Speculative commentary about potential future opportunities. No ticker, no trade details."
     },
     {
       "id": "core-002",
-      "description": "'Adding more NVDA calls' — add-on with no strikes, OPEN LONG CALL",
+      "description": "Status update about current positions — no actionable signal",
       "input": {
-        "message": "Adding more NVDA calls, avg down",
-        "symbols": ["NVDA"]
+        "rawHtml": "<html><head></head><body><div>any trades i have on now are non directional straddles strangles and time spreads&nbsp;</div></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-11-20T20:56:16.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "OPEN",
-            "symbol": "NVDA",
-            "direction": "LONG",
-            "strategy": "CALL"
-          }
-        ]
+        "outcome": "SKIP"
       },
-      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
-      "tags": ["core"],
-      "notes": "'Adding more' = OPEN, system detects existing position."
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Describing existing positions, not opening or closing anything."
     },
     {
       "id": "core-003",
-      "description": "'Locked in AMZN 200/210 CDS for 3.50' — entry details mean OPEN not CLOSE",
+      "description": "Forward-looking conditional intent to leg out of MSFT PCS — not actionable yet",
       "input": {
-        "message": "Locked in AMZN 200/210 CDS for 3.50",
-        "symbols": ["AMZN"]
+        "rawHtml": "<html><head></head><body><div>I am prepared to leg out of the <a href=\"/option-stalker/chart/MSFT\" target=\"os\" data-symbol=\"MSFT\" data-criteria=\"Bear\"><b>MSFT</b></a> PCS, but I need stock and market weakness to line up before I attempt that. Right now, I am just evaluating. That was a nice breach of support. We lean on support when we sell these spreads. That is where buyers should be interested. When those levels fail, we treat them just like any other breakdown. The stock becomes an attractive short. I am in wait and see mode. There is plenty of time to evaluate the stock and it is one that can recover quickly.&nbsp;</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-11-06T14:38:30.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "OPEN",
-            "symbol": "AMZN",
-            "direction": "LONG",
-            "strategy": "CDS",
-            "statedPremium": 3.50,
-            "legs": [
-              { "action": "BUY", "strike": 200, "optionType": "CALL" },
-              { "action": "SELL", "strike": 210, "optionType": "CALL" }
-            ]
-          }
-        ]
+        "outcome": "SKIP"
       },
-      "mustMatch": ["signals[0].action", "signals[0].direction"],
-      "tags": ["core"],
-      "notes": "'Locked in' + entry details (strikes + premium + strategy) = OPEN not CLOSE."
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Conditional future intent ('prepared to', 'need weakness to line up', 'wait and see mode'). No action taken."
     },
     {
       "id": "core-004",
-      "description": "'NVDA having a great day, wish I had more' — sentiment commentary, not a signal",
+      "description": "Commentary about holding TERN and looking to exit later — no action now",
       "input": {
-        "message": "NVDA having a great day, wish I had more",
-        "symbols": ["NVDA"]
+        "rawHtml": "<html><head></head><body><div>I am not worried about holding <a href=\"/option-stalker/chart/TERN\" target=\"os\" data-symbol=\"TERN\"><b>TERN</b></a> overnight, but I will be looking to exit in the next few days. Strong stock, but poor entry.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-10T20:55:39.000Z"
       },
       "expected": {
-        "decision": "SKIP"
+        "outcome": "SKIP"
       },
-      "mustMatch": [],
-      "tags": ["core", "skip"]
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Future intent to exit ('will be looking to exit'). No trade executed in this message."
     },
     {
       "id": "core-005",
-      "description": "'Short ABNB Lotto $123 Puts' — Lotto always = buy, Short = bearish view",
+      "description": "General advice about day trading options vs shares — pure commentary",
       "input": {
-        "message": "Short ABNB Lotto $123 Puts for .21",
-        "symbols": ["ABNB"]
+        "rawHtml": "<html><head></head><body><div>I personally dont think you need to DT options anyways. I find shares a lot easier to manage especially with DT margin. You dont pay unless you hold overnight so theres no issue with BP on the larger positions. Also it's a lot faster to execute a trade and to get in/out with shares. Today I was futzing around with options on <a href=\"/option-stalker/chart/UBER\" target=\"os\" data-symbol=\"UBER\" data-criteria=\"Bear\"><b>UBER</b></a> after my entry was confirmed and probably lost about 0.20 of profit before giving up and just taking a shares entry. &nbsp;<br>\n            <blockquote>\n               <i class=\"bx bxs-quote-left\"></i> <b><b data-user=\"JBS\">@JBS</b></b>: I hit my targets with 1 share, and I sized up in November. had a learning curve in November, learnings to day trade options and navigating the choppy markets, but things are turning around in december... <a data-msglink=\"\" href=\"#m-486447\">View<i class=\"bx bx-chevron-right\"></i></a> \n         \t </blockquote>\n\t\t\t\t\t <div></div></div></body></html>",
+        "author": "Isidore",
+        "timestamp": "2025-12-11T02:05:48.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Educational commentary about shares vs options trading. Mentions UBER incidentally in a past-tense anecdote, not as a signal."
+    },
+    {
+      "id": "core-006",
+      "description": "Monitoring an existing AMZN PCS lotto position — no new trade",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>I have an <a href=\"/option-stalker/chart/AMZN\" target=\"os\" data-symbol=\"AMZN\"><b>AMZN</b></a> lotto $227.50.$225 PCS that I am watching. For now all is good, but if the market sells off, I have to make sure the stock is stable. For now, it has been.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-05T16:34:03.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Describes an existing position ('I have an AMZN lotto PCS that I am watching'). Position monitoring, not a new trade."
+    },
+    {
+      "id": "core-007",
+      "description": "Feedback Request badge on GS PCS — not a trade entry",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-faded-purple text-purple\">Feedback Request</span>&nbsp;<a href=\"/option-stalker/chart/GS\" target=\"os\" data-symbol=\"GS\" data-criteria=\"Bull\"><b>GS</b></a>&nbsp;PCS 880/875 @ 1.25 credit.</body></html>",
+        "author": "JR21",
+        "timestamp": "2025-12-11T15:44:07.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["core", "skip"],
+      "notes": "Feedback Request badge means asking for community feedback, not announcing a trade entry."
+    },
+    {
+      "id": "core-008",
+      "description": "Hariseldon buys MSTR stock — Long badge, 1000 shares at $185.01",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> $185.01 - 1,000 Shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-09T15:37:39.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "ABNB",
-            "direction": "LONG",
-            "strategy": "PUT",
-            "statedPremium": 0.21,
-            "legs": [
-              { "action": "BUY", "strike": 123, "optionType": "PUT" }
-            ]
+            "orderType": "STOCK",
+            "hasTradeId": false
           }
         ]
       },
-      "mustMatch": ["signals[0].direction"],
-      "tags": ["core", "lotto"],
-      "notes": "Lotto = speculative buy always. Short = bearish stock view."
+      "mustMatch": ["outcome", "signals[0].orderType"],
+      "tags": ["core", "stock"],
+      "notes": "Clear stock entry: Long badge + ticker + price + share count. No options involved."
+    },
+    {
+      "id": "core-009",
+      "description": "Hariseldon buys NVDA stock — Long badge, 1000 shares at $185.16",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> $185.16 - 1,000 Shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-08T17:57:51.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "hasTradeId": false
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType"],
+      "tags": ["core", "stock"],
+      "notes": "Clear stock entry: Long badge + ticker + price + share count."
+    },
+    {
+      "id": "core-010",
+      "description": "Hariseldon shorts MSTR stock — Short badge, 1000 shares at $180.63 (data-symbol typo MNSTR)",
+      "input": {
+        "rawHtml": "<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/MNSTR\" target=\"os\" data-symbol=\"MNSTR\"><b>MSTR</b></a> $180.63 - 1,000 Shares&nbsp;",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-11T19:42:31.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "hasTradeId": false
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType"],
+      "tags": ["core", "stock"],
+      "notes": "Stock short entry. data-symbol is 'MNSTR' (DB typo) but bold text reads 'MSTR'. Parser uses extractSymbols from data-symbol attributes."
     }
   ]
 }

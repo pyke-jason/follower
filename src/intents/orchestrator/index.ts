@@ -5,7 +5,7 @@
  * resolution engine. Each message is routed to the cheapest path that can
  * fully resolve it:
  *
- *   parse → route → resolve → ResolvedSignal[] | SKIP | FLAG_FOR_REVIEW
+ *   parse → route → resolve → ResolvedSignal[] | SKIP | MANUAL_REVIEW
  *
  * Routes (in order of precedence):
  *   1. Hard skip  → SKIP immediately (no I/O)
@@ -44,7 +44,7 @@ const log = createLogger('Orchestrator');
  * @param ctx      All context the orchestrator might need (message, market data, positions, chat)
  * @param provider Optional LLM provider. Required if the message needs NLU (complex language,
  *                 casual exits, follow trades). If null and the LLM path is triggered,
- *                 returns FLAG_FOR_REVIEW.
+ *                 returns MANUAL_REVIEW.
  */
 export async function resolveOrchestrator(
   ctx: OrchestratorContext,
@@ -61,7 +61,7 @@ export async function resolveOrchestrator(
 
   // ── 1. Hard skip ────────────────────────────────────────────────────────────
   if (parse.isHardSkip) {
-    log.debug(`[${ctx.messageId}] hard skip: ${parse.skipReason}`);
+    logResult(ctx, parse, { outcome: 'SKIP', reason: parse.skipReason ?? 'hard skip' });
     return { outcome: 'SKIP', reason: parse.skipReason ?? 'hard skip' };
   }
 
@@ -69,7 +69,9 @@ export async function resolveOrchestrator(
   // Strangles decompose into two SINGLE signals: one CALL and one PUT.
   if (parse.isStrangle) {
     log.debug(`[${ctx.messageId}] strangle → forking into CALL + PUT`);
-    return resolveStrangle(parse, ctx);
+    const r = await resolveStrangle(parse, ctx);
+    logResult(ctx, parse, r);
+    return r;
   }
 
   // ── 3 & 4. Deterministic paths ──────────────────────────────────────────────
@@ -80,7 +82,9 @@ export async function resolveOrchestrator(
   if (!needsLLM) {
     if (parse.action === 'OPEN' || parse.action === 'ADD') {
       log.debug(`[${ctx.messageId}] → open path`);
-      return resolveOpenPath(parse, ctx);
+      const r = await resolveOpenPath(parse, ctx);
+      logResult(ctx, parse, r);
+      return r;
     }
 
     if (
@@ -89,7 +93,9 @@ export async function resolveOrchestrator(
       parse.action === 'LEG_OFF'
     ) {
       log.debug(`[${ctx.messageId}] → position path (${parse.action})`);
-      return resolvePositionPath(parse, ctx);
+      const r = await resolvePositionPath(parse, ctx);
+      logResult(ctx, parse, r);
+      return r;
     }
   }
 
@@ -103,13 +109,50 @@ export async function resolveOrchestrator(
     log.warn(
       `[${ctx.messageId}] LLM path needed (${flagDetail}) but no provider supplied`,
     );
-    return {
-      outcome: 'FLAG_FOR_REVIEW',
+    const r: OrchestratorResult = {
+      outcome: 'MANUAL_REVIEW',
       reason: `Requires NLU (${flagDetail}) but no LLM provider available`,
     };
+    logResult(ctx, parse, r);
+    return r;
   }
 
-  return resolveLLMPath(parse, ctx, provider);
+  const r = await resolveLLMPath(parse, ctx, provider);
+  logResult(ctx, parse, r);
+  return r;
+}
+
+// ── Info-level summary log ────────────────────────────────────────────────────
+
+function logResult(ctx: OrchestratorContext, parse: ParseResult, result: OrchestratorResult): void {
+  const id = `[${ctx.messageId}]`;
+  const who = ctx.author;
+
+  if (result.outcome === 'SKIP') {
+    log.info(`${id} ${who} | SKIP ${result.reason}`);
+    return;
+  }
+
+  const head = [parse.action, parse.strategy, parse.symbol].filter(Boolean).join(' ');
+
+  // Compact key=value for non-null parse fields
+  const fields: string[] = [];
+  if (parse.strikes) fields.push(`strikes=${parse.strikes.join('/')}`);
+  if (parse.expiryHint) fields.push(`expiry="${parse.expiryHint}"`);
+  if (parse.premiumHint != null) fields.push(`premium=${parse.premiumHint}`);
+  if (parse.direction) fields.push(`dir=${parse.direction}`);
+  if (parse.isLotto) fields.push('lotto');
+  if (parse.isStrangle) fields.push('strangle');
+  if (parse.exitPercent != null) fields.push(`exit=${parse.exitPercent}`);
+  if (parse.complexityFlags.size > 0) fields.push(`flags=[${[...parse.complexityFlags].join(',')}]`);
+  const detail = fields.length > 0 ? ` | ${fields.join(' ')}` : '';
+
+  if (result.outcome === 'EXECUTE') {
+    const legCount = result.signals.reduce((n, s) => n + s.legs.length, 0);
+    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)`);
+  } else {
+    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}`);
+  }
 }
 
 // ── Strangle resolution ───────────────────────────────────────────────────────
@@ -144,7 +187,7 @@ async function resolveStrangle(
   for (const result of [callResult, putResult]) {
     if (result.outcome === 'EXECUTE') {
       signals.push(...result.signals);
-    } else if (result.outcome === 'FLAG_FOR_REVIEW') {
+    } else if (result.outcome === 'MANUAL_REVIEW') {
       flagReasons.push(result.reason);
     }
   }
@@ -154,7 +197,7 @@ async function resolveStrangle(
   }
 
   return {
-    outcome: 'FLAG_FOR_REVIEW',
+    outcome: 'MANUAL_REVIEW',
     reason: `strangle resolution failed: ${flagReasons.join('; ')}`,
   };
 }

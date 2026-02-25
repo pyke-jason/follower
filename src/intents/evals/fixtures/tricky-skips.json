@@ -1,0 +1,94 @@
+{
+  "cases": [
+    {
+      "id": "tricky-skip-001",
+      "description": "Pete says 'Nothing actionable' despite mentioning 8+ real tickers (NVDA, GOOG, AMZN, QCOM, AMD, TSM, AVGO, BABA, BIDU)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Nothing actionable, but <a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> is going to face more and more competition. They might have a head start, but <a href=\"/option-stalker/chart/GOOG\" target=\"os\" data-symbol=\"GOOG\"><b>GOOG</b></a>, <a href=\"/option-stalker/chart/AMZN\" target=\"os\" data-symbol=\"AMZN\"><b>AMZN</b></a>, <a href=\"/option-stalker/chart/QCOM\" target=\"os\" data-symbol=\"QCOM\"><b>QCOM</b></a>, <a href=\"/option-stalker/chart/AMD\" target=\"os\" data-symbol=\"AMD\"><b>AMD</b></a>, <a href=\"/option-stalker/chart/TSM\" target=\"os\" data-symbol=\"TSM\" data-criteria=\"Bull\"><b>TSM</b></a>, <a href=\"/option-stalker/chart/AVGO\" target=\"os\" data-symbol=\"AVGO\"><b>AVGO</b></a> and a host of other companies are developing chips. <a href=\"/option-stalker/chart/BABA\" target=\"os\" data-symbol=\"BABA\"><b>BABA</b></a>, <a href=\"/option-stalker/chart/BIDU\" target=\"os\" data-symbol=\"BIDU\"><b>BIDU</b></a> and Huawei are making chips as well.&nbsp;&nbsp;</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-02T17:12:44.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["tricky-skip", "multi-ticker-commentary"],
+      "notes": "Explicitly says 'Nothing actionable' at the top. Multiple tickers are mentioned as market analysis — Pete is discussing competitive dynamics, not entering or exiting any position. The density of real symbols could fool a naive classifier into thinking this is a trade message."
+    },
+    {
+      "id": "tricky-skip-002",
+      "description": "Pete posting a GTC sell offer on TLRY at $12.45 — pending limit order, not a completed fill",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Offering <a href=\"/option-stalker/chart/TLRY\" target=\"os\" data-symbol=\"TLRY\"><b>TLRY</b></a> $12.45. If I get a pop I want to have an offer working.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-12T19:38:37.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["tricky-skip", "pending-order"],
+      "notes": "This has a real ticker and a specific price — hallmarks of an executed trade. But 'Offering' means Pete is placing a limit sell order that has NOT been filled yet. 'If I get a pop I want to have an offer working' confirms this is a future conditional. No trade has occurred."
+    },
+    {
+      "id": "tricky-skip-003",
+      "description": "Hariseldon setting an alert on MCD with a conditional bullish thesis — watchlist action, not a trade",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Setting an alert on <a href=\"/option-stalker/chart/MCD\" target=\"os\" data-symbol=\"MCD\"><b>MCD</b></a> - clear TL it needs to break - if it does there is a nice bullish play to made for the stock - <a href=\"/option-stalker/chart/CSCO\" target=\"os\" data-symbol=\"CSCO\"><b>CSCO</b></a> is a strong bullish pick right now however&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-08T16:59:31.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["tricky-skip", "alert-watchlist"],
+      "notes": "Two real tickers with a bullish view expressed on both. 'Setting an alert' means no trade was placed — this is a watchlist/monitoring action. The conditional 'if it does there is a nice bullish play' further confirms nothing was executed. CSCO is described as 'a strong pick' but no position was opened."
+    },
+    {
+      "id": "tricky-skip-004",
+      "description": "Pete recapping existing positions across 5 tickers with strategy names — portfolio summary, no new action",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>As a recap, I am long <a href=\"/option-stalker/chart/CLF\" target=\"os\" data-symbol=\"CLF\"><b>CLF</b></a>, <a href=\"/option-stalker/chart/HIMS\" target=\"os\" data-symbol=\"HIMS\"><b>HIMS</b></a> and I have naked puts on <a href=\"/option-stalker/chart/IONQ\" target=\"os\" data-symbol=\"IONQ\"><b>IONQ</b></a> and <a href=\"/option-stalker/chart/IREN\" target=\"os\" data-symbol=\"IREN\"><b>IREN</b></a>. My <a href=\"/option-stalker/chart/GOOG\" target=\"os\" data-symbol=\"GOOG\"><b>GOOG</b></a> spread will expire worthless today for a 25% gain. All told I've had a very solid month between the adjustments and futures trades and that is even considering where I own these stocks.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-11-21T14:36:24.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["tricky-skip", "position-recap"],
+      "notes": "This message contains real tickers, strategy names ('naked puts', 'spread'), and P&L information ('25% gain') — all the surface features of a trade signal. But 'As a recap' signals this is a portfolio status summary of already-open positions, not any new open or close action. The GOOG spread expiring worthless is an automatic expiry event, not an explicit CLOSE signal from the trader."
+    },
+    {
+      "id": "tricky-skip-005",
+      "description": "Pete describing desire to sell RKLB puts with specific strike and expiry but explicitly declining to act",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>I am watching <a href=\"/option-stalker/chart/RKLB\" target=\"os\" data-symbol=\"RKLB\" data-criteria=\"Bull\"><b>RKLB</b></a>. I would sell some $50 puts Dec (19), but I don't want to chase this breakout. Volume good.&nbsp;</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-10T15:09:22.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["tricky-skip", "conditional-intent"],
+      "notes": "This is the most deceptive case: real ticker, specific strategy (naked put), specific strike ($50), specific expiry (Dec 19). This looks exactly like a short put signal. But 'I would sell... but I don't want to chase' explicitly says the trade was NOT placed. The conjunction 'but' followed by hesitation is the key discriminator — Pete evaluated and declined to act."
+    },
+    {
+      "id": "tricky-skip-006",
+      "description": "Pete offering JNJ Nov $190 calls at $3.40 to scratch an existing position — limit order working, not a new fill",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Offering <a href=\"/option-stalker/chart/JNJ\" target=\"os\" data-symbol=\"JNJ\"><b>JNJ</b></a> Nov (21) $190 calls @ $3.40. Trying to scratch a trade that did not perform.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-11-11T14:39:03.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["tricky-skip", "pending-order"],
+      "notes": "This has ticker, strategy (calls), expiry (Nov 21), strike ($190), and price ($3.40) — an extremely convincing trade signal. But 'Offering... @ $3.40' means Pete is posting a limit sell order that has NOT yet been filled. 'Trying to scratch a trade' confirms this is an aspiration, not a completed exit. Executing on this would duplicate an order that may never fill or may be cancelled."
+    }
+  ]
+}

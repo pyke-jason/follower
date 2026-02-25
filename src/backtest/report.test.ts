@@ -38,7 +38,7 @@ function arbTrades(count: { min: number; max: number }) {
       trader: arbTrader,
       strategy: arbStrategy,
     }),
-    count,
+    { minLength: count.min, maxLength: count.max },
   ).map((items) =>
     items.map((item, i) => makeTrade({
       pnl: item.pnl,

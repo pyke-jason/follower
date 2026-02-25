@@ -1,0 +1,143 @@
+{
+  "cases": [
+    {
+      "id": "assign-001",
+      "description": "Pete acquires HIMS stock via put assignment — Long badge, no option details",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/HIMS\" target=\"os\" data-symbol=\"HIMS\"><b>HIMS</b></a> @ $40.75 via assignment.&nbsp;</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-11-21T14:33:37.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "hasTradeId": false }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType"],
+      "tags": ["assignment", "stock"],
+      "notes": "'via assignment' = stock acquired through put assignment. Long badge confirms bullish direction. This is a STOCK OPEN (new position), not an options trade. The put that was assigned is now closed; trader now holds shares. Price $40.75 is the effective cost basis."
+    },
+    {
+      "id": "assign-002",
+      "description": "Pete acquires CLF stock via call assignment — 'via assignment of the Nov (21) $15 calls'",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/CLF\" target=\"os\" data-symbol=\"CLF\"><b>CLF</b></a> $14.29 via assignment of the Nov (21) $15 calls. I am holding the stock.</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-11-17T14:51:07.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "hasTradeId": false }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType"],
+      "tags": ["assignment", "stock"],
+      "notes": "'Long CLF $14.29 via assignment of the Nov (21) $15 calls' — Pete was short $15 calls (covered calls) on CLF. The stock was called away at $15, but because he already held shares his cost basis worked out to $14.29 net of premium. He immediately bought back in (or retained shares from assignment mechanics). Regardless of the exact mechanics, the message announces a new STOCK LONG position at $14.29. 'I am holding the stock' confirms. Signal: STOCK OPEN LONG."
+    },
+    {
+      "id": "assign-003",
+      "description": "Pete ULTA lotto expired worthless — informational, system auto-handles expiry",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;My <a href=\"/option-stalker/chart/ULTA\" target=\"os\" data-symbol=\"ULTA\"><b>ULTA</b></a> lotto expired worthless. Looks like my wife will have to get her hair done some other time.&nbsp;</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-05T21:03:23.000Z",
+        "positions": [
+          {
+            "id": "pos-ulta-call",
+            "symbol": "ULTA",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "ULTA  251205C00420000", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 420, "type": "option", "optionType": "CALL" }],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["assignment", "expiry", "skip"],
+      "notes": "'lotto expired worthless' is a past-tense informational statement. The option already expired; there is nothing to execute at the broker. sweepExpired() handles end-of-day expiry cleanup automatically. Even with an Exit badge present, no broker order is possible on an already-expired option. SKIP."
+    },
+    {
+      "id": "assign-004",
+      "description": "Pete ACHR puts expired worthless — past-tense recap, no badge, no action",
+      "input": {
+        "rawHtml": "<html><head></head><body><div><a href=\"/option-stalker/chart/ACHR\" target=\"os\" data-symbol=\"ACHR\" data-criteria=\"Bear\"><b>ACHR</b></a> puts expired worthless last Fri.&nbsp;</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-11-07T21:16:52.000Z",
+        "positions": [
+          {
+            "id": "pos-achr-put",
+            "symbol": "ACHR",
+            "strategy": "PUT",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "ACHR  251101P00020000", "side": "SELL", "quantity": 1, "expiry": "2025-11-01", "strike": 20, "type": "option", "optionType": "PUT" }],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["assignment", "expiry", "skip"],
+      "notes": "'expired worthless last Fri' — past-tense, referring to last Friday's expiry. No Exit badge. The position is already gone. sweepExpired() would have handled this. No broker action is possible or needed. SKIP."
+    },
+    {
+      "id": "assign-005",
+      "description": "Pete JOBY puts 'will expire worthless today' — Exit badge, but expiry is imminent not immediate action",
+      "input": {
+        "rawHtml": "<span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/JOBY\" target=\"os\" data-symbol=\"JOBY\"><b>JOBY</b></a> Oct (3) $15 puts will expire worthless today. I sold them for $.60 and held $7.50 in reserve so that I could take assignment. Based on that, I made an 8% return in two weeks without breaking a sweat. If this market is challenging for you, this is a fantastic return and you can distance your self from all of the wiggles and jiggles.&nbsp; The position has not expired yet, but I doubt the stock will drop 10% today and I didn't want to forget about the trade.",
+        "author": "Pete",
+        "timestamp": "2025-10-03T13:38:43.000Z",
+        "positions": [
+          {
+            "id": "pos-joby-put",
+            "symbol": "JOBY",
+            "strategy": "PUT",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "JOBY  251003P00015000", "side": "SELL", "quantity": 1, "expiry": "2025-10-03", "strike": 15, "type": "option", "optionType": "PUT" }],
+            "quantity": 8
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["assignment", "expiry", "skip"],
+      "notes": "'will expire worthless today' is a forward-looking expectation, not a close order. Pete explicitly says 'The position has not expired yet' and does not instruct a close. This is an anticipatory comment. sweepExpired() will handle the position at EOD. Exit badge reflects Pete's view that the trade is effectively over, not a buy-to-close instruction. SKIP."
+    },
+    {
+      "id": "assign-006",
+      "description": "Pete AVGO PCS 'the spread expired worthless' — Exit badge, past tense, position closed at expiry",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/AVGO\" target=\"os\" data-symbol=\"AVGO\"><b>AVGO</b></a> Nov (28) PCS for 25% gain. The spread expired worthless and it only lasted a week. I sold it the Fri morning after the big gap reversal on Nov 20.</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-01T14:34:23.000Z",
+        "positions": [
+          {
+            "id": "pos-avgo-pcs",
+            "symbol": "AVGO",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              { "symbol": "AVGO  251128P00165000", "side": "SELL", "quantity": 1, "expiry": "2025-11-28", "strike": 165, "type": "option", "optionType": "PUT" },
+              { "symbol": "AVGO  251128P00160000", "side": "BUY", "quantity": 1, "expiry": "2025-11-28", "strike": 160, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["assignment", "expiry", "skip", "spreads"],
+      "notes": "'the spread expired worthless' is past tense — the Nov 28 expiry already passed (this is posted Dec 1). No broker action possible. Pete is reporting the outcome as a win. Exit badge is retrospective. sweepExpired() handles the record. SKIP."
+    }
+  ]
+}

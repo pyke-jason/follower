@@ -2,205 +2,462 @@
   "cases": [
     {
       "id": "exits-001",
-      "description": "'Took profits on CRWV calls' — exit language → CLOSE",
+      "description": "'Exit MSTR for a .11 loss on the lotto' — Hariseldon CLOSE PUT LONG lotto",
       "input": {
-        "message": "Took profits on CRWV calls this morning",
-        "symbols": ["CRWV"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> for a .11 loss on the lotto - not enough time left&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-12T20:50:39.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "CRWV",
-            "strategy": "CALL"
+            "id": "pos-mstr-put-1",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251212P00177500", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 177.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 25
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"]
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close"],
+      "notes": "Exit badge + lotto ref. 'Short' badge on original open = bearish view, but lotto = buying puts = LONG direction. Position matches by symbol."
     },
     {
       "id": "exits-002",
-      "description": "'Sold half my TSLA puts' — partial exit → TRIM exitPercent 0.5",
+      "description": "'Exit MSTR lotto took 100% profit ty Hari' — Dave W CLOSE PUT LONG lotto",
       "input": {
-        "message": "Sold half my TSLA puts, letting the rest ride",
-        "symbols": ["TSLA"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> lotto&nbsp; took 100% profit&nbsp; ty Hari&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-12T20:38:10.000Z",
+        "positions": [
           {
-            "action": "TRIM",
-            "symbol": "TSLA",
+            "id": "pos-mstr-put-2",
+            "symbol": "MSTR",
             "strategy": "PUT",
-            "exitPercent": 0.5
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251212P00177500", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 177.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 5
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].exitPercent"],
-      "tags": ["exits", "trim"]
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close"],
+      "notes": "Exit badge + lotto keyword. Dave W followed Hari's MSTR lotto play. Position is PUT LONG (lotto = buy to open)."
     },
     {
       "id": "exits-003",
-      "description": "'Done with the MSTR position, booked a small gain' → CLOSE",
+      "description": "'Exit Short AVGO lotto for 35% profit' — Dave W CLOSE PUT LONG (Short badge = bearish view, lotto = buy)",
       "input": {
-        "message": "Done with the MSTR position, booked a small gain",
-        "symbols": ["MSTR"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/AVGO\" target=\"os\" data-symbol=\"AVGO\" data-criteria=\"Bear\"><b>AVGO</b></a> lotto for 35% profit&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-12T20:07:02.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "MSTR"
+            "id": "pos-avgo-put-1",
+            "symbol": "AVGO",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "AVGO  251213P00220000", "side": "BUY", "quantity": 1, "expiry": "2025-12-13", "strike": 220, "type": "option", "optionType": "PUT" }],
+            "quantity": 3
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"]
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close"],
+      "notes": "Short badge = bearish stock view, lotto = speculative BUY of puts. Position direction is LONG. Exit+Short badges together = closing a bearish lotto."
     },
     {
       "id": "exits-004",
-      "description": "'Out of AAPL stock' → CLOSE STOCK position",
+      "description": "'Exit Long Short GOOGL strangle took small profit' — CLOSE both legs of strangle (CALL + PUT)",
       "input": {
-        "message": "Out of AAPL stock",
-        "symbols": ["AAPL"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/GOOGL\" target=\"os\" data-symbol=\"GOOGL\" data-criteria=\"Bear\"><b>GOOGL</b></a> strangle took small profit&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-11T20:00:39.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "AAPL",
-            "strategy": "STOCK"
+            "id": "pos-googl-call",
+            "symbol": "GOOGL",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "GOOGL 251219C00195000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 195, "type": "option", "optionType": "CALL" }],
+            "quantity": 5
+          },
+          {
+            "id": "pos-googl-put",
+            "symbol": "GOOGL",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "GOOGL 251219P00190000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 190, "type": "option", "optionType": "PUT" }],
+            "quantity": 5
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"]
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close", "strangle"],
+      "notes": "Exit+Long+Short badges = mixed_action flag in orchestrator → routes to LLM. Strangle was two separate positions (CALL + PUT). Should close at least one, ideally both."
     },
     {
       "id": "exits-005",
-      "description": "'Got stopped on SPY puts' → CLOSE SPY PUT",
+      "description": "'Exit MSTR Straddle completely with a .30 cent loss per contract total' — CLOSE straddle (CALL + PUT)",
       "input": {
-        "message": "Got stopped on SPY puts",
-        "symbols": ["SPY"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> Straddle completely with a .30 cent loss per contract total&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-05T15:07:17.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "SPY",
-            "strategy": "PUT"
+            "id": "pos-mstr-call-1",
+            "symbol": "MSTR",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205C00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "CALL" }],
+            "quantity": 15
+          },
+          {
+            "id": "pos-mstr-put-3",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205P00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 15
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"]
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close", "strangle"],
+      "notes": "Exit badge + 'Straddle completely' = full close of both CALL and PUT positions. '.30 cent loss per contract total' is P&L context."
     },
     {
       "id": "exits-006",
-      "description": "'Exit RKLB 1/2' — fraction notation → TRIM exitPercent 0.5",
+      "description": "'Exit Long QURE sold half for 1.90 gain on shares' — TRIM 50% of STOCK position",
       "input": {
-        "message": "Exit RKLB 1/2",
-        "symbols": ["RKLB"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/QURE\" target=\"os\" data-symbol=\"QURE\" data-criteria=\"Bull\"><b>QURE</b></a> sold half for 1.90 gain on shares</body></html>",
+        "author": "Khorn",
+        "timestamp": "2025-10-09T16:27:51.000Z",
+        "positions": [
           {
-            "action": "TRIM",
-            "symbol": "RKLB",
-            "exitPercent": 0.5
+            "id": "pos-qure-stock-1",
+            "symbol": "QURE",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "QURE", "side": "BUY", "quantity": 200, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 200
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].exitPercent"],
-      "tags": ["exits", "trim"]
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true, "exitPercent": 0.5 }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId", "signals[0].exitPercent"],
+      "tags": ["exits", "trim"],
+      "notes": "Exit+Long badges + 'sold half' = TRIM 50%. 'on shares' confirms STOCK strategy. exitPercent=0.5 derived from 'half'."
     },
     {
       "id": "exits-007",
-      "description": "'Exit Long UNH cds took small profit hold straight calls' → LEG_OFF targetStrategy CALL",
+      "description": "'Exit Long TMC sold half for .50 gain' — TRIM 50% of STOCK position",
       "input": {
-        "message": "Exit Long UNH cds took small profit hold straight calls",
-        "symbols": ["UNH"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/TMC\" target=\"os\" data-symbol=\"TMC\" data-criteria=\"Bull\"><b>TMC</b></a> sold half for .50 gain&nbsp;</body></html>",
+        "author": "Khorn",
+        "timestamp": "2025-10-07T18:56:38.000Z",
+        "positions": [
           {
-            "action": "LEG_OFF",
-            "symbol": "UNH",
-            "targetStrategy": "CALL"
+            "id": "pos-tmc-stock-1",
+            "symbol": "TMC",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "TMC", "side": "BUY", "quantity": 100, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 100
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].targetStrategy"],
-      "tags": ["exits", "leg-off"],
-      "notes": "Close short leg, keep long calls → targetStrategy CALL."
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true, "exitPercent": 0.5 }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId", "signals[0].exitPercent"],
+      "tags": ["exits", "trim"],
+      "notes": "Exit+Long badges + 'sold half' = TRIM 50%. Same pattern as QURE case."
     },
     {
       "id": "exits-008",
-      "description": "'Locked in AMZN gains' — exit action, no entry details → CLOSE",
+      "description": "'Exit 500 Shares of NFLX with a .60 profit - still holding 1,500 shares' — TRIM with explicit quantities",
       "input": {
-        "message": "Locked in AMZN gains",
-        "symbols": ["AMZN"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body>Exit 500 Shares of <a href=\"/option-stalker/chart/NFLX\" target=\"os\" data-symbol=\"NFLX\"><b>NFLX</b></a> with a .60 profit - still holding 1,500 shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-11T15:17:23.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "AMZN"
+            "id": "pos-nflx-stock-1",
+            "symbol": "NFLX",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "NFLX", "side": "BUY", "quantity": 2000, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 2000
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"],
-      "notes": "Locked in = exit action (no entry details). Contrast with 'Locked in AMZN 200/210 CDS for 3.50' which is an OPEN."
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "trim"],
+      "notes": "No badges. 'Exit 500 Shares' + 'still holding 1,500 shares' = TRIM (not full close). Known limitation: parser has no fraction word so action defaults to CLOSE via EXIT_VERB_RE. The quantity-based trim detection is not yet implemented."
     },
     {
       "id": "exits-009",
-      "description": "'Exit NFLX with .12 loss per contract (15)' — exit with explicit loss amount → CLOSE PUT",
+      "description": "'Exit Long SPY took partial profits in overnight calls holding some' — TRIM but no fraction → defaults to CLOSE",
       "input": {
-        "message": "Exit NFLX with .12 loss per contract (15)",
-        "symbols": ["NFLX"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/SPY\" target=\"os\" data-symbol=\"SPY\"><b>SPY</b></a> took partial profits in overnight calls&nbsp; holding some&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-11T21:06:50.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "NFLX"
+            "id": "pos-spy-call-1",
+            "symbol": "SPY",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "SPY   251212C00605000", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 605, "type": "option", "optionType": "CALL" }],
+            "quantity": 10
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"],
-      "notes": "'.12 loss per contract (15)' is P&L context, not an entry price. The open was 'Short NFLX Lotto Puts' so strategy is PUT."
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "trim"],
+      "notes": "Exit+Long badges + 'partial profits' + 'holding some' = TRIM intent. Known limitation: parser has no fraction word so action defaults to CLOSE. Tagged as trim for tracking."
     },
     {
       "id": "exits-010",
-      "description": "'Exit Long UNH took nice profits' — bare exit with profit language → CLOSE",
+      "description": "'Exit Long UNH cds took small profit hold straight calls for oct 17' — LEG_OFF CDS, keep long calls",
       "input": {
-        "message": "Exit Long UNH took nice profits",
-        "symbols": ["UNH"],
-        "badges": ["Long"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/UNH\" target=\"os\" data-symbol=\"UNH\"><b>UNH</b></a> cds took small profit hold straight calls for oct 17&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-10-02T19:55:37.000Z",
+        "positions": [
           {
-            "action": "CLOSE",
-            "symbol": "UNH"
+            "id": "pos-unh-cds",
+            "symbol": "UNH",
+            "strategy": "CDS",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "UNH   251017C00500000", "side": "BUY", "quantity": 1, "expiry": "2025-10-17", "strike": 500, "type": "option", "optionType": "CALL" },
+              { "symbol": "UNH   251017C00510000", "side": "SELL", "quantity": 1, "expiry": "2025-10-17", "strike": 510, "type": "option", "optionType": "CALL" }
+            ],
+            "quantity": 1
           }
         ]
       },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["exits"],
-      "notes": "Bug: LLM emitted strategy STOCK by default. Bare exit 'took nice profits' should CLOSE without assuming STOCK strategy. Pipeline fuzzy matching handles position lookup."
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "leg-off"],
+      "notes": "Exit+Long badges + 'cds took small profit hold straight calls' = LEG_OFF. Close the short CALL leg (SELL side), keep the long CALL. Result is converting CDS → naked CALL."
+    },
+    {
+      "id": "exits-011",
+      "description": "'Bought back the short Puts on GOOGL PDS' — LEG_OFF PDS, close short PUT leg",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the short Puts on <a href=\"/option-stalker/chart/GOOGL\" target=\"os\" data-symbol=\"GOOGL\"><b>GOOGL</b></a> PDS - $1.33 differential on the long Puts now&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-09T17:35:15.000Z",
+        "positions": [
+          {
+            "id": "pos-googl-pds",
+            "symbol": "GOOGL",
+            "strategy": "PDS",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "GOOGL 251219P00195000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 195, "type": "option", "optionType": "PUT" },
+              { "symbol": "GOOGL 251219P00190000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 190, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "leg-off"],
+      "notes": "No badges. 'Bought back the short Puts' = closing the short leg of the PDS (buy-to-close the SELL leg). Known edge case: BOUGHT_BUYING_RE fires → action=OPEN instead of position-reducing. May need LLM path to resolve correctly."
+    },
+    {
+      "id": "exits-012",
+      "description": "'Close MSTR Puts on the straddle for a profit - holding the calls now' — partial straddle close (PUT side only)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Close <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> Puts on the straddle for a profit - holding the calls now&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-05T14:42:48.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-call-2",
+            "symbol": "MSTR",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205C00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "CALL" }],
+            "quantity": 15
+          },
+          {
+            "id": "pos-mstr-put-2",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251205P00182500", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 182.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 15
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close", "strangle"],
+      "notes": "No badges. 'Close MSTR Puts on the straddle' + 'holding the calls now' = close only the PUT position, keep the CALL. Parser sees 'Close' → EXIT_VERB_RE → action=CLOSE. Should match the PUT position specifically."
+    },
+    {
+      "id": "exits-013",
+      "description": "'Exit Long TSLA Nov (28) PCS for 25% gain' — CLOSE PCS position",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> Nov (28) PCS for 25% gain. I put this spread on the same morning and it expired last Fri.</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-01T14:35:20.000Z",
+        "positions": [
+          {
+            "id": "pos-tsla-pcs",
+            "symbol": "TSLA",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              { "symbol": "TSLA  251128P00355000", "side": "SELL", "quantity": 1, "expiry": "2025-11-28", "strike": 355, "type": "option", "optionType": "PUT" },
+              { "symbol": "TSLA  251128P00350000", "side": "BUY", "quantity": 1, "expiry": "2025-11-28", "strike": 350, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close"],
+      "notes": "Exit+Long badges + PCS strategy noun. PCS direction is SHORT (credit spread). 'Long' badge = bullish stock view, not trade direction. '25% gain' is P&L context."
+    },
+    {
+      "id": "exits-014",
+      "description": "'Exit Long AMZN Dec (5) $227.50/225 PCS for $.01' — CLOSE PCS position",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/AMZN\" target=\"os\" data-symbol=\"AMZN\"><b>AMZN</b></a> Dec (5) $227.50/225 PCS for $.01. That was a trade I put on Mon. 21% gain</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-05T20:13:43.000Z",
+        "positions": [
+          {
+            "id": "pos-amzn-pcs",
+            "symbol": "AMZN",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              { "symbol": "AMZN  251205P00227500", "side": "SELL", "quantity": 1, "expiry": "2025-12-05", "strike": 227.5, "type": "option", "optionType": "PUT" },
+              { "symbol": "AMZN  251205P00225000", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 225, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 3
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close"],
+      "notes": "Exit+Long badges + PCS with explicit strikes and expiry. '$.01' = exit price (spread expired nearly worthless). PCS direction is SHORT."
+    },
+    {
+      "id": "exits-015",
+      "description": "'Closed IREN PCS (40/35) (12/19/25) expiration for roughly 20% gain' — CLOSE PCS position",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Closed <a href=\"/option-stalker/chart/IREN\" target=\"os\" data-symbol=\"IREN\"><b>IREN</b></a> PCS (40/35) (12/19/25) expiration for roughly 20% gain&nbsp;</div></body></html>",
+        "author": "Chilled Chilly",
+        "timestamp": "2025-12-09T14:49:59.000Z",
+        "positions": [
+          {
+            "id": "pos-iren-pcs",
+            "symbol": "IREN",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              { "symbol": "IREN  251219P00040000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 40, "type": "option", "optionType": "PUT" },
+              { "symbol": "IREN  251219P00035000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 35, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["exits", "close"],
+      "notes": "No badges. 'Closed' verb = EXIT_VERB_RE → action=CLOSE. PCS with explicit strikes (40/35) and expiry. Direction is SHORT (credit spread). Chilled Chilly is a less common trader."
     }
   ]
 }

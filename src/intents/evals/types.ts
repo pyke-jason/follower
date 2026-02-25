@@ -1,38 +1,34 @@
 // All shared types for the eval system.
 
-export type EvalCaseInput = {
-  message: string;
+import type { OptionLeg, ResolvedSignal, OpenPosition } from '../orchestrator/types.js';
+
+export type EvalInput = {
+  rawHtml: string;
   author?: string;       // default 'testTrader'
   timestamp?: string;    // ISO 8601, default '2025-09-05T14:00:00.000Z'
-  badges?: string[];
-  symbols?: string[];
+  positions?: OpenPosition[];
+  chatContext?: string;   // recent messages for LLM context in relational cases
 };
 
+export type ExpectedLeg = Partial<Pick<OptionLeg, 'side' | 'strike' | 'optionType' | 'expiry'>>;
+
 export type ExpectedSignal = {
-  action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
-  symbol?: string;
-  direction?: 'LONG' | 'SHORT';
-  strategy?: 'STOCK' | 'CALL' | 'PUT' | 'CDS' | 'PDS';
+  orderType?: ResolvedSignal['orderType'];
   exitPercent?: number;
-  targetStrategy?: 'CALL' | 'PUT';
-  statedPremium?: number;
-  legs?: Array<{
-    strike?: number;
-    expiry?: string;      // raw text, 'YYYY-MM-DD', or 'LEAP' (special: means >= 6 months from refDate)
-    optionType?: 'CALL' | 'PUT';
-    action?: 'BUY' | 'SELL';
-  }>;
+  hasTradeId?: boolean;
+  legs?: ExpectedLeg[];
+  symbol?: string;       // verify correct underlying in multi-ticker messages
 };
 
 export type EvalCase = {
   id: string;
   description: string;
-  input: EvalCaseInput;
+  input: EvalInput;
   expected: {
-    decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
+    outcome: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
     signals?: ExpectedSignal[];
   };
-  /** Field paths that cause hard FAIL if mismatched. e.g. ['signals[0].direction', 'signals[0].strategy'] */
+  /** Field paths that cause hard FAIL if mismatched. e.g. ['signals[0].orderType', 'signals[0].legs[0].side'] */
   mustMatch?: string[];
   tags?: string[];
   notes?: string;

@@ -2,258 +2,239 @@
   "cases": [
     {
       "id": "regression-001",
-      "description": "LEAP add-on with avg price — must emit long-dated expiry, not next Friday",
+      "description": "'Long HUT sold the 12/19 $36 puts' — 'sold' verb overrides Long badge → SHORT direction, leg side=SELL",
       "input": {
-        "message": "Added to SPY Leaps - now 50 total contracts $38.97 avg",
-        "symbols": ["SPY"]
+        "rawHtml": "<div><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/HUT\" target=\"os\" data-symbol=\"HUT\" data-criteria=\"Bear\"><b>HUT</b></a>&nbsp;sold the 12/19 $36 puts for a credit of $0.88/contract</div>",
+        "author": "spectre",
+        "timestamp": "2025-12-12T20:07:36.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "SPY",
-            "direction": "LONG",
-            "strategy": "CALL",
+            "orderType": "SINGLE",
             "legs": [
-              { "optionType": "CALL", "action": "BUY", "expiry": "LEAP" }
+              { "side": "SELL", "optionType": "PUT", "strike": 36 }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy",
-        "signals[0].legs[0].expiry"
-      ],
-      "tags": ["regressions", "leap"],
-      "notes": "Classic LEAP case. LLM must emit a leg with long-dated expiry. Bug: old system defaulted to nextFriday()."
+      "mustMatch": ["signals[0].legs[0].side", "signals[0].orderType"],
+      "tags": ["regressions", "sold-authoritative"],
+      "notes": "Bug: old system treated Long badge as direction=LONG. Fix: 'sold' verb is authoritative and overrides badge → direction SHORT, leg side SELL."
     },
     {
       "id": "regression-002",
-      "description": "LEAP calls add — must recognise long-dated expiry from 'Leap' keyword",
+      "description": "'Short Bought QCOM Nov (21) $160 puts' — 'Bought' verb overrides Short badge → leg side=BUY",
       "input": {
-        "message": "SPY Leap calls added 15 contracts",
-        "symbols": ["SPY"]
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;Bought <a href=\"/option-stalker/chart/QCOM\" target=\"os\" data-symbol=\"QCOM\" data-criteria=\"Bear\"><b>QCOM</b></a> Nov (21) $160 puts $12.25</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-10-10T19:58:00.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "SPY",
-            "direction": "LONG",
-            "strategy": "CALL",
+            "orderType": "SINGLE",
             "legs": [
-              { "optionType": "CALL", "action": "BUY", "expiry": "LEAP" }
+              { "side": "BUY", "optionType": "PUT", "strike": 160 }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy",
-        "signals[0].legs[0].expiry"
-      ],
-      "tags": ["regressions", "leap"]
+      "mustMatch": ["signals[0].legs[0].side"],
+      "tags": ["regressions", "badge-override"],
+      "notes": "Bug: old system used Short badge for direction. Fix: 'Bought' verb is authoritative — badge is stock view, not trade direction."
     },
     {
       "id": "regression-003",
-      "description": "PCS with 'Long' prefix — direction must be SHORT (selling credit spread)",
+      "description": "'Sold 10 $180 Puts on NVDA' — no-badge sell-to-open must be EXECUTE, not commentary",
       "input": {
-        "message": "Long GLW pcs 68/67 for .63 credit",
-        "symbols": ["GLW"]
+        "rawHtml": "<html><head></head><body><div>Sold 10 $180 Puts on <a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\" data-criteria=\"Bear\"><b>NVDA</b></a> for $1.80 - expiring tomorrow&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-11T18:38:41.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "GLW",
-            "direction": "SHORT",
-            "strategy": "PDS",
-            "statedPremium": 0.63,
+            "orderType": "SINGLE",
             "legs": [
-              { "action": "SELL", "strike": 68, "optionType": "PUT" },
-              { "action": "BUY", "strike": 67, "optionType": "PUT" }
+              { "side": "SELL", "optionType": "PUT", "strike": 180 }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy"
-      ],
-      "tags": ["regressions", "pcs-direction"],
-      "notes": "PCS = credit spread = SHORT direction. 'Long' is stock view not trade direction."
-    },
-    {
-      "id": "regression-005",
-      "description": "'Exit NFLX with .12 loss per contract (15)' — loss-per-contract exit must close, not be skipped",
-      "input": {
-        "message": "Exit NFLX with .12 loss per contract (15)",
-        "symbols": ["NFLX"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "CLOSE",
-            "symbol": "NFLX"
-          }
-        ]
-      },
-      "mustMatch": ["signals[0].action", "signals[0].symbol"],
-      "tags": ["regressions", "exits"],
-      "notes": "Bug: system auto-closed at expiry ($0.00) because this exit at 3:43 PM was not recognised as a CLOSE. '(15)' is the original contract count, not a quantity instruction. 'with .12 loss per contract' is exit context, not a SKIP trigger."
+      "mustMatch": ["signals[0].legs[0].side"],
+      "tags": ["regressions", "no-badge"],
+      "notes": "Bug: no-badge sell-to-open was classified as commentary. Fix: 'Sold' verb + symbol = OPEN action."
     },
     {
       "id": "regression-004",
-      "description": "'sold' overrides 'Long' prefix — cash-secured put is SHORT direction",
+      "description": "LEAP add-on 'Added to SPY Leaps' — must emit long-dated expiry, not nextFriday()",
       "input": {
-        "message": "Long BE sold Oct $59 put $2.40. Happy to own the stock below AVWAP",
-        "symbols": ["BE"]
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "OPEN",
-            "symbol": "BE",
-            "direction": "SHORT",
-            "strategy": "PUT",
-            "statedPremium": 2.40,
-            "legs": [
-              { "action": "SELL", "strike": 59, "optionType": "PUT", "expiry": "Oct" }
-            ]
-          }
-        ]
-      },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy"
-      ],
-      "tags": ["regressions", "sold-authoritative"],
-      "notes": "'sold' is authoritative over 'Long' prefix. Happy to own = cash-secured put."
-    },
-    {
-      "id": "regression-006",
-      "description": "LEAP add-on with 'Short' badge + explicit expiry/strike — badge is view, not direction",
-      "input": {
-        "message": "Short SPY - added another 10 the leaps - total 60 - avg. $27.67 - 3/26 - $600",
-        "symbols": ["SPY"],
-        "badges": ["Short"],
-        "timestamp": "2025-09-24T16:29:39.000Z"
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "OPEN",
-            "symbol": "SPY",
-            "direction": "LONG",
-            "strategy": "CALL",
-            "legs": [
-              { "optionType": "CALL", "action": "BUY", "strike": 600, "expiry": "LEAP" }
-            ]
-          }
-        ]
-      },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy",
-        "signals[0].legs[0].expiry"
-      ],
-      "tags": ["regressions", "leap", "badge-override"],
-      "notes": "Bug: v10 classified as SHORT STOCK. 'Short' badge is bearish VIEW. 'added another 10 the leaps' = LONG CALL. '3/26' = March 2026 expiry, '$600' = strike. System created SPY 250926C00660000 (next-Friday fallback) and auto-closed 2 days later."
-    },
-    {
-      "id": "regression-007",
-      "description": "'Long UNH cds for next week expiration' — expiry hint leg required, not next-Friday default",
-      "input": {
-        "message": "Long UNH cds for next week expiration",
-        "symbols": ["UNH"],
-        "timestamp": "2025-09-19T14:00:00.000Z"
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "OPEN",
-            "symbol": "UNH",
-            "direction": "LONG",
-            "strategy": "CDS",
-            "legs": [
-              { "optionType": "CALL", "action": "BUY", "strike": 0, "expiry": "next week" }
-            ]
-          }
-        ]
-      },
-      "mustMatch": [
-        "signals[0].strategy",
-        "signals[0].legs[0].expiry"
-      ],
-      "tags": ["regressions", "expiry-hint"],
-      "notes": "Bug: LLM omitted legs entirely → system defaulted to nextFriday(2025-09-19) = same-day expiry. Need hint leg with expiry 'next week' and strike: 0."
-    },
-    {
-      "id": "regression-008",
-      "description": "'Long UNH added some straight oct 3 calls' — expiry hint leg for month+day format",
-      "input": {
-        "message": "Long UNH added some straight oct 3 calls",
-        "symbols": ["UNH"],
-        "timestamp": "2025-09-19T14:00:00.000Z"
-      },
-      "expected": {
-        "decision": "EXECUTE",
-        "signals": [
-          {
-            "action": "OPEN",
-            "symbol": "UNH",
-            "direction": "LONG",
-            "strategy": "CALL",
-            "legs": [
-              { "optionType": "CALL", "action": "BUY", "strike": 0, "expiry": "oct 3" }
-            ]
-          }
-        ]
-      },
-      "mustMatch": [
-        "signals[0].strategy",
-        "signals[0].legs[0].expiry"
-      ],
-      "tags": ["regressions", "expiry-hint"],
-      "notes": "Bug: LLM omitted legs → system defaulted to nextFriday(2025-09-19) = same-day expiry. Need hint leg with expiry 'oct 3' and strike: 0."
-    },
-    {
-      "id": "regression-009",
-      "description": "'Short C Lotto weeklies $95.50 puts' — 'weeklies' expiry must be parseable, not crash normalizeExpiry",
-      "input": {
-        "message": "Short C Lotto weeklies $95.50 puts for .15",
-        "symbols": ["C"],
+        "rawHtml": "<html><head></head><body>Added to <a data-symbol=\"SPY\"><b>SPY</b></a> Leaps - now 50 total contracts $38.97 avg</body></html>",
+        "author": "testTrader",
         "timestamp": "2025-09-05T14:00:00.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "C",
-            "direction": "LONG",
-            "strategy": "PUT",
-            "statedPremium": 0.15,
+            "orderType": "SINGLE",
             "legs": [
-              { "optionType": "PUT", "action": "BUY", "strike": 95.5 }
+              { "optionType": "CALL", "side": "BUY" }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy"
-      ],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["regressions", "leap"],
+      "notes": "Bug: old system defaulted to nextFriday(). Fix: LEAP keyword detected → long-dated expiry."
+    },
+    {
+      "id": "regression-005",
+      "description": "LEAP with Short badge 'added another 10 the leaps' — badge is view, not direction → LONG CALL",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a data-symbol=\"SPY\"><b>SPY</b></a> - added another 10 the leaps - total 60 - avg. $27.67 - 3/26 - $600</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-24T16:29:39.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "optionType": "CALL", "side": "BUY", "strike": 600 }
+            ]
+          }
+        ]
+      }, 
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["regressions", "leap", "badge-override"],
+      "notes": "Bug: v10 classified as SHORT STOCK. Fix: 'Short' badge is bearish VIEW. 'added another 10 the leaps' = LONG CALL. '3/26' = March 2026 expiry, '$600' = strike."
+    },
+    {
+      "id": "regression-006",
+      "description": "PCS direction: 'Long GLW pcs 68/67 for .63 credit' — PCS = credit spread = SELL higher/BUY lower PUT",
+      "input": {
+        "rawHtml": "<html><head></head><body>Long <a data-symbol=\"GLW\"><b>GLW</b></a> pcs 68/67 for .63 credit</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-05T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "side": "SELL", "strike": 68, "optionType": "PUT" },
+              { "side": "BUY", "strike": 67, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].legs[0].side", "signals[0].orderType"],
+      "tags": ["regressions", "pcs-direction"],
+      "notes": "Bug: PCS treated as direction=LONG. Fix: PCS = credit spread = legs are SELL higher/BUY lower PUT. 'Long' is stock view not trade direction."
+    },
+    {
+      "id": "regression-007",
+      "description": "CDS with 'next week' expiry hint: 'Long UNH cds for next week expiration'",
+      "input": {
+        "rawHtml": "<html><head></head><body>Long <a data-symbol=\"UNH\"><b>UNH</b></a> cds for next week expiration</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-19T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "optionType": "CALL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType"],
+      "tags": ["regressions", "expiry-hint"],
+      "notes": "Bug: LLM omitted legs entirely → system defaulted to nextFriday(2025-09-19) = same-day expiry. Fix: orchestrator resolves 'next week' expiry from market data."
+    },
+    {
+      "id": "regression-008",
+      "description": "Lotto with 'weeklies' expiry: 'Short C Lotto weeklies $95.50 puts' — Lotto = BUY, 'weeklies' must not crash",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a data-symbol=\"C\"><b>C</b></a> Lotto weeklies $95.50 puts for .15</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-05T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "BUY", "strike": 95.5, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].legs[0].side", "signals[0].orderType"],
       "tags": ["regressions", "lotto", "expiry-hint"],
-      "notes": "Bug: LLM emitted expiry 'weekly' which crashed normalizeExpiry. Lotto = LONG (buy). 'Weeklies' = short-dated weekly option expiry."
+      "notes": "Bug: LLM emitted expiry 'weekly' which crashed normalizeExpiry. Lotto = LONG (buy) regardless of Short badge. $95.50 strike."
+    },
+    {
+      "id": "regression-009",
+      "description": "Loss-per-contract exit: 'Exit MSTR for a .11 loss on the lotto' — must CLOSE, not skip",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> for a .11 loss on the lotto - not enough time left&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-12T20:50:39.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-lotto",
+            "symbol": "MSTR",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR  251212P00177500", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 177.5, "type": "option", "optionType": "PUT" }],
+            "quantity": 25
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["signals[0].hasTradeId"],
+      "tags": ["regressions", "exits"],
+      "notes": "Bug: '.11 loss per contract' was not recognised as a CLOSE and auto-closed at expiry. Fix: Exit badge + symbol + loss context = CLOSE action."
+    },
+    {
+      "id": "regression-010",
+      "description": "'oct 3 calls' expiry hint: 'Long UNH added some straight oct 3 calls'",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a data-symbol=\"UNH\"><b>UNH</b></a> added some straight oct 3 calls</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-19T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "optionType": "CALL", "side": "BUY" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType"],
+      "tags": ["regressions", "expiry-hint"],
+      "notes": "Bug: LLM omitted legs → system defaulted to nextFriday(2025-09-19) = same-day expiry. 'oct 3' = October 3rd expiry, orchestrator resolves concrete date."
     }
   ]
 }

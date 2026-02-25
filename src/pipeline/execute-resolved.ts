@@ -60,9 +60,6 @@ export type ResolvedPipelineDeps = {
 
 export type ResolvedPipelineOpts = {
   messageId?: string;
-  taskId?: string;
-  backtestRunId?: string;
-  isBacktest?: boolean;
 };
 
 export type ResolvedPipelineResult = {
@@ -279,7 +276,15 @@ async function executeResolvedSignal(
   const action = deriveAction(signal);
   const isPositionReducing = action !== 'OPEN' && action !== 'ADD';
 
-  log.debug(`${action} ${direction} ${strategy} ${symbol} (tradeId=${signal.tradeId ?? 'none'})`);
+  // One info line per signal — the authoritative execution log
+  const optLegs = signal.legs.filter((l): l is OptionLeg => l.type === 'option');
+  const execParts = [`${action} ${direction} ${strategy} ${symbol}`];
+  if (optLegs.length > 0) {
+    execParts.push(`${signal.legs.length} leg(s) expiry=${optLegs[0].expiry} strikes=${optLegs.map(l => l.strike).join('/')}`);
+  }
+  if (signal.limitPrice != null) execParts.push(`limit=$${signal.limitPrice}`);
+  if (signal.tradeId) execParts.push(`tradeId=${signal.tradeId}`);
+  log.info(execParts.join(' | '));
 
   // ── OPEN / ADD path ─────────────────────────────────
 
@@ -330,9 +335,6 @@ async function executeResolvedSignal(
           legs: orderLegs,
           openedAt: fa?.toISOString(),
           sourceMessageId: opts.messageId,
-          taskId: opts.taskId,
-          backtestRunId: opts.backtestRunId,
-          isBacktest: opts.isBacktest ?? false,
         });
         if (recorded) tradeId = recorded.tradeId;
         return recorded;
@@ -384,9 +386,6 @@ async function executeResolvedSignal(
         legs: orderLegs,
         closedAt: fa?.toISOString(),
         closeMessageId: opts.messageId,
-        taskId: opts.taskId,
-        backtestRunId: opts.backtestRunId,
-        isBacktest: opts.isBacktest ?? false,
       });
       if (recorded) tradeId = recorded.tradeId;
       return recorded;

@@ -60,7 +60,7 @@ The message has already been pre-parsed for structured fields (strategy keywords
 For OPEN signals:
 - action: "OPEN"
 - symbol: ticker (required)
-- strategy: "CALL" | "PUT" | "CDS" | "PDS" | "STOCK"
+- strategy: "CALL" | "PUT" | "CDS" | "PDS" | "PCS" | "STOCK"
 - direction: "LONG" | "SHORT" (if not deterministic from strategy)
 - statedPremium: dollar amount if mentioned (e.g. 2.10)
 - Do NOT include legs, expiry dates, or exact strikes — those are resolved by market data
@@ -115,7 +115,7 @@ export async function resolveLLMPath(
   } catch (err) {
     log.error('LLM path agent loop failed:', err);
     return {
-      outcome: 'FLAG_FOR_REVIEW',
+      outcome: 'MANUAL_REVIEW',
       reason: `LLM error: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -123,7 +123,7 @@ export async function resolveLLMPath(
   const taskResult = loopResult.result as TaskResult | null;
 
   if (!taskResult) {
-    return { outcome: 'FLAG_FOR_REVIEW', reason: 'LLM did not call a decision tool' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool' };
   }
 
   if (taskResult.decision === 'SKIP') {
@@ -131,11 +131,11 @@ export async function resolveLLMPath(
   }
 
   if (taskResult.decision === 'MANUAL_REVIEW') {
-    return { outcome: 'FLAG_FOR_REVIEW', reason: taskResult.reasoning };
+    return { outcome: 'MANUAL_REVIEW', reason: taskResult.reasoning };
   }
 
   if (!taskResult.signals || taskResult.signals.length === 0) {
-    return { outcome: 'FLAG_FOR_REVIEW', reason: 'LLM returned EXECUTE with no signals' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'LLM returned EXECUTE with no signals' };
   }
 
   log.debug(
@@ -215,7 +215,7 @@ async function routeLLMSignals(
 
     if (result.outcome === 'EXECUTE') {
       allSignals.push(...result.signals);
-    } else if (result.outcome === 'FLAG_FOR_REVIEW') {
+    } else if (result.outcome === 'MANUAL_REVIEW') {
       flagReasons.push(result.reason);
     }
     // SKIP from a sub-signal is treated as no output (not propagated as top-level SKIP)
@@ -226,7 +226,7 @@ async function routeLLMSignals(
   }
 
   return {
-    outcome: 'FLAG_FOR_REVIEW',
+    outcome: 'MANUAL_REVIEW',
     reason:
       flagReasons.length > 0
         ? flagReasons.join('; ')
@@ -261,6 +261,7 @@ function signalToParseResult(signal: Signal, originalParse: ParseResult): ParseR
     exitPercent: signal.exitPercent ?? originalParse.exitPercent,
     targetStrategy: (signal.targetStrategy as ParseResult['targetStrategy']) ??
       originalParse.targetStrategy,
+    isLotto: originalParse.isLotto,
     isStrangle: false,
     isHardSkip: false,
     skipReason: null,

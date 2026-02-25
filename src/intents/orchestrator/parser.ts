@@ -24,7 +24,7 @@ const FUTURES_RE = /\b(ES|NQ|RTY|YM)[\s/]|\b(futures?|futs?)\b/i;
 // ── Strategy detection patterns ───────────────────────────────────────────────
 
 const CDS_RE = /\bcds\b|call debit spread/i;
-const PCS_RE = /\bpcs\b|put credit spread/i;
+const PCS_RE = /\bpcs\b|put credit spread|bull(?:ish)?\s+put\s+spread/i;
 const PDS_RE = /\bpds\b|put debit spread/i;
 const LEAP_RE = /\bleaps?\b/i;
 const LOTTO_RE = /\blotto\b|\byolo\b/i;
@@ -66,7 +66,7 @@ const EXPIRY_BARE_MONTH_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec
 // We intentionally require a trigger word or explicit $ before the number to avoid
 // accidentally matching strike prices.
 const PREMIUM_RE =
-  /(?:for\s+\$?|at\s+\$?|\$)(\d{1,4}(?:\.\d+)?)(?:\s*(?:credit|debit|cr|db))?|(\d{1,4}(?:\.\d+)?)\s+(?:credit|debit|cr|db)/i;
+  /(?:for\s+\$?|at\s+\$?|\$)(\d{0,4}\.\d+|\d{1,4})(?:\s*(?:credit|debit|cr|db))?|(\d{0,4}\.\d+|\d{1,4})\s+(?:credit|debit|cr|db)/i;
 
 const PREMIUM_MIN = 0.01;
 const PREMIUM_MAX = 500;
@@ -134,14 +134,28 @@ function extractExitPercent(text: string): number | null {
  * Extract explicit strikes from text.
  * Priority: slash pair > single strike near option keyword > dollar-prefixed.
  */
+function looksLikeDate(a: number, b: number): boolean {
+  return Number.isInteger(a) && Number.isInteger(b) && a >= 1 && a <= 12 && b >= 1 && b <= 31;
+}
+
 function extractStrikes(text: string): number[] | null {
-  // Slash pair (spread strikes): "180/185", "68/67"
-  const pairM = SLASH_PAIR_RE.exec(text);
-  if (pairM) {
-    const s1 = parseFloat(pairM[1]);
-    const s2 = parseFloat(pairM[2]);
-    if (isFinite(s1) && isFinite(s2)) return [s1, s2];
+  // Find ALL slash pairs, prefer the one that's clearly strikes (not a date)
+  const pairRe = new RegExp(SLASH_PAIR_RE.source, 'g');
+  let best: [number, number] | null = null;
+  let fallback: [number, number] | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = pairRe.exec(text)) !== null) {
+    const s1 = parseFloat(m[1]);
+    const s2 = parseFloat(m[2]);
+    if (!isFinite(s1) || !isFinite(s2)) continue;
+    if (!looksLikeDate(s1, s2)) {
+      best = [s1, s2]; // clearly strikes — use immediately
+      break;
+    }
+    if (!fallback) fallback = [s1, s2]; // date-like — keep as fallback
   }
+  if (best) return best;
+  if (fallback) return fallback;
 
   // Single strike adjacent to option type word
   const nearM = STRIKE_NEAR_OPTION_RE.exec(text);
@@ -176,8 +190,12 @@ function extractExpiryHint(text: string, isLotto: boolean): string | null {
 
   const slashM = EXPIRY_SLASH_DATE_RE.exec(text);
   if (slashM) {
-    const [full] = slashM;
-    return full;
+    const mo = parseInt(slashM[1], 10);
+    const dy = parseInt(slashM[2], 10);
+    // Reject strike pairs (e.g. "68/67") that match the date regex
+    if (mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+      return slashM[0];
+    }
   }
 
   const mdM = EXPIRY_MONTH_DAY_RE.exec(text);
@@ -255,14 +273,10 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   if (CDS_RE.test(cleanText)) {
     strategy = 'CDS';
-    directionFromStrategy = 'LONG';
   } else if (PCS_RE.test(cleanText)) {
-    // PCS normalizes to PDS SHORT
-    strategy = 'PDS';
-    directionFromStrategy = 'SHORT';
+    strategy = 'PCS';
   } else if (PDS_RE.test(cleanText)) {
     strategy = 'PDS';
-    directionFromStrategy = 'LONG';
   } else if (LEAP_RE.test(cleanText)) {
     strategy = 'CALL';
     directionFromStrategy = 'LONG';
@@ -355,15 +369,42 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   // ── Strikes ───────────────────────────────────────────────────────────────
 
-  const strikes = extractStrikes(cleanText);
+  let strikes = extractStrikes(cleanText);
 
   // ── Expiry hint ───────────────────────────────────────────────────────────
 
   const expiryHint = extractExpiryHint(cleanText, isLotto);
 
+  // ── Disambiguate slash pairs that look like dates (e.g. "9/12") ─────────
+  // A slash pair where first=1-12, second=1-31 could be M/DD or cheap-stock strikes.
+  // - Non-spread (CALL/PUT): always a date, not strikes
+  // - Spread + another expiry hint exists: strikes (date is covered elsewhere)
+  // - Spread + no other expiry: genuinely ambiguous → route to LLM
+  const isSpread = strategy === 'CDS' || strategy === 'PDS' || strategy === 'PCS';
+  if (strikes !== null && strikes.length === 2) {
+    const [s1, s2] = strikes;
+    const looksLikeDate = s1 >= 1 && s1 <= 12 && s2 >= 1 && s2 <= 31;
+    if (looksLikeDate) {
+      if (!isSpread) {
+        strikes = null; // it's a date, not strikes
+      } else if (!expiryHint || expiryHint === `${s1}/${s2}`) {
+        // Spread but the only expiry hint IS this same slash pair — ambiguous
+        strikes = null;
+        complexityFlags.add('ambiguous_strikes');
+      }
+      // else: spread + separate expiry hint → keep as strikes
+    }
+  }
+
   // ── Premium hint ──────────────────────────────────────────────────────────
 
-  const premiumHint = extractPremium(cleanText);
+  let premiumHint = extractPremium(cleanText);
+
+  // If the extracted premium matches an explicit strike, it's really the strike price
+  // (e.g. "$36 puts" → $36 is the strike, not the premium paid)
+  if (premiumHint !== null && strikes !== null && strikes.includes(premiumHint)) {
+    premiumHint = null;
+  }
 
   // ── Complexity: extra_text ────────────────────────────────────────────────
 
@@ -381,6 +422,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     premiumHint,
     exitPercent,
     targetStrategy,
+    isLotto,
     isStrangle,
     isHardSkip: false,
     skipReason: null,
@@ -404,16 +446,8 @@ export function strikesFromParse(parse: ParseResult): StrikeSelection {
     return { method: 'explicit', strikes: parse.strikes };
   }
 
-  // Detect lotto from expiryHint (set to '0DTE' for lotto) combined with a
-  // check on the direction override. Since this function only has the ParseResult
-  // we use the heuristic: lotto → expiryHint==='0DTE' && direction==='LONG'
-  // but that's not fully discriminating. We rely on the caller having run
-  // parseMessage, so we check if expiryHint is '0DTE' AND strategy is PUT/CALL
-  // as a proxy. The cleaner approach: expose isLotto in ParseResult, but per the
-  // spec it isn't there. Use delta when expiryHint==='0DTE' as a reasonable proxy.
-  if (parse.expiryHint === '0DTE' && parse.direction === 'LONG' &&
-      (parse.strategy === 'PUT' || parse.strategy === 'CALL')) {
-    return { method: 'delta', target: 0.70, bias: 'otm' };
+  if (parse.isLotto) {
+    return { method: 'delta', target: 0.70, bias: 'nearest' };
   }
 
   if (parse.premiumHint !== null) {
@@ -436,6 +470,7 @@ function hardSkip(reason: string, complexityFlags: Set<ComplexityFlag>): ParseRe
     premiumHint: null,
     exitPercent: null,
     targetStrategy: null,
+    isLotto: false,
     isStrangle: false,
     isHardSkip: true,
     skipReason: reason,

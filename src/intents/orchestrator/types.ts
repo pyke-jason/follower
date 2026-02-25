@@ -53,7 +53,7 @@ export type ResolvedSignal = {
 export type OrchestratorResult =
   | { outcome: 'EXECUTE'; signals: ResolvedSignal[] }
   | { outcome: 'SKIP'; reason: string }
-  | { outcome: 'FLAG_FOR_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[] };
+  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[] };
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -147,7 +147,8 @@ export type ComplexityFlag =
   | 'extra_text'     // significant commentary beyond core trade fields
   | 'multi_ticker'   // more than one ticker detected
   | 'relational'     // references another trader's message ("following Dave")
-  | 'mixed_action';  // entry + exit in same message
+  | 'mixed_action'   // entry + exit in same message
+  | 'ambiguous_strikes';  // slash pair could be date or strikes (cheap-stock spread)
 
 /**
  * Output of the synchronous parse step. Contains everything derivable from
@@ -165,6 +166,7 @@ export type ParseResult = {
   premiumHint: number | null;      // stated premium (absolute value)
   exitPercent: number | null;      // for TRIM: 0.0–1.0
   targetStrategy: Strategy | null; // for LEG_OFF: strategy to keep
+  isLotto: boolean;                // true when lotto/yolo detected
   isStrangle: boolean;             // true when strangle/straddle detected
   isHardSkip: boolean;             // true when message is definitively not a trade
   skipReason: string | null;

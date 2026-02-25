@@ -8,12 +8,11 @@ import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import { toDateKeyET, parseDateKey } from '../lib/et-date.js';
-import { resolveOrchestrator } from '../intents/orchestrator/index.js';
-import type { OrchestratorContext, OpenPosition } from '../intents/orchestrator/types.js';
-import { executeResolvedSignals } from '../pipeline/execute-resolved.js';
 import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
+import { processTask as processTaskShared } from '../pipeline/process-task.js';
+import { tradeToOpenPosition } from '../trades/adapters.js';
 import { getTrader } from '../config/traders.js';
 import { OrderManager } from '../orders/order-manager.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
@@ -29,8 +28,7 @@ import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { logExpiryNotices } from '../lib/expiry-warning.js';
-import type { TradeLeg } from '../db/schema.js';
-import { getRecentChatMessages, formatChatContext } from '../intents/trader-context.js';
+import type { Task, TradeLeg } from '../db/schema.js';
 
 const log = createLogger('Backtest');
 
@@ -531,27 +529,29 @@ async function recordExecute(
   });
 }
 
-// ── Adapter: DB Trade → OpenPosition for orchestrator ───
+// ── Adapter: HistoricalMessage → Task for processTask ───
 
-function tradeToOpenPosition(row: typeof schema.trades.$inferSelect): OpenPosition {
-  const legs = (row.legs as TradeLeg[]).map(leg => ({
-    symbol: leg.symbol,
-    side: leg.action as 'BUY' | 'SELL',
-    quantity: leg.quantity ?? 1,
-    expiry: leg.expiry ?? '',
-    strike: leg.strike ?? 0,
-    type: (leg.type === 'STOCK' ? 'stock' : 'option') as 'stock' | 'option',
-    ...(leg.type !== 'STOCK' && { optionType: leg.type as 'CALL' | 'PUT' }),
-  }));
-
+function taskFromMessage(msg: HistoricalMessage): Task {
   return {
-    id: row.id,
-    symbol: row.symbol,
-    strategy: row.strategy,
-    direction: row.direction,
-    legs,
-    quantity: row.quantity ?? 1,
-  };
+    id: msg.id,
+    messageId: msg.id,
+    taskType: 'REVIEW_MESSAGE',
+    status: 'IN_PROGRESS',
+    assignee: 'agent',
+    priority: 0,
+    context: {
+      author: msg.author,
+      symbols: msg.symbols,
+      badges: msg.badges,
+    },
+    result: null,
+    createdAt: msg.timestamp.toISOString(),
+    startedAt: msg.timestamp.toISOString(),
+    completedAt: null,
+    error: null,
+    modelProvider: null,
+    modelName: null,
+  } as Task;
 }
 
 // ── Per-message processing ──
@@ -563,98 +563,44 @@ async function processMessage(
   updateStats: (stats: Stats) => void,
 ): Promise<void> {
   const ctx: MessageContext = { msg, runId: btCtx.runId, stats, updateStats, decisionStart: Date.now() };
+  const task = taskFromMessage(msg);
 
-  // Prefetch market data so getQuote calls during orchestrator resolution are cache hits
-  await btCtx.priceProvider.prefetch(msg.symbols, msg.timestamp);
-
-  // Build orchestrator context
-  const traderConfig = await getTrader(msg.author);
-  const orchCtx: OrchestratorContext = {
-    messageId: msg.id,
-    rawHtml: msg.rawHtml,
-    cleanText: msg.cleanText,
-    badges: msg.badges,
-    symbols: msg.symbols,
-    timestamp: msg.timestamp.toISOString(),
-    author: msg.author,
-    marketData: {
-      getQuote: (symbol) => btCtx.priceProvider.getQuote(symbol, msg.timestamp),
-      getOptionChain: async () => null,
-      getExpiryDates: async () => [],
+  await processTaskShared(task, {
+    getPositions: async (symbol) => {
+      const filters: PositionFilters = symbol ? { symbol } : {};
+      const rows = await btCtx.getOpenPositions({ ...filters, trader: msg.author });
+      return rows.map(tradeToOpenPosition);
     },
-    positions: {
-      getPositions: async (symbol) => {
-        const filters: PositionFilters = symbol ? { symbol } : {};
-        const rows = await btCtx.getOpenPositions({ ...filters, trader: msg.author });
-        return rows.map(tradeToOpenPosition);
-      },
+    llm: btCtx.agentProvider,
+    pipeline: btCtx.pipelineDeps,
+    onResult: async (result) => {
+      if (result.outcome === 'EXECUTE') {
+        const executedResults = result.results.filter(r => r.executed);
+        const pendingResults = result.results.filter(r => !r.executed && r.orderId);
+        const firstTradeId = executedResults[0]?.tradeId;
+        const failedResults = result.results.filter(r => !r.executed && !r.orderId && r.reason);
+
+        for (const r of failedResults) {
+          if (r.signal.tradeId) stats.failedExitSignals++;
+          else stats.failedEntrySignals++;
+        }
+
+        if (executedResults.length > 0 || pendingResults.length > 0) {
+          const reasoning = result.signals.map(s => `${s.orderType} ${s.legs.map(l => l.symbol).join('+')}`).join('; ');
+          await recordExecute(ctx, 'orchestrator', reasoning, firstTradeId);
+        } else if (failedResults.length > 0) {
+          const failReason = failedResults.map(r => r.reason).join('; ');
+          log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
+          await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason);
+        } else {
+          await recordSkip(ctx, 'orchestrator', 'no execution', 'Signals produced but none executed');
+        }
+      } else if (result.outcome === 'MANUAL_REVIEW') {
+        await recordSkip(ctx, 'orchestrator', 'flagged', result.reason);
+      } else {
+        await recordSkip(ctx, 'orchestrator', 'skip', result.reason);
+      }
+      updateStats(stats);
     },
-    chatHistory: {
-      getRecentMessages: async (author, limit) => {
-        const messages = await getRecentChatMessages(msg.timestamp.toISOString(), author, limit);
-        return formatChatContext(messages);
-      },
-    },
-    traderConfig: {
-      strategies: traderConfig?.strategies ?? [],
-      notes: traderConfig?.notes ?? null,
-    },
-  };
-
-  // Resolve via orchestrator
-  const orchResult = await resolveOrchestrator(orchCtx, btCtx.agentProvider);
-
-  if (orchResult.outcome === 'SKIP') {
-    await recordSkip(ctx, 'orchestrator', 'skip', orchResult.reason);
-    updateStats(stats);
-    return;
-  }
-
-  if (orchResult.outcome === 'FLAG_FOR_REVIEW') {
-    await recordSkip(ctx, 'orchestrator', 'flagged', orchResult.reason);
-    updateStats(stats);
-    return;
-  }
-
-  // EXECUTE: run resolved signals through the pipeline
-  const signals = orchResult.signals;
-  if (signals.length === 0) {
-    await recordSkip(ctx, 'orchestrator', 'empty', 'Orchestrator returned empty signals');
-    updateStats(stats);
-    return;
-  }
-
-  const pipelineResults = await executeResolvedSignals(
-    signals,
-    msg.author,
-    btCtx.pipelineDeps,
-    {
-      messageId: msg.id,
-      backtestRunId: btCtx.runId,
-      isBacktest: true,
-    },
-  );
-
-  const executedResults = pipelineResults.filter(r => r.executed);
-  const pendingResults = pipelineResults.filter(r => !r.executed && r.orderId);
-  const firstTradeId = executedResults[0]?.tradeId;
-
-  const failedResults = pipelineResults.filter(r => !r.executed && !r.orderId && r.reason);
-  for (const r of failedResults) {
-    if (r.signal.tradeId) stats.failedExitSignals++;
-    else stats.failedEntrySignals++;
-  }
-
-  if (executedResults.length > 0 || pendingResults.length > 0) {
-    const reasoning = signals.map(s => `${s.orderType} ${s.legs.map(l => l.symbol).join('+')}`).join('; ');
-    await recordExecute(ctx, 'orchestrator', reasoning, firstTradeId);
-  } else if (failedResults.length > 0) {
-    const failReason = failedResults.map(r => r.reason).join('; ');
-    log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
-    await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason);
-  } else {
-    await recordSkip(ctx, 'orchestrator', 'no execution', 'Signals produced but none executed');
-  }
-
-  updateStats(stats);
+  });
 }

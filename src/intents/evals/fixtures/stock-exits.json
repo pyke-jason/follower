@@ -1,0 +1,116 @@
+{
+  "cases": [
+    {
+      "id": "stockexit-001",
+      "description": "Pete exits long TLRY stock at $12.06 for $.20 loss — Exit+Long badges, explicit exit price",
+      "input": {
+        "rawHtml": "<span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/TLRY\" target=\"os\" data-symbol=\"TLRY\"><b>TLRY</b></a> $12.06 for $.20 loss. No staying power. I was looking for $.20 on the upside and follow thru. Did not get it and this is not a stock I would want to hold overnight",
+        "author": "Pete",
+        "timestamp": "2025-12-12T19:57:15.000Z",
+        "positions": [
+          {
+            "id": "pos-tlry-stock",
+            "symbol": "TLRY",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "TLRY", "side": "BUY", "quantity": 100, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 100
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "tags": ["stock-exit", "close"],
+      "notes": "Clean long stock exit: Exit+Long badges, ticker, exit price ($12.06), P&L ('$.20 loss'). Exit badge = CLOSE action. Long badge = was long stock, now closing. orderType=STOCK, direction=LONG on the open position."
+    },
+    {
+      "id": "stockexit-002",
+      "description": "Pete exits short MRVL stock at $85.12 for $.40 gain — Exit+Short badges, brief message",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/MRVL\" target=\"os\" data-symbol=\"MRVL\" data-criteria=\"Bear\"><b>MRVL</b></a> $85.12 for $.40 gain.&nbsp;</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-12T19:30:46.000Z",
+        "positions": [
+          {
+            "id": "pos-mrvl-stock",
+            "symbol": "MRVL",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "MRVL", "side": "SELL", "quantity": 100, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 100
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "tags": ["stock-exit", "close"],
+      "notes": "Short stock exit: Exit+Short badges. Critical badge semantics: Short badge on an EXIT message = closing a SHORT stock position (buy-to-cover), NOT a new short sale. The position direction is SHORT (was selling shares); the exit action covers it. orderType=STOCK must be preserved."
+    },
+    {
+      "id": "stockexit-003",
+      "description": "Pete exits short ORLY stock at $94.11 for $.20 gain — Exit+Short badges, trader commentary",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/ORLY\" target=\"os\" data-symbol=\"ORLY\" data-criteria=\"Bear\"><b>ORLY</b></a> $94.11 for $.20 gain. The stock looks like a good short, but it has not been moving down with the market like I would like to see. Getting late in the day so taking the gain.&nbsp;</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-09T20:04:06.000Z",
+        "positions": [
+          {
+            "id": "pos-orly-stock",
+            "symbol": "ORLY",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "ORLY", "side": "SELL", "quantity": 100, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 100
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "tags": ["stock-exit", "close"],
+      "notes": "Short stock exit with trader reasoning. 'The stock looks like a good short' is bearish market commentary — it does NOT mean a new short entry. The Exit badge is authoritative: this is a CLOSE of an existing SHORT position. LLM must not mistake the reasoning text for a new signal."
+    },
+    {
+      "id": "stockexit-004",
+      "description": "Hariseldon exits NVDA stock with $2.15 profit per share — Exit badge only (no Long/Short), profit-per-share format",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> with $2.15 profit per share (1,000)&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-08T22:43:56.000Z",
+        "positions": [
+          {
+            "id": "pos-nvda-stock",
+            "symbol": "NVDA",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "NVDA", "side": "BUY", "quantity": 1000, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 1000
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "tags": ["stock-exit", "close"],
+      "notes": "Hariseldon style: Exit badge only (no Long/Short direction badge). Profit expressed as '$X per share (quantity)' rather than a percentage or exit price. The '(1,000)' is share count context, not a price. Must still resolve to a CLOSE of the NVDA STOCK position. orderType=STOCK, hasTradeId=true."
+    }
+  ]
+}

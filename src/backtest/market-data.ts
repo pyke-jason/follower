@@ -10,7 +10,7 @@ import {
   readCachedRanges, readCachedTicks, writeCachedTicks,
 } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
-import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols } from './occ-symbology.js';
+import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from './occ-symbology.js';
 import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
@@ -200,15 +200,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
     // Get underlying price for strike filtering
     let underlyingPrice: number;
-    try {
-      const quote = await this.getQuote(symbol, at);
-      underlyingPrice = (quote.bid + quote.ask) / 2;
-    } catch (err) {
-      throw new Error(
-        `[MarketData] Cannot get underlying price for ${symbol} at ${at.toISOString()} — ` +
-        `needed for options chain strike filtering. ${err instanceof Error ? err.message : err}`,
-      );
-    }
+    const quote = await this.getQuote(symbol, at);
+    underlyingPrice = (quote.bid + quote.ask) / 2;
 
     const strikeLow = underlyingPrice * 0.8;
     const strikeHigh = underlyingPrice * 1.2;
@@ -541,6 +534,70 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     }
 
     return result >= 0 ? ticks[result] : null;
+  }
+
+  /**
+   * Probe Databento for real option expiry dates by batch-fetching ohlcv-1d bars
+   * for a handful of ATM OCC symbols across candidate Fridays.
+   * ~15KB per call — surgical data usage.
+   */
+  async getExpiryDates(symbol: string, at: Date): Promise<string[]> {
+    // Get stock price to determine ATM strikes
+    const quote = await this.getQuote(symbol, at);
+    const stockPrice = (quote.bid + quote.ask) / 2;
+
+    const interval = stockPrice < 20 ? 0.5 : stockPrice < 100 ? 1 : stockPrice < 500 ? 5 : 10;
+    const atmStrike = Math.round(stockPrice / interval) * interval;
+    const probeStrikes = [atmStrike - interval, atmStrike, atmStrike + interval];
+
+    // Generate candidate Fridays for the next 12 weeks
+    const fridays: string[] = [];
+    const d = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+    const dow = d.getUTCDay();
+    d.setUTCDate(d.getUTCDate() + ((5 - dow + 7) % 7 || 7));
+    for (let i = 0; i < 12; i++) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      fridays.push(`${y}-${m}-${dd}`);
+      d.setUTCDate(d.getUTCDate() + 7);
+    }
+
+    // Build probe OCC symbols — 3 strikes × 12 Fridays = 36 symbols
+    const probeSymbols: string[] = [];
+    const expiryForSymbol: string[] = [];
+    for (const expiry of fridays) {
+      for (const strike of probeStrikes) {
+        probeSymbols.push(formatOccSymbol({ underlying: symbol, expiration: expiry, type: 'CALL', strike }));
+        expiryForSymbol.push(expiry);
+      }
+    }
+
+    // ohlcv-1d ts_event is midnight UTC of the NEXT day — extend by 2 days to avoid boundary miss
+    const dayStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+    const dayEnd = new Date(dayStart.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+    const ticks = await fetchTickWindow({
+      apiKey: this.apiKey,
+      dataset: this.optionsDataset,
+      schema: 'ohlcv-1d',
+      symbols: probeSymbols,
+      start: dayStart,
+      end: dayEnd,
+      stypeIn: 'raw_symbol',
+    });
+
+    const symbolsWithData = new Set(ticks.map(t => t.symbol));
+    const validExpiries = new Set<string>();
+    for (let i = 0; i < probeSymbols.length; i++) {
+      if (symbolsWithData.has(probeSymbols[i])) {
+        validExpiries.add(expiryForSymbol[i]);
+      }
+    }
+
+    const result = [...validExpiries].sort();
+    log.debug(`getExpiryDates(${symbol}): ${result.length} valid expiries from ${fridays.length} candidates (~${ticks.length} ticks)`);
+    return result;
   }
 
   /** Log per-symbol data quality summary. Call after backtest loop completes. */

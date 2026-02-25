@@ -2,145 +2,130 @@
   "cases": [
     {
       "id": "spreads-001",
-      "description": "CDS with explicit strikes — BUY lower, SELL higher call",
+      "description": "Pete AMZN PCS with Long badge — 'Sold Dec (5) $227.50/225 PCS for $.42 Cr.'",
       "input": {
-        "message": "Long AAPL 180/185 cds for $2.10",
-        "symbols": ["AAPL"]
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/AMZN\" target=\"os\" data-symbol=\"AMZN\"><b>AMZN</b></a> Sold Dec (5) $227.50/225 PCS for $.42 Cr. I believe the stock will stay above the 100-day MA this week. it was up this morning when the market was down. RS</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-01T16:58:42.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "AAPL",
-            "direction": "LONG",
-            "strategy": "CDS",
-            "statedPremium": 2.10,
+            "orderType": "SPREAD",
             "legs": [
-              { "action": "BUY", "strike": 180, "optionType": "CALL" },
-              { "action": "SELL", "strike": 185, "optionType": "CALL" }
+              { "side": "SELL", "strike": 227.5, "optionType": "PUT" },
+              { "side": "BUY", "strike": 225, "optionType": "PUT" }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy",
-        "signals[0].legs[0].action",
-        "signals[0].legs[1].action"
-      ],
-      "tags": ["spreads"]
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["spreads", "pcs", "badge-override"],
+      "notes": "Long badge = bullish VIEW. PCS = credit spread = direction SHORT. SELL higher strike (227.5), BUY lower strike (225)."
     },
     {
       "id": "spreads-002",
-      "description": "PCS with strikes — SELL higher strike, BUY lower strike, direction SHORT",
+      "description": "Jaferd45 RDDT PCS — 'sold 12/19 PCS 200/197.5 for 0.58'",
       "input": {
-        "message": "Long GLW pcs 68/67 for .63 credit",
-        "symbols": ["GLW"]
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/RDDT\" target=\"os\" data-symbol=\"RDDT\" data-criteria=\"Bull\"><b>RDDT</b></a> sold 12/19 PCS 200/197.5 for 0.58</body></html>",
+        "author": "Jaferd45",
+        "timestamp": "2025-12-02T15:42:06.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "GLW",
-            "direction": "SHORT",
-            "strategy": "PDS",
-            "statedPremium": 0.63,
+            "orderType": "SPREAD",
             "legs": [
-              { "action": "SELL", "strike": 68, "optionType": "PUT" },
-              { "action": "BUY", "strike": 67, "optionType": "PUT" }
+              { "side": "SELL", "strike": 200, "optionType": "PUT" },
+              { "side": "BUY", "strike": 197.5, "optionType": "PUT" }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy",
-        "signals[0].legs[0].action"
-      ],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["spreads", "pcs"],
-      "notes": "PCS legs are REVERSED from PDS: SELL higher, BUY lower."
+      "notes": "PCS with explicit strikes and expiry. SELL 200, BUY 197.5."
     },
     {
       "id": "spreads-003",
-      "description": "PCS without credit price — direction SHORT, strikes stated",
+      "description": "Chilled Chilly IREN PCS — parenthetical strikes '(40/35)'",
       "input": {
-        "message": "Long NVDA pcs 900/895",
-        "symbols": ["NVDA"]
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/IREN\" target=\"os\" data-symbol=\"IREN\"><b>IREN</b></a> PCS (40/35), 12/19/25 expiration for $0.83 credit</body></html>",
+        "author": "Chilled Chilly",
+        "timestamp": "2025-12-08T20:20:28.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "NVDA",
-            "direction": "SHORT",
-            "strategy": "PDS",
+            "orderType": "SPREAD",
             "legs": [
-              { "action": "SELL", "strike": 900, "optionType": "PUT" },
-              { "action": "BUY", "strike": 895, "optionType": "PUT" }
+              { "side": "SELL", "strike": 40, "optionType": "PUT" },
+              { "side": "BUY", "strike": 35, "optionType": "PUT" }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
-      "tags": ["spreads", "pcs"]
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["spreads", "pcs"],
+      "notes": "PCS with strikes in parentheses. SELL 40, BUY 35. Credit explicitly stated."
     },
     {
       "id": "spreads-004",
-      "description": "'Short ALGN pds 260/255' — bearish debit spread, direction LONG, BUY higher, SELL lower",
+      "description": "JR21 WDC 'bullish put spread' — PCS synonym without 'PCS' keyword",
       "input": {
-        "message": "Short ALGN pds 260/255",
-        "symbols": ["ALGN"]
+        "rawHtml": "<html><head></head><body><a href=\"/option-stalker/chart/WDC\" target=\"os\" data-symbol=\"WDC\" data-criteria=\"Bull\"><b>WDC</b></a>&nbsp;175/170 bullish put spread (Dec 26) for $1.16 credit</body></html>",
+        "author": "JR21",
+        "timestamp": "2025-12-11T20:51:50.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "ALGN",
-            "direction": "LONG",
-            "strategy": "PDS",
+            "orderType": "SPREAD",
             "legs": [
-              { "action": "BUY", "strike": 260, "optionType": "PUT" },
-              { "action": "SELL", "strike": 255, "optionType": "PUT" }
+              { "side": "SELL", "strike": 175, "optionType": "PUT" },
+              { "side": "BUY", "strike": 170, "optionType": "PUT" }
             ]
           }
         ]
       },
-      "mustMatch": [
-        "signals[0].direction",
-        "signals[0].strategy",
-        "signals[0].legs[0].action"
-      ],
-      "tags": ["spreads"]
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["spreads", "pcs", "llm-path"],
+      "notes": "'bullish put spread' is a PCS synonym not matched by PCS_RE (/\\bpcs\\b|put credit spread/i). This case likely requires the LLM path to resolve correctly."
     },
     {
       "id": "spreads-005",
-      "description": "'Adding AAPL 190/200 cds' — add-on is still OPEN, legs BUY/SELL",
+      "description": "Hariseldon COST CDS+PDS combo — two spread signals in one message",
       "input": {
-        "message": "Adding AAPL 190/200 cds",
-        "symbols": ["AAPL"]
+        "rawHtml": "<html><head></head><body><div><a href=\"/option-stalker/chart/COST\" target=\"os\" data-symbol=\"COST\"><b>COST</b></a></div><div>CDS $905/$910 for $1.28 - 20 Contracts</div><div>PDS $855/$850 for $1 - 20 Contracts</div><div>Total Risk - $2.28</div><div>Gain if <a href=\"/option-stalker/chart/COST\" target=\"os\" data-symbol=\"COST\"><b>COST</b></a> Closes above $910 or below $850 - $2.72</div><div>Earnings tonight&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-11T20:43:32.000Z"
       },
       "expected": {
-        "decision": "EXECUTE",
+        "outcome": "EXECUTE",
         "signals": [
           {
-            "action": "OPEN",
-            "symbol": "AAPL",
-            "direction": "LONG",
-            "strategy": "CDS",
+            "orderType": "SPREAD",
             "legs": [
-              { "action": "BUY", "strike": 190, "optionType": "CALL" },
-              { "action": "SELL", "strike": 200, "optionType": "CALL" }
+              { "side": "BUY", "strike": 905, "optionType": "CALL" },
+              { "side": "SELL", "strike": 910, "optionType": "CALL" }
+            ]
+          },
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "side": "BUY", "strike": 855, "optionType": "PUT" },
+              { "side": "SELL", "strike": 850, "optionType": "PUT" }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].direction", "signals[0].strategy"],
-      "tags": ["spreads"],
-      "notes": "'Adding' = OPEN (system handles existing position detection)."
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[1].orderType", "signals[1].legs[0].side"],
+      "tags": ["spreads", "cds", "pds", "multi-trade"],
+      "notes": "Two separate spread strategies on same ticker (earnings play). CDS: BUY 905 CALL, SELL 910 CALL. PDS: BUY 855 PUT, SELL 850 PUT. No badges — may route to MANUAL_REVIEW or require LLM decomposition."
     }
   ]
 }

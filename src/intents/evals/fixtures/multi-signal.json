@@ -1,0 +1,205 @@
+{
+  "cases": [
+    {
+      "id": "multi-001",
+      "description": "Double Exit badge — Hariseldon closes AMD and GOOGL stock positions in one message",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/AMD\" target=\"os\" data-symbol=\"AMD\"><b>AMD</b></a> (premarket) for a loss of $7 per share<br><br><div><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/GOOGL\" target=\"os\" data-symbol=\"GOOGL\"><b>GOOGL</b></a> with a loss of $3.32 per share&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-24T13:35:03.000Z",
+        "positions": [
+          {
+            "id": "pos-amd-stock-short",
+            "symbol": "AMD",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "AMD", "side": "SELL", "quantity": 469, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 469
+          },
+          {
+            "id": "pos-googl-stock-long",
+            "symbol": "GOOGL",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "GOOGL", "side": "BUY", "quantity": 6888, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 6888
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "symbol": "AMD", "hasTradeId": true },
+          { "orderType": "STOCK", "symbol": "GOOGL", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["multi-signal", "close", "stock"],
+      "notes": "Two explicit Exit badges, each anchored to a different ticker. Both are CLOSE actions for existing STOCK positions. No new opens. Pattern 2 (two separate trades concatenated). AMD was a SHORT position (premarket loss), GOOGL was LONG."
+    },
+    {
+      "id": "multi-002",
+      "description": "CLOSE TSLA PDS + OPEN META PDS SHORT in one message — Hariseldon exits one spread and enters another",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> PDS with $1 profit per contract (20)<br><br><div><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/META\" target=\"os\" data-symbol=\"META\" data-criteria=\"Bear\"><b>META</b></a> PDS $705/$695 for $3.77 - 20 Contracts&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-10-14T19:46:45.000Z",
+        "positions": [
+          {
+            "id": "pos-tsla-pds-short",
+            "symbol": "TSLA",
+            "strategy": "PDS",
+            "direction": "SHORT",
+            "legs": [
+              { "symbol": "TSLA  251017P00430000", "side": "BUY", "quantity": 20, "expiry": "2025-10-17", "strike": 430, "type": "option", "optionType": "PUT" },
+              { "symbol": "TSLA  251017P00420000", "side": "SELL", "quantity": 20, "expiry": "2025-10-17", "strike": 420, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 20
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "SPREAD", "symbol": "TSLA", "hasTradeId": true },
+          { "orderType": "SPREAD", "symbol": "META", "hasTradeId": false }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["multi-signal", "close", "open", "spreads", "mixed-action"],
+      "notes": "Exit+Short badges on two different tickers = mixed_action flag. First signal closes existing TSLA PDS. Second signal opens a new META PDS with explicit strikes $705/$695. Short badge = bearish stock VIEW, not direction for PDS. '$1 profit per contract (20)' is P&L context for the exit."
+    },
+    {
+      "id": "multi-003",
+      "description": "CLOSE BABA stock + OPEN AMD stock SHORT — Hariseldon replaces one position with another",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/BABA\" target=\"os\" data-symbol=\"BABA\"><b>BABA</b></a> for the loss (around $5.75 a share), replaced it with&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/AMD\" target=\"os\" data-symbol=\"AMD\"><b>AMD</b></a> $229.43 - 1,000 Shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-11-18T15:28:41.000Z",
+        "positions": [
+          {
+            "id": "pos-baba-stock-short",
+            "symbol": "BABA",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "BABA", "side": "SELL", "quantity": 464, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 464
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "symbol": "BABA", "hasTradeId": true },
+          { "orderType": "STOCK", "symbol": "AMD", "hasTradeId": false }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["multi-signal", "close", "open", "stock", "mixed-action"],
+      "notes": "Exit badge closes BABA short stock position. 'replaced it with Short AMD $229.43 - 1,000 Shares' = new SHORT STOCK OPEN. Short badge + 'Short' text + authoritative '$229.43 - 1,000 Shares' price/quantity format = definitive sell-to-open. AMD position does not exist yet (hasTradeId: false)."
+    },
+    {
+      "id": "multi-004",
+      "description": "CLOSE PDD stock + OPEN MSTR stock LONG — Hariseldon exits a short and enters a long",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/PDD\" target=\"os\" data-symbol=\"PDD\"><b>PDD</b></a> with a $2.86 loss&nbsp;<div><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> $179.18 - 1,000 Shares&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-05T17:00:24.000Z",
+        "positions": [
+          {
+            "id": "pos-pdd-stock-short",
+            "symbol": "PDD",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "PDD", "side": "SELL", "quantity": 464, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 464
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "symbol": "PDD", "hasTradeId": true },
+          { "orderType": "STOCK", "symbol": "MSTR", "hasTradeId": false }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["multi-signal", "close", "open", "stock", "mixed-action"],
+      "notes": "Exit badge = close PDD short position (took a loss). Long badge + '$179.18 - 1,000 Shares' = new LONG STOCK OPEN on MSTR. Long badge here means BUYING stock (STOCK strategy, not options). '$2.86 loss' is P&L context for the exit. MSTR has no existing position."
+    },
+    {
+      "id": "multi-005",
+      "description": "Pete closes two STOCK positions — CRM explicitly and ULTA implicitly via 'Same for'",
+      "input": {
+        "rawHtml": "<span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/CRM\" target=\"os\" data-symbol=\"CRM\" data-criteria=\"Bull\"><b>CRM</b></a> $261.11 for $.40 gain. I was just waiting for any move higher. Same for <a href=\"/option-stalker/chart/ULTA\" target=\"os\" data-symbol=\"ULTA\"><b>ULTA</b></a>",
+        "author": "Pete",
+        "timestamp": "2025-12-05T18:30:56.000Z",
+        "positions": [
+          {
+            "id": "pos-crm-stock-long",
+            "symbol": "CRM",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "CRM", "side": "BUY", "quantity": 223, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 223
+          },
+          {
+            "id": "pos-ulta-stock-long",
+            "symbol": "ULTA",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "ULTA", "side": "BUY", "quantity": 78, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 78
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "symbol": "CRM", "hasTradeId": true },
+          { "orderType": "STOCK", "symbol": "ULTA", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["multi-signal", "close", "stock", "implicit-reference"],
+      "notes": "Exit+Long badges apply to CRM explicitly. 'Same for ULTA' = implicit second close with no repeated badge. Both signals should close existing LONG STOCK positions. '$261.11 for $.40 gain' is P&L context. ULTA's exit action is fully inferred from the 'Same for' referential phrase — this is the key challenge for the LLM."
+    },
+    {
+      "id": "multi-006",
+      "description": "Hariseldon closes MSTR and adds to an existing NVDA LONG position",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a> with the loss ($21) - added to <a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> - avg. $177.87 - 2,000 Shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-01T15:28:19.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-stock-long",
+            "symbol": "MSTR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR", "side": "BUY", "quantity": 122, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 122
+          },
+          {
+            "id": "pos-nvda-stock-long",
+            "symbol": "NVDA",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "NVDA", "side": "BUY", "quantity": 225, "expiry": "", "strike": 0, "type": "stock" }],
+            "quantity": 225
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "symbol": "MSTR", "hasTradeId": true },
+          { "orderType": "STOCK", "symbol": "NVDA", "hasTradeId": true }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "tags": ["multi-signal", "close", "add", "stock", "mixed-action"],
+      "notes": "Exit badge = close MSTR long position (took a loss). 'added to NVDA' + avg price + '2,000 Shares' = ADD to an existing NVDA long position (hasTradeId: true). 'avg. $177.87' confirms this is an average-down, not a fresh open. The single Exit badge only covers MSTR; NVDA is an ADD action inferred from 'added to'."
+    }
+  ]
+}

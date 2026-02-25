@@ -17,15 +17,10 @@ export const LegActionSchema = z.enum(['BUY', 'SELL']);
 export type LegAction = z.infer<typeof LegActionSchema>;
 
 /** Strategies supported by the execution pipeline. */
-export const StrategySchema = z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS']);
+export const StrategySchema = z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS']);
 export type Strategy = z.infer<typeof StrategySchema>;
 
-/**
- * Extended strategies for labeling / eval ground truth.
- * Includes PCS (Put Credit Spread) which the execution pipeline
- * does not yet support — labels can describe patterns broader
- * than what the pipeline trades.
- */
+/** Extended strategies for labeling / eval ground truth. */
 export const LabelStrategySchema = z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS']);
 export const TradeActionSchema = z.enum(['OPEN', 'CLOSE', 'ADD', 'TRIM', 'LEG_OFF']);
 export type TradeAction = z.infer<typeof TradeActionSchema>;
