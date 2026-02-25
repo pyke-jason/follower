@@ -84,10 +84,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "RH",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 155 }]
+          }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["time-spread", "exits"],
       "notes": "Exit badge + Short+Long badges together = time spread close. Matching the RH open from timespread-001 (message 486703 the day before). No strike in this exit message — must match by symbol. Position is modeled as a CALL LONG since a time spread is net-long the far-dated call. Position match should find the RH CALL position."
     },
@@ -112,10 +116,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "HPQ",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 30 }]
+          }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["time-spread", "exits"],
       "notes": "Verbose exit narrative explains the mechanics: short-dated calls expired worthless, now selling the longer-dated calls for .24 (double the .12 entry). Exit+Long+Short badges with 'time spread' keyword. The 'sold this weeks calls' phrase describes the exit leg action, not a new SHORT signal. extra_text complexity flag expected. Must emit EXECUTE + match the HPQ CALL position."
     }

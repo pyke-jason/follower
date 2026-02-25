@@ -21,6 +21,7 @@ import type {
   OptionLeg,
   StockLeg,
   Leg,
+  OpenPosition,
 } from './types.js';
 import type { Strategy } from '../../lib/enums.js';
 import { spreadLegs } from '../../lib/spread-legs.js';
@@ -138,15 +139,20 @@ function resolveExpiryHint(hint: string, messageDate: Date): string | null {
     return dateToYMD(messageDate);
   }
 
-  // LEAP
+  // LEAP → third Friday of month, 1 year out (standard monthly option expiry)
   if (normalized === 'leap') {
     const leapDate = new Date(messageDate);
     leapDate.setUTCFullYear(leapDate.getUTCFullYear() + 1);
-    return dateToYMD(nextFriday(leapDate));
+    return dateToYMD(thirdFriday(leapDate.getUTCFullYear(), leapDate.getUTCMonth()));
   }
 
   // overnight → next business day
   if (normalized === 'overnight') {
+    return dateToYMD(addBusinessDays(messageDate, 1));
+  }
+
+  // tomorrow → next business day
+  if (normalized === 'tomorrow') {
     return dateToYMD(addBusinessDays(messageDate, 1));
   }
 
@@ -368,7 +374,28 @@ export async function resolveOpenPath(
   // ── Step 2: Resolve expiry ───────────────────────────────────────────────────
 
   const messageDate = parseMessageDate(ctx.timestamp);
-  const strikeSelection = strikesFromParse(parse);
+  let strikeSelection = strikesFromParse(parse);
+
+  // Safety net: reject explicit strikes that are wildly inconsistent with the stock price.
+  // Catches misidentified premiums or cost-basis values (e.g. "$38.97 avg" on a $550 stock).
+  if (
+    strikeSelection.method === 'explicit' &&
+    !spreadStrategy &&
+    strategy !== 'STOCK' &&
+    strikeSelection.strikes.length === 1
+  ) {
+    const quote = await ctx.marketData.getQuote(symbol);
+    const stockPrice = (quote.bid + quote.ask) / 2;
+    const strike = strikeSelection.strikes[0];
+    if (strike < stockPrice * 0.15 || strike > stockPrice * 5) {
+      log.debug(
+        'open-path: explicit strike %s implausible vs stock price %s — falling back to ATM',
+        strike,
+        stockPrice.toFixed(2),
+      );
+      strikeSelection = { method: 'atm' };
+    }
+  }
 
   let resolvedExpiry: string | null = null;
 
@@ -461,9 +488,12 @@ export async function resolveOpenPath(
       const quote = await ctx.marketData.getQuote(symbol);
       const stockPrice = (quote.bid + quote.ask) / 2;
 
-      // Try to get chain to detect interval
+      // Chain is required for ATM — if null, the expiry likely doesn't exist
       const chainForInterval = await ctx.marketData.getOptionChain(symbol, expiry, optType);
-      const chainStrikes = chainForInterval?.strikes.map(s => s.strike);
+      if (!chainForInterval || !chainForInterval.strikes.length) {
+        return { error: `No option chain for ${symbol} ${expiry} ${optType} — expiry may not exist` };
+      }
+      const chainStrikes = chainForInterval.strikes.map(s => s.strike);
 
       const interval = detectStrikeInterval(stockPrice, chainStrikes);
       const atmStrike = roundToInterval(stockPrice, interval);
@@ -566,7 +596,7 @@ export async function resolveOpenPath(
         }
         if (!bestStrikes) return { error: 'Could not find matching spread strikes' };
 
-        const tolerance = statedPremium * 0.05;
+        const tolerance = Math.max(statedPremium * 0.15, 0.15);
         if (bestDiff > tolerance) {
           return { error: `premium_mismatch: best spread diff ${bestDiff.toFixed(2)} > tolerance ${tolerance.toFixed(2)}` };
         }
@@ -589,7 +619,7 @@ export async function resolveOpenPath(
 
         const matchedStrike = chain.strikes.find(s => s.strike === bestStrike);
         const matchedMid = matchedStrike ? chainMid(matchedStrike.bid, matchedStrike.ask) : 0;
-        const tolerance = statedPremium * 0.05;
+        const tolerance = Math.max(statedPremium * 0.15, 0.15);
         const diff = Math.abs(matchedMid - statedPremium);
         if (diff > tolerance) {
           return { error: `premium_mismatch: diff ${diff.toFixed(2)} > tolerance ${tolerance.toFixed(2)}` };
@@ -680,6 +710,7 @@ export async function resolveOpenPath(
   if (
     parse.premiumHint !== null &&
     strikeSelection.method !== 'premium_match' &&
+    strikeSelection.method !== 'explicit' &&
     resolvedLegs.legs.length > 0
   ) {
     const optionLegs = resolvedLegs.legs.filter((l): l is OptionLeg => l.type === 'option');
@@ -700,7 +731,7 @@ export async function resolveOpenPath(
         }
 
         if (computedMid !== null) {
-          const tolerance = parse.premiumHint * 0.05;
+          const tolerance = Math.max(parse.premiumHint * 0.15, 0.15);
           const diff = Math.abs(computedMid - parse.premiumHint);
           if (diff > tolerance) {
             log.debug(
@@ -746,6 +777,67 @@ export async function resolveOpenPath(
   );
 
   return { outcome: 'EXECUTE', signals: [signal] };
+}
+
+// ── ADD path ──────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve an ADD action: adding to an existing open position.
+ *
+ * 1. Look up existing open position by symbol (+ optional strategy preference)
+ * 2. Enrich parse.direction from matched position (handles "Added to AMD short" where direction=null)
+ * 3. Delegate to resolveOpenPath with action='OPEN' so existing leg-building logic applies
+ * 4. If EXECUTE and position found, stamp tradeId on each signal so the executor ADDs to the existing trade
+ */
+export async function resolveAddPath(
+  parse: ParseResult,
+  ctx: OrchestratorContext,
+): Promise<OrchestratorResult> {
+  if (!parse.symbol) {
+    return { outcome: 'MANUAL_REVIEW', reason: 'ADD signal missing symbol' };
+  }
+
+  // Look up existing position
+  let positions: OpenPosition[];
+  try {
+    positions = await ctx.positions.getPositions(parse.symbol);
+  } catch (err) {
+    log.error('getPositions failed for', parse.symbol, err);
+    return {
+      outcome: 'MANUAL_REVIEW',
+      reason: `failed to fetch positions for ${parse.symbol}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // Find matching position — strategy-filtered if parse has a strategy hint
+  let matched: OpenPosition | null = null;
+  if (positions.length === 1) {
+    matched = positions[0];
+  } else if (positions.length > 1 && parse.strategy) {
+    const byStrategy = positions.filter(p => p.strategy === parse.strategy);
+    if (byStrategy.length === 1) {
+      matched = byStrategy[0];
+    }
+  }
+
+  // Enrich direction from the matched position when parse didn't determine it
+  const enrichedParse: ParseResult = {
+    ...parse,
+    action: 'OPEN', // delegate to open-path as a new OPEN
+    direction: parse.direction ?? matched?.direction ?? null,
+    strategy: parse.strategy ?? matched?.strategy ?? null,
+  };
+
+  const result = await resolveOpenPath(enrichedParse, ctx);
+
+  // If EXECUTE and we matched a position, stamp tradeId so executor ADDs to existing trade
+  if (result.outcome === 'EXECUTE' && matched) {
+    for (const signal of result.signals) {
+      signal.tradeId = matched.id;
+    }
+  }
+
+  return result;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

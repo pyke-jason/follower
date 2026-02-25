@@ -24,7 +24,7 @@ const SignalLegSchema = z.object({
 export const SignalSchema = z.object({
   action: TradeActionSchema,
   symbol: z.string().min(1),
-  direction: DirectionSchema.default('LONG'),
+  direction: DirectionSchema.optional(),
   strategy: StrategySchema.default('STOCK'),
   /** Trader's stated premium from the message text ("for $3.72", "for .09"). Informational only — never used for order placement. */
   statedPremium: zPrice.optional(),

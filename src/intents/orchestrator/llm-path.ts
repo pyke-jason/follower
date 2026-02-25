@@ -27,7 +27,7 @@ import type {
   ParseResult,
   ResolvedSignal,
 } from './types.js';
-import { resolveOpenPath } from './open-path.js';
+import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath } from './position-path.js';
 
 const log = createLogger('Orchestrator:LLM');
@@ -73,6 +73,8 @@ For CLOSE / TRIM / LEG_OFF signals:
 - targetStrategy: "CALL" | "PUT" for LEG_OFF (the leg to KEEP)
 
 ## Rules:
+- When a message describes multiple distinct actions (e.g. closing one position AND opening another), emit one signal per action — do not merge them.
+- STOCK direction: "shorting"/"shorted"/"short" → SHORT. "buying"/"bought"/"long" → LONG. Use the pre-parsed direction when present.
 - "Lotto"/"Yolo" = always LONG (buying), never SHORT
 - "Wrote"/"Writing" = always SHORT (selling to open)
 - For follow-trades: call get_recent_chat to find the trade, then mirror it exactly
@@ -200,7 +202,9 @@ async function routeLLMSignals(
     const signalParse = signalToParseResult(signal, originalParse);
     let result: OrchestratorResult;
 
-    if (signalParse.action === 'OPEN' || signalParse.action === 'ADD') {
+    if (signalParse.action === 'ADD') {
+      result = await resolveAddPath(signalParse, ctx);
+    } else if (signalParse.action === 'OPEN') {
       result = await resolveOpenPath(signalParse, ctx);
     } else if (
       signalParse.action === 'CLOSE' ||

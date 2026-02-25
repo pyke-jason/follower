@@ -29,11 +29,11 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "AMD", "hasTradeId": true },
-          { "orderType": "STOCK", "symbol": "GOOGL", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "AMD", "legs": [{ "side": "BUY" }] },
+          { "orderType": "STOCK", "symbol": "GOOGL", "legs": [{ "side": "SELL" }] }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["multi-signal", "close", "stock"],
       "notes": "Two explicit Exit badges, each anchored to a different ticker. Both are CLOSE actions for existing STOCK positions. No new opens. Pattern 2 (two separate trades concatenated). AMD was a SHORT position (premarket loss), GOOGL was LONG."
     },
@@ -61,11 +61,25 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "SPREAD", "symbol": "TSLA", "hasTradeId": true },
-          { "orderType": "SPREAD", "symbol": "META", "hasTradeId": false }
+          {
+            "orderType": "SPREAD",
+            "symbol": "TSLA",
+            "legs": [
+              { "optionType": "PUT", "side": "SELL", "strike": 430 },
+              { "optionType": "PUT", "side": "BUY", "strike": 420 }
+            ]
+          },
+          {
+            "orderType": "SPREAD",
+            "symbol": "META",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 705 },
+              { "optionType": "PUT", "side": "SELL", "strike": 695 }
+            ]
+          }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[1].side", "signals[0].legs[1].optionType", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike", "signals[1].legs[1].side", "signals[1].legs[1].optionType", "signals[1].legs[1].strike"],
       "tags": ["multi-signal", "close", "open", "spreads", "mixed-action"],
       "notes": "Exit+Short badges on two different tickers = mixed_action flag. First signal closes existing TSLA PDS. Second signal opens a new META PDS with explicit strikes $705/$695. Short badge = bearish stock VIEW, not direction for PDS. '$1 profit per contract (20)' is P&L context for the exit."
     },
@@ -90,13 +104,13 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "BABA", "hasTradeId": true },
-          { "orderType": "STOCK", "symbol": "AMD", "hasTradeId": false }
+          { "orderType": "STOCK", "symbol": "BABA", "legs": [{ "side": "BUY" }] },
+          { "orderType": "STOCK", "symbol": "AMD", "legs": [{ "side": "SELL" }] }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["multi-signal", "close", "open", "stock", "mixed-action"],
-      "notes": "Exit badge closes BABA short stock position. 'replaced it with Short AMD $229.43 - 1,000 Shares' = new SHORT STOCK OPEN. Short badge + 'Short' text + authoritative '$229.43 - 1,000 Shares' price/quantity format = definitive sell-to-open. AMD position does not exist yet (hasTradeId: false)."
+      "notes": "Exit badge closes BABA short stock position. 'replaced it with Short AMD $229.43 - 1,000 Shares' = new SHORT STOCK OPEN. Short badge + 'Short' text + authoritative '$229.43 - 1,000 Shares' price/quantity format = definitive sell-to-open. AMD position does not exist yet."
     },
     {
       "id": "multi-004",
@@ -119,11 +133,11 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "PDD", "hasTradeId": true },
-          { "orderType": "STOCK", "symbol": "MSTR", "hasTradeId": false }
+          { "orderType": "STOCK", "symbol": "PDD", "legs": [{ "side": "BUY" }] },
+          { "orderType": "STOCK", "symbol": "MSTR", "legs": [{ "side": "BUY" }] }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["multi-signal", "close", "open", "stock", "mixed-action"],
       "notes": "Exit badge = close PDD short position (took a loss). Long badge + '$179.18 - 1,000 Shares' = new LONG STOCK OPEN on MSTR. Long badge here means BUYING stock (STOCK strategy, not options). '$2.86 loss' is P&L context for the exit. MSTR has no existing position."
     },
@@ -156,11 +170,11 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "CRM", "hasTradeId": true },
-          { "orderType": "STOCK", "symbol": "ULTA", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "CRM", "legs": [{ "side": "SELL" }] },
+          { "orderType": "STOCK", "symbol": "ULTA", "legs": [{ "side": "SELL" }] }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["multi-signal", "close", "stock", "implicit-reference"],
       "notes": "Exit+Long badges apply to CRM explicitly. 'Same for ULTA' = implicit second close with no repeated badge. Both signals should close existing LONG STOCK positions. '$261.11 for $.40 gain' is P&L context. ULTA's exit action is fully inferred from the 'Same for' referential phrase — this is the key challenge for the LLM."
     },
@@ -193,13 +207,13 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "MSTR", "hasTradeId": true },
-          { "orderType": "STOCK", "symbol": "NVDA", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "MSTR", "legs": [{ "side": "SELL" }] },
+          { "orderType": "STOCK", "symbol": "NVDA", "legs": [{ "side": "BUY" }] }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["multi-signal", "close", "add", "stock", "mixed-action"],
-      "notes": "Exit badge = close MSTR long position (took a loss). 'added to NVDA' + avg price + '2,000 Shares' = ADD to an existing NVDA long position (hasTradeId: true). 'avg. $177.87' confirms this is an average-down, not a fresh open. The single Exit badge only covers MSTR; NVDA is an ADD action inferred from 'added to'."
+      "notes": "Exit badge = close MSTR long position (took a loss). 'added to NVDA' + avg price + '2,000 Shares' = ADD to an existing NVDA long position. 'avg. $177.87' confirms this is an average-down, not a fresh open. The single Exit badge only covers MSTR; NVDA is an ADD action inferred from 'added to'."
     }
   ]
 }

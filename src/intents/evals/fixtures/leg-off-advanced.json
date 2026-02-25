@@ -46,12 +46,12 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true, "symbol": "TSLA" },
-          { "hasTradeId": true, "symbol": "COST" },
-          { "hasTradeId": true, "symbol": "COST" }
+          { "orderType": "SINGLE", "symbol": "TSLA", "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 440 }] },
+          { "orderType": "SINGLE", "symbol": "COST", "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 910 }] },
+          { "orderType": "SINGLE", "symbol": "COST", "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 850 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId", "signals[1].hasTradeId", "signals[2].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].symbol", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[1].orderType", "signals[1].symbol", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike", "signals[2].orderType", "signals[2].symbol", "signals[2].legs[0].side", "signals[2].legs[0].optionType", "signals[2].legs[0].strike"],
       "tags": ["leg-off", "multi-ticker", "multi-signal"],
       "notes": "Most complex case: three leg-offs in one message across two symbols. TSLA PDS → buy-to-close the short PUT leg ($440 SELL). COST CDS → buy-to-close the short CALL leg ($910 SELL). COST PDS → buy-to-close the short PUT leg ($850 SELL). The COST positions form an earnings strangle (iron condor): CDS $905/$910 + PDS $855/$850, both opened on Dec 11 before COST earnings. Signal[0] matches TSLA, signals[1] and [2] match the two COST positions. symbol field used to distinguish TSLA vs COST signals."
     },
@@ -79,10 +79,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          { "orderType": "SINGLE", "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 400 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "cds"],
       "notes": "'Bought back the short Calls' = buy-to-close the SELL leg of CDS. 'Still in long Calls' explicitly confirms the BUY leg is retained — this is a LEG_OFF not a CLOSE. '15 Contracts' matches position quantity. The remaining position becomes a naked long call. No badges — Hariseldon's statements are always text-only for options."
     },
@@ -110,10 +110,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          { "orderType": "SINGLE", "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 220 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "cds"],
       "notes": "Simpler phrasing than legoff-adv-002 but identical structure. 'holding the long Calls' is the retention marker. 'I bought back' (first-person + bought back) = buy-to-close pattern. No price info — pure LEG_OFF intent. The BUY call leg stays open as a naked long CALL."
     },
@@ -141,10 +141,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          { "orderType": "SINGLE", "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 580 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "cds"],
       "notes": "No explicit 'still in' or 'holding' phrase — the LEG_OFF intent is implied solely by 'Bought back the Short Calls'. When a spread is open and the message says 'bought back the short [type]', the system must infer this is a LEG_OFF (partial close) not a full CLOSE. The BUY leg stays open. This tests implicit LEG_OFF detection without a retention confirmation phrase."
     },
@@ -172,10 +172,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          { "orderType": "SINGLE", "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 1140 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "cds"],
       "notes": "Position based on Hariseldon's actual NFLX CDS: '$1130/$1140 for $3.28 - 20 Contracts' (Oct 22). 'now holding the long Calls' explicitly confirms the long $1130 BUY leg is kept. '$6 profit' applies to the short SELL leg buy-to-close. After this LEG_OFF, the $1130 call becomes a naked long CALL position."
     },
@@ -203,10 +203,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          { "orderType": "SINGLE", "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 180 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "pds"],
       "notes": "PDS leg-off: 'Bought back the short Puts on TSM PDS'. Explicit strategy noun 'PDS' confirms the spread type. Short PUT = SELL leg (lower strike $180). Buying it back = buy-to-close. The BUY leg ($185 PUT) is retained as a naked long PUT. Trailing dash with no profit amount is common Hariseldon shorthand."
     },
@@ -233,12 +233,97 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          { "orderType": "SINGLE", "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 125 }] }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "close", "sold-put"],
       "notes": "Different pattern: 'Puts I sold' references a prior sell-to-open action (SHORT PUT position). 'Bought back' = buy-to-close the entire short PUT position (full CLOSE, not a leg-off). This tests disambiguation: when only one position exists with a single SELL leg, 'bought back' closes it entirely. The phrase 'I sold' anchors the reference to the existing SHORT direction PUT position. '.33 profit' = credit received on open minus debit paid to close."
+    },
+    {
+      "id": "legoff-adv-008",
+      "description": "'Long META CDS $755/$765 for $3.64 - 10 Contracts' — standard CDS open, part 1 of leg-off → exit sequence",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/META\" target=\"os\" data-symbol=\"META\"><b>META</b></a> CDS $755/$765 for $3.64 - 10 Contracts&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-04T14:42:56.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "optionType": "CALL", "side": "BUY", "strike": 755 },
+              { "optionType": "CALL", "side": "SELL", "strike": 765 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[1].side"],
+      "tags": ["leg-off", "cds", "sequence"],
+      "notes": "Part 1 of 3 (open → leg-off → exit). Standard CDS open: Long badge = bullish view, CDS = call debit spread, direction LONG. $755/$765 = BUY $755 CALL, SELL $765 CALL. Sets up position for the leg-off in legoff-adv-009."
+    },
+    {
+      "id": "legoff-adv-009",
+      "description": "'Bought back the short Calls on META holding the long Calls' — CDS leg-off, retain long calls (part 2 of sequence)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the short Calls on <a href=\"/option-stalker/chart/META\" target=\"os\" data-symbol=\"META\"><b>META</b></a> holding the long Calls&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-04T17:00:33.000Z",
+        "positions": [
+          {
+            "id": "pos-meta-cds-sep",
+            "symbol": "META",
+            "strategy": "CDS",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "META  250905C00755000", "side": "BUY", "quantity": 1, "expiry": "2025-09-05", "strike": 755, "type": "option", "optionType": "CALL" },
+              { "symbol": "META  250905C00765000", "side": "SELL", "quantity": 1, "expiry": "2025-09-05", "strike": 765, "type": "option", "optionType": "CALL" }
+            ],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "SINGLE", "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 765 }] }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["leg-off", "cds", "sequence"],
+      "notes": "Part 2 of 3 (open → leg-off → exit). 'Bought back the short Calls' = buy-to-close the SELL leg ($765). 'holding the long Calls' = retention marker, confirms BUY leg ($755) stays open. This is a LEG_OFF, not CLOSE. Nearly identical to legoff-adv-003 (MSTR) but part of a documented 3-step sequence where the exit follows in legoff-adv-010."
+    },
+    {
+      "id": "legoff-adv-010",
+      "description": "'Exit META CDS at break-even' — CLOSE remaining long calls after leg-off (part 3 of sequence)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/META\" target=\"os\" data-symbol=\"META\"><b>META</b></a> CDS at break-even&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-05T13:34:20.000Z",
+        "positions": [
+          {
+            "id": "pos-meta-cds-sep",
+            "symbol": "META",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "META  250905C00755000", "side": "BUY", "quantity": 1, "expiry": "2025-09-05", "strike": 755, "type": "option", "optionType": "CALL" }
+            ],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "SINGLE", "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 755 }] }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["leg-off", "cds", "exit-after-legoff", "sequence"],
+      "notes": "Part 3 of 3 (open → leg-off → exit). After legoff-adv-009 bought back the short $765 calls, the position converted from CDS to naked CALL (targetStrategy=CALL) with only the long $755 calls remaining. Trader still says 'Exit META CDS' using the original strategy name — system must fuzzy-match to the CALL position by symbol."
     }
   ]
 }

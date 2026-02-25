@@ -103,12 +103,18 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "AAPL",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 260 }
+            ]
+          }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["covered-call", "close"],
-      "notes": "'Bought back' = closing a previously sold (SHORT) CALL position. Must match the open SHORT CALL position by symbol. hasTradeId=true confirms the signal resolves against an open position rather than opening a new one."
+      "notes": "'Bought back' = closing a previously sold (SHORT) CALL position. Must match the open SHORT CALL position by symbol. CLOSE reverses leg side: SELL→BUY. Strike $260, optionType CALL from position."
     },
     {
       "id": "cc-005",
@@ -142,8 +148,11 @@
         "outcome": "EXECUTE",
         "signals": [
           {
-            "hasTradeId": true,
-            "symbol": "MSTR"
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 210 }
+            ]
           },
           {
             "orderType": "SINGLE",
@@ -154,9 +163,9 @@
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike"],
       "tags": ["covered-call", "roll", "multi-signal"],
-      "notes": "Roll = two actions in one message. Signal 0: close existing $210 SHORT CALL (hasTradeId=true). Signal 1: new sell-to-open $200 CALL (side=SELL). 'Bought back' = close; 'sold' = new open. Both on MSTR. The $200 strike is lower than $210, a classic downward roll when stock is falling."
+      "notes": "Roll = two actions in one message. Signal 0: close existing $210 SHORT CALL (reversed leg: BUY CALL $210). Signal 1: new sell-to-open $200 CALL (side=SELL). 'Bought back' = close; 'sold' = new open. Both on MSTR. The $200 strike is lower than $210, a classic downward roll when stock is falling."
     }
   ]
 }

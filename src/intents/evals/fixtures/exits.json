@@ -21,10 +21,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 177.5 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "close"],
       "notes": "Exit badge + lotto ref. 'Short' badge on original open = bearish view, but lotto = buying puts = LONG direction. Position matches by symbol."
     },
@@ -49,10 +53,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 177.5 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "close"],
       "notes": "Exit badge + lotto keyword. Dave W followed Hari's MSTR lotto play. Position is PUT LONG (lotto = buy to open)."
     },
@@ -77,10 +85,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "AVGO",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 220 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "close"],
       "notes": "Short badge = bearish stock view, lotto = speculative BUY of puts. Position direction is LONG. Exit+Short badges together = closing a bearish lotto."
     },
@@ -113,10 +125,19 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "GOOGL",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 195 }]
+          },
+          {
+            "orderType": "SINGLE",
+            "symbol": "GOOGL",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 190 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[1].orderType", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike"],
       "tags": ["exits", "close", "strangle"],
       "notes": "Exit+Long+Short badges = mixed_action flag in orchestrator → routes to LLM. Strangle was two separate positions (CALL + PUT). Should close at least one, ideally both."
     },
@@ -149,10 +170,19 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 182.5 }]
+          },
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 182.5 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[1].orderType", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike"],
       "tags": ["exits", "close", "strangle"],
       "notes": "Exit badge + 'Straddle completely' = full close of both CALL and PUT positions. '.30 cent loss per contract total' is P&L context."
     },
@@ -177,10 +207,15 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true, "exitPercent": 0.5 }
+          {
+            "orderType": "STOCK",
+            "symbol": "QURE",
+            "exitPercent": 0.5,
+            "legs": [{ "side": "SELL" }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId", "signals[0].exitPercent"],
+      "mustMatch": ["signals[0].orderType", "signals[0].exitPercent", "signals[0].legs[0].side"],
       "tags": ["exits", "trim"],
       "notes": "Exit+Long badges + 'sold half' = TRIM 50%. 'on shares' confirms STOCK strategy. exitPercent=0.5 derived from 'half'."
     },
@@ -205,10 +240,15 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true, "exitPercent": 0.5 }
+          {
+            "orderType": "STOCK",
+            "symbol": "TMC",
+            "exitPercent": 0.5,
+            "legs": [{ "side": "SELL" }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId", "signals[0].exitPercent"],
+      "mustMatch": ["signals[0].orderType", "signals[0].exitPercent", "signals[0].legs[0].side"],
       "tags": ["exits", "trim"],
       "notes": "Exit+Long badges + 'sold half' = TRIM 50%. Same pattern as QURE case."
     },
@@ -233,10 +273,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "STOCK",
+            "symbol": "NFLX",
+            "legs": [{ "side": "SELL" }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["exits", "trim"],
       "notes": "No badges. 'Exit 500 Shares' + 'still holding 1,500 shares' = TRIM (not full close). Known limitation: parser has no fraction word so action defaults to CLOSE via EXIT_VERB_RE. The quantity-based trim detection is not yet implemented."
     },
@@ -261,10 +305,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "SPY",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 605 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "trim"],
       "notes": "Exit+Long badges + 'partial profits' + 'holding some' = TRIM intent. Known limitation: parser has no fraction word so action defaults to CLOSE. Tagged as trim for tracking."
     },
@@ -292,10 +340,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "UNH",
+            "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 510 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "leg-off"],
       "notes": "Exit+Long badges + 'cds took small profit hold straight calls' = LEG_OFF. Close the short CALL leg (SELL side), keep the long CALL. Result is converting CDS → naked CALL."
     },
@@ -323,10 +375,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "GOOGL",
+            "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 190 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "leg-off"],
       "notes": "No badges. 'Bought back the short Puts' = closing the short leg of the PDS (buy-to-close the SELL leg). Known edge case: BOUGHT_BUYING_RE fires → action=OPEN instead of position-reducing. May need LLM path to resolve correctly."
     },
@@ -359,10 +415,14 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 182.5 }]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "close", "strangle"],
       "notes": "No badges. 'Close MSTR Puts on the straddle' + 'holding the calls now' = close only the PUT position, keep the CALL. Parser sees 'Close' → EXIT_VERB_RE → action=CLOSE. Should match the PUT position specifically."
     },
@@ -390,10 +450,17 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SPREAD",
+            "symbol": "TSLA",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 355 },
+              { "optionType": "PUT", "side": "SELL", "strike": 350 }
+            ]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[0].legs[1].side", "signals[0].legs[1].strike"],
       "tags": ["exits", "close"],
       "notes": "Exit+Long badges + PCS strategy noun. PCS direction is SHORT (credit spread). 'Long' badge = bullish stock view, not trade direction. '25% gain' is P&L context."
     },
@@ -421,10 +488,17 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SPREAD",
+            "symbol": "AMZN",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 227.5 },
+              { "optionType": "PUT", "side": "SELL", "strike": 225 }
+            ]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[0].legs[1].side", "signals[0].legs[1].strike"],
       "tags": ["exits", "close"],
       "notes": "Exit+Long badges + PCS with explicit strikes and expiry. '$.01' = exit price (spread expired nearly worthless). PCS direction is SHORT."
     },
@@ -452,10 +526,17 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SPREAD",
+            "symbol": "IREN",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 40 },
+              { "optionType": "PUT", "side": "SELL", "strike": 35 }
+            ]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[0].legs[1].side", "signals[0].legs[1].strike"],
       "tags": ["exits", "close"],
       "notes": "No badges. 'Closed' verb = EXIT_VERB_RE → action=CLOSE. PCS with explicit strikes (40/35) and expiry. Direction is SHORT (credit spread). Chilled Chilly is a less common trader."
     }

@@ -153,14 +153,15 @@
           {
             "orderType": "SPREAD",
             "legs": [
-              { "optionType": "CALL" }
+              { "optionType": "CALL", "side": "BUY" },
+              { "optionType": "CALL", "side": "SELL" }
             ]
           }
         ]
       },
       "mustMatch": ["signals[0].orderType"],
       "tags": ["regressions", "expiry-hint"],
-      "notes": "Bug: LLM omitted legs entirely → system defaulted to nextFriday(2025-09-19) = same-day expiry. Fix: orchestrator resolves 'next week' expiry from market data."
+      "notes": "Bug: LLM omitted legs entirely → system defaulted to nextFriday(2025-09-19) = same-day expiry. Fix: orchestrator resolves 'next week' expiry from market data. CDS = call debit spread: BUY lower, SELL higher."
     },
     {
       "id": "regression-008",
@@ -206,10 +207,15 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "hasTradeId": true }
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "SELL", "optionType": "PUT" }
+            ]
+          }
         ]
       },
-      "mustMatch": ["signals[0].hasTradeId"],
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
       "tags": ["regressions", "exits"],
       "notes": "Bug: '.11 loss per contract' was not recognised as a CLOSE and auto-closed at expiry. Fix: Exit badge + symbol + loss context = CLOSE action."
     },
@@ -235,6 +241,101 @@
       "mustMatch": ["signals[0].orderType"],
       "tags": ["regressions", "expiry-hint"],
       "notes": "Bug: LLM omitted legs → system defaulted to nextFriday(2025-09-19) = same-day expiry. 'oct 3' = October 3rd expiry, orchestrator resolves concrete date."
+    },
+    {
+      "id": "regression-011",
+      "description": "Reversal trade: 'taking the loss on TXN long and shorting it' — must emit CLOSE + OPEN SHORT STOCK, not just one signal",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Doing a rare reversal trade, taking the loss on <a href=\"/option-stalker/chart/TXN\" target=\"os\" data-symbol=\"TXN\"><b>TXN</b></a> long (-$8.40) and shorting it at $199.06 , 1,000 Shares&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-02T14:21:15.000Z",
+        "positions": [
+          {
+            "id": "pos-txn-long",
+            "symbol": "TXN",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "TXN", "side": "BUY", "quantity": 1000, "type": "stock" }],
+            "quantity": 1000
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "legs": [
+              { "side": "SELL" }
+            ]
+          },
+          {
+            "orderType": "STOCK",
+            "legs": [
+              { "side": "SELL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[1].orderType", "signals[1].legs[0].side"],
+      "tags": ["regressions", "reversal", "multi-signal"],
+      "notes": "Misclassification risk: treating as single CLOSE (missing the short open) or single OPEN (missing the close). 'taking the loss on TXN long' = CLOSE existing long. 'shorting it at $199.06' = OPEN SHORT STOCK. Must produce 2 signals."
+    },
+    {
+      "id": "regression-012",
+      "description": "Exit short stock: 'Exit TXN with $1.74 profit per share' — must CLOSE the short, not skip as commentary",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/TXN\" target=\"os\" data-symbol=\"TXN\"><b>TXN</b></a> with $1.74 profit per share (1,000) - some mitigation against the Long loss&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-02T15:17:05.000Z",
+        "positions": [
+          {
+            "id": "pos-txn-short",
+            "symbol": "TXN",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "TXN", "side": "SELL", "quantity": 1000, "type": "stock" }],
+            "quantity": 1000
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "legs": [
+              { "side": "BUY" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["regressions", "exits", "short-stock"],
+      "notes": "Misclassification risk: 'mitigation against the Long loss' could confuse LLM into thinking this references the long position. Exit badge + TXN symbol = CLOSE the current SHORT position."
+    },
+    {
+      "id": "regression-013",
+      "description": "'Long QS via selling the Sept (19) $9.50 puts @ $.50' — coordinated extraction: strike=9.50, premium=0.50, expiry=Sep 19, direction SHORT from 'selling'",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a data-symbol=\"QS\"><b>QS</b></a> via selling the Sept (19) $9.50 puts @ $.50</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-05T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              { "side": "SELL", "optionType": "PUT", "strike": 9.5 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].legs[0].side", "signals[0].legs[0].strike", "signals[0].orderType"],
+      "tags": ["regressions", "coordinated-extraction", "selling-verb"],
+      "notes": "Bug: old system had 4 cascading failures: (1) strike regex skipped $9. and captured '50' → strike=50, (2) premium regex captured $9.50 first → premium=9.5, (3) 'selling' not matched by SOLD_RE, (4) 'Sept' not matched by month regex. Fix: coordinated token extraction assigns $9.50+puts=strike, $.50+@=premium, Sept+(19)=expiry. 'selling' added to SOLD_RE."
     }
   ]
 }

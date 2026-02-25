@@ -20,7 +20,7 @@
 import { createLogger } from '../../lib/logger.js';
 import type { LLMProvider } from '../../agent/providers.js';
 import { parseMessage } from './parser.js';
-import { resolveOpenPath } from './open-path.js';
+import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath } from './position-path.js';
 import { resolveLLMPath } from './llm-path.js';
 import type {
@@ -28,6 +28,7 @@ import type {
   OrchestratorResult,
   ParseResult,
   ResolvedSignal,
+  Leg,
 } from './types.js';
 
 export type { OrchestratorContext, OrchestratorResult, ResolvedSignal };
@@ -66,7 +67,15 @@ export async function resolveOrchestrator(
   }
 
   // ── 2. Strangle ─────────────────────────────────────────────────────────────
-  // Strangles decompose into two SINGLE signals: one CALL and one PUT.
+  // Strangle/straddle EXIT: close all matching positions for symbol
+  if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
+    log.debug(`[${ctx.messageId}] strangle exit → per-position close`);
+    const r = await resolveStrangleExit(parse, ctx);
+    logResult(ctx, parse, r);
+    return r;
+  }
+
+  // Strangle/straddle OPEN: decompose into CALL + PUT signals
   if (parse.isStrangle) {
     log.debug(`[${ctx.messageId}] strangle → forking into CALL + PUT`);
     const r = await resolveStrangle(parse, ctx);
@@ -80,7 +89,14 @@ export async function resolveOrchestrator(
   const needsLLM = parse.complexityFlags.size > 0 || parse.action === null;
 
   if (!needsLLM) {
-    if (parse.action === 'OPEN' || parse.action === 'ADD') {
+    if (parse.action === 'ADD') {
+      log.debug(`[${ctx.messageId}] → add path`);
+      const r = await resolveAddPath(parse, ctx);
+      logResult(ctx, parse, r);
+      return r;
+    }
+
+    if (parse.action === 'OPEN') {
       log.debug(`[${ctx.messageId}] → open path`);
       const r = await resolveOpenPath(parse, ctx);
       logResult(ctx, parse, r);
@@ -200,4 +216,55 @@ async function resolveStrangle(
     outcome: 'MANUAL_REVIEW',
     reason: `strangle resolution failed: ${flagReasons.join('; ')}`,
   };
+}
+
+// ── Strangle exit resolution ─────────────────────────────────────────────────
+
+/**
+ * Close all open positions for a strangle/straddle symbol.
+ * Produces one CLOSE signal per open position with its tradeId.
+ */
+async function resolveStrangleExit(
+  parse: ParseResult,
+  ctx: OrchestratorContext,
+): Promise<OrchestratorResult> {
+  if (!parse.symbol) {
+    return { outcome: 'MANUAL_REVIEW', reason: 'strangle exit missing symbol' };
+  }
+
+  const positions = await ctx.positions.getPositions(parse.symbol);
+  if (positions.length === 0) {
+    return { outcome: 'MANUAL_REVIEW', reason: `no open positions for ${parse.symbol}` };
+  }
+
+  const signals: ResolvedSignal[] = [];
+  for (const pos of positions) {
+    const legs: Leg[] = pos.legs.map(leg => {
+      const closeSide = leg.side === 'BUY' ? 'SELL' as const : 'BUY' as const;
+      if (leg.type === 'option') {
+        return {
+          type: 'option' as const,
+          symbol: pos.symbol,
+          expiry: leg.expiry,
+          optionType: leg.optionType!,
+          strike: leg.strike,
+          side: closeSide,
+          quantity: leg.quantity,
+        };
+      }
+      return {
+        type: 'stock' as const,
+        symbol: pos.symbol,
+        side: closeSide,
+        quantity: leg.quantity,
+      };
+    });
+    signals.push({
+      orderType: legs.length > 1 ? 'SPREAD' : 'SINGLE',
+      legs,
+      tradeId: pos.id,
+    });
+  }
+
+  return { outcome: 'EXECUTE', signals };
 }

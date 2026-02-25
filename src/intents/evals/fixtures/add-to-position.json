@@ -34,11 +34,13 @@
           {
             "orderType": "SINGLE",
             "symbol": "SOFI",
-            "hasTradeId": true
+            "legs": [
+              { "optionType": "CALL", "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
       "tags": ["add", "call", "options"],
       "notes": "Unambiguous ADD — 'Added to ... Calls'. No badge to misinterpret. Avg price ($2.10) and running total (50 contracts) confirm this is adding to an existing position, not a fresh open. Must match existing SOFI CALL LONG position."
     },
@@ -92,18 +94,22 @@
           {
             "orderType": "STOCK",
             "symbol": "MSTR",
-            "hasTradeId": true
+            "legs": [
+              { "side": "SELL" }
+            ]
           },
           {
             "orderType": "STOCK",
             "symbol": "NVDA",
-            "hasTradeId": true
+            "legs": [
+              { "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].hasTradeId", "signals[1].symbol", "signals[1].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["add", "stock", "multi-signal", "mixed-action"],
-      "notes": "Exit badge triggers CLOSE on MSTR; 'added to NVDA' triggers ADD on NVDA — both in one message. The avg price ($177.87) and '2,000 Shares' confirm the NVDA signal is adding to an existing position, not a new open. Both signals must resolve to matching positions (hasTradeId). Critical case for mixed-action parsing."
+      "notes": "Exit badge triggers CLOSE on MSTR; 'added to NVDA' triggers ADD on NVDA — both in one message. The avg price ($177.87) and '2,000 Shares' confirm the NVDA signal is adding to an existing position, not a new open. Both signals must resolve to matching positions. Critical case for mixed-action parsing."
     },
     {
       "id": "add-003",
@@ -138,11 +144,13 @@
           {
             "orderType": "STOCK",
             "symbol": "AMD",
-            "hasTradeId": true
+            "legs": [
+              { "side": "SELL" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["add", "stock", "short"],
       "notes": "The word 'short' in 'AMD short' identifies this as adding to a SHORT stock position (SELL shares). The avg price ($230.84) and running total (2,000 shares) are the confirming ADD signals. Position matching must look for the SHORT AMD STOCK position, not a LONG one."
     },
@@ -189,13 +197,16 @@
           {
             "orderType": "SPREAD",
             "symbol": "MSFT",
-            "hasTradeId": true
+            "legs": [
+              { "optionType": "PUT", "side": "SELL" },
+              { "optionType": "PUT", "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
       "tags": ["add", "pcs", "spread", "badge-override"],
-      "notes": "Long badge = Dave W's bullish stock VIEW on MSFT, NOT the trade direction. PCS (put credit spread) is always direction SHORT regardless of any badge. The LLM must not let the Long badge flip PCS to LONG direction. 'My pcs' implies an existing position — hasTradeId required. See also add-007 (sister message 477909) for the same pattern with a credit stated."
+      "notes": "Long badge = Dave W's bullish stock VIEW on MSFT, NOT the trade direction. PCS (put credit spread) is always direction SHORT regardless of any badge. The LLM must not let the Long badge flip PCS to LONG direction. 'My pcs' implies an existing position. See also add-007 (sister message 477909) for the same pattern with a credit stated."
     },
     {
       "id": "add-005",
@@ -231,11 +242,13 @@
           {
             "orderType": "SINGLE",
             "symbol": "MSTR",
-            "hasTradeId": true
+            "legs": [
+              { "optionType": "PUT", "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
       "tags": ["add", "lotto", "options"],
       "notes": "Lotto = speculative BUY, always direction LONG regardless of underlying direction. The '(just having fun here)' parenthetical is commentary noise. Avg price ($0.67) and total (20 contracts) confirm ADD. No badge to confuse direction. Must match existing MSTR lotto (PUT LONG) position."
     },
@@ -273,13 +286,15 @@
           {
             "orderType": "SINGLE",
             "symbol": "GOOGL",
-            "hasTradeId": true
+            "legs": [
+              { "optionType": "CALL", "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
       "tags": ["add", "call", "options", "swing"],
-      "notes": "Long badge and CALL direction coincidentally agree here (bullish view + buying calls), but the direction must be derived from the CALL strategy, not the badge. 'Swing calls' is Dave W's standard swing-trade options terminology. 'Added to' with no strike/expiry = ADD to existing GOOGL CALL position. hasTradeId required."
+      "notes": "Long badge and CALL direction coincidentally agree here (bullish view + buying calls), but the direction must be derived from the CALL strategy, not the badge. 'Swing calls' is Dave W's standard swing-trade options terminology. 'Added to' with no strike/expiry = ADD to existing GOOGL CALL position."
     },
     {
       "id": "add-007",
@@ -324,11 +339,14 @@
           {
             "orderType": "SPREAD",
             "symbol": "MSFT",
-            "hasTradeId": true
+            "legs": [
+              { "optionType": "PUT", "side": "SELL" },
+              { "optionType": "PUT", "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
       "tags": ["add", "pcs", "spread", "badge-override"],
       "notes": "Companion to add-004 (message 478375, one day earlier). Long badge = bullish stock view, irrelevant for direction. '1.25 credit' confirms this is a credit spread (PCS = SHORT). 'added to pcs' without the possessive 'my' is slightly more ambiguous than add-004 but still an ADD — no strike/expiry given, and price is a credit value consistent with adding to an existing spread at the same strikes."
     }

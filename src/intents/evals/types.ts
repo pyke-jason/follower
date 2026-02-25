@@ -15,7 +15,6 @@ export type ExpectedLeg = Partial<Pick<OptionLeg, 'side' | 'strike' | 'optionTyp
 export type ExpectedSignal = {
   orderType?: ResolvedSignal['orderType'];
   exitPercent?: number;
-  hasTradeId?: boolean;
   legs?: ExpectedLeg[];
   symbol?: string;       // verify correct underlying in multi-ticker messages
 };

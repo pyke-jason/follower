@@ -11,10 +11,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "hasTradeId": false }
+          { "orderType": "STOCK", "symbol": "HIMS" }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
       "tags": ["assignment", "stock"],
       "notes": "'via assignment' = stock acquired through put assignment. Long badge confirms bullish direction. This is a STOCK OPEN (new position), not an options trade. The put that was assigned is now closed; trader now holds shares. Price $40.75 is the effective cost basis."
     },
@@ -29,10 +29,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "hasTradeId": false }
+          { "orderType": "STOCK", "symbol": "CLF" }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
       "tags": ["assignment", "stock"],
       "notes": "'Long CLF $14.29 via assignment of the Nov (21) $15 calls' — Pete was short $15 calls (covered calls) on CLF. The stock was called away at $15, but because he already held shares his cost basis worked out to $14.29 net of premium. He immediately bought back in (or retained shares from assignment mechanics). Regardless of the exact mechanics, the message announces a new STOCK LONG position at $14.29. 'I am holding the stock' confirms. Signal: STOCK OPEN LONG."
     },

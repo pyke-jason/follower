@@ -12,6 +12,10 @@
         "outcome": "EXECUTE",
         "signals": [
           {
+            "action": "OPEN",
+            "symbol": "AMZN",
+            "direction": "SHORT",
+            "strategy": "PCS",
             "orderType": "SPREAD",
             "legs": [
               { "side": "SELL", "strike": 227.5, "optionType": "PUT" },
@@ -20,7 +24,7 @@
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "mustMatch": ["signals[0].action", "signals[0].symbol", "signals[0].direction", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["spreads", "pcs", "badge-override"],
       "notes": "Long badge = bullish VIEW. PCS = credit spread = direction SHORT. SELL higher strike (227.5), BUY lower strike (225)."
     },
@@ -36,6 +40,10 @@
         "outcome": "EXECUTE",
         "signals": [
           {
+            "action": "OPEN",
+            "symbol": "RDDT",
+            "direction": "SHORT",
+            "strategy": "PCS",
             "orderType": "SPREAD",
             "legs": [
               { "side": "SELL", "strike": 200, "optionType": "PUT" },
@@ -44,7 +52,7 @@
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "mustMatch": ["signals[0].action", "signals[0].symbol", "signals[0].direction", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["spreads", "pcs"],
       "notes": "PCS with explicit strikes and expiry. SELL 200, BUY 197.5."
     },
@@ -60,6 +68,10 @@
         "outcome": "EXECUTE",
         "signals": [
           {
+            "action": "OPEN",
+            "symbol": "IREN",
+            "direction": "SHORT",
+            "strategy": "PCS",
             "orderType": "SPREAD",
             "legs": [
               { "side": "SELL", "strike": 40, "optionType": "PUT" },
@@ -68,7 +80,7 @@
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "mustMatch": ["signals[0].action", "signals[0].symbol", "signals[0].direction", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["spreads", "pcs"],
       "notes": "PCS with strikes in parentheses. SELL 40, BUY 35. Credit explicitly stated."
     },
@@ -84,6 +96,10 @@
         "outcome": "EXECUTE",
         "signals": [
           {
+            "action": "OPEN",
+            "symbol": "WDC",
+            "direction": "SHORT",
+            "strategy": "PCS",
             "orderType": "SPREAD",
             "legs": [
               { "side": "SELL", "strike": 175, "optionType": "PUT" },
@@ -92,7 +108,7 @@
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
+      "mustMatch": ["signals[0].action", "signals[0].symbol", "signals[0].direction", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["spreads", "pcs", "llm-path"],
       "notes": "'bullish put spread' is a PCS synonym not matched by PCS_RE (/\\bpcs\\b|put credit spread/i). This case likely requires the LLM path to resolve correctly."
     },
@@ -108,6 +124,10 @@
         "outcome": "EXECUTE",
         "signals": [
           {
+            "action": "OPEN",
+            "symbol": "COST",
+            "direction": "LONG",
+            "strategy": "CDS",
             "orderType": "SPREAD",
             "legs": [
               { "side": "BUY", "strike": 905, "optionType": "CALL" },
@@ -115,6 +135,10 @@
             ]
           },
           {
+            "action": "OPEN",
+            "symbol": "COST",
+            "direction": "LONG",
+            "strategy": "PDS",
             "orderType": "SPREAD",
             "legs": [
               { "side": "BUY", "strike": 855, "optionType": "PUT" },
@@ -123,9 +147,9 @@
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[1].orderType", "signals[1].legs[0].side"],
+      "mustMatch": ["signals[0].action", "signals[0].symbol", "signals[0].direction", "signals[0].strategy", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].action", "signals[1].symbol", "signals[1].direction", "signals[1].strategy", "signals[1].orderType", "signals[1].legs[0].side"],
       "tags": ["spreads", "cds", "pds", "multi-trade"],
-      "notes": "Two separate spread strategies on same ticker (earnings play). CDS: BUY 905 CALL, SELL 910 CALL. PDS: BUY 855 PUT, SELL 850 PUT. No badges — may route to MANUAL_REVIEW or require LLM decomposition."
+      "notes": "Two separate spread strategies on same ticker (earnings play). CDS: BUY 905 CALL, SELL 910 CALL (direction LONG). PDS: BUY 855 PUT, SELL 850 PUT (direction LONG). No badges — may route to MANUAL_REVIEW or require LLM decomposition."
     }
   ]
 }

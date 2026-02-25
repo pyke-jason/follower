@@ -21,10 +21,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "TLRY" }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
       "tags": ["stock-exit", "close"],
       "notes": "Clean long stock exit: Exit+Long badges, ticker, exit price ($12.06), P&L ('$.20 loss'). Exit badge = CLOSE action. Long badge = was long stock, now closing. orderType=STOCK, direction=LONG on the open position."
     },
@@ -49,10 +49,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "MRVL" }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
       "tags": ["stock-exit", "close"],
       "notes": "Short stock exit: Exit+Short badges. Critical badge semantics: Short badge on an EXIT message = closing a SHORT stock position (buy-to-cover), NOT a new short sale. The position direction is SHORT (was selling shares); the exit action covers it. orderType=STOCK must be preserved."
     },
@@ -77,10 +77,10 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "ORLY" }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
       "tags": ["stock-exit", "close"],
       "notes": "Short stock exit with trader reasoning. 'The stock looks like a good short' is bearish market commentary — it does NOT mean a new short entry. The Exit badge is authoritative: this is a CLOSE of an existing SHORT position. LLM must not mistake the reasoning text for a new signal."
     },
@@ -105,12 +105,12 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "hasTradeId": true }
+          { "orderType": "STOCK", "symbol": "NVDA" }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].hasTradeId"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
       "tags": ["stock-exit", "close"],
-      "notes": "Hariseldon style: Exit badge only (no Long/Short direction badge). Profit expressed as '$X per share (quantity)' rather than a percentage or exit price. The '(1,000)' is share count context, not a price. Must still resolve to a CLOSE of the NVDA STOCK position. orderType=STOCK, hasTradeId=true."
+      "notes": "Hariseldon style: Exit badge only (no Long/Short direction badge). Profit expressed as '$X per share (quantity)' rather than a percentage or exit price. The '(1,000)' is share count context, not a price. Must still resolve to a CLOSE of the NVDA STOCK position. orderType=STOCK, symbol=NVDA."
     }
   ]
 }

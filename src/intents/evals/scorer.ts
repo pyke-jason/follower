@@ -66,14 +66,6 @@ function resolveMustMatchPath(
   const expectedSignal = evalCase.expected.signals?.[signalIdx];
   const actualSignal = result.outcome === 'EXECUTE' ? result.signals[signalIdx] : undefined;
 
-  // hasTradeId: expected is boolean, actual is tradeId != null
-  if (rest === 'hasTradeId') {
-    const expVal = expectedSignal?.hasTradeId;
-    const actVal = actualSignal ? actualSignal.tradeId != null : undefined;
-    if (expVal == null) return { matched: true, expected: expVal, actual: actVal };
-    return { matched: expVal === actVal, expected: expVal, actual: actVal };
-  }
-
   // symbol: verify correct underlying ticker
   if (rest === 'symbol') {
     const expVal = expectedSignal?.symbol;
@@ -88,7 +80,7 @@ function resolveMustMatchPath(
     const legIdx = parseInt(legMatch[1], 10);
     const field = legMatch[2];
     const expectedLeg = expectedSignal?.legs?.[legIdx];
-    const actualLegs = actualSignal ? getOptionLegs(actualSignal) : [];
+    const actualLegs = actualSignal ? actualSignal.legs : [];
     const actualLeg = actualLegs[legIdx];
 
     if (field === 'expiry') {
@@ -181,7 +173,6 @@ function scoreLeg(
 function countExpectedFields(expectedSig: ExpectedSignal): number {
   let count = 0;
   if (expectedSig.orderType != null) count++;
-  if (expectedSig.hasTradeId != null) count++;
   if (expectedSig.exitPercent != null) count++;
   if (expectedSig.symbol != null) count++;
   if (expectedSig.legs != null) {
@@ -214,16 +205,6 @@ function scoreSignal(
     });
   }
 
-  if (expectedSig.hasTradeId != null) {
-    const actualHasTradeId = actualSig.tradeId != null;
-    scores.push({
-      field: `${sigPrefix}.hasTradeId`,
-      matched: expectedSig.hasTradeId === actualHasTradeId,
-      expected: expectedSig.hasTradeId,
-      actual: actualHasTradeId,
-    });
-  }
-
   if (expectedSig.exitPercent != null) {
     const actualExit = actualSig.exitPercent;
     const matched = actualExit != null && Math.abs(actualExit - expectedSig.exitPercent) < 0.01;
@@ -246,7 +227,7 @@ function scoreSignal(
   }
 
   if (expectedSig.legs != null) {
-    const actualLegs = getOptionLegs(actualSig);
+    const actualLegs = actualSig.legs;
 
     scores.push({
       field: `${sigPrefix}.legs.count`,
@@ -265,7 +246,8 @@ function scoreSignal(
       let matchedActualIndex = -1;
       if (expectedLeg.optionType != null) {
         for (let k = 0; k < actualLegs.length; k++) {
-          if (!usedActualIndices.has(k) && actualLegs[k].optionType === expectedLeg.optionType) {
+          if (!usedActualIndices.has(k) && actualLegs[k].type === 'option' &&
+              (actualLegs[k] as OptionLeg).optionType === expectedLeg.optionType) {
             matchedActualIndex = k;
             break;
           }

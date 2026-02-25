@@ -118,11 +118,14 @@
         "signals": [
           {
             "orderType": "STOCK",
-            "hasTradeId": false
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["core", "stock"],
       "notes": "Clear stock entry: Long badge + ticker + price + share count. No options involved."
     },
@@ -139,11 +142,14 @@
         "signals": [
           {
             "orderType": "STOCK",
-            "hasTradeId": false
+            "symbol": "NVDA",
+            "legs": [
+              { "side": "BUY" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["core", "stock"],
       "notes": "Clear stock entry: Long badge + ticker + price + share count."
     },
@@ -160,11 +166,14 @@
         "signals": [
           {
             "orderType": "STOCK",
-            "hasTradeId": false
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "SELL" }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType"],
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["core", "stock"],
       "notes": "Stock short entry. data-symbol is 'MNSTR' (DB typo) but bold text reads 'MSTR'. Parser uses extractSymbols from data-symbol attributes."
     }
