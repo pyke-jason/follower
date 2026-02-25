@@ -47,24 +47,10 @@ const BOUGHT_BACK_SHORT_CALLS_RE = /\bbought\s+back\s+(?:the\s+)?short\s+(?:call
 const BOUGHT_BACK_SHORT_PUTS_RE = /\bbought\s+back\s+(?:the\s+)?short\s+(?:put|puts)\b/i;
 const SHORTING_RE = /\b(shorting|shorted)\b/i;
 
-// ── Strike extraction ─────────────────────────────────────────────────────────
+// ── Strike detection (used in strategy detection fallback) ────────────────────
 
-const SLASH_PAIR_RE = /(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/;
 // Single strike near option type keyword or bare dollar prefix
 const STRIKE_NEAR_OPTION_RE = /\$?(\d{2,5}(?:\.\d+)?)\s*(?:calls?|puts?|[cp]\b)/i;
-const DOLLAR_STRIKE_RE = /\$(\d{2,5}(?:\.\d+)?)/g;
-
-// ── Expiry hint extraction (ordered: most-specific first) ─────────────────────
-
-const EXPIRY_0DTE_RE = /\b0\s*-?\s*dte\b/i;
-const EXPIRY_OVERNIGHT_RE = /\bovernight\b/i;
-const EXPIRY_NEXT_FRIDAY_RE = /\bnext\s+friday\b/i;
-const EXPIRY_NEXT_WEEK_RE = /\bnext\s+week\b/i;
-const EXPIRY_THIS_WEEK_RE = /\bthis\s+week\b/i;
-const EXPIRY_SLASH_DATE_RE = /\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/;
-const EXPIRY_MONTH_DAY_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\(?\s*(\d{1,2})\s*\)?/i;
-const EXPIRY_BARE_MONTH_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i;
-const EXPIRY_TOMORROW_RE = /\btomorrow\b/i;
 
 // ── Monitoring / observation patterns ────────────────────────────────────────
 
