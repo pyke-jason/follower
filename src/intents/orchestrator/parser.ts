@@ -348,12 +348,6 @@ function extractTradeFields(
     () => [],
   );
 
-  // "for $", "at $" phrases (mark the $ token as price-context)
-  const forAtDollarTokens = collectTokens(
-    /(?:for|at)\s+\$/gi, 'price_marker', text,
-    () => [],
-  );
-
   // credit/debit keywords
   const creditDebitTokens = collectTokens(
     /\b(credit|debit|cr|db)\b/gi, 'credit_debit', text,
@@ -365,6 +359,36 @@ function extractTradeFields(
     /(?<!\$)(?<!\d)(\d{1,5}(?:\.\d+)?)\s*(?=(?:puts?|calls?|[cp])\b)/gi, 'bare_num', text,
     m => [parseFloat(m[1])],
   );
+
+  // Bare numbers after "for"/"at" (no $ prefix): "for .63", "for 1.80", "at 2.10"
+  // These are premium candidates; we don't tokenize "for" itself, just the number
+  const forAtBareTokens = collectTokens(
+    /(?:for|at)\s+\.(\d+)/gi, 'bare_num', text,
+    m => [parseFloat('0.' + m[1])],
+  );
+  // Adjust: the regex above captures "for .63" but the token position should be just the number
+  // Let's re-collect with position adjustment
+  const forAtBareTokensFixed: Token[] = [];
+  {
+    const re = /\b(?:for|at)\s+(\.?\d+(?:\.\d+)?)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      // Skip if the number part starts with $ (already a dollar token)
+      const numStr = m[1];
+      const numStart = m.index + m[0].length - numStr.length;
+      if (numStart > 0 && text[numStart - 1] === '$') continue;
+      const val = parseFloat(numStr);
+      if (isFinite(val) && val >= PREMIUM_MIN && val <= PREMIUM_MAX) {
+        forAtBareTokensFixed.push({
+          type: 'bare_num',
+          start: numStart,
+          end: m.index + m[0].length,
+          value: numStr,
+          parsed: [val],
+        });
+      }
+    }
+  }
 
   // Cost-basis suffix pattern
   const costBasisRe = /\b(?:avg|average|cost|basis)\b/gi;
@@ -385,9 +409,9 @@ function extractTradeFields(
     ...parenNumTokens,
     ...keywordExpiryTokens,
     ...priceMarkerTokens,
-    ...forAtDollarTokens,
     ...creditDebitTokens,
     ...bareNumTokens,
+    ...forAtBareTokensFixed,
   ]);
 
   // ── Phase 2: Assign roles ──────────────────────────────────────────────────
@@ -412,10 +436,13 @@ function extractTradeFields(
       t.type === 'option_kw' && t.start >= tok.end && t.start - tok.end <= dist);
   }
 
-  // Helper: is a price marker (@) or "for $"/"at $" within N chars before a token?
+  // Helper: is a price marker (@) or "for"/"at" within N chars before a token?
   function priceMarkerBefore(tok: Token, dist = 4): boolean {
-    return allTokens.some(t =>
-      t.type === 'price_marker' && t.end <= tok.start && tok.start - t.end <= dist);
+    // Check for @ token
+    if (allTokens.some(t => t.type === 'price_marker' && t.end <= tok.start && tok.start - t.end <= dist)) return true;
+    // Check for "for"/"at" keyword in raw text before the token
+    const lookback = text.slice(Math.max(0, tok.start - 6), tok.start);
+    return /\b(?:for|at)\s*$/.test(lookback);
   }
 
   // Helper: is a credit/debit keyword within N chars after a token?
