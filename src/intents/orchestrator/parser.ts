@@ -56,19 +56,10 @@ const STRIKE_NEAR_OPTION_RE = /\$?(\d{2,5}(?:\.\d+)?)\s*(?:calls?|puts?|[cp]\b)/
 
 const MONITORING_RE = /\b(watching|monitoring|I\s+have|I\s+am\s+holding)\b/i;
 
-// ── Premium hint extraction ───────────────────────────────────────────────────
-
-// Matches patterns like "for $2.10", "for .63", "at $1.20", "$0.63 credit", "2.10 debit"
-// We intentionally require a trigger word or explicit $ before the number to avoid
-// accidentally matching strike prices.
-const PREMIUM_RE =
-  /(?:for\s+\$?|at\s+\$?|\$)(\d{0,4}\.\d+|\d{1,4})(?:\s*(?:credit|debit|cr|db))?|(\d{0,4}\.\d+|\d{1,4})\s+(?:credit|debit|cr|db)/i;
+// ── Premium constants ─────────────────────────────────────────────────────────
 
 const PREMIUM_MIN = 0.01;
 const PREMIUM_MAX = 500;
-
-// Cost-basis suffix — dollar amounts followed by these are NOT strikes or premiums
-const COST_BASIS_SUFFIX_RE = /^\s*(?:avg|average|cost|basis)\b/i;
 
 // ── Exit-percent / fraction patterns ─────────────────────────────────────────
 
@@ -96,23 +87,6 @@ const RELATIONAL_RE = /\b(following|same as|from yesterday|ty\s+\w+|thanks?\s+\w
 
 function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
-}
-
-/**
- * Extract a premium value from the text.
- * Returns the first match that falls within the sanity range, or null.
- */
-function extractPremium(text: string): number | null {
-  const m = PREMIUM_RE.exec(text);
-  if (!m) return null;
-  const raw = m[1] ?? m[2];
-  if (!raw) return null;
-  // Skip cost basis (e.g. "$38.97 avg")
-  const afterMatch = text.slice(m.index + m[0].length);
-  if (COST_BASIS_SUFFIX_RE.test(afterMatch)) return null;
-  const val = parseFloat(raw);
-  if (!isFinite(val) || val < PREMIUM_MIN || val > PREMIUM_MAX) return null;
-  return val;
 }
 
 /**
