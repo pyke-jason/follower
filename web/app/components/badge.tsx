@@ -81,6 +81,17 @@ const COLORS: Record<string, string> = {
   FAIL: CLAY,
   MANUAL_REVIEW: AMBER,
 
+  // Decision events
+  PARSED: DUSTY_BLUE,
+  SIGNAL_RESOLVED: MAUVE,
+  SIZED: WARM_TEAL,
+  ORDER_PLACED: SAGE,
+  ORDER_ADJUSTED: AMBER,
+  ORDER_FILLED: SAGE,
+  QUOTE_FAILED: CLAY,
+  RETRY_LLM: AMBER,
+  SETTLED: SAND,
+
   // Decision phases
   orchestrator: DUSTY_BLUE,
   pipeline: MAUVE,

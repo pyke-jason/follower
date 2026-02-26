@@ -120,6 +120,41 @@
       "when": 1771600000000,
       "tag": "0016_drop_eval_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1771700000000,
+      "tag": "0017_trade_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1771800000000,
+      "tag": "0018_trim_normalization",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1771900000000,
+      "tag": "0019_drop_message_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1772000000000,
+      "tag": "0020_drop_task_steps",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1772100000000,
+      "tag": "0021_add_decision_events",
+      "breakpoints": true
     }
   ]
 }

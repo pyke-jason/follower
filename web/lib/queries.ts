@@ -101,9 +101,6 @@ export async function getDecisionsForTrade(trade: {
   backtestRunId: string | null;
   taskId: string | null;
 }) {
-  const messageIds = [trade.sourceMessageId, trade.closeMessageId].filter(Boolean) as string[];
-  if (messageIds.length === 0) return [];
-
   const scopeFilter = trade.backtestRunId
     ? eq(schema.runDecisions.backtestRunId, trade.backtestRunId)
     : trade.taskId
@@ -111,12 +108,22 @@ export async function getDecisionsForTrade(trade: {
       : null;
   if (!scopeFilter) return [];
 
+  // Step 1: Find all messageIds that produced decisions linked to this trade
+  // (catches intermediate messages like leg-off that aren't source or close)
+  const linkedRows = await db
+    .selectDistinct({ messageId: schema.runDecisions.messageId })
+    .from(schema.runDecisions)
+    .where(and(eq(schema.runDecisions.tradeId, trade.id), scopeFilter));
+
+  const messageIds = new Set(linkedRows.map(r => r.messageId));
+  if (trade.sourceMessageId) messageIds.add(trade.sourceMessageId);
+  if (trade.closeMessageId) messageIds.add(trade.closeMessageId);
+  if (messageIds.size === 0) return [];
+
+  // Step 2: Get ALL events for those messages (catches PARSED events that have no trade_id)
   return db.select().from(schema.runDecisions)
     .where(and(
-      or(
-        eq(schema.runDecisions.tradeId, trade.id),
-        inArray(schema.runDecisions.messageId, messageIds),
-      ),
+      inArray(schema.runDecisions.messageId, [...messageIds]),
       scopeFilter,
     ))
     .orderBy(asc(schema.runDecisions.createdAt), asc(schema.runDecisions.signalIndex));
@@ -414,8 +421,39 @@ export async function getRunDecisions(backtestRunId: string) {
     .from(schema.runDecisions)
     .innerJoin(schema.messages, eq(schema.runDecisions.messageId, schema.messages.id))
     .leftJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
-    .where(eq(schema.runDecisions.backtestRunId, backtestRunId))
+    .where(and(
+      eq(schema.runDecisions.backtestRunId, backtestRunId),
+      eq(schema.runDecisions.event, 'SETTLED'),
+    ))
     .orderBy(desc(schema.runDecisions.createdAt));
+}
+
+/** Get the full event timeline for a message (all events, not just SETTLED). */
+/** Get the SETTLED decision for a message (used by task detail / trade story). */
+export async function getRunDecisionForTask(messageId: string, opts?: { backtestRunId?: string; taskId?: string }) {
+  const conditions: SQL[] = [
+    eq(schema.runDecisions.messageId, messageId),
+    eq(schema.runDecisions.event, 'SETTLED'),
+  ];
+  if (opts?.backtestRunId) conditions.push(eq(schema.runDecisions.backtestRunId, opts.backtestRunId));
+  else conditions.push(isNull(schema.runDecisions.backtestRunId));
+  if (opts?.taskId) conditions.push(eq(schema.runDecisions.taskId, opts.taskId));
+
+  const [row] = await db.select().from(schema.runDecisions)
+    .where(and(...conditions))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Get the full event timeline for a message (all events, not just SETTLED). */
+export async function getDecisionTimeline(messageId: string, opts?: { backtestRunId?: string; taskId?: string }) {
+  const conditions = [eq(schema.runDecisions.messageId, messageId)];
+  if (opts?.backtestRunId) conditions.push(eq(schema.runDecisions.backtestRunId, opts.backtestRunId));
+  if (opts?.taskId) conditions.push(eq(schema.runDecisions.taskId, opts.taskId));
+
+  return db.select().from(schema.runDecisions)
+    .where(and(...conditions))
+    .orderBy(asc(schema.runDecisions.createdAt), asc(schema.runDecisions.signalIndex));
 }
 
 export async function getMtmSnapshots(backtestRunId: string) {
@@ -699,7 +737,7 @@ export async function getReconAlertStats() {
 export async function getDecisionDiff(runIdA: string, runIdB: string) {
   const a = schema.runDecisions;
 
-  // Get decisions for both runs, keyed by messageId
+  // Get SETTLED decisions for both runs, keyed by messageId
   const decisionsA = await db
     .select({
       messageId: a.messageId,
@@ -708,7 +746,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       reasoning: a.reasoning,
     })
     .from(a)
-    .where(eq(a.backtestRunId, runIdA));
+    .where(and(eq(a.backtestRunId, runIdA), eq(a.event, 'SETTLED')));
 
   const decisionsB = await db
     .select({
@@ -718,7 +756,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       reasoning: a.reasoning,
     })
     .from(a)
-    .where(eq(a.backtestRunId, runIdB));
+    .where(and(eq(a.backtestRunId, runIdB), eq(a.event, 'SETTLED')));
 
   const mapA = new Map(decisionsA.map((d) => [d.messageId, d]));
   const mapB = new Map(decisionsB.map((d) => [d.messageId, d]));
@@ -881,14 +919,17 @@ export async function getEnrichedMessages(opts: {
   }
 
   // Build LEFT JOIN conditions for runDecisions — works for both backtest and live
+  // Filter to SETTLED events only so summary views get one row per signal
   const decisionJoin = opts.runId
     ? and(
         eq(schema.runDecisions.messageId, schema.messages.id),
         eq(schema.runDecisions.backtestRunId, opts.runId),
+        eq(schema.runDecisions.event, 'SETTLED'),
       )
     : and(
         eq(schema.runDecisions.messageId, schema.messages.id),
         isNull(schema.runDecisions.backtestRunId),
+        eq(schema.runDecisions.event, 'SETTLED'),
       );
 
   // Role-based server-side filtering

@@ -1,18 +1,15 @@
 import { notFound } from 'next/navigation';
-import { getTradeById, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getDecisionsForTrade, getBacktestRunById } from '@/lib/queries';
+import { getTradeById, getMessageById, getMessagesByIds, getTradeEvents, getNearbyMessages, getTaskById, getDecisionsForTrade, getBacktestRunById } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
-import { LegsTable } from '../../components/legs-table';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { ChatPreview } from '../../messages/chat-preview';
 import { FillQuality } from './fill-quality';
-import { EventTimeline } from './event-timeline';
-import { DecisionTimeline } from '../../components/decision-timeline';
-import { ParsedContext } from './parsed-context';
+import { UnifiedTimeline } from '../../components/decision-timeline';
 import { safeParseFloat } from '../../../../src/lib/numbers';
 import { computeTradeCommission } from '../../../../src/lib/commission';
 import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
@@ -52,7 +49,16 @@ export default async function TradeDetailPage({
     getDecisionsForTrade(trade),
   ]);
 
-  const context = task?.context;
+  // Collect messages for inline quotes in timeline (needs timestamp for sort ordering)
+  // Include intermediate messages (e.g., leg-off) discovered via decisions
+  const knownMessageIds = new Set([trade.sourceMessageId, trade.closeMessageId].filter(Boolean));
+  const intermediateIds = [...new Set(decisions.map(d => d.messageId))].filter(id => !knownMessageIds.has(id));
+  const intermediateMessages = intermediateIds.length > 0 ? await getMessagesByIds(intermediateIds) : [];
+
+  const timelineMessages = [sourceMessage, closeMessage, ...intermediateMessages]
+    .filter((m): m is NonNullable<typeof m> => m != null)
+    .map(m => ({ id: m.id, cleanText: m.cleanText, author: m.author, timestamp: m.timestamp }));
+
   const legs = trade.legs;
 
   return (
@@ -123,33 +129,18 @@ export default async function TradeDetailPage({
             </CardContent>
           </Card>
 
-          {/* Legs */}
-          {legs.length > 0 && (
-            <Card className="py-0 gap-0 overflow-hidden">
-              <CardHeader className="border-b py-3 px-4">
-                <CardTitle className="text-sm font-medium">Legs</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <LegsTable legs={legs} showFills />
-              </CardContent>
-            </Card>
-          )}
-
           {/* Fill Quality */}
           <FillQuality trade={trade} />
 
-          {/* Event Timeline */}
-          {tradeEvents.length > 0 && (
-            <EventTimeline events={tradeEvents} closeMessageId={trade.closeMessageId} />
+          {/* Unified Timeline — merges trade events + decision events chronologically */}
+          {(tradeEvents.length > 0 || decisions.length > 0) && (
+            <UnifiedTimeline
+              decisions={decisions}
+              tradeEvents={tradeEvents}
+              closeMessageId={trade.closeMessageId}
+              messages={timelineMessages}
+            />
           )}
-
-          {/* Decision Timeline */}
-          {decisions.length > 0 && (
-            <DecisionTimeline decisions={decisions} />
-          )}
-
-          {/* Parsed Context */}
-          {context && <ParsedContext context={context} />}
         </div>
 
         {/* ── Right Column (sticky) ────────────────────── */}
@@ -171,8 +162,6 @@ export default async function TradeDetailPage({
               title="Close Context"
             />
           )}
-
-          {/* Audit Trail */}
         </div>
       </div>
     </div>

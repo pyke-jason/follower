@@ -19,7 +19,7 @@ import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
-import { recordDecision } from '../decisions/record.js';
+import { createEmitter } from '../decisions/emitter.js';
 import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
@@ -201,6 +201,14 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     },
     onCancel: (order) => {
       pendingIntents.delete(order.orderId);
+    },
+    onAdjust: async (order, fromPrice, toPrice, step) => {
+      const pending = pendingIntents.get(order.orderId);
+      if (!pending) return;
+      const emitter = createEmitter({ messageId: pending.messageId ?? '', backtestRunId: runId });
+      await emitter.emit('ORDER_ADJUSTED', {
+        orderId: order.orderId, fromPrice, toPrice, step,
+      }, { signalIndex: pending.signalIndex ?? null });
     },
   });
 
@@ -520,6 +528,11 @@ async function processMessage(
 ): Promise<void> {
   const task = taskFromMessage(msg);
 
+  const emitter = createEmitter({
+    messageId: msg.id,
+    backtestRunId: btCtx.runId,
+  });
+
   await processTaskShared(task, {
     getPositions: async (symbol) => {
       const filters: PositionFilters = symbol ? { symbol } : {};
@@ -528,9 +541,7 @@ async function processMessage(
     },
     llm: btCtx.agentProvider,
     pipeline: btCtx.pipelineDeps,
-    onDecision: async (row) => {
-      await recordDecision({ ...row, backtestRunId: btCtx.runId });
-    },
+    emitter,
     onResult: async (result) => {
       if (result.outcome === 'EXECUTE') {
         const executed = result.results.filter(r => r.executed).length;

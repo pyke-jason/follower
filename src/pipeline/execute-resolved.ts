@@ -5,7 +5,7 @@
  * concrete legs, signed limit prices, position-matched tradeIds.
  * This module is purely mechanical: derive metadata → size → risk → order → record.
  *
- * Fires env.onDecision per-signal as each resolves (phase: 'pipeline' or 'order').
+ * Emits per-signal events through env.emitter (SETTLED with outcome per signal).
  */
 
 import type { BrokerService } from '../broker/interface.js';
@@ -14,8 +14,8 @@ import type { OrderManager } from '../orders/order-manager.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
-import type { ResolvedSignal, OrchestratorResult, OptionLeg, Leg, OpenPosition } from '../intents/orchestrator/types.js';
-import type { DecisionRow, Message } from '../db/schema.js';
+import type { ResolvedSignal, OrchestratorResult, OptionLeg, Leg, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
+import type { Message } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
@@ -37,6 +37,7 @@ export type ResolvedPendingContext = {
   legs: OrderLeg[];
   messageId?: string;
   tradeId?: string;
+  signalIndex?: number;
   recordFill: (filledPrice: number, filledAt?: Date) => Promise<RecordTradeResult | null>;
 };
 
@@ -65,7 +66,6 @@ export type ResolvedPipelineResult = {
   executed: boolean;
   reason?: string;
   tradeId?: string;
-  orderId?: string;
 };
 
 /** What executeResolvedSignals needs from the caller's env. */
@@ -73,7 +73,7 @@ export type ExecuteEnv = {
   getPositions: (symbol?: string) => Promise<OpenPosition[]>;
   llm: LLMProvider;
   pipeline: ResolvedPipelineDeps;
-  onDecision: (row: DecisionRow) => Promise<void>;
+  emitter: SignalEventEmitter;
 };
 
 // ─── Per-strategy order defaults ────────────────────
@@ -256,6 +256,7 @@ async function executeResolvedSignal(
   trader: string,
   deps: ResolvedPipelineDeps,
   messageId?: string,
+  signalIndex?: number,
 ): Promise<ResolvedPipelineResult> {
   const symbol = deriveSymbol(signal.legs);
   const strategy = deriveStrategy(signal.legs);
@@ -310,7 +311,8 @@ async function executeResolvedSignal(
       strategy,
       quantity: size.quantity,
       legs: orderLegs,
-      messageId: messageId,
+      messageId,
+      signalIndex,
       recordFill: async (fp, fa) => {
         const recorded = await deps.recordTrade({
           action: 'OPEN',
@@ -332,7 +334,7 @@ async function executeResolvedSignal(
     if (result.status === 'REJECTED') {
       return { signal, executed: false, reason: result.message ?? 'Order rejected' };
     }
-    return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
+    return { signal, executed: result.status === 'FILLED', tradeId };
   }
 
   // ── Position-reducing path ─────────────────────────
@@ -354,8 +356,9 @@ async function executeResolvedSignal(
     strategy,
     quantity,
     legs: orderLegs,
-    messageId: messageId,
+    messageId,
     tradeId: signal.tradeId,
+    signalIndex,
     recordFill: async (fp, fa) => {
       const action = signal.exitPercent != null && signal.exitPercent < 1
         ? 'TRIM' as const
@@ -385,7 +388,7 @@ async function executeResolvedSignal(
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
   }
-  return { signal, executed: result.status === 'FILLED', tradeId, orderId: result.orderId };
+  return { signal, executed: result.status === 'FILLED', tradeId };
 }
 
 // ─── Public API ─────────────────────────────────────
@@ -394,8 +397,8 @@ async function executeResolvedSignal(
  * Execute an array of ResolvedSignals sequentially.
  * Each signal is independent — a failure on signal N does not prevent signal N+1.
  *
- * Fires `ctx.env.onDecision` per-signal after each resolves (EXECUTE or FAIL).
- * On QuoteResolutionError, records the original failure first, then retries
+ * Emits per-signal events (SETTLED with outcome) through env.emitter.
+ * On QuoteResolutionError, emits QUOTE_FAILED + RETRY_LLM, then retries
  * via resolveOrchestrator with failureContext (max 1 retry).
  */
 export async function executeResolvedSignals(ctx: {
@@ -406,31 +409,29 @@ export async function executeResolvedSignals(ctx: {
   const { resolved, message, env } = ctx;
   const deps = env.pipeline;
   const trader = message.author;
+  const emitter = env.emitter;
   const results: ResolvedPipelineResult[] = [];
 
   for (let i = 0; i < resolved.signals.length; i++) {
     const signal = resolved.signals[i];
-    const startMs = Date.now();
 
     try {
-      const result = await executeResolvedSignal(signal, trader, deps, message.id);
+      const result = await executeResolvedSignal(signal, trader, deps, message.id, i);
       results.push(result);
 
-      await env.onDecision({
-        messageId: message.id,
+      // Emit SETTLED for this signal
+      const outcome = result.executed ? 'EXECUTE' : 'FAIL';
+      await emitter.emit('SETTLED', { outcome, signal }, {
         signalIndex: i,
-        outcome: result.executed ? 'EXECUTE' : 'FAIL',
-        phase: result.executed ? 'order' : 'pipeline',
+        outcome,
         reasoning: result.reason ?? null,
         tradeId: result.tradeId ?? null,
-        snapshot: { signal },
-        durationMs: Date.now() - startMs,
         inputTokens: resolved.usage?.inputTokens ?? null,
         outputTokens: resolved.usage?.outputTokens ?? null,
       });
     } catch (err) {
       if (err instanceof QuoteResolutionError) {
-        // Always record the original failure first
+        // Record the original failure
         const failResult: ResolvedPipelineResult = {
           signal,
           executed: false,
@@ -438,34 +439,34 @@ export async function executeResolvedSignals(ctx: {
         };
         results.push(failResult);
 
-        await env.onDecision({
-          messageId: message.id,
-          signalIndex: i,
-          outcome: 'FAIL',
-          phase: 'pipeline',
-          reasoning: failResult.reason!,
-          snapshot: { signal, error: err.originalMessage },
-          durationMs: Date.now() - startMs,
-        });
+        await emitter.emit('QUOTE_FAILED', {
+          occSymbol: err.occSymbol,
+          error: err.originalMessage,
+          signal,
+        }, { signalIndex: i });
 
         // Attempt retry via LLM re-parse
         log.info(`Quote resolution failed — retrying via LLM: ${err.originalMessage.slice(0, 120)}`);
+        await emitter.emit('RETRY_LLM', {
+          reason: 'invalid strike',
+          originalError: err.originalMessage,
+        }, { signalIndex: i });
+
         const retryResolved = await resolveOrchestrator(message, {
           getPositions: env.getPositions,
           llm: env.llm,
           broker: deps.broker,
-          onDecision: env.onDecision,
+          emitter,
         }, { failureContext: { error: err.originalMessage } });
 
         if (retryResolved.outcome !== 'EXECUTE') {
-          // Retry didn't produce signals — onDecision already fired from orchestrator for the skip
+          // Retry didn't produce signals — emitter already fired from orchestrator for the skip
           continue;
         }
 
         // Execute retry signals (no further retries)
         for (let ri = 0; ri < retryResolved.signals.length; ri++) {
           const retrySignal = retryResolved.signals[ri];
-          const retrySignalStartMs = Date.now();
 
           // Check if the retry produced the same bad symbol
           if (err.occSymbol) {
@@ -479,50 +480,39 @@ export async function executeResolvedSignals(ctx: {
                 reason: `Quote resolution retry returned same invalid symbol ${err.occSymbol}`,
               };
               results.push(sameSymbolResult);
-              await env.onDecision({
-                messageId: message.id,
+              await emitter.emit('SETTLED', { outcome: 'FAIL', signal: retrySignal, retryContext: { originalError: err.originalMessage } }, {
                 signalIndex: resolved.signals.length + ri,
                 outcome: 'FAIL',
-                phase: 'pipeline',
                 reasoning: sameSymbolResult.reason!,
-                snapshot: { signal: retrySignal, retryContext: { originalError: err.originalMessage } },
-                durationMs: Date.now() - retrySignalStartMs,
               });
               continue;
             }
           }
 
           try {
-            const retryResult = await executeResolvedSignal(retrySignal, trader, deps, message.id);
+            const retryResult = await executeResolvedSignal(retrySignal, trader, deps, message.id, resolved.signals.length + ri);
             results.push(retryResult);
-            await env.onDecision({
-              messageId: message.id,
+            const outcome = retryResult.executed ? 'EXECUTE' : 'FAIL';
+            await emitter.emit('SETTLED', { outcome, signal: retrySignal, retryContext: { originalError: err.originalMessage } }, {
               signalIndex: resolved.signals.length + ri,
-              outcome: retryResult.executed ? 'EXECUTE' : 'FAIL',
-              phase: retryResult.executed ? 'order' : 'pipeline',
+              outcome,
               reasoning: retryResult.reason ?? null,
               tradeId: retryResult.tradeId ?? null,
-              snapshot: { signal: retrySignal, retryContext: { originalError: err.originalMessage } },
-              durationMs: Date.now() - retrySignalStartMs,
               inputTokens: retryResolved.usage?.inputTokens ?? null,
               outputTokens: retryResolved.usage?.outputTokens ?? null,
             });
           } catch (retryErr) {
-            const msg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+            const errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
             const retryFailResult: ResolvedPipelineResult = {
               signal: retrySignal,
               executed: false,
-              reason: `Quote resolution retry failed: ${msg}`,
+              reason: `Quote resolution retry failed: ${errMsg}`,
             };
             results.push(retryFailResult);
-            await env.onDecision({
-              messageId: message.id,
+            await emitter.emit('SETTLED', { outcome: 'FAIL', signal: retrySignal, retryContext: { originalError: err.originalMessage }, error: errMsg }, {
               signalIndex: resolved.signals.length + ri,
               outcome: 'FAIL',
-              phase: 'pipeline',
               reasoning: retryFailResult.reason!,
-              snapshot: { signal: retrySignal, retryContext: { originalError: err.originalMessage }, error: msg },
-              durationMs: Date.now() - retrySignalStartMs,
             });
           }
         }

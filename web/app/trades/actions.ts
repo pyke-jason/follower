@@ -67,7 +67,7 @@ export type TradeStory = {
   closeMessage: Message | null;
   nearbyMessages: Message[];
   decision: {
-    outcome: string;
+    outcome: string | null;
     reasoning: string | null;
     phase: string | null;
     durationMs: number | null;

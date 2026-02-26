@@ -2,14 +2,13 @@
  * Task processor — bridges the task queue to the orchestrator + resolved-signal executor.
  *
  * processTask(task, env) is the single entry point for both live and backtest paths.
- * It fetches the message, calls the orchestrator (which fires onDecision for skips),
- * then calls the executor (which fires onDecision per-signal).
+ * It fetches the message, calls the orchestrator (which emits PARSED/SETTLED),
+ * then calls the executor (which emits per-signal events).
  */
 
 import type { Task } from '../db/schema.js';
-import type { DecisionRow } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
-import type { ResolvedSignal, OpenPosition } from '../intents/orchestrator/types.js';
+import type { ResolvedSignal, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult } from './execute-resolved.js';
 
 import { db, schema } from '../db/client.js';
@@ -19,7 +18,7 @@ import { executeResolvedSignals } from './execute-resolved.js';
 
 // ─── Types ──────────────────────────────────────────
 
-export type TaskResult =
+export type ProcessTaskResult =
   | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
   | { outcome: 'MANUAL_REVIEW'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
   | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[] };
@@ -28,8 +27,8 @@ export type TaskEnv = {
   getPositions: (symbol?: string) => Promise<OpenPosition[]>;
   llm: LLMProvider;
   pipeline: ResolvedPipelineDeps;
-  onDecision: (row: DecisionRow) => Promise<void>;
-  onResult: (result: TaskResult) => Promise<void>;
+  emitter: SignalEventEmitter;
+  onResult: (result: ProcessTaskResult) => Promise<void>;
 };
 
 // ─── Main ───────────────────────────────────────────
@@ -46,12 +45,12 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
 
   if (!message) throw new Error(`Message ${messageId} not found for task ${task.id}`);
 
-  // Orchestrator fires env.onDecision for SKIP/MANUAL_REVIEW internally
+  // Orchestrator emits PARSED + SETTLED (for skips) or SIGNAL_RESOLVED (for executes)
   const resolved = await resolveOrchestrator(message, {
     getPositions: env.getPositions,
     llm: env.llm,
     broker: env.pipeline.broker,
-    onDecision: env.onDecision,
+    emitter: env.emitter,
   });
 
   if (resolved.outcome !== 'EXECUTE') {
@@ -64,7 +63,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     return;
   }
 
-  // Executor fires env.onDecision per-signal as each resolves
+  // Executor emits per-signal SETTLED events via env.emitter
   const results = await executeResolvedSignals({
     resolved,
     message,

@@ -7,13 +7,12 @@
  * selection, expiry resolution).
  */
 
-import type { Direction, Strategy } from '../../lib/enums.js';
+import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
 import type {
   OrchestratorContext,
   ParseResult,
   StrikeSelection,
   ComplexityFlag,
-  Action,
 } from './types.js';
 
 // ── Hard-skip patterns ────────────────────────────────────────────────────────
@@ -746,7 +745,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   // ── Action determination ──────────────────────────────────────────────────
 
-  let action: Action | null = null;
+  let action: TradeAction | null = null;
   let exitPercent: number | null = null;
   let targetStrategy: Strategy | null = null;
 

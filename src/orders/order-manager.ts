@@ -11,6 +11,7 @@ export type OrderManagerConfig = {
   clock: () => Date;
   onFill?: (order: FilledWorkingOrder) => void | Promise<void>;
   onCancel?: (order: WorkingOrder) => void;
+  onAdjust?: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
   manualTick?: boolean;
 };
@@ -18,8 +19,9 @@ export type OrderManagerConfig = {
 export class OrderManager {
   private broker: BrokerService;
   private clock: () => Date;
-  private onFill?: (order: FilledWorkingOrder) => void;
+  private onFill?: (order: FilledWorkingOrder) => void | Promise<void>;
   private onCancel?: (order: WorkingOrder) => void;
+  private onAdjust?: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   private manualTick: boolean;
   private workingOrders = new Map<string, WorkingOrder>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -29,6 +31,7 @@ export class OrderManager {
     this.clock = config.clock;
     this.onFill = config.onFill;
     this.onCancel = config.onCancel;
+    this.onAdjust = config.onAdjust;
     this.manualTick = config.manualTick ?? false;
   }
 
@@ -152,11 +155,13 @@ export class OrderManager {
             : order.currentLimitPrice - totalMovement;
 
           const roundedPrice = roundCents(newPrice);
-          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${order.currentLimitPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
+          const oldPrice = order.currentLimitPrice;
+          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${oldPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
           await this.broker.modifyOrder(orderId, roundedPrice);
           order.currentLimitPrice = roundedPrice;
           order.lastAdjustedAt = now;
           order.adjustmentCount += stepsToApply;
+          await this.onAdjust?.(order, oldPrice, roundedPrice, order.adjustmentCount);
         }
       }
     }

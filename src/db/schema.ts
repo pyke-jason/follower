@@ -166,9 +166,10 @@ export const runDecisions = sqliteTable('run_decisions', {
   backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id),  // nullable — null for live
   taskId:         text('task_id').references(() => tasks.id),                 // nullable — for live trade story lookups
   messageId:      text('message_id').references(() => messages.id).notNull(),
+  event:          text('event').notNull().default('SETTLED'),  // discriminator: PARSED | SIGNAL_RESOLVED | SIZED | ORDER_PLACED | ORDER_ADJUSTED | ORDER_FILLED | ORDER_CANCELLED | SETTLED | etc.
   signalIndex:    integer('signal_index'),           // null = message-level (skip/flag), 0+ = per-signal
-  outcome:        text('outcome').notNull(),          // 'EXECUTE' | 'SKIP' | 'FAIL'
-  phase:          text('phase').notNull(),            // 'orchestrator' | 'pipeline' | 'order'
+  outcome:        text('outcome'),                    // 'EXECUTE' | 'SKIP' | 'FAIL' — only meaningful on SETTLED events
+  phase:          text('phase'),                      // 'orchestrator' | 'pipeline' | 'order' — legacy, nullable for events
   reasoning:      text('reasoning'),
   tradeId:        text('trade_id'),                   // FK to resulting trade (null unless EXECUTE)
   pnl:            text('pnl'),                        // backfilled after close
@@ -182,6 +183,7 @@ export const runDecisions = sqliteTable('run_decisions', {
   index('idx_run_decisions_task').on(table.taskId),
   index('idx_run_decisions_message').on(table.messageId),
   index('idx_run_decisions_run_message').on(table.backtestRunId, table.messageId),
+  index('idx_run_decisions_settled').on(table.backtestRunId, table.event),
 ]);
 
 // ─── Backtest MTM Snapshots ──────────────────────────
@@ -397,5 +399,5 @@ export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
-export type DecisionRow = Omit<typeof runDecisions.$inferInsert, 'id' | 'backtestRunId' | 'taskId' | 'createdAt'>;
+export type DecisionInsert = typeof runDecisions.$inferInsert;
 export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;

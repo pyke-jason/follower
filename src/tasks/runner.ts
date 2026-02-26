@@ -17,7 +17,7 @@ import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { isOpen, isClosed, notBacktest, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { recordTrade } from '../trades/record-trade.js';
-import { recordDecision } from '../decisions/record.js';
+import { createEmitter } from '../decisions/emitter.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
 import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
 
@@ -46,6 +46,14 @@ const orderManager = new OrderManager({
   },
   onCancel: (order) => {
     pendingIntents.delete(order.orderId);
+  },
+  onAdjust: async (order, fromPrice, toPrice, step) => {
+    const pending = pendingIntents.get(order.orderId);
+    if (!pending) return;
+    const emitter = createEmitter({ messageId: pending.messageId ?? '', taskId: undefined });
+    await emitter.emit('ORDER_ADJUSTED', {
+      orderId: order.orderId, fromPrice, toPrice, step,
+    }, { signalIndex: pending.signalIndex ?? null });
   },
 });
 
@@ -213,6 +221,11 @@ async function handleTask(task: Task): Promise<void> {
       },
     };
 
+    const emitter = createEmitter({
+      messageId: task.messageId!,
+      taskId: task.id,
+    });
+
     await processTaskShared(task, {
       getPositions: async (symbol) => {
         const filters: PositionFilters = symbol ? { symbol } : {};
@@ -221,9 +234,7 @@ async function handleTask(task: Task): Promise<void> {
       },
       llm: provider,
       pipeline: pipelineDeps,
-      onDecision: async (row) => {
-        await recordDecision({ ...row, taskId: task.id });
-      },
+      emitter,
       onResult: async (result) => {
         await completeTask(task.id, { outcome: result.outcome });
         console.log(`[Runner] Task ${task.id} completed: ${result.outcome}`);

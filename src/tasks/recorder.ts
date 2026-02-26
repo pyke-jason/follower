@@ -30,15 +30,6 @@ export async function failTask(
     .where(eq(schema.tasks.id, taskId));
 }
 
-export async function startTask(taskId: string): Promise<void> {
-  await db.update(schema.tasks)
-    .set({
-      status: 'IN_PROGRESS',
-      startedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.tasks.id, taskId));
-}
-
 /**
  * Enrich a trade record with broker fill data.
  * Computes slippage between requested entry price and actual broker fill price.

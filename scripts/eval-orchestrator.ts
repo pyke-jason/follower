@@ -105,7 +105,7 @@ async function main() {
       getPositions: async () => input.positions ?? [],
       llm: provider,
       broker,
-      onDecision: async () => {},
+      emitter: { emit: async () => {} },
     };
 
     try {

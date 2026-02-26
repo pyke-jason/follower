@@ -10,9 +10,9 @@
 
 import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
 import type { Quote, OptionsChain } from '../../broker/types.js';
-import type { DecisionRow } from '../../db/schema.js';
 import type { LLMProvider } from '../../agent/providers.js';
 import type { BrokerService } from '../../broker/interface.js';
+import type { SignalEventEmitter } from '../../decisions/emitter.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -53,12 +53,12 @@ export type ResolvedSignal = {
   exitPercent?: number;
 };
 
-export type LLMUsageInfo = { inputTokens: number; outputTokens: number };
+export type { SignalEventEmitter } from '../../decisions/emitter.js';
 
 export type OrchestratorResult =
-  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: Record<string, unknown>; usage?: LLMUsageInfo }
-  | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: LLMUsageInfo }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: Record<string, unknown>; usage?: LLMUsageInfo };
+  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } };
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -125,17 +125,12 @@ export interface ChatHistoryProvider {
   getRecentMessages(author?: string, limit?: number): Promise<string>;
 }
 
-export type TraderConfig = {
-  strategies: string[];
-  notes: string | null;
-};
-
 /** Dependencies the orchestrator needs from the caller's environment. */
 export type OrchestratorEnv = {
   getPositions: (symbol?: string) => Promise<OpenPosition[]>;
   llm: LLMProvider;
   broker: BrokerService;
-  onDecision: (row: DecisionRow) => Promise<void>;
+  emitter: SignalEventEmitter;
 };
 
 /** Everything the orchestrator might need, injected at the call site. */
@@ -150,7 +145,6 @@ export type OrchestratorContext = {
   marketData: OrchestratorMarketDataProvider;
   positions: PositionProvider;
   chatHistory: ChatHistoryProvider;
-  traderConfig: TraderConfig;
   /**
    * Set when retrying after a 422 symbol-not-found error at execution time.
    * Presence of this field forces the LLM path so it can correct the bad strike.
@@ -159,9 +153,6 @@ export type OrchestratorContext = {
 };
 
 // ── Internal parse types ──────────────────────────────────────────────────────
-
-/** Re-export for convenience — orchestrator actions are the same as trade actions. */
-export type Action = TradeAction;
 
 export type ComplexityFlag =
   | 'extra_text'     // significant commentary beyond core trade fields
@@ -177,7 +168,7 @@ export type ComplexityFlag =
  * This is an internal type — it never appears in the orchestrator's output.
  */
 export type ParseResult = {
-  action: Action | null;
+  action: TradeAction | null;
   symbol: string | null;
   direction: Direction | null;
   strategy: Strategy | null;

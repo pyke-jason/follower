@@ -24,7 +24,6 @@ import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath } from './position-path.js';
 import { resolveLLMPath } from './llm-path.js';
 import { getRecentChatMessages, formatChatContext } from '../trader-context.js';
-import { getTrader } from '../../config/traders.js';
 import type {
   OrchestratorContext,
   OrchestratorEnv,
@@ -36,7 +35,7 @@ import type {
 
 export type { OrchestratorEnv, OrchestratorResult, ResolvedSignal };
 export type { Leg, OptionLeg, StockLeg } from './types.js';
-export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, OpenPosition, TraderConfig } from './types.js';
+export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, OpenPosition, SignalEventEmitter } from './types.js';
 
 const log = createLogger('Orchestrator');
 
@@ -46,10 +45,10 @@ const log = createLogger('Orchestrator');
  * Resolve a trading message to concrete signals (or SKIP/FLAG outcome).
  *
  * Builds OrchestratorContext internally from the message and env.
- * Fires `env.onDecision` for all outcomes (phase: 'orchestrator').
+ * Emits PARSED + SETTLED (for skips) or SIGNAL_RESOLVED (for executes) via env.emitter.
  *
  * @param message  The chat message to resolve
- * @param env      Pipeline environment (positions, LLM, broker, onDecision)
+ * @param env      Pipeline environment (positions, LLM, broker, emitter)
  * @param opts     Optional: failureContext for 422 retry
  */
 export async function resolveOrchestrator(
@@ -57,8 +56,6 @@ export async function resolveOrchestrator(
   env: OrchestratorEnv,
   opts?: { failureContext?: { error: string } },
 ): Promise<OrchestratorResult> {
-  const startMs = Date.now();
-
   // Build internal context from message + env
   const ctx = await buildContext(message, env, opts?.failureContext);
   const parse = parseMessage(ctx);
@@ -80,7 +77,7 @@ export async function resolveOrchestrator(
       parseResult: serializedParse,
     };
     logResult(ctx, parse, result);
-    await fireOrchestratorDecision(env, message, result, startMs);
+    await emitOrchestratorEvents(env, result, serializedParse, 'hard-skip');
     return result;
   }
 
@@ -91,7 +88,7 @@ export async function resolveOrchestrator(
     const r = await resolveStrangleExit(parse, ctx);
     const result = { ...r, parseResult: serializedParse };
     logResult(ctx, parse, result);
-    await fireOrchestratorDecision(env, message, result, startMs);
+    await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
     return result;
   }
 
@@ -101,7 +98,7 @@ export async function resolveOrchestrator(
     const r = await resolveStrangle(parse, ctx);
     const result = { ...r, parseResult: serializedParse };
     logResult(ctx, parse, result);
-    await fireOrchestratorDecision(env, message, result, startMs);
+    await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
     return result;
   }
 
@@ -117,7 +114,7 @@ export async function resolveOrchestrator(
       const r = await resolveAddPath(parse, ctx);
       const result = { ...r, parseResult: serializedParse };
       logResult(ctx, parse, result);
-      await fireOrchestratorDecision(env, message, result, startMs);
+      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
       return result;
     }
 
@@ -126,7 +123,7 @@ export async function resolveOrchestrator(
       const r = await resolveOpenPath(parse, ctx);
       const result = { ...r, parseResult: serializedParse };
       logResult(ctx, parse, result);
-      await fireOrchestratorDecision(env, message, result, startMs);
+      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
       return result;
     }
 
@@ -139,7 +136,7 @@ export async function resolveOrchestrator(
       const r = await resolvePositionPath(parse, ctx);
       const result = { ...r, parseResult: serializedParse };
       logResult(ctx, parse, result);
-      await fireOrchestratorDecision(env, message, result, startMs);
+      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
       return result;
     }
   }
@@ -162,14 +159,14 @@ export async function resolveOrchestrator(
       parseResult: serializedParse,
     };
     logResult(ctx, parse, result);
-    await fireOrchestratorDecision(env, message, result, startMs);
+    await emitOrchestratorEvents(env, result, serializedParse, 'llm');
     return result;
   }
 
   const r = await resolveLLMPath(parse, ctx, env.llm);
   const result = { ...r, parseResult: serializedParse };
   logResult(ctx, parse, result);
-  await fireOrchestratorDecision(env, message, result, startMs);
+  await emitOrchestratorEvents(env, result, serializedParse, 'llm');
   return result;
 }
 
@@ -180,8 +177,6 @@ async function buildContext(
   env: OrchestratorEnv,
   failureContext?: { error: string },
 ): Promise<OrchestratorContext> {
-  const traderConfig = await getTrader(message.author);
-
   return {
     messageId: message.id,
     rawHtml: message.rawHtml,
@@ -204,33 +199,47 @@ async function buildContext(
         return formatChatContext(msgs);
       },
     },
-    traderConfig: {
-      strategies: traderConfig?.strategies ?? [],
-      notes: traderConfig?.notes ?? null,
-    },
     failureContext,
   };
 }
 
-// ── Fire onDecision for all orchestrator outcomes ─────────────────────────────
+// ── Emit orchestrator events ──────────────────────────────────────────────────
 
-async function fireOrchestratorDecision(
+async function emitOrchestratorEvents(
   env: OrchestratorEnv,
-  message: Message,
   result: OrchestratorResult,
-  startMs: number,
+  serializedParse: Record<string, unknown>,
+  route: 'deterministic' | 'llm' | 'hard-skip',
 ): Promise<void> {
-  const outcome = result.outcome === 'MANUAL_REVIEW' ? 'SKIP' as const : result.outcome;
-  await env.onDecision({
-    messageId: message.id,
-    outcome,
-    phase: 'orchestrator',
-    reasoning: result.outcome === 'EXECUTE' ? undefined : result.reason,
-    snapshot: result.parseResult ? { parseResult: result.parseResult } : undefined,
-    durationMs: Date.now() - startMs,
-    inputTokens: result.usage?.inputTokens ?? null,
-    outputTokens: result.usage?.outputTokens ?? null,
-  });
+  // Always emit PARSED — include route so timeline knows how we got here
+  await env.emitter.emit('PARSED', { ...serializedParse, route });
+
+  // For non-EXECUTE outcomes, also emit SETTLED immediately
+  if (result.outcome !== 'EXECUTE') {
+    const outcome = result.outcome === 'MANUAL_REVIEW' ? 'SKIP' : result.outcome;
+    await env.emitter.emit('SETTLED', { outcome }, {
+      outcome,
+      reasoning: result.reason,
+      inputTokens: result.usage?.inputTokens ?? null,
+      outputTokens: result.usage?.outputTokens ?? null,
+    });
+  } else {
+    // For EXECUTE, emit SIGNAL_RESOLVED per signal
+    for (let i = 0; i < result.signals.length; i++) {
+      const signal = result.signals[i];
+      await env.emitter.emit('SIGNAL_RESOLVED', {
+        orderType: signal.orderType,
+        legs: signal.legs,
+        limitPrice: signal.limitPrice,
+        tradeId: signal.tradeId,
+      }, {
+        signalIndex: i,
+        tradeId: signal.tradeId ?? null,
+        inputTokens: result.usage?.inputTokens ?? null,
+        outputTokens: result.usage?.outputTokens ?? null,
+      });
+    }
+  }
 }
 
 // ── Serialize ParseResult for snapshot ────────────────────────────────────────

@@ -14,21 +14,6 @@ import { zPrice } from '../lib/zod-financial.js';
 
 const OrderLegSchema = TradeLegSchema.omit({ fillPrice: true });
 
-// ── OrderParams ──────────────────────────────────────────────────────
-
-export const OrderParamsSchema = z.object({
-  symbol: z.string().min(1),
-  strategy: z.string().min(1),
-  direction: DirectionSchema,
-  legs: z.array(OrderLegSchema),
-  orderType: z.enum(['MARKET', 'LIMIT']),
-  limitPrice: zPrice.optional(),
-  isClosing: z.boolean().optional(),
-}).refine(
-  o => o.orderType !== 'LIMIT' || o.limitPrice != null,
-  { message: 'LIMIT orders require limitPrice' },
-);
-
 // ── AdjustmentRule ───────────────────────────────────────────────────
 
 const AdjustmentRuleSchema = z.object({
