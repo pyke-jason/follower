@@ -31,7 +31,6 @@ app.post('/force-exit', async (c) => {
 
   // Record the close through the canonical write path (emits trade_events).
   const recorded = await recordTrade({
-    action: 'CLOSE',
     tradeId: body.tradeId,
     symbol: body.symbol,
     trader: body.trader,

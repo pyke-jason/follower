@@ -3,7 +3,9 @@ import { createFixtureSource } from '../src/intents/evals/sources/fixture.js';
 import { scoreCase, PASS_THRESHOLD } from '../src/intents/evals/scorer.js';
 import { printReport } from '../src/intents/evals/reporter.js';
 import { resolveOrchestrator } from '../src/intents/orchestrator/index.js';
-import type { OrchestratorContext, TraderConfig } from '../src/intents/orchestrator/types.js';
+import type { OrchestratorEnv } from '../src/intents/orchestrator/types.js';
+import type { Message } from '../src/db/schema.js';
+import type { BrokerService } from '../src/broker/interface.js';
 import { DatabentoMarketDataProvider } from '../src/backtest/market-data.js';
 import { tickCacheDb } from '../src/db/tick-cache-client.js';
 import { createProvider } from '../src/agent/providers.js';
@@ -56,11 +58,6 @@ async function main() {
     ? new DatabentoMarketDataProvider(apiKey, tickCacheDb)
     : null;
 
-  const traderConfig: TraderConfig = {
-    strategies: ['CALL', 'PUT', 'CDS', 'PDS', 'PCS', 'STOCK', 'STRANGLE'],
-    notes: null,
-  };
-
   const CONCURRENCY = 8;
   console.log(`Running ${cases.length} cases (${providerName}/${modelName}, concurrency=${CONCURRENCY})...\n`);
 
@@ -78,28 +75,41 @@ async function main() {
     const { badges } = extractBadges(rawHtml);
     const symbols = extractSymbols(rawHtml);
 
-    const marketData = {
-      getQuote: (symbol: string) => marketDataProvider!.getQuote(symbol, at),
-      getOptionChain: (symbol: string, expiry: string, optionType: 'CALL' | 'PUT') =>
-        marketDataProvider!.getOptionsChain(symbol, expiry, optionType, at),
-      getExpiryDates: (symbol: string) => marketDataProvider!.getExpiryDates(symbol, at),
-    };
-    const ctx: OrchestratorContext = {
-      messageId: evalCase.id,
+    const message: Message = {
+      id: evalCase.id,
+      author: input.author ?? 'testTrader',
+      timestamp,
       rawHtml,
       cleanText,
       badges,
       symbols,
-      timestamp,
-      author: input.author ?? 'testTrader',
-      marketData,
-      positions: { getPositions: async () => input.positions ?? [] },
-      chatHistory: { getRecentMessages: async () => input.chatContext ?? '' },
-      traderConfig,
+      actionHint: null,
+      directionHint: null,
+      detectedStrategies: [],
+      isPaperTrade: false,
+      confidence: null,
+      ingestedAt: new Date().toISOString(),
+    };
+
+    const broker: BrokerService = {
+      getQuote: (symbol) => marketDataProvider!.getQuote(symbol, at),
+      placeOrder: async () => { throw new Error('not used in evals'); },
+      modifyOrder: async () => { throw new Error('not used in evals'); },
+      cancelOrder: async () => { throw new Error('not used in evals'); },
+      getOrderStatus: async () => { throw new Error('not used in evals'); },
+      getPositions: async () => [],
+      getAccountBalance: async () => { throw new Error('not used in evals'); },
+    };
+
+    const env: OrchestratorEnv = {
+      getPositions: async () => input.positions ?? [],
+      llm: provider,
+      broker,
+      onDecision: async () => {},
     };
 
     try {
-      const orchestratorResult = await resolveOrchestrator(ctx, provider);
+      const orchestratorResult = await resolveOrchestrator(message, env);
       const evalResult = scoreCase(evalCase, orchestratorResult, at);
       evalResult.durationMs = Date.now() - start;
 

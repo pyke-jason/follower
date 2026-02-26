@@ -2,12 +2,13 @@
  * Task processor — bridges the task queue to the orchestrator + resolved-signal executor.
  *
  * processTask(task, env) is the single entry point for both live and backtest paths.
- * It fetches the message, builds orchestrator context, resolves signals, and executes.
+ * It fetches the message, calls the orchestrator (which fires onDecision for skips),
+ * then calls the executor (which fires onDecision per-signal).
  */
 
-import type { Task, Message } from '../db/schema.js';
+import type { Task } from '../db/schema.js';
+import type { DecisionRow } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
-import type { OrchestratorContext } from '../intents/orchestrator/types.js';
 import type { ResolvedSignal, OpenPosition } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult } from './execute-resolved.js';
 
@@ -15,20 +16,19 @@ import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { executeResolvedSignals } from './execute-resolved.js';
-import { getRecentChatMessages, formatChatContext } from '../intents/trader-context.js';
-import { getTrader } from '../config/traders.js';
 
 // ─── Types ──────────────────────────────────────────
 
 export type TaskResult =
-  | { outcome: 'SKIP'; reason: string }
-  | { outcome: 'MANUAL_REVIEW'; reason: string }
+  | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'MANUAL_REVIEW'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
   | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[] };
 
 export type TaskEnv = {
   getPositions: (symbol?: string) => Promise<OpenPosition[]>;
   llm: LLMProvider;
   pipeline: ResolvedPipelineDeps;
+  onDecision: (row: DecisionRow) => Promise<void>;
   onResult: (result: TaskResult) => Promise<void>;
 };
 
@@ -46,27 +46,30 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
 
   if (!message) throw new Error(`Message ${messageId} not found for task ${task.id}`);
 
-  const orchCtx = await buildOrchestratorContext(message, env);
-  const resolved = await resolveOrchestrator(orchCtx, env.llm);
+  // Orchestrator fires env.onDecision for SKIP/MANUAL_REVIEW internally
+  const resolved = await resolveOrchestrator(message, {
+    getPositions: env.getPositions,
+    llm: env.llm,
+    broker: env.pipeline.broker,
+    onDecision: env.onDecision,
+  });
 
   if (resolved.outcome !== 'EXECUTE') {
-    await env.onResult({ outcome: resolved.outcome, reason: resolved.reason });
+    await env.onResult({
+      outcome: resolved.outcome,
+      reason: resolved.reason,
+      parseResult: resolved.parseResult,
+      usage: resolved.usage,
+    });
     return;
   }
 
-  const results = await executeResolvedSignals(
-    resolved.signals,
-    message.author,
-    env.pipeline,
-    {
-      messageId: message.id,
-      resolveRetry: async (failureContext) => {
-        const retryCtx: OrchestratorContext = { ...orchCtx, failureContext };
-        const retryResolved = await resolveOrchestrator(retryCtx, env.llm);
-        return retryResolved.outcome === 'EXECUTE' ? retryResolved.signals : null;
-      },
-    },
-  );
+  // Executor fires env.onDecision per-signal as each resolves
+  const results = await executeResolvedSignals({
+    resolved,
+    message,
+    env,
+  });
 
   await env.onResult({
     outcome: 'EXECUTE',
@@ -74,41 +77,4 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     signals: resolved.signals,
     results,
   });
-}
-
-// ─── Helpers ────────────────────────────────────────
-
-async function buildOrchestratorContext(
-  message: Message,
-  env: TaskEnv,
-): Promise<OrchestratorContext> {
-  const traderConfig = await getTrader(message.author);
-
-  return {
-    messageId: message.id,
-    rawHtml: message.rawHtml,
-    cleanText: message.cleanText,
-    badges: (message.badges as string[]) ?? [],
-    symbols: (message.symbols as string[]) ?? [],
-    timestamp: message.timestamp,
-    author: message.author,
-    marketData: {
-      getQuote: (s) => env.pipeline.broker.getQuote(s),
-      getOptionChain: async () => null,
-      getExpiryDates: async () => [],
-    },
-    positions: {
-      getPositions: env.getPositions,
-    },
-    chatHistory: {
-      getRecentMessages: async (author?: string, limit?: number) => {
-        const msgs = await getRecentChatMessages(message.timestamp, author, limit);
-        return formatChatContext(msgs);
-      },
-    },
-    traderConfig: {
-      strategies: traderConfig?.strategies ?? [],
-      notes: traderConfig?.notes ?? null,
-    },
-  };
 }

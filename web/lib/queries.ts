@@ -86,14 +86,6 @@ export async function getTradeById(id: string) {
   return trade ?? null;
 }
 
-export async function getTradeSteps(taskId: string) {
-  return db
-    .select()
-    .from(schema.taskSteps)
-    .where(eq(schema.taskSteps.taskId, taskId))
-    .orderBy(schema.taskSteps.stepNumber);
-}
-
 export async function getTradeByTaskId(taskId: string) {
   const [trade] = await db
     .select()
@@ -102,17 +94,32 @@ export async function getTradeByTaskId(taskId: string) {
   return trade ?? null;
 }
 
-export async function getRunDecisionForTask(messageId: string, backtestRunId: string) {
-  const [decision] = await db
-    .select()
-    .from(schema.runDecisions)
-    .where(
-      and(
-        eq(schema.runDecisions.messageId, messageId),
-        eq(schema.runDecisions.backtestRunId, backtestRunId),
-      )
-    );
-  return decision ?? null;
+export async function getDecisionsForTrade(trade: {
+  id: string;
+  sourceMessageId: string | null;
+  closeMessageId: string | null;
+  backtestRunId: string | null;
+  taskId: string | null;
+}) {
+  const messageIds = [trade.sourceMessageId, trade.closeMessageId].filter(Boolean) as string[];
+  if (messageIds.length === 0) return [];
+
+  const scopeFilter = trade.backtestRunId
+    ? eq(schema.runDecisions.backtestRunId, trade.backtestRunId)
+    : trade.taskId
+      ? eq(schema.runDecisions.taskId, trade.taskId)
+      : null;
+  if (!scopeFilter) return [];
+
+  return db.select().from(schema.runDecisions)
+    .where(and(
+      or(
+        eq(schema.runDecisions.tradeId, trade.id),
+        inArray(schema.runDecisions.messageId, messageIds),
+      ),
+      scopeFilter,
+    ))
+    .orderBy(asc(schema.runDecisions.createdAt), asc(schema.runDecisions.signalIndex));
 }
 
 /** All messages from a specific author mentioning a specific symbol, ordered by time. */
@@ -696,7 +703,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
   const decisionsA = await db
     .select({
       messageId: a.messageId,
-      decision: a.decision,
+      outcome: a.outcome,
       pnl: a.pnl,
       reasoning: a.reasoning,
     })
@@ -706,7 +713,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
   const decisionsB = await db
     .select({
       messageId: a.messageId,
-      decision: a.decision,
+      outcome: a.outcome,
       pnl: a.pnl,
       reasoning: a.reasoning,
     })
@@ -719,8 +726,8 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
   const allMessageIds = new Set([...mapA.keys(), ...mapB.keys()]);
   const diffs: {
     messageId: string;
-    decisionA: string | null;
-    decisionB: string | null;
+    outcomeA: string | null;
+    outcomeB: string | null;
     pnlA: number;
     pnlB: number;
     delta: number;
@@ -731,13 +738,13 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
   for (const msgId of allMessageIds) {
     const dA = mapA.get(msgId);
     const dB = mapB.get(msgId);
-    if (dA?.decision !== dB?.decision) {
+    if (dA?.outcome !== dB?.outcome) {
       const pnlA = safeParseFloat(dA?.pnl);
       const pnlB = safeParseFloat(dB?.pnl);
       diffs.push({
         messageId: msgId,
-        decisionA: dA?.decision ?? null,
-        decisionB: dB?.decision ?? null,
+        outcomeA: dA?.outcome ?? null,
+        outcomeB: dB?.outcome ?? null,
         pnlA,
         pnlB,
         delta: pnlB - pnlA,
@@ -873,21 +880,24 @@ export async function getEnrichedMessages(opts: {
     conditions.push(lt(schema.messages.timestamp, opts.cursor));
   }
 
-  // Build LEFT JOIN conditions for runDecisions (backtest-only)
+  // Build LEFT JOIN conditions for runDecisions — works for both backtest and live
   const decisionJoin = opts.runId
     ? and(
         eq(schema.runDecisions.messageId, schema.messages.id),
         eq(schema.runDecisions.backtestRunId, opts.runId),
       )
-    : sql`0 = 1`; // never match for live — live doesn't use runDecisions
+    : and(
+        eq(schema.runDecisions.messageId, schema.messages.id),
+        isNull(schema.runDecisions.backtestRunId),
+      );
 
   // Role-based server-side filtering
   if (opts.roleFilter === 'processed') {
-    conditions.push(isNotNull(schema.runDecisions.decision));
+    conditions.push(isNotNull(schema.runDecisions.outcome));
   } else if (opts.roleFilter === 'executed') {
     conditions.push(isNotNull(schema.trades.id));
   } else if (opts.roleFilter === 'skipped') {
-    conditions.push(and(isNotNull(schema.runDecisions.decision), isNull(schema.trades.id))!);
+    conditions.push(and(isNotNull(schema.runDecisions.outcome), isNull(schema.trades.id))!);
   }
 
   const rows = await db
@@ -907,10 +917,10 @@ export async function getEnrichedMessages(opts: {
         closedAt: schema.trades.closedAt,
       },
       decision: {
-        decision: schema.runDecisions.decision,
+        outcome: schema.runDecisions.outcome,
         reasoning: schema.runDecisions.reasoning,
         pnl: schema.runDecisions.pnl,
-        path: schema.runDecisions.path,
+        phase: schema.runDecisions.phase,
         durationMs: schema.runDecisions.durationMs,
       },
     })
@@ -940,7 +950,7 @@ export async function getEnrichedMessages(opts: {
     enriched.push({
       message: r.message,
       trade: r.trade?.id ? (r.trade as TradeOutcome) : null,
-      decision: r.decision?.decision ? (r.decision as MessageDecision) : null,
+      decision: r.decision?.outcome ? (r.decision as MessageDecision) : null,
     });
   }
 

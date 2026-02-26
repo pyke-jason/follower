@@ -1,9 +1,8 @@
 import { notFound } from 'next/navigation';
-import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask, getBacktestRunById } from '@/lib/queries';
+import { getTradeById, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getDecisionsForTrade, getBacktestRunById } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
-import { StepViewer } from '../../components/step-viewer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
@@ -12,7 +11,7 @@ import { ArrowLeft } from 'lucide-react';
 import { ChatPreview } from '../../messages/chat-preview';
 import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
-import { DecisionReasoning } from './decision-reasoning';
+import { DecisionTimeline } from '../../components/decision-timeline';
 import { ParsedContext } from './parsed-context';
 import { safeParseFloat } from '../../../../src/lib/numbers';
 import { computeTradeCommission } from '../../../../src/lib/commission';
@@ -32,8 +31,7 @@ export default async function TradeDetailPage({
   const trade = await getTradeById(id);
   if (!trade) notFound();
 
-  const [steps, sourceMessage, tradeEvents, task, closeMessage, backtestRun] = await Promise.all([
-    trade.taskId ? getTradeSteps(trade.taskId) : Promise.resolve([]),
+  const [sourceMessage, tradeEvents, task, closeMessage, backtestRun] = await Promise.all([
     trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
     getTradeEvents(trade.id),
     trade.taskId ? getTaskById(trade.taskId) : Promise.resolve(null),
@@ -44,36 +42,15 @@ export default async function TradeDetailPage({
   const commissionSchedule: CommissionSchedule | undefined =
     (backtestRun?.config as BacktestRunConfig | null)?.commissionSchedule;
 
-  const [nearbyMessages, closeNearbyMessages, runDecision] = await Promise.all([
+  const [nearbyMessages, closeNearbyMessages, decisions] = await Promise.all([
     sourceMessage
       ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60, trade.symbol)
       : Promise.resolve([]),
     closeMessage
       ? getNearbyMessages(closeMessage.author, closeMessage.timestamp, 60, trade.symbol)
       : Promise.resolve([]),
-    sourceMessage && trade.backtestRunId
-      ? getRunDecisionForTask(sourceMessage.id, trade.backtestRunId)
-      : Promise.resolve(null),
+    getDecisionsForTrade(trade),
   ]);
-
-  let decision: { decision: string; reasoning: string | null; path: string | null; durationMs: number | null; pnl: string | null } | null = null;
-  if (runDecision) {
-    decision = {
-      decision: runDecision.decision,
-      reasoning: runDecision.reasoning,
-      path: runDecision.path,
-      durationMs: runDecision.durationMs,
-      pnl: runDecision.pnl,
-    };
-  } else if (task?.result) {
-    decision = {
-      decision: task.result.decision ?? '',
-      reasoning: task.result.reasoning ?? null,
-      path: null,
-      durationMs: null,
-      pnl: null,
-    };
-  }
 
   const context = task?.context;
   const legs = trade.legs;
@@ -166,13 +143,9 @@ export default async function TradeDetailPage({
             <EventTimeline events={tradeEvents} closeMessageId={trade.closeMessageId} />
           )}
 
-          {/* Signal Decision */}
-          {decision && (
-            <DecisionReasoning
-              decision={decision}
-              taskStartedAt={task?.startedAt}
-              taskCompletedAt={task?.completedAt}
-            />
+          {/* Decision Timeline */}
+          {decisions.length > 0 && (
+            <DecisionTimeline decisions={decisions} />
           )}
 
           {/* Parsed Context */}
@@ -200,12 +173,6 @@ export default async function TradeDetailPage({
           )}
 
           {/* Audit Trail */}
-          {steps.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-foreground mb-3">Audit Trail</h3>
-              <StepViewer steps={steps} />
-            </div>
-          )}
         </div>
       </div>
     </div>

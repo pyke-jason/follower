@@ -141,8 +141,8 @@ export async function cancelBacktestRun(formData: FormData) {
 
   if (trades.length > 0) {
     const decisions = rawDecisions.map((d) => ({
-      path: d.decision.path,
-      decision: d.decision.decision,
+      path: d.decision.phase,
+      decision: d.decision.outcome,
     }));
     const [cancelledRun] = await db
       .select({ config: schema.backtestRuns.config })
@@ -197,16 +197,6 @@ export async function deleteBacktestRun(formData: FormData) {
     });
   }
 
-  // Delete associated trades and tasks first
-  const tasks = await db
-    .select({ id: schema.tasks.id })
-    .from(schema.tasks)
-    .where(eq(schema.tasks.backtestRunId, runId));
-
-  for (const task of tasks) {
-    await db.delete(schema.taskSteps).where(eq(schema.taskSteps.taskId, task.id));
-  }
-
   await db.delete(schema.trades).where(eq(schema.trades.backtestRunId, runId));
   await db.delete(schema.tasks).where(eq(schema.tasks.backtestRunId, runId));
   await db.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
@@ -253,16 +243,6 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
         method: 'POST',
       }).catch(() => {});
     }
-  }
-
-  // Delete associated tasks/steps
-  const tasks = await db
-    .select({ id: schema.tasks.id })
-    .from(schema.tasks)
-    .where(inArray(schema.tasks.backtestRunId, runIds));
-
-  if (tasks.length > 0) {
-    await db.delete(schema.taskSteps).where(inArray(schema.taskSteps.taskId, tasks.map((t) => t.id)));
   }
 
   await db.delete(schema.trades).where(inArray(schema.trades.backtestRunId, runIds));

@@ -78,7 +78,13 @@ const COLORS: Record<string, string> = {
   // Agent decisions
   EXECUTE: SAGE,
   SKIP: FADED,
+  FAIL: CLAY,
   MANUAL_REVIEW: AMBER,
+
+  // Decision phases
+  orchestrator: DUSTY_BLUE,
+  pipeline: MAUVE,
+  order: SAGE,
 
   // Pipeline steps
   classify: DUSTY_BLUE,

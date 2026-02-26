@@ -9,7 +9,7 @@ import { buildHref } from '@/lib/run-scope';
 import { AutoRefresh } from '../components/auto-refresh';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import type { TaskContext, TaskResult } from '../../../src/db/schema';
+import type { TaskContext } from '../../../src/db/schema';
 
 const STATUSES = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'SKIPPED'];
 
@@ -25,7 +25,7 @@ type Task = {
   taskType: string;
   status: string;
   context: TaskContext | null;
-  result: TaskResult | null;
+  result: { outcome: string } | null;
   createdAt: string | null;
   error: string | null;
 };
@@ -153,9 +153,8 @@ const tableComponents = {
 
 function TaskRow({ task: t, runId }: { task: Task; runId?: string }) {
   const ctx = (t.context as TaskContext) || {};
-  const res = (t.result as TaskResult | null) || null;
   const symbol = ctx.symbols?.[0];
-  const decision = res?.decision;
+  const decision = t.result?.outcome;
 
   return (
     <>

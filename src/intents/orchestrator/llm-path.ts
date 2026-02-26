@@ -122,22 +122,25 @@ export async function resolveLLMPath(
     };
   }
 
+  const usage = loopResult.usage.inputTokens > 0
+    ? { inputTokens: loopResult.usage.inputTokens, outputTokens: loopResult.usage.outputTokens }
+    : undefined;
   const taskResult = loopResult.result as TaskResult | null;
 
   if (!taskResult) {
-    return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool', usage };
   }
 
   if (taskResult.decision === 'SKIP') {
-    return { outcome: 'SKIP', reason: taskResult.reasoning };
+    return { outcome: 'SKIP', reason: taskResult.reasoning, usage };
   }
 
   if (taskResult.decision === 'MANUAL_REVIEW') {
-    return { outcome: 'MANUAL_REVIEW', reason: taskResult.reasoning };
+    return { outcome: 'MANUAL_REVIEW', reason: taskResult.reasoning, usage };
   }
 
   if (!taskResult.signals || taskResult.signals.length === 0) {
-    return { outcome: 'MANUAL_REVIEW', reason: 'LLM returned EXECUTE with no signals' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'LLM returned EXECUTE with no signals', usage };
   }
 
   log.debug(
@@ -145,7 +148,8 @@ export async function resolveLLMPath(
   );
 
   // Route each signal through the appropriate resolution path
-  return routeLLMSignals(taskResult.signals, parse, ctx);
+  const result = await routeLLMSignals(taskResult.signals, parse, ctx);
+  return { ...result, usage };
 }
 
 // ── Prompt builder ────────────────────────────────────────────────────────────

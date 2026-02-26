@@ -19,7 +19,6 @@ import { RollingWinRate } from './rolling-win-rate';
 import { StrategyEquityChart } from './strategy-equity';
 import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
-import { DecisionScatter } from './decision-scatter';
 import { TradesTableClient } from '../../components/trades-table-client';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
@@ -172,27 +171,10 @@ export default async function BacktestDetailPage({
     return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
   })();
 
-  const scatterData = decisions
-    .filter((r) => r.decision.pnl != null)
-    .map((r) => ({
-      date: r.message.timestamp.split('T')[0],
-      pnl: safeParseFloat(r.decision.pnl),
-      decision: r.decision.decision,
-      message: r.message.cleanText.slice(0, 60),
-    }));
 
   const messagesContent = (
     <div className="space-y-3 flex flex-col flex-1 min-h-0">
-      {scatterData.length > 0 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Decision Outcomes</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <DecisionScatter data={scatterData} />
-          </CardContent>
-        </Card>
-      )}
+
       <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
         <ChatRoom
           initialMessages={chatData.messages}
@@ -396,16 +378,17 @@ export type StrategyEquityPoint = Record<string, number | string>;
 
 function computeFromTrades(
   allTrades: TradeRow[],
-  decisions: { decision: { path: string; decision: string } }[],
+  decisions: { decision: { phase: string; outcome: string; inputTokens?: number | null } }[],
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
   commissionSchedule?: CommissionSchedule,
 ) {
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, commissionSchedule);
 
-  // Execution stats from already-loaded decisions — no precomputed fallback
-  const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;
-  const agentTrades = decisions.filter((d) => d.decision.path === 'agent' && d.decision.decision === 'EXECUTE').length;
-  const skipped = decisions.filter((d) => d.decision.decision === 'SKIP').length;
+  // Execution stats from already-loaded decisions — use inputTokens to identify LLM-involved decisions
+  const isLLMInvolved = (d: { decision: { inputTokens?: number | null } }) => d.decision.inputTokens != null;
+  const agentCallsUsed = decisions.filter(isLLMInvolved).length;
+  const agentTrades = decisions.filter((d) => isLLMInvolved(d) && d.decision.outcome === 'EXECUTE').length;
+  const skipped = decisions.filter((d) => d.decision.outcome === 'SKIP').length;
 
   const summary = { ...core, totalMessages: 0, tradedMessages: 0, agentCallsUsed, agentTrades, skipped };
 

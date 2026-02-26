@@ -5,9 +5,9 @@ import { buildHref } from '@/lib/run-scope';
 type Props = {
   sourceMessage?: { cleanText: string; author: string; timestamp: string } | null;
   decision?: {
-    decision: string;
+    outcome: string;
     reasoning?: string | null;
-    path?: string | null;
+    phase?: string | null;
     durationMs?: number | null;
     pnl?: string | null;
   } | null;
@@ -34,7 +34,7 @@ export function SignalDecisionSummary({ sourceMessage, decision, taskId, runId }
 
       {decision && (
         <div className="flex items-start gap-2">
-          <Badge label={decision.decision} />
+          <Badge label={decision.outcome} />
           {decision.reasoning && (
             <p className="text-xs text-muted-foreground line-clamp-2">{decision.reasoning}</p>
           )}

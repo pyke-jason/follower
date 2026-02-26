@@ -10,6 +10,9 @@
 
 import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
 import type { Quote, OptionsChain } from '../../broker/types.js';
+import type { DecisionRow } from '../../db/schema.js';
+import type { LLMProvider } from '../../agent/providers.js';
+import type { BrokerService } from '../../broker/interface.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -50,10 +53,12 @@ export type ResolvedSignal = {
   exitPercent?: number;
 };
 
+export type LLMUsageInfo = { inputTokens: number; outputTokens: number };
+
 export type OrchestratorResult =
-  | { outcome: 'EXECUTE'; signals: ResolvedSignal[] }
-  | { outcome: 'SKIP'; reason: string }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[] };
+  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: Record<string, unknown>; usage?: LLMUsageInfo }
+  | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: LLMUsageInfo }
+  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: Record<string, unknown>; usage?: LLMUsageInfo };
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -123,6 +128,14 @@ export interface ChatHistoryProvider {
 export type TraderConfig = {
   strategies: string[];
   notes: string | null;
+};
+
+/** Dependencies the orchestrator needs from the caller's environment. */
+export type OrchestratorEnv = {
+  getPositions: (symbol?: string) => Promise<OpenPosition[]>;
+  llm: LLMProvider;
+  broker: BrokerService;
+  onDecision: (row: DecisionRow) => Promise<void>;
 };
 
 /** Everything the orchestrator might need, injected at the call site. */

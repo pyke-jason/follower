@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { Badge } from '../components/badge';
 import { Sparkline } from '../components/sparkline';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,7 +8,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate } from '@/lib/format';
 import Link from 'next/link';
-import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
+import { Star, Trash2 } from 'lucide-react';
 import type { BacktestRunConfig, BacktestRunSummary } from '../../../src/db/schema';
 import { pctDisplay, PROFIT_FACTOR_INF } from '../../../src/lib/numbers';
 import { togglePin, bulkDeleteBacktestRuns } from './actions';
@@ -42,7 +41,6 @@ export function BacktestList({
   runs: Run[];
   experimentTags: string[];
 }) {
-  const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [deleting, startDelete] = useTransition();
@@ -78,11 +76,6 @@ export function BacktestList({
         return next;
       });
     }
-  }
-
-  function handleCompare() {
-    const ids = Array.from(selected).slice(0, 3).join(',');
-    router.push(`/backtests/compare?ids=${ids}`);
   }
 
   function handleBulkDelete() {
@@ -132,12 +125,6 @@ export function BacktestList({
           >
             <Trash2 className="h-3.5 w-3.5" />
             Delete ({selected.size})
-          </Button>
-        )}
-        {selected.size >= 2 && selected.size <= 3 && (
-          <Button size="sm" variant="outline" onClick={handleCompare} className="gap-1.5">
-            <GitCompareArrows className="h-3.5 w-3.5" />
-            Compare ({selected.size})
           </Button>
         )}
         <Button size="sm" asChild>

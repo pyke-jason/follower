@@ -19,7 +19,7 @@ Applies when working with files in `data/` or querying SQLite databases.
 - **`run_decisions`** — Backtest per-message decisions. Path: intent | agent | deterministic | skipped | pipeline_failure.
 - **`backtest_runs`** — Run metadata with `extended_metrics` and `live_metrics` JSON.
 - **`backtest_mtm_snapshots`** — Daily mark-to-market for equity curves.
-- **`tasks`/`task_steps`** — Internal agent orchestration.
+- **`tasks`** — Internal agent orchestration.
 - **`message_labels`** — Manual eval ground truth (658 rows).
 
 ## tick-cache.db — Key Tables

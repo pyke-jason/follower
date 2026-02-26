@@ -449,7 +449,6 @@ export class SimBroker implements BrokerService {
     if (!trade) throw new Error(`Trade ${tradeId} not found`);
 
     const result = await recordTrade({
-      action: 'CLOSE',
       tradeId,
       symbol: trade.symbol,
       trader: trade.trader,

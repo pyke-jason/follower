@@ -19,10 +19,10 @@ import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { recordTrade } from '../trades/record-trade.js';
+import { recordDecision } from '../decisions/record.js';
 import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
-import type { LLMUsage } from '../agent/providers.js';
 import { resetApiStats, getApiStats } from './databento-tape.js';
 import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
@@ -473,7 +473,7 @@ async function backfillDecisionPnl(runId: string): Promise<void> {
         AND t.pnl IS NOT NULL
     )
     WHERE backtest_run_id = ${runId}
-      AND decision = 'EXECUTE'
+      AND outcome = 'EXECUTE'
   `);
 }
 
@@ -484,50 +484,6 @@ type Stats = {
   failedEntrySignals: number;
   failedExitSignals: number;
 };
-
-type MessageContext = {
-  msg: HistoricalMessage;
-  runId: string;
-  stats: Stats;
-  updateStats: (stats: Stats) => void;
-  decisionStart: number;
-};
-
-async function recordSkip(ctx: MessageContext, path: string, category: string, reason: string, usage?: LLMUsage): Promise<void> {
-  log.debug(`  → skipped (${reason.slice(0, 100)}) (${Date.now() - ctx.decisionStart}ms)`);
-  ctx.stats.skipped++;
-  ctx.stats.skipReasons.set(category, (ctx.stats.skipReasons.get(category) ?? 0) + 1);
-  await db.insert(schema.runDecisions).values({
-    backtestRunId: ctx.runId,
-    messageId: ctx.msg.id,
-    path,
-    decision: 'SKIP',
-    skipCategory: category,
-    reasoning: reason,
-    durationMs: Date.now() - ctx.decisionStart,
-    ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
-  });
-}
-
-async function recordExecute(
-  ctx: MessageContext,
-  path: string,
-  reasoning: string,
-  tradeId?: string,
-  usage?: LLMUsage,
-): Promise<void> {
-  ctx.stats.agentTrades++;
-  await db.insert(schema.runDecisions).values({
-    backtestRunId: ctx.runId,
-    messageId: ctx.msg.id,
-    path,
-    decision: 'EXECUTE',
-    reasoning,
-    tradeId,
-    durationMs: Date.now() - ctx.decisionStart,
-    ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
-  });
-}
 
 // ── Adapter: HistoricalMessage → Task for processTask ───
 
@@ -562,7 +518,6 @@ async function processMessage(
   stats: Stats,
   updateStats: (stats: Stats) => void,
 ): Promise<void> {
-  const ctx: MessageContext = { msg, runId: btCtx.runId, stats, updateStats, decisionStart: Date.now() };
   const task = taskFromMessage(msg);
 
   await processTaskShared(task, {
@@ -573,32 +528,21 @@ async function processMessage(
     },
     llm: btCtx.agentProvider,
     pipeline: btCtx.pipelineDeps,
+    onDecision: async (row) => {
+      await recordDecision({ ...row, backtestRunId: btCtx.runId });
+    },
     onResult: async (result) => {
       if (result.outcome === 'EXECUTE') {
-        const executedResults = result.results.filter(r => r.executed);
-        const pendingResults = result.results.filter(r => !r.executed && r.orderId);
-        const firstTradeId = executedResults[0]?.tradeId;
-        const failedResults = result.results.filter(r => !r.executed && !r.orderId && r.reason);
-
-        for (const r of failedResults) {
+        const executed = result.results.filter(r => r.executed).length;
+        const failed = result.results.filter(r => !r.executed);
+        stats.agentTrades += executed;
+        for (const r of failed) {
           if (r.signal.tradeId) stats.failedExitSignals++;
           else stats.failedEntrySignals++;
         }
-
-        if (executedResults.length > 0 || pendingResults.length > 0) {
-          const reasoning = result.signals.map(s => `${s.orderType} ${s.legs.map(l => l.symbol).join('+')}`).join('; ');
-          await recordExecute(ctx, 'orchestrator', reasoning, firstTradeId);
-        } else if (failedResults.length > 0) {
-          const failReason = failedResults.map(r => r.reason).join('; ');
-          log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
-          await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason);
-        } else {
-          await recordSkip(ctx, 'orchestrator', 'no execution', 'Signals produced but none executed');
-        }
-      } else if (result.outcome === 'MANUAL_REVIEW') {
-        await recordSkip(ctx, 'orchestrator', 'flagged', result.reason);
       } else {
-        await recordSkip(ctx, 'orchestrator', 'skip', result.reason);
+        stats.skipped++;
+        stats.skipReasons.set(result.reason, (stats.skipReasons.get(result.reason) ?? 0) + 1);
       }
       updateStats(stats);
     },

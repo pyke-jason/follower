@@ -1,107 +1,112 @@
-# Fix: LEG_OFF action lost between orchestrator and executor
+# Legs-first execution: kill the action enum
 
-## Problem
+## North star
 
-The orchestrator correctly parses LEG_OFF signals ("Bought back the short Calls on META holding the long Calls") but `ResolvedSignal` has no `action` field. The executor re-derives action via `deriveAction()` which always returns `CLOSE` for anything with a `tradeId` that isn't a TRIM. So `recordTrade()` fully closes the position instead of mutating it in-place (CDS → CALL).
+The entire execution pipeline reduces to one concept: **a ledger of BUY/SELL orders for securities, grouped by strategy.**
 
-Result: the META CDS $755/$765 trade gets killed on the leg-off message, and "Exit META CDS at break-even" finds no open position.
+That's what brokers accept. That's what the orchestrator already produces. Everything between — `deriveAction()`, the action enum, the 5-branch switch in `recordTrade` — is invented complexity that re-labels what the data already says.
 
-The evals pass because they only test the orchestrator. The backtest fails because it actually executes.
-
-## Root cause trace
+### What the system looks like at steady state
 
 ```
-Orchestrator (correct):
-  parse: action=LEG_OFF symbol=META strategy=CALL targetStrategy=CALL
-  position-path: builds single reversal leg (BUY back the $765 SELL leg)
-  → ResolvedSignal { orderType: 'SINGLE', legs: [...], tradeId: '7a57...' }
-                     ↑ no action field, no targetStrategy
-
-Executor (broken):
-  deriveAction(signal) → has tradeId, not TRIM → returns 'CLOSE'
-  recordTrade({ action: 'CLOSE', ... }) → full close, position gone
-
-recordTrade LEG_OFF branch (never reached):
-  if (action === 'LEG_OFF') { ... }  // action is 'CLOSE', skipped
+Chat message
+  → Orchestrator (parse intent, resolve to concrete legs)
+  → Executor (send legs to broker, get fills)
+  → Portfolio reconciler (apply fills to positions — derive what happened from the data)
+  → Event log (audit trail with derived labels)
 ```
 
-## Fix
+**The orchestrator doesn't change.** It already outputs `{ legs: [BUY 755C, SELL 765C], limitPrice?, tradeId? }`. That's a ledger entry.
 
-### 1. Add `action` + `targetStrategy` to ResolvedSignal
+**The executor doesn't need `deriveAction()`.** It just needs to know: is this opening a new position (`!tradeId`) or transacting against an existing one (`tradeId`)? That's a boolean, not a 5-value enum.
 
-**`src/intents/orchestrator/types.ts`** — ResolvedSignal (line 43)
+**`recordTrade` becomes a portfolio reconciler.** It receives fills (legs + prices) and reconciles them against existing positions. The "action" falls out of the comparison:
 
-No new types. `action` reuses the union already in ParseResult/RecordTradeInput. `targetStrategy` reuses the `Strategy` enum.
+| Incoming legs vs existing position | What happened |
+|---|---|
+| No existing position | New position opened |
+| Same-direction legs | Position grew |
+| Reversal of all legs, full qty | Position closed |
+| Reversal of all legs, partial qty | Position shrunk |
+| Reversal of some legs | Spread shape changed (leg removed) |
 
-```ts
-export type ResolvedSignal = {
-  action: 'OPEN' | 'CLOSE' | 'TRIM' | 'LEG_OFF';
-  orderType: 'SINGLE' | 'SPREAD' | 'STOCK';
-  legs: Leg[];
-  limitPrice?: number;
-  tradeId?: string;
-  exitPercent?: number;
-  /** LEG_OFF only: the strategy the position converts to after removing a leg. */
-  targetStrategy?: Strategy;
-};
-```
+These labels are derived for the event log and UI. They're never inputs.
 
-### 2. Set action on every signal construction site (6 total)
+**`TradeAction` stops being an API input.** It survives only as:
+- A derived label on `trade_events` rows (for audit, display, rebuild)
+- An internal routing hint in the orchestrator parser (to decide open-path vs position-path)
+- An LLM output field (to help the model classify intent)
 
-| Site | File | Action |
-|---|---|---|
-| position-path.ts:318 | CLOSE/TRIM/LEG_OFF resolver | `action` from local var + `targetStrategy` for LEG_OFF |
-| open-path.ts:433 | STOCK open | `action: 'OPEN'` |
-| open-path.ts:461 | Premium-match scan | `action: 'OPEN'` |
-| open-path.ts:547 | Main spread/option path | `action: 'OPEN'` |
-| index.ts:~265 | `resolveStrangleExit()` | `action: 'CLOSE'` |
-| index.ts: ADD path | `resolveAddPath()` stamps tradeId on signals from resolveOpenPath | Overwrite `action: 'ADD'` alongside tradeId |
+It never flows into the executor or recordTrade as a behavioral driver.
 
-**llm-path.ts needs no changes** — it delegates to `resolveOpenPath`/`resolvePositionPath` which set action.
+---
 
-### 3. Delete `deriveAction()` in executor
+## Tactical: immediate bug fix
 
-**`src/pipeline/execute-resolved.ts`**
+The META CDS $755/$765 bug. `deriveAction()` returns `'CLOSE'` for a single-leg reversal on a spread. `recordTrade` blindly closes the whole position.
 
-- Delete `deriveAction()` (lines 155-165) entirely
-- Replace `const action = deriveAction(signal)` with `const action = signal.action`
-- For LEG_OFF: pass `strategy: signal.targetStrategy` to recordTrade (what the trade becomes), keep `deriveStrategy()` for order building (describes the reversal order shape)
+**Fix in `record-trade.ts` only.** The CLOSE branch already receives the incoming legs and has the existing trade. Add leg comparison at the top of the branch:
 
-### 4. Simplify `recordTrade` LEG_OFF branch — derive keptLeg internally
+- Existing position has 2+ legs (it's a spread)
+- Incoming reversal covers only a subset
+- → This is a partial leg close. Derive kept/closed legs, mutate the position in-place instead of closing it.
 
-**`src/trades/record-trade.ts`** (~line 320)
+~40 lines. Zero type changes. Zero upstream changes. This is the first concrete step of the north star: making the CLOSE branch data-driven instead of label-driven.
 
-Stop reading `targetStrategy`/`keptLeg`/`closedLeg` from the opaque metadata bag. Derive from what's already available:
-- `strategy` param = targetStrategy (what the trade becomes)
-- `legs` param = the closed leg reversal
-- `existing.legs` = the current spread legs
-- keptLeg = existing.legs minus closed legs (matched by OCC symbol — same `formatOccSymbol` on both sides)
+### Detection
 
-**Still write** `{ targetStrategy, closedLeg, keptLeg }` to event metadata — `rebuild.ts:111` reads them back for replay.
+Match incoming reversal legs to existing position legs by `strike + type + expiry`. Both sides use the same field formats (OCC symbology from `formatOccSymbol`).
 
-### 5. Bonus: add LEG_OFF to backtest timestamp guard
+### Mutation
 
-`record-trade.ts` lines 103-109 check `CLOSE || TRIM` but not `LEG_OFF`. Pre-existing bug — fix while in the file.
+- Remove closed leg(s) from position
+- Derive new strategy from remaining legs (single CALL → `'CALL'`, single PUT → `'PUT'`)
+- Adjust entry basis: `oldEntry + buybackCost` (the cost of closing the removed leg)
+- Emit `LEG_OFF` event with `{ targetStrategy, closedLeg, keptLeg }` metadata (rebuild.ts replays from this)
+- Keep position OPEN with updated legs/strategy
 
-## Files to modify
+If detection fails, falls through to normal full-close. No regression.
+
+### Also
+
+Fix backtest timestamp guard (line 107): add LEG_OFF to `(action === 'CLOSE' || action === 'TRIM')`.
+
+---
+
+## Strategic: subsequent steps toward north star
+
+### Step 2: recordTrade derives all actions from legs
+
+Extend the leg-comparison logic to handle every case. The `action` parameter becomes optional/ignored — recordTrade figures it out:
+- No existing position → OPEN
+- Same-direction legs on existing → ADD
+- Full reversal → CLOSE
+- Partial qty reversal → TRIM
+- Partial leg reversal → LEG_OFF (step 1)
+
+The `action` param stays on the input type for backwards compat during migration but recordTrade stops reading it.
+
+### Step 3: executor stops deriving action
+
+Delete `deriveAction()`. The executor just needs `tradeId ? positionReducing : opening` for order building. Pass fills to recordTrade without an action label.
+
+### Step 4: clean up the type surface
+
+- Remove `action` from `RecordTradeInput`
+- Remove `TradeAction` from executor/pipeline types
+- `TradeAction` survives only in: parser routing, LLM schemas, event display, rebuild
+
+---
+
+## Files to modify (step 1 only)
 
 | File | Change |
 |---|---|
-| `src/intents/orchestrator/types.ts` | Add `action`, `targetStrategy` to ResolvedSignal |
-| `src/intents/orchestrator/position-path.ts` | Set `action` + `targetStrategy` on signal |
-| `src/intents/orchestrator/open-path.ts` | Set `action: 'OPEN'` on 3 signal sites |
-| `src/intents/orchestrator/index.ts` | Set `action: 'CLOSE'` in strangle exit, `action: 'ADD'` in ADD path |
-| `src/pipeline/execute-resolved.ts` | Delete `deriveAction()`, use `signal.action`, pass targetStrategy for LEG_OFF |
-| `src/trades/record-trade.ts` | Derive keptLeg internally, still write to event metadata, fix timestamp guard |
-
-## What gets deleted
-
-- `deriveAction()` function and its comments
-- metadata bag reads in recordTrade LEG_OFF branch
+| `src/trades/record-trade.ts` | Leg comparison in CLOSE branch, timestamp guard fix |
 
 ## Verification
 
-1. Type check: `npx tsc --noEmit`
-2. META CDS evals: `npx tsx scripts/eval-orchestrator.ts --case legoff-adv-008 && --case legoff-adv-009 && --case legoff-adv-010`
-3. Full eval suite: `npx tsx scripts/eval-orchestrator.ts`
-4. Re-run backtest: verify META trade shows LEG_OFF event, position mutates CDS→CALL, exit message finds open position
+1. `npx tsc --noEmit`
+2. `npx tsx scripts/eval-orchestrator.ts --case legoff-adv-008 && npx tsx scripts/eval-orchestrator.ts --case legoff-adv-009 && npx tsx scripts/eval-orchestrator.ts --case legoff-adv-010`
+3. `npx tsx scripts/eval-orchestrator.ts` (full suite)
+4. Re-run backtest: META trade shows LEG_OFF event, position mutates CDS→CALL, exit message finds open position

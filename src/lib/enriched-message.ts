@@ -15,12 +15,12 @@ export type TradeOutcome = {
   closedAt: string | null;
 };
 
-/** Agent decision for a message — from runDecisions (backtest) or task.result (live). */
+/** Agent decision for a message — from runDecisions (backtest and live). */
 export type MessageDecision = {
-  decision: 'EXECUTE' | 'SKIP';
+  outcome: 'EXECUTE' | 'SKIP' | 'FAIL';
   reasoning: string | null;
   pnl: string | null;
-  path: string;
+  phase: string;
   durationMs: number | null;
 };
 

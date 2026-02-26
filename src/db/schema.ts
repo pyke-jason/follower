@@ -59,7 +59,7 @@ export const tasks = sqliteTable('tasks', {
   assignee:    text('assignee').notNull().default('agent'),
   priority:    integer('priority').default(0),
   context:     text('context', { mode: 'json' }).$type<TaskContext>().default({}),
-  result:      text('result', { mode: 'json' }).$type<TaskResult | null>(),
+  result:      text('result', { mode: 'json' }).$type<{ outcome: string } | null>(),
   createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:   text('started_at'),
   completedAt: text('completed_at'),
@@ -72,22 +72,6 @@ export const tasks = sqliteTable('tasks', {
   index('idx_tasks_message').on(table.messageId),
   index('idx_tasks_backtest_run').on(table.backtestRunId),
   uniqueIndex('idx_tasks_message_unique').on(table.messageId).where(sql`message_id IS NOT NULL`),
-]);
-
-// ─── Task Steps ──────────────────────────────────────
-
-export const taskSteps = sqliteTable('task_steps', {
-  id:          text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  taskId:      text('task_id').references(() => tasks.id).notNull(),
-  stepNumber:  integer('step_number').notNull(),
-  toolName:    text('tool_name'),
-  toolInput:   text('tool_input', { mode: 'json' }),
-  toolOutput:  text('tool_output', { mode: 'json' }),
-  reasoning:   text('reasoning'),
-  durationMs:  integer('duration_ms'),
-  createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
-}, (table) => [
-  index('idx_steps_task').on(table.taskId),
 ]);
 
 // ─── Trades ──────────────────────────────────────────
@@ -179,20 +163,23 @@ export const backtestRuns = sqliteTable('backtest_runs', {
 
 export const runDecisions = sqliteTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id).notNull(),
+  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id),  // nullable — null for live
+  taskId:         text('task_id').references(() => tasks.id),                 // nullable — for live trade story lookups
   messageId:      text('message_id').references(() => messages.id).notNull(),
-  path:           text('path').notNull(),          // 'agent' | 'skipped'
-  decision:       text('decision').notNull(),      // 'EXECUTE' | 'SKIP'
+  signalIndex:    integer('signal_index'),           // null = message-level (skip/flag), 0+ = per-signal
+  outcome:        text('outcome').notNull(),          // 'EXECUTE' | 'SKIP' | 'FAIL'
+  phase:          text('phase').notNull(),            // 'orchestrator' | 'pipeline' | 'order'
   reasoning:      text('reasoning'),
-  skipCategory:   text('skip_category'),           // e.g. 'risk blocked', 'agent skip', 'no open position'
-  tradeId:        text('trade_id'),                // FK to resulting trade (null if SKIP)
-  pnl:            text('pnl'),                     // outcome P&L, back-filled after close
+  tradeId:        text('trade_id'),                   // FK to resulting trade (null unless EXECUTE)
+  pnl:            text('pnl'),                        // backfilled after close
+  snapshot:       text('snapshot', { mode: 'json' }).$type<Record<string, unknown>>(),
   durationMs:     integer('duration_ms'),
-  inputTokens:    integer('input_tokens'),          // LLM input tokens (null for deterministic skips)
-  outputTokens:   integer('output_tokens'),         // LLM output tokens (null for deterministic skips)
+  inputTokens:    integer('input_tokens'),
+  outputTokens:   integer('output_tokens'),
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   index('idx_run_decisions_run').on(table.backtestRunId),
+  index('idx_run_decisions_task').on(table.taskId),
   index('idx_run_decisions_message').on(table.messageId),
   index('idx_run_decisions_run_message').on(table.backtestRunId, table.messageId),
 ]);
@@ -381,12 +368,6 @@ export type TaskContext = {
   [key: string]: unknown;
 };
 
-export type TaskResult = {
-  decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
-  reasoning: string;
-  signals?: Signal[];
-};
-
 export type TradeMetadata = {
   slippage?: number;
   fillQuality?: string;
@@ -406,7 +387,6 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
-export type TaskStep = typeof taskSteps.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
 export type BacktestRun = typeof backtestRuns.$inferSelect;
 export type TrackedTrader = typeof trackedTraders.$inferSelect;
@@ -417,4 +397,5 @@ export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
+export type DecisionRow = Omit<typeof runDecisions.$inferInsert, 'id' | 'backtestRunId' | 'taskId' | 'createdAt'>;
 export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;

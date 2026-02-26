@@ -17,6 +17,7 @@ import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { isOpen, isClosed, notBacktest, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { recordTrade } from '../trades/record-trade.js';
+import { recordDecision } from '../decisions/record.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
 import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
 
@@ -220,14 +221,17 @@ async function handleTask(task: Task): Promise<void> {
       },
       llm: provider,
       pipeline: pipelineDeps,
+      onDecision: async (row) => {
+        await recordDecision({ ...row, taskId: task.id });
+      },
       onResult: async (result) => {
-        await completeTask(task.id, { decision: result.outcome, reasoning: result.reason });
+        await completeTask(task.id, { outcome: result.outcome });
         console.log(`[Runner] Task ${task.id} completed: ${result.outcome}`);
       },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await failTask(task.id, msg);
-    console.error(`[Runner] Task ${task.id} failed:`, msg);
+    throw err;
   }
 }

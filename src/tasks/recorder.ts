@@ -1,34 +1,12 @@
 import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
-import type { TaskResult, TradeMetadata } from '../db/schema.js';
+import type { TradeMetadata } from '../db/schema.js';
 import type { OrderResult } from '../broker/types.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
 
-export async function recordStep(
-  taskId: string,
-  stepNumber: number,
-  step: {
-    toolName?: string;
-    toolInput?: unknown;
-    toolOutput?: unknown;
-    reasoning?: string;
-    durationMs?: number;
-  }
-): Promise<void> {
-  await db.insert(schema.taskSteps).values({
-    taskId,
-    stepNumber,
-    toolName: step.toolName ?? null,
-    toolInput: step.toolInput ?? null,
-    toolOutput: step.toolOutput ?? null,
-    reasoning: step.reasoning ?? null,
-    durationMs: step.durationMs ?? null,
-  });
-}
-
 export async function completeTask(
   taskId: string,
-  result: TaskResult
+  result: { outcome: string }
 ): Promise<void> {
   await db.update(schema.tasks)
     .set({

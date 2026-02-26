@@ -118,7 +118,6 @@ web/
 | `messages` | Ingested chat messages with parsed badges, symbols, action/direction hints |
 | `message_labels` | Ground truth labels for eval (action, direction, strategy, strikes, expiry) |
 | `tasks` | Agent tasks: PENDING → IN_PROGRESS → COMPLETED/FAILED |
-| `task_steps` | Tool calls per task (tool name, input, output, reasoning, duration) |
 | `trades` | Open/closed trades with entry/exit price, P&L, broker fills, legs |
 | `tracked_traders` | Whitelist of traders to copy with position sizing config |
 | `backtest_runs` | Test runs with config, summary metrics, equity curve |

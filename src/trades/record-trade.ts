@@ -17,7 +17,10 @@ import type { Direction, Strategy } from '../lib/enums.js';
 const log = createLogger('RecordTrade');
 
 export type RecordTradeInput = {
-  action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
+  /** Optional hint — recordTrade derives the actual action from legs vs existing position.
+   *  If omitted, the function infers OPEN (no tradeId) or derives CLOSE/TRIM/ADD/LEG_OFF
+   *  from leg comparison. If provided, used as fallback when derivation returns null. */
+  action?: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
   symbol: string;
   trader: string;
   direction?: Direction;
@@ -77,6 +80,63 @@ function emitEvent(params: {
   });
 }
 
+// ─── Action derivation ──────────────────────────────
+
+type DerivedAction = 'CLOSE' | 'TRIM' | 'LEG_OFF' | 'ADD';
+
+/**
+ * Derive the correct action by comparing incoming legs against the existing
+ * position's legs. Returns null if derivation isn't possible (caller's hint
+ * is used as fallback).
+ *
+ * Same-direction legs (BUY→BUY or SELL→SELL) = ADD.
+ * Reversal legs covering all existing legs at full qty = CLOSE.
+ * Reversal legs covering all existing legs at partial qty = TRIM.
+ * Reversal legs covering a subset of existing legs = LEG_OFF.
+ */
+function deriveActionFromLegs(
+  incomingLegs: TradeLeg[],
+  existingLegs: TradeLeg[],
+  existingQty: number,
+): DerivedAction | null {
+  if (incomingLegs.length === 0 || existingLegs.length === 0) return null;
+
+  // Classify each incoming leg as same-direction or reversal relative to
+  // the matching existing leg (matched by strike + type + expiry).
+  let sameDir = 0;
+  let reversal = 0;
+  let unmatched = 0;
+
+  for (const il of incomingLegs) {
+    const match = existingLegs.find(el =>
+      el.strike === il.strike && el.type === il.type && el.expiry === il.expiry
+    );
+    if (!match) {
+      unmatched++;
+      continue;
+    }
+    if (il.action === match.action) sameDir++;
+    else reversal++;
+  }
+
+  // All incoming legs are same-direction as existing → adding to position
+  if (sameDir > 0 && reversal === 0 && unmatched === 0) return 'ADD';
+
+  // All incoming legs are reversals
+  if (reversal > 0 && sameDir === 0) {
+    // Subset of existing legs reversed → LEG_OFF (spread shape changes)
+    if (reversal < existingLegs.length) return 'LEG_OFF';
+
+    // All existing legs reversed — check quantity to distinguish CLOSE vs TRIM
+    const incomingQty = incomingLegs[0]?.quantity ?? 1;
+    if (incomingQty < existingQty) return 'TRIM';
+    return 'CLOSE';
+  }
+
+  // Mixed or unmatched — can't derive reliably
+  return null;
+}
+
 // ─── Main ────────────────────────────────────────────
 
 export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeResult | null> {
@@ -90,22 +150,25 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
   const now = new Date().toISOString();
 
+  // Infer intent: no tradeId → OPEN, tradeId present → position-modifying (derived from legs later)
+  const isOpen_ = !input.tradeId && (action === 'OPEN' || action == null);
+
   // Guard: quantity must be positive if provided (validate at boundary, not in readers).
   if (quantity != null && quantity <= 0) {
-    throw new Error(`recordTrade: invalid quantity ${quantity} for ${action} ${symbol} (must be positive)`);
+    throw new Error(`recordTrade: invalid quantity ${quantity} for ${action ?? 'unknown'} ${symbol} (must be positive)`);
   }
   if (closeQuantity != null && closeQuantity <= 0) {
-    throw new Error(`recordTrade: invalid closeQuantity ${closeQuantity} for ${action} ${symbol} (must be positive)`);
+    throw new Error(`recordTrade: invalid closeQuantity ${closeQuantity} for ${action ?? 'unknown'} ${symbol} (must be positive)`);
   }
 
   // Guard: backtest trades must have explicit timestamps — never fall back to
   // wall-clock time, which collapses the equity curve to a single day.
   if (isBacktest || backtestRunId) {
-    if (action === 'OPEN' && !openedAt) {
+    if (isOpen_ && !openedAt) {
       throw new Error(`recordTrade: backtest OPEN for ${symbol} missing openedAt timestamp`);
     }
-    if ((action === 'CLOSE' || action === 'TRIM') && !closedAt) {
-      throw new Error(`recordTrade: backtest ${action} for ${symbol} missing closedAt timestamp`);
+    if (!isOpen_ && !closedAt) {
+      throw new Error(`recordTrade: backtest ${action ?? 'position-modify'} for ${symbol} missing closedAt timestamp`);
     }
   }
 
@@ -120,7 +183,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   ];
 
   // ── OPEN: insert a new trade row ──
-  if (action === 'OPEN') {
+  if (isOpen_) {
     const tradeId = crypto.randomUUID();
     const ts = openedAt ?? now;
     const values = {
@@ -167,12 +230,81 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     ? await db.select().from(schema.trades).where(eq(schema.trades.id, input.tradeId))
     : await db.select().from(schema.trades).where(and(...scopeFilters)).limit(1);
   if (!existing) {
-    log.debug(`${action}: no open position for ${symbol}/${trader}${backtestRunId ? ` run=${backtestRunId.slice(0, 8)}` : ''}`);
+    log.debug(`${action ?? 'position-modify'}: no open position for ${symbol}/${trader}${backtestRunId ? ` run=${backtestRunId.slice(0, 8)}` : ''}`);
     return null;
   }
 
+  // ── Derive action from legs vs existing position ──
+  // The caller's action is a hint; the data determines what actually happened.
+  const existingLegs = (existing.legs ?? []) as TradeLeg[];
+  const incomingLegs = legs ?? [];
+  const derived = deriveActionFromLegs(incomingLegs, existingLegs, tradeQty(existing.quantity));
+  const effectiveAction = derived ?? action ?? 'CLOSE';
+
+  if (derived && derived !== action && action != null) {
+    log.debug(`Action override: caller=${action} derived=${derived} for ${symbol} [${existing.id.slice(0, 8)}]`);
+  }
+
   // ── CLOSE: close the entire position ──
-  if (action === 'CLOSE') {
+  if (effectiveAction === 'CLOSE') {
+    // ── Fallback leg comparison: auto-detect partial leg close on spreads ──
+    // (Normally caught by deriveActionFromLegs above, but kept for callers that
+    // don't provide legs or when derivation returns null.)
+    if (existingLegs.length >= 2 && incomingLegs.length > 0 && incomingLegs.length < existingLegs.length) {
+      // Match incoming legs to existing legs by strike + type + expiry
+      const closedLegs: TradeLeg[] = [];
+      const keptLegs: TradeLeg[] = [];
+      for (const el of existingLegs) {
+        const matched = incomingLegs.some(il =>
+          il.strike === el.strike && il.type === el.type && il.expiry === el.expiry
+        );
+        if (matched) closedLegs.push(el);
+        else keptLegs.push(el);
+      }
+
+      if (closedLegs.length > 0 && keptLegs.length > 0) {
+        // This is a partial leg close — convert to LEG_OFF
+        const closedLeg = closedLegs[0];
+        const keptLeg = keptLegs[0];
+        const targetStrategy = keptLeg.type === 'CALL' ? 'CALL' as Strategy
+          : keptLeg.type === 'PUT' ? 'PUT' as Strategy
+          : 'STOCK' as Strategy;
+
+        const exit = exitPrice ?? 0;
+        const entry = safeParseFloat(existing.entryPrice);
+        const newEntryPrice = roundCents(entry + exit);
+        const ts = closedAt ?? now;
+
+        await emitEvent({
+          tradeId: existing.id,
+          action: 'LEG_OFF',
+          price: exit,
+          quantity: tradeQty(existing.quantity),
+          legs: existingLegs,
+          strategy: existing.strategy,
+          direction: existing.direction,
+          messageId: closeMessageId,
+          metadata: { targetStrategy, closedLeg, keptLeg },
+          timestamp: ts,
+        });
+
+        const openLegCount = existingLegs.length;
+        await db.update(schema.trades)
+          .set({
+            strategy: targetStrategy,
+            legs: [keptLeg],
+            entryPrice: String(newEntryPrice),
+            metadata: { ...existing.metadata, openLegCount },
+          })
+          .where(eq(schema.trades.id, existing.id));
+
+        const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, existing.id));
+        log.debug(`LEG_OFF (auto): ${existing.strategy}→${targetStrategy} ${symbol} buyback=$${exit} newBasis=$${newEntryPrice} [${existing.id.slice(0, 8)}]`);
+        return { tradeId: existing.id, action: 'LEG_OFF', trade };
+      }
+      // Detection failed — fall through to normal CLOSE
+    }
+
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
     const qty = tradeQty(existing.quantity);
@@ -214,7 +346,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   }
 
   // ── ADD: increase quantity on existing position ──
-  if (action === 'ADD') {
+  if (effectiveAction === 'ADD') {
     const addQty = quantity ?? 1;
     const addPrice = entryPrice ?? 0;
     const existingQty = tradeQty(existing.quantity);
@@ -249,7 +381,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   }
 
   // ── TRIM: partial close — update position in place, accumulate realizedPnl ──
-  if (action === 'TRIM') {
+  if (effectiveAction === 'TRIM') {
     const existingQty = tradeQty(existing.quantity);
     let trimQty = closeQuantity ?? (exitPercent
       ? Math.max(1, Math.floor(existingQty * exitPercent))
@@ -317,13 +449,34 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   // ── LEG_OFF: close one leg of a spread, mutate position in place ──
   // Not a new trade — the position stays open with a different shape.
   // OPEN CDS → LEG_OFF (mutate to CALL) → eventually CLOSE CALL. One trade row.
-  if (action === 'LEG_OFF') {
+  if (effectiveAction === 'LEG_OFF') {
     const exit = exitPrice ?? 0;
     const entry = safeParseFloat(existing.entryPrice);
 
-    const targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as Strategy;
-    const closedLeg = (metadata as Record<string, unknown>)?.closedLeg as TradeLeg | undefined;
-    const keptLeg = (metadata as Record<string, unknown>)?.keptLeg as TradeLeg | undefined;
+    // Try metadata first (explicit LEG_OFF from caller), then derive from legs
+    let targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as Strategy | undefined;
+    let closedLeg = (metadata as Record<string, unknown>)?.closedLeg as TradeLeg | undefined;
+    let keptLeg = (metadata as Record<string, unknown>)?.keptLeg as TradeLeg | undefined;
+
+    if ((!targetStrategy || !keptLeg) && incomingLegs.length > 0 && existingLegs.length >= 2) {
+      // Derive from leg comparison (same logic as old CLOSE-branch auto-detect)
+      const closed: TradeLeg[] = [];
+      const kept: TradeLeg[] = [];
+      for (const el of existingLegs) {
+        const matched = incomingLegs.some(il =>
+          il.strike === el.strike && il.type === el.type && il.expiry === el.expiry
+        );
+        if (matched) closed.push(el);
+        else kept.push(el);
+      }
+      if (closed.length > 0 && kept.length > 0) {
+        closedLeg = closed[0];
+        keptLeg = kept[0];
+        targetStrategy = keptLeg.type === 'CALL' ? 'CALL' as Strategy
+          : keptLeg.type === 'PUT' ? 'PUT' as Strategy
+          : 'STOCK' as Strategy;
+      }
+    }
 
     if (!targetStrategy || !keptLeg) {
       log.warn(`LEG_OFF: missing targetStrategy or keptLeg metadata for ${symbol}/${trader}`);

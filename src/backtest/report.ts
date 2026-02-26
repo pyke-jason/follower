@@ -249,7 +249,7 @@ export function generateReportFromTrades(params: {
   trades: { pnl: string | null; status: string; trader: string; strategy: string;
             quantity: number | null; legs: unknown[] | null;
             entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
-  decisions: { path: string; decision: string }[];
+  decisions: { phase: string; outcome: string; inputTokens: number | null }[];
   mtmSnapshots?: MtmSnapshot[];
   startingEquity: number;
   commissionSchedule?: CommissionSchedule;
@@ -257,11 +257,11 @@ export function generateReportFromTrades(params: {
   const { trades, decisions, mtmSnapshots, startingEquity, commissionSchedule } = params;
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, commissionSchedule);
 
-  // Derive execution stats from decisions — count both live agent and cached intent paths
-  const isClassified = (d: { path: string }) => d.path === 'agent' || d.path === 'intent';
-  const agentTrades = decisions.filter((d) => isClassified(d) && d.decision === 'EXECUTE').length;
+  // Derive execution stats from decisions — LLM-involved decisions have non-null inputTokens
+  const isClassified = (d: { inputTokens: number | null }) => d.inputTokens != null;
+  const agentTrades = decisions.filter((d) => isClassified(d) && d.outcome === 'EXECUTE').length;
   const agentCallsUsed = decisions.filter((d) => isClassified(d)).length;
-  const skipped = decisions.filter((d) => d.decision === 'SKIP').length;
+  const skipped = decisions.filter((d) => d.outcome === 'SKIP').length;
 
   // Extended metrics (use net PnL from core summary)
   const netPnlOf = (t: typeof sortedClosed[number]) =>
