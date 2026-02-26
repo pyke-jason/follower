@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, computeBacktestAccuracy } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { formatCurrency } from '@/lib/format';
-import { deleteBacktestRun, cancelBacktestRun, invalidateIntentCache } from '../actions';
+import { deleteBacktestRun, cancelBacktestRun } from '../actions';
 import { LogViewer } from './log-viewer';
 import { BacktestTabs } from './backtest-tabs';
 import { EquityCurveChart } from './equity-curve-chart';
@@ -21,9 +21,8 @@ import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { DecisionScatter } from './decision-scatter';
 import { TradesTableClient } from '../../components/trades-table-client';
-import { AccuracyGrid } from '../../components/accuracy-grid';
 import Link from 'next/link';
-import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
 import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
 import type { LiveMetrics } from '../../../../src/backtest/types';
 
@@ -56,7 +55,7 @@ export default async function BacktestDetailPage({
     ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString() // +1hr buffer
     : config.endDate;
 
-  const [decisions, allTrades, chatData, mtmSnapshots, accuracyResult] = await Promise.all([
+  const [decisions, allTrades, chatData, mtmSnapshots] = await Promise.all([
     getRunDecisions(id),
     getTradesByBacktestRun(id, { includeOpen: true }),
     loadInitialChatData({
@@ -66,7 +65,6 @@ export default async function BacktestDetailPage({
       runId: id,
     }),
     getMtmSnapshots(id),
-    computeBacktestAccuracy(id),
   ]);
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
@@ -199,7 +197,6 @@ export default async function BacktestDetailPage({
         <ChatRoom
           initialMessages={chatData.messages}
           initialCursor={chatData.cursor}
-          initialIntents={chatData.intents}
           initialLabels={chatData.labels}
           initialEnrichment={chatData.enrichment}
           authors={chatData.authors}
@@ -243,12 +240,6 @@ export default async function BacktestDetailPage({
                 <Copy className="size-3" /> Clone &amp; Edit
               </Link>
             </Button>
-            <form action={invalidateIntentCache}>
-              <input type="hidden" name="runId" value={run.id} />
-              <Button type="submit" variant="ghost" size="xs">
-                <RotateCcw className="size-3" /> Clear Intent Cache
-              </Button>
-            </form>
             <Separator orientation="vertical" className="!h-4 mx-1" />
             <Button variant="ghost" size="xs" asChild>
               <Link href={`/?run=${run.id}`}>
@@ -370,21 +361,7 @@ export default async function BacktestDetailPage({
         performance={performanceContent}
         messages={messagesContent}
         trades={tradesContent}
-        accuracy={
-          accuracyResult ? (
-            <AccuracyGrid
-              result={accuracyResult}
-              totalMessages={accuracyResult.totalMessages}
-              labeledMessages={accuracyResult.labeledMessages}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground text-center py-6">
-              No reviewed labels overlap with this backtest&apos;s messages.
-            </p>
-          )
-        }
         hasMessages={chatData.messages.length > 0}
-        hasAccuracy={accuracyResult != null}
       />
     </div>
 

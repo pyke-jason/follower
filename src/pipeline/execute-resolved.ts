@@ -435,6 +435,16 @@ export async function executeResolvedSignals(
           results.push({ signal, executed: false, reason: 'Quote resolution failed — LLM could not correct' });
         } else {
           for (const s of corrected) {
+            // If the LLM produced the same invalid OCC symbol, skip immediately.
+            if (err.occSymbol) {
+              const stillBad = s.legs
+                .filter((l): l is OptionLeg => l.type === 'option')
+                .some(l => formatOccSymbol({ underlying: l.symbol, expiration: l.expiry, type: l.optionType, strike: l.strike }) === err.occSymbol);
+              if (stillBad) {
+                results.push({ signal: s, executed: false, reason: `Quote resolution retry returned same invalid symbol ${err.occSymbol}` });
+                continue;
+              }
+            }
             try {
               results.push(await executeResolvedSignal(s, trader, deps, optsNoRetry));
             } catch (retryErr) {

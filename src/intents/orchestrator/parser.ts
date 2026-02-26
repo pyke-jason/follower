@@ -35,6 +35,8 @@ const SPREAD_KW_RE = /\bcds\b|\bpcs\b|\bpds\b|call debit spread|put credit sprea
 const CALLS_RE = /\bcalls?\b/i;
 const PUTS_RE = /\bputs?\b/i;
 const STOCK_RE = /\bstocks?\b|\bshares?\b/i;
+const CONTRACT_RE = /\bcontracts?\b/i;
+const STOCK_QTY_RE = /\b\d{1,3}(,\d{3})+\b/;
 
 // ── Direction-override verb patterns ─────────────────────────────────────────
 
@@ -45,7 +47,7 @@ const BOUGHT_BUYING_RE = /\b(bought|buying)\b/i;
 const BOUGHT_BACK_RE = /\bbought\s+back\b/i;
 const BOUGHT_BACK_SHORT_CALLS_RE = /\bbought\s+back\s+(?:the\s+)?short\s+(?:call|calls)\b/i;
 const BOUGHT_BACK_SHORT_PUTS_RE = /\bbought\s+back\s+(?:the\s+)?short\s+(?:put|puts)\b/i;
-const SHORTING_RE = /\b(shorting|shorted)\b/i;
+const SHORTING_RE = /\b(shorting|shorted)\b|\bshort\b(?!\s*(?:term|squeeze|interest|sellers?|covering|side|dated|strike|week|leg|run))/i;
 
 // ── Strike detection (used in strategy detection fallback) ────────────────────
 
@@ -107,6 +109,11 @@ function extractExitPercent(text: string): number | null {
 
 function looksLikeDate(a: number, b: number): boolean {
   return Number.isInteger(a) && Number.isInteger(b) && a >= 1 && a <= 12 && b >= 1 && b <= 31;
+}
+
+/** Strip parenthetical content for strategy detection (preserves for field extraction). */
+function stripParenthetical(text: string): string {
+  return text.replace(/\([^)]*\)/g, ' ').replace(/\s{2,}/g, ' ').trim();
 }
 
 // ── Coordinated token extraction ──────────────────────────────────────────────
@@ -519,6 +526,80 @@ function extractTradeFields(
   return { strikes, premiumHint, expiryHint, ambiguousSlashPair };
 }
 
+// ── Strategy detection (extracted for two-pass paren stripping) ──────────────
+
+function detectStrategy(
+  text: string,
+  isLotto: boolean,
+  fullText: string,
+): { strategy: Strategy | null; directionFromStrategy: Direction | null } {
+  let strategy: Strategy | null = null;
+  let directionFromStrategy: Direction | null = null;
+
+  if (CDS_RE.test(text)) {
+    strategy = 'CDS';
+    directionFromStrategy = 'LONG';
+  } else if (PCS_RE.test(text)) {
+    strategy = 'PCS';
+  } else if (PDS_RE.test(text)) {
+    strategy = 'PDS';
+    directionFromStrategy = 'LONG';
+  } else if (LEAP_RE.test(text)) {
+    strategy = 'CALL';
+    directionFromStrategy = 'LONG';
+  } else if (isLotto) {
+    // Always check full text since "(calls)" may be in parens
+    strategy = CALLS_RE.test(fullText) ? 'CALL' : 'PUT';
+    directionFromStrategy = 'LONG';
+  } else if (CALLS_RE.test(text) && !SPREAD_KW_RE.test(text)) {
+    strategy = 'CALL';
+    directionFromStrategy = 'LONG';
+  } else if (PUTS_RE.test(text) && !SPREAD_KW_RE.test(text)) {
+    strategy = 'PUT';
+    directionFromStrategy = 'LONG';
+  } else if (STOCK_RE.test(text)) {
+    strategy = 'STOCK';
+    directionFromStrategy = null;
+  }
+
+  // Positional STOCK override: if CALL/PUT was detected but the text also
+  // contains stock indicators, prefer STOCK (the option keyword is likely
+  // commentary about an existing position, not the primary trade action)
+  if ((strategy === 'CALL' || strategy === 'PUT') && !SPREAD_KW_RE.test(text)) {
+    if (STOCK_QTY_RE.test(text)) {
+      // Comma-separated quantities (1,000+) strongly indicate stock
+      strategy = 'STOCK';
+      directionFromStrategy = null;
+    } else if (STOCK_RE.test(text)) {
+      const stockPos = text.search(STOCK_RE);
+      const callPos = CALLS_RE.test(text) ? text.search(CALLS_RE) : Infinity;
+      const putPos = PUTS_RE.test(text) ? text.search(PUTS_RE) : Infinity;
+      if (stockPos < Math.min(callPos, putPos)) {
+        strategy = 'STOCK';
+        directionFromStrategy = null;
+      }
+    }
+  }
+
+  // Bare P/C abbreviation fallback (e.g. "$34 P", "$180 C")
+  if (strategy === null) {
+    const nearM = STRIKE_NEAR_OPTION_RE.exec(text);
+    if (nearM) {
+      const match = nearM[0].toLowerCase();
+      if (/p\b/.test(match)) { strategy = 'PUT'; directionFromStrategy = 'LONG'; }
+      else if (/c\b/.test(match)) { strategy = 'CALL'; directionFromStrategy = 'LONG'; }
+    }
+  }
+
+  // "put spread" + credit/debit disambiguation (when PCS_RE didn't match)
+  if (strategy === null && /\bput\s+spread\b/i.test(text)) {
+    if (/\bcredit\b/i.test(text) || /\bbullish\b/i.test(text)) strategy = 'PCS';
+    else if (/\bdebit\b/i.test(text) || /\bbearish\b/i.test(text)) strategy = 'PDS';
+  }
+
+  return { strategy, directionFromStrategy };
+}
+
 // ── Main parse function ───────────────────────────────────────────────────────
 
 /**
@@ -598,51 +679,39 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     (STRANGLE_RE.test(cleanText) && CALLS_RE.test(cleanText) && PUTS_RE.test(cleanText)) ||
     (STRANGLE_RE.test(cleanText) && (hasLongBadge || hasShortBadge || hasExitBadge));
 
-  // ── Strategy detection ────────────────────────────────────────────────────
+  // ── Strategy detection (two-pass: primary text first, full text fallback) ──
+  //
+  // Phase 1: detect on paren-stripped text to prevent keyword hijacking from
+  //          parenthetical commentary (e.g., "PDS" in aside text).
+  // Phase 2: fall back to full text for messages where the trade strategy is
+  //          legitimately inside parentheses (e.g., "Long OSCR (sold $18 puts)").
 
-  let strategy: Strategy | null = null;
-  let directionFromStrategy: Direction | null = null;
+  const primaryText = stripParenthetical(cleanText);
+  let { strategy, directionFromStrategy } = detectStrategy(primaryText, isLotto, cleanText);
+  const strategyFromPrimary = strategy !== null;
 
-  if (CDS_RE.test(cleanText)) {
-    strategy = 'CDS';
-    directionFromStrategy = 'LONG';
-  } else if (PCS_RE.test(cleanText)) {
-    strategy = 'PCS';
-  } else if (PDS_RE.test(cleanText)) {
-    strategy = 'PDS';
-    directionFromStrategy = 'LONG';
-  } else if (LEAP_RE.test(cleanText)) {
-    strategy = 'CALL';
-    directionFromStrategy = 'LONG';
-  } else if (isLotto) {
-    // Lotto with "calls" → CALL; otherwise PUT (more common lotto play)
-    strategy = CALLS_RE.test(cleanText) ? 'CALL' : 'PUT';
-    directionFromStrategy = 'LONG';
-  } else if (CALLS_RE.test(cleanText) && !SPREAD_KW_RE.test(cleanText)) {
-    strategy = 'CALL';
-    directionFromStrategy = 'LONG';
-  } else if (PUTS_RE.test(cleanText) && !SPREAD_KW_RE.test(cleanText)) {
-    strategy = 'PUT';
-    directionFromStrategy = 'LONG';
-  } else if (STOCK_RE.test(cleanText)) {
-    strategy = 'STOCK';
-    directionFromStrategy = null; // badge-derived below
+  if (strategy === null) {
+    ({ strategy, directionFromStrategy } = detectStrategy(cleanText, isLotto, cleanText));
   }
 
-  // Bare P/C abbreviation fallback (e.g. "$34 P", "$180 C")
-  if (strategy === null) {
-    const nearM = STRIKE_NEAR_OPTION_RE.exec(cleanText);
-    if (nearM) {
-      const match = nearM[0].toLowerCase();
-      if (/p\b/.test(match)) { strategy = 'PUT'; directionFromStrategy = 'LONG'; }
-      else if (/c\b/.test(match)) { strategy = 'CALL'; directionFromStrategy = 'LONG'; }
+  // STOCK priority: strategy found only in parenthetical content but primary text
+  // has stock indicators, or badge implies stock with no trade fields in parens
+  if (!strategyFromPrimary && strategy !== null && strategy !== 'STOCK') {
+    const primaryHasStock = STOCK_RE.test(primaryText) || STOCK_QTY_RE.test(primaryText);
+    const parenContent = cleanText.match(/\([^)]*\)/g)?.join(' ') ?? '';
+    const parenHasTradeFields = /\$\d/.test(parenContent) || /\bexpir/i.test(parenContent);
+    const badgeImpliesStock = (hasLongBadge || hasShortBadge) && !hasExitBadge && !parenHasTradeFields;
+    if (primaryHasStock || badgeImpliesStock) {
+      strategy = 'STOCK';
+      directionFromStrategy = null;
     }
   }
 
-  // "put spread" + credit/debit disambiguation (when PCS_RE didn't match)
-  if (strategy === null && /\bput\s+spread\b/i.test(cleanText)) {
-    if (/\bcredit\b/i.test(cleanText) || /\bbullish\b/i.test(cleanText)) strategy = 'PCS';
-    else if (/\bdebit\b/i.test(cleanText) || /\bbearish\b/i.test(cleanText)) strategy = 'PDS';
+  // Badge-implied STOCK fallback: Long/Short badge + no option strategy detected.
+  // Guard: "contracts" keyword suggests an unlabeled options trade → leave for LLM.
+  if (strategy === null && (hasLongBadge || hasShortBadge) && !hasExitBadge && !CONTRACT_RE.test(cleanText)) {
+    strategy = 'STOCK';
+    directionFromStrategy = null;
   }
 
   // ── Direction derivation ──────────────────────────────────────────────────

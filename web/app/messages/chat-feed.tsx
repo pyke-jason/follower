@@ -8,7 +8,7 @@ import { DateSeparator } from './date-separator';
 import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
 import type { Message, MessageLabel } from '../../../src/db/schema';
-import type { MessageIntent, MessageEnrichment } from './actions';
+import type { MessageEnrichment } from './actions';
 
 type FeedItem =
   | { type: 'date'; date: string; key: string }
@@ -44,7 +44,6 @@ export function ChatFeed({
   highlightMessageId,
   selectedMessageId,
   anchorMessageId,
-  intents,
   labels,
   enrichment,
   lastProcessedTs,
@@ -62,7 +61,6 @@ export function ChatFeed({
   selectedMessageId?: string;
   /** When set, scroll-to-bottom button scrolls here instead of absolute bottom. */
   anchorMessageId?: string;
-  intents?: Record<string, MessageIntent>;
   labels?: Record<string, MessageLabel>;
   enrichment?: Record<string, MessageEnrichment>;
   lastProcessedTs?: string;
@@ -142,10 +140,10 @@ export function ChatFeed({
         )}
         onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
       >
-        <ChatBubble message={item.message} intent={intents?.[item.message.id]} label={labels?.[item.message.id]} />
+        <ChatBubble message={item.message} label={labels?.[item.message.id]} />
       </div>
     );
-  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, runId, intents, labels, renderItem, onMessageClick]);
+  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, runId, labels, renderItem, onMessageClick]);
 
   if (messages.length === 0) {
     return (

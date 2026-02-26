@@ -293,8 +293,6 @@ export function ChatFilters({
       >
         <ToggleGroupItem value="labeled" className="text-xs">Labeled</ToggleGroupItem>
         <ToggleGroupItem value="unlabeled" className="text-xs">Unlabeled</ToggleGroupItem>
-        <ToggleGroupItem value="mismatched" className="text-xs">Mismatched</ToggleGroupItem>
-        <ToggleGroupItem value="needs-review" className="text-xs">Needs Review</ToggleGroupItem>
       </ToggleGroup>
     </div>
   );

@@ -4,7 +4,7 @@ import { useState, useRef, useMemo, useCallback, useTransition, useEffect } from
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
 import { RelatedMessagesPanel } from './related-messages-panel';
-import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageIntent, type MessageEnrichment } from './actions';
+import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageEnrichment } from './actions';
 import type { Message, MessageLabel } from '../../../src/db/schema';
 
 const START_INDEX = 100_000;
@@ -29,7 +29,6 @@ export type FilterConstraints = {
 
 type RelatedContext = {
   messages: Message[];
-  intents: Record<string, MessageIntent>;
   labels: Record<string, MessageLabel>;
   sourceSymbols: string[];
 };
@@ -43,7 +42,6 @@ export type StableDecisionCounts = {
 export function ChatRoom({
   initialMessages,
   initialCursor,
-  initialIntents,
   initialLabels,
   initialEnrichment,
   authors,
@@ -52,7 +50,6 @@ export function ChatRoom({
 }: {
   initialMessages: Message[];
   initialCursor: string | null;
-  initialIntents: Record<string, MessageIntent>;
   initialLabels: Record<string, MessageLabel>;
   initialEnrichment?: Record<string, MessageEnrichment>;
   authors: string[];
@@ -60,7 +57,6 @@ export function ChatRoom({
   stableDecisionCounts?: StableDecisionCounts;
 }) {
   const [messages, setMessages] = useState(initialMessages);
-  const [intents, setIntents] = useState(initialIntents);
   const [labels, setLabels] = useState(initialLabels);
   const [enrichment, setEnrichment] = useState<Record<string, MessageEnrichment>>(initialEnrichment ?? {});
   const [cursor, setCursor] = useState(initialCursor);
@@ -115,7 +111,6 @@ export function ChatRoom({
     // State is desc (newest first); incoming messages are newer, so prepend.
     setMessages((prev) => [...incoming, ...prev]);
     setEnrichment((prev) => ({ ...prev, ...initialEnrichment }));
-    setIntents((prev) => ({ ...prev, ...initialIntents }));
     setLabels((prev) => ({ ...prev, ...initialLabels }));
   }, [initialMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -145,7 +140,6 @@ export function ChatRoom({
       startLoadingTransition(async () => {
         const result = await fetchMessages(merged);
         setMessages(result.messages);
-        setIntents(result.intents);
         setLabels(result.labels);
         setEnrichment(result.enrichment);
         setCursor(result.nextCursor);
@@ -168,7 +162,6 @@ export function ChatRoom({
       const newItemCount = result.messages.length + 5; // padding for date separators
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
-      setIntents((prev) => ({ ...prev, ...result.intents }));
       setLabels((prev) => ({ ...prev, ...result.labels }));
       setEnrichment((prev) => ({ ...prev, ...result.enrichment }));
       setCursor(result.nextCursor);
@@ -204,7 +197,6 @@ export function ChatRoom({
         <div className="flex-1 min-w-0 flex flex-col">
           <ChatFeed
             messages={messages}
-            intents={intents}
             labels={labels}
             enrichment={Object.keys(enrichment).length > 0 ? enrichment : undefined}
             lastProcessedTs={constraints?.lastProcessedTs ?? undefined}

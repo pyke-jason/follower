@@ -4,11 +4,9 @@ import { ChatFeed } from './chat-feed';
 import { Card } from '@/components/ui/card';
 import { X } from 'lucide-react';
 import type { Message, MessageLabel } from '../../../src/db/schema';
-import type { MessageIntent } from './actions';
 
 type RelatedContext = {
   messages: Message[];
-  intents: Record<string, MessageIntent>;
   labels: Record<string, MessageLabel>;
   sourceSymbols: string[];
 };
@@ -57,7 +55,6 @@ export function RelatedMessagesPanel({
         ) : context && context.messages.length > 0 ? (
           <ChatFeed
             messages={context.messages}
-            intents={context.intents}
             labels={context.labels}
             highlightMessageId={sourceMessage.id}
             focusMessageId={sourceMessage.id}

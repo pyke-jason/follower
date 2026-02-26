@@ -4,23 +4,19 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, type ReactNode } from 'react';
 
-const VALID_TABS = ['performance', 'messages', 'trades', 'accuracy'] as const;
+const VALID_TABS = ['performance', 'messages', 'trades'] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 export function BacktestTabs({
   performance,
   messages,
   trades,
-  accuracy,
   hasMessages,
-  hasAccuracy,
 }: {
   performance: ReactNode;
   messages: ReactNode;
   trades: ReactNode;
-  accuracy: ReactNode;
   hasMessages: boolean;
-  hasAccuracy: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -54,9 +50,6 @@ export function BacktestTabs({
           )}
         </TabsTrigger>
         <TabsTrigger value="trades">Trades</TabsTrigger>
-        {hasAccuracy && (
-          <TabsTrigger value="accuracy">Accuracy</TabsTrigger>
-        )}
       </TabsList>
 
       <TabsContent value="performance" className="space-y-4 mt-2">
@@ -70,12 +63,6 @@ export function BacktestTabs({
       <TabsContent value="trades" className="mt-2">
         {trades}
       </TabsContent>
-
-      {hasAccuracy && (
-        <TabsContent value="accuracy" className="space-y-4 mt-2">
-          {accuracy}
-        </TabsContent>
-      )}
     </Tabs>
   );
 }

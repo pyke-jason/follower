@@ -14,7 +14,6 @@ export default async function MessagesPage() {
       <ChatRoom
         initialMessages={data.messages}
         initialCursor={data.cursor}
-        initialIntents={data.intents}
         initialLabels={data.labels}
         initialEnrichment={data.enrichment}
         authors={data.authors}

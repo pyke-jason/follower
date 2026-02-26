@@ -19,7 +19,6 @@ export async function startBacktest(formData: FormData) {
   const agentModel = (formData.get('agentModel') as string) || undefined;
   const logLevel = (formData.get('logLevel') as string) || 'debug';
   const disableRiskLimits = formData.get('disableRiskLimits') === 'on';
-  const clearIntentCache = formData.get('clearIntentCache') === 'on';
   const maxOnSymbol = formData.get('maxOnSymbol') ? Number(formData.get('maxOnSymbol')) : undefined;
   const maxTotalPositions = formData.get('maxTotalPositions') ? Number(formData.get('maxTotalPositions')) : undefined;
   const maxDrawdownPct = formData.get('maxDrawdownPct') ? Number(formData.get('maxDrawdownPct')) : undefined;
@@ -62,29 +61,6 @@ export async function startBacktest(formData: FormData) {
     ...(startingEquity != null ? { startingEquity } : {}),
     ...(commissionSchedule ? { commissionSchedule } : {}),
   };
-
-  // Clear cached intents for matching messages if requested
-  if (clearIntentCache) {
-    const messages = await db
-      .select({ id: schema.messages.id })
-      .from(schema.messages)
-      .where(
-        and(
-          inArray(schema.messages.author, traders),
-          gte(schema.messages.timestamp, new Date(startDate + 'T00:00:00Z').toISOString()),
-          lte(schema.messages.timestamp, new Date(endDate + 'T23:59:59Z').toISOString()),
-        ),
-      );
-
-    if (messages.length > 0) {
-      const CHUNK = 500;
-      const ids = messages.map((m) => m.id);
-      for (let i = 0; i < ids.length; i += CHUNK) {
-        const chunk = ids.slice(i, i + CHUNK);
-        await db.delete(schema.messageIntents).where(inArray(schema.messageIntents.messageId, chunk));
-      }
-    }
-  }
 
   const runId = crypto.randomUUID();
   await db.insert(schema.backtestRuns).values({
@@ -302,45 +278,4 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
   revalidatePath('/backtests');
 }
 
-export async function invalidateIntentCache(formData: FormData) {
-  const runId = formData.get('runId') as string;
-  if (!runId) return;
-
-  const [run] = await db
-    .select({ config: schema.backtestRuns.config })
-    .from(schema.backtestRuns)
-    .where(eq(schema.backtestRuns.id, runId));
-
-  if (!run) return;
-
-  const config = run.config as BacktestRunConfig;
-
-  // Find message IDs that fall within this backtest's scope
-  const messages = await db
-    .select({ id: schema.messages.id })
-    .from(schema.messages)
-    .where(
-      and(
-        inArray(schema.messages.author, config.traders),
-        gte(schema.messages.timestamp, config.startDate),
-        lte(schema.messages.timestamp, config.endDate),
-      ),
-    );
-
-  if (messages.length === 0) return;
-
-  // Delete in chunks (SQLite variable limit)
-  const CHUNK = 500;
-  const ids = messages.map((m) => m.id);
-  let deleted = 0;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    const result = await db
-      .delete(schema.messageIntents)
-      .where(inArray(schema.messageIntents.messageId, chunk));
-    deleted += chunk.length;
-  }
-
-  revalidatePath(`/backtests/${runId}`);
-}
 

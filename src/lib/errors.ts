@@ -10,7 +10,11 @@
  * Caught by executeResolvedSignals to trigger an optional LLM correction retry.
  */
 export class QuoteResolutionError extends Error {
-  constructor(public readonly originalMessage: string) {
+  constructor(
+    public readonly originalMessage: string,
+    /** The OCC symbol that failed (e.g. "TSLA  250919C00002000"). */
+    public readonly occSymbol?: string,
+  ) {
     super(originalMessage);
     this.name = 'QuoteResolutionError';
   }

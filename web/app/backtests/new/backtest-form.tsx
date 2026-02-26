@@ -117,10 +117,6 @@ export function BacktestForm({
           <Switch name="disableRiskLimits" id="disableRiskLimits" defaultChecked={defaultConfig?.disableRiskLimits ?? false} />
           <Label htmlFor="disableRiskLimits" className="text-sm">Disable risk limits</Label>
         </div>
-        <div className="flex items-center gap-3">
-          <Switch name="clearIntentCache" id="clearIntentCache" />
-          <Label htmlFor="clearIntentCache" className="text-sm">Clear intent cache</Label>
-        </div>
       </div>
 
       <div className="grid grid-cols-5 gap-4">
