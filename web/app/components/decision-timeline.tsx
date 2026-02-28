@@ -367,71 +367,75 @@ export function UnifiedTimeline({
             const isSkip = d.outcome === 'SKIP' || (d.snapshot as Record<string, unknown> | null)?.outcome === 'SKIP';
 
             return (
-              <div key={d.id} className={cn(
-                'relative',
-                isPhaseBreak && 'mt-4 pt-3 before:absolute before:left-[-30px] before:right-0 before:top-0 before:h-px before:bg-border/50',
-                !isPhaseBreak && i > 0 && 'mt-0',
-                !isLast && 'pb-2.5',
-              )}>
-                {/* 8px dot — decisions are supporting context */}
-                <div
-                  className={cn('absolute w-[8px] h-[8px] rounded-full ring-2 ring-background', DOT[event] ?? 'bg-muted-foreground/30')}
-                  style={{ left: '-22px', top: '5px' }}
-                />
+              <Popover key={d.id}>
+                <div className={cn(
+                  'relative',
+                  isPhaseBreak && 'mt-4 pt-3 before:absolute before:left-[-30px] before:right-0 before:top-0 before:h-px before:bg-border/50',
+                  !isPhaseBreak && i > 0 && 'mt-0',
+                  !isLast && 'pb-2.5',
+                )}>
+                  {/* 8px dot — decisions are supporting context */}
+                  <div
+                    className={cn('absolute w-[8px] h-[8px] rounded-full ring-2 ring-background', DOT[event] ?? 'bg-muted-foreground/30')}
+                    style={{ left: '-22px', top: '5px' }}
+                  />
 
-                {/* Header: event label + outcome + metrics */}
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className={cn(
-                    'text-[10px] font-bold uppercase tracking-wider shrink-0',
-                    isFail ? 'text-loss/80' : 'text-foreground/60',
-                  )}>
-                    {EVENT_LABEL[event] ?? event}
-                  </span>
+                  {/* Header: event label (popover trigger) + outcome + metrics */}
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <PopoverTrigger asChild>
+                      <button type="button" className={cn(
+                        'text-[10px] font-bold uppercase tracking-wider shrink-0 hover:underline underline-offset-2 cursor-pointer',
+                        isFail ? 'text-loss/80' : 'text-foreground/60',
+                      )}>
+                        {EVENT_LABEL[event] ?? event}
+                      </button>
+                    </PopoverTrigger>
 
-                  {d.outcome && <Badge label={d.outcome} />}
-                  {d.signalIndex != null && d.signalIndex > 0 && (
-                    <span className="text-[10px] text-muted-foreground/50 tabular-nums">#{d.signalIndex}</span>
+                    {d.outcome && <Badge label={d.outcome} />}
+                    {d.signalIndex != null && d.signalIndex > 0 && (
+                      <span className="text-[10px] text-muted-foreground/50 tabular-nums">#{d.signalIndex}</span>
+                    )}
+
+                    <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                      {d.pnl != null && parseFloat(d.pnl) !== 0 && (
+                        <span className={cn('text-xs font-semibold tabular-nums', pnlColor(d.pnl))}>{formatCurrency(d.pnl)}</span>
+                      )}
+                      {d.inputTokens != null && d.outputTokens != null && (
+                        <span className="text-[10px] text-muted-foreground/50 tabular-nums">{d.inputTokens.toLocaleString()}/{d.outputTokens.toLocaleString()}</span>
+                      )}
+                      {d.durationMs != null && d.durationMs > 10 && (
+                        <span className="text-[10px] text-muted-foreground/50 tabular-nums">{fmtMs(d.durationMs)}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Structured detail (badges, chips, prices) */}
+                  <div className="mt-0.5">
+                    <DecisionDetail d={d} />
+                  </div>
+
+                  {/* Reasoning on its own line — not crammed with badges */}
+                  {d.reasoning && (
+                    <p className={cn(
+                      'text-[11px] mt-1 leading-relaxed line-clamp-2',
+                      isFail ? 'text-loss/60' : isSkip ? 'text-muted-foreground/50' : 'text-foreground/60',
+                    )}>
+                      {d.reasoning}
+                    </p>
                   )}
 
-                  <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                    {d.pnl != null && parseFloat(d.pnl) !== 0 && (
-                      <span className={cn('text-xs font-semibold tabular-nums', pnlColor(d.pnl))}>{formatCurrency(d.pnl)}</span>
-                    )}
-                    {d.inputTokens != null && d.outputTokens != null && (
-                      <span className="text-[10px] text-muted-foreground/50 tabular-nums">{d.inputTokens.toLocaleString()}/{d.outputTokens.toLocaleString()}</span>
-                    )}
-                    {/* Only show duration if meaningful (> 10ms) */}
-                    {d.durationMs != null && d.durationMs > 10 && (
-                      <span className="text-[10px] text-muted-foreground/50 tabular-nums">{fmtMs(d.durationMs)}</span>
-                    )}
-                  </div>
+                  {/* Message quote for PARSED events */}
+                  {event === 'PARSED' && d.messageId && msgMap.has(d.messageId) && (() => {
+                    const msg = msgMap.get(d.messageId)!;
+                    return (
+                      <p className="mt-1.5 text-[11px] text-foreground/50 italic line-clamp-2 border-l-2 border-foreground/20 pl-2">
+                        {msg.cleanText}
+                      </p>
+                    );
+                  })()}
                 </div>
-
-                {/* Structured detail (badges, chips, prices) */}
-                <div className="mt-0.5">
-                  <DecisionDetail d={d} />
-                </div>
-
-                {/* Reasoning on its own line — not crammed with badges */}
-                {d.reasoning && (
-                  <p className={cn(
-                    'text-[11px] mt-1 leading-relaxed line-clamp-2',
-                    isFail ? 'text-loss/60' : isSkip ? 'text-muted-foreground/50' : 'text-foreground/60',
-                  )}>
-                    {d.reasoning}
-                  </p>
-                )}
-
-                {/* Message quote for PARSED events */}
-                {event === 'PARSED' && d.messageId && msgMap.has(d.messageId) && (() => {
-                  const msg = msgMap.get(d.messageId)!;
-                  return (
-                    <p className="mt-1.5 text-[11px] text-foreground/50 italic line-clamp-2 border-l-2 border-foreground/20 pl-2">
-                      {msg.cleanText}
-                    </p>
-                  );
-                })()}
-              </div>
+                <DecisionPopover d={d} />
+              </Popover>
             );
           })}
       </div>
