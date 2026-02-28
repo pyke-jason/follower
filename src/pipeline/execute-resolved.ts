@@ -220,6 +220,8 @@ async function placeOrder(
   deps: ResolvedPipelineDeps,
   params: WorkingOrderParams,
   pending: ResolvedPendingContext,
+  emitter: SignalEventEmitter,
+  signalIndex?: number,
 ): Promise<OrderResult> {
   let raw: OrderResult;
   if (deps.orderManager) {
@@ -230,7 +232,32 @@ async function placeOrder(
   }
   const result = OrderResultSchema.parse(raw);
 
+  if (result.status !== 'REJECTED') {
+    await emitter.emit('ORDER_PLACED', {
+      orderId: result.orderId,
+      status: result.status,
+      orderType: params.orderType,
+      limitPrice: params.limitPrice,
+      symbol: params.symbol,
+      strategy: params.strategy,
+      direction: params.direction,
+      isClosing: params.isClosing ?? false,
+      legs: params.legs,
+      adjustmentRules: params.adjustmentRules,
+      cancelAfterSec: params.cancelAfterSec,
+    }, { signalIndex: signalIndex ?? null });
+  }
+
   if (result.status === 'FILLED') {
+    await emitter.emit('ORDER_FILLED', {
+      orderId: result.orderId,
+      filledPrice: result.filledPrice,
+      fillTimestamp: result.fillTimestamp,
+      filledQuantity: result.filledQuantity,
+      commission: result.commission,
+      legFills: result.legFills,
+      immediatelyFilled: true,
+    }, { signalIndex: signalIndex ?? null });
     await pending.recordFill(
       result.filledPrice!,
       new Date(result.fillTimestamp!),
@@ -255,6 +282,7 @@ async function executeResolvedSignal(
   signal: ResolvedSignal,
   trader: string,
   deps: ResolvedPipelineDeps,
+  emitter: SignalEventEmitter,
   messageId?: string,
   signalIndex?: number,
 ): Promise<ResolvedPipelineResult> {
@@ -290,6 +318,16 @@ async function executeResolvedSignal(
     if (size.quantity <= 0) {
       return { signal, executed: false, reason: `Position sizer returned qty=${size.quantity}` };
     }
+
+    await emitter.emit('SIZED', {
+      symbol,
+      strategy,
+      direction,
+      entryPrice,
+      quantity: size.quantity,
+      riskPerTrade: size.riskPerTrade,
+      reasoning: size.reasoning,
+    }, { signalIndex: signalIndex ?? null });
 
     // 2. Risk check
     const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: 'OPEN' });
@@ -329,7 +367,7 @@ async function executeResolvedSignal(
         if (recorded) tradeId = recorded.tradeId;
         return recorded;
       },
-    });
+    }, emitter, signalIndex);
 
     if (result.status === 'REJECTED') {
       return { signal, executed: false, reason: result.message ?? 'Order rejected' };
@@ -383,7 +421,7 @@ async function executeResolvedSignal(
       if (recorded) tradeId = recorded.tradeId;
       return recorded;
     },
-  });
+  }, emitter, signalIndex);
 
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
@@ -416,7 +454,7 @@ export async function executeResolvedSignals(ctx: {
     const signal = resolved.signals[i];
 
     try {
-      const result = await executeResolvedSignal(signal, trader, deps, message.id, i);
+      const result = await executeResolvedSignal(signal, trader, deps, emitter, message.id, i);
       results.push(result);
 
       // Emit SETTLED for this signal
@@ -490,7 +528,7 @@ export async function executeResolvedSignals(ctx: {
           }
 
           try {
-            const retryResult = await executeResolvedSignal(retrySignal, trader, deps, message.id, resolved.signals.length + ri);
+            const retryResult = await executeResolvedSignal(retrySignal, trader, deps, emitter, message.id, resolved.signals.length + ri);
             results.push(retryResult);
             const outcome = retryResult.executed ? 'EXECUTE' : 'FAIL';
             await emitter.emit('SETTLED', { outcome, signal: retrySignal, retryContext: { originalError: err.originalMessage } }, {

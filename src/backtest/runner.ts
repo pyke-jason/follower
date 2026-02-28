@@ -7,7 +7,7 @@ import { checkRiskLimits } from '../orders/risk-check.js';
 import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import { toDateKeyET, parseDateKey } from '../lib/et-date.js';
+import { toDateKeyET, parseDateKey, isoToDateKey } from '../lib/et-date.js';
 import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
@@ -28,7 +28,8 @@ import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { logExpiryNotices } from '../lib/expiry-warning.js';
-import type { Task, TradeLeg } from '../db/schema.js';
+import type { Task } from '../db/schema.js';
+import { getLegs } from '../db/accessors.js';
 
 const log = createLogger('Backtest');
 
@@ -105,7 +106,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   log.info(`Loading messages for ${config.traders.join(', ')}...`);
   const startDate = new Date(config.startDate);
   const endDate = new Date(config.endDate);
-  log.info(`Date range: ${config.startDate.split('T')[0]} to ${config.endDate.split('T')[0]}`);
+  log.info(`Date range: ${isoToDateKey(config.startDate)} to ${isoToDateKey(config.endDate)}`);
 
   const allMessages = await loadHistoricalMessages({
     startDate,
@@ -174,7 +175,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const riskDeps: RiskCheckDeps = {
     getOpenTrades: getOpenPositions,
     getDailyClosedPnl: async () => {
-      const dateStr = clock.now().toISOString().split('T')[0];
+      const dateStr = toDateKeyET(clock.now());
       const result = await db.select({
         total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
       }).from(schema.trades).where(and(
@@ -197,6 +198,21 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       const pending = pendingIntents.get(order.orderId);
       if (!pending) return;
       pendingIntents.delete(order.orderId);
+      const emitter = createEmitter({ messageId: pending.messageId ?? '', backtestRunId: runId });
+      await emitter.emit('ORDER_FILLED', {
+        orderId: order.orderId,
+        symbol: order.params.symbol,
+        strategy: order.params.strategy,
+        direction: order.params.direction,
+        filledPrice: order.filledPrice,
+        filledAt: order.filledAt.toISOString(),
+        filledQuantity: order.filledQuantity,
+        commission: order.commission,
+        legFills: order.legFills,
+        adjustmentCount: order.adjustmentCount,
+        originalLimitPrice: order.params.limitPrice,
+        immediatelyFilled: false,
+      }, { signalIndex: pending.signalIndex ?? null });
       await pending.recordFill(order.filledPrice, order.filledAt);
     },
     onCancel: (order) => {
@@ -317,7 +333,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
         for (const pos of openPositions) {
           if (pos.strategy === 'STOCK') continue;
-          const hasExpiredLeg = (pos.legs as TradeLeg[] ?? []).some((l: TradeLeg) => l.expiry <= sweepThrough);
+          const hasExpiredLeg = getLegs(pos).some((l) => l.expiry <= sweepThrough);
           if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
         }
 
@@ -402,7 +418,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
       for (const pos of finalOpenPositions) {
         if (pos.strategy === 'STOCK') continue;
-        const hasExpiredLeg = (pos.legs as TradeLeg[] ?? []).some((l: TradeLeg) => l.expiry <= lastMsgDay);
+        const hasExpiredLeg = getLegs(pos).some((l) => l.expiry <= lastMsgDay);
         if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
       }
 
@@ -544,16 +560,39 @@ async function processMessage(
     emitter,
     onResult: async (result) => {
       if (result.outcome === 'EXECUTE') {
-        const executed = result.results.filter(r => r.executed).length;
-        const failed = result.results.filter(r => !r.executed);
-        stats.agentTrades += executed;
-        for (const r of failed) {
+        const executedResults = result.results.filter(r => r.executed);
+        const pendingResults = result.results.filter(r => !r.executed && r.orderId);
+        const firstTradeId = executedResults[0]?.tradeId;
+        const failedResults = result.results.filter(r => !r.executed && !r.orderId && r.reason);
+
+        for (const r of failedResults) {
           if (r.signal.tradeId) stats.failedExitSignals++;
           else stats.failedEntrySignals++;
         }
+
+        if (executedResults.length > 0 || pendingResults.length > 0) {
+          const reasoning = result.signals.map(s => `${s.orderType} ${s.legs.map(l => l.symbol).join('+')}`).join('; ');
+          stats.agentTrades++;
+          await emitter.emit('SETTLED', { outcome: 'EXECUTE' }, { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId });
+        } else if (failedResults.length > 0) {
+          const failReason = failedResults.map(r => r.reason).join('; ');
+          log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
+          stats.skipped++;
+          stats.skipReasons.set('pipeline failure', (stats.skipReasons.get('pipeline failure') ?? 0) + 1);
+          await emitter.emit('SETTLED', { outcome: 'FAIL', skipCategory: 'pipeline failure' }, { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason });
+        } else {
+          stats.skipped++;
+          stats.skipReasons.set('no execution', (stats.skipReasons.get('no execution') ?? 0) + 1);
+          await emitter.emit('SETTLED', { outcome: 'SKIP', skipCategory: 'no execution' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed' });
+        }
+      } else if (result.outcome === 'MANUAL_REVIEW') {
+        stats.skipped++;
+        stats.skipReasons.set('flagged', (stats.skipReasons.get('flagged') ?? 0) + 1);
+        await emitter.emit('SETTLED', { outcome: 'SKIP', skipCategory: 'flagged' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason });
       } else {
         stats.skipped++;
-        stats.skipReasons.set(result.reason, (stats.skipReasons.get(result.reason) ?? 0) + 1);
+        stats.skipReasons.set('skip', (stats.skipReasons.get('skip') ?? 0) + 1);
+        await emitter.emit('SETTLED', { outcome: 'SKIP', skipCategory: 'skip' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason });
       }
       updateStats(stats);
     },

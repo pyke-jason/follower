@@ -15,7 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 function EventDetail({ event }: { event: TradeEvent }) {
   const price = safeParseFloat(event.price);
-  const meta = event.metadata as Record<string, unknown> | null;
+  const meta = event.metadata;
 
   switch (event.action) {
     case 'OPEN':

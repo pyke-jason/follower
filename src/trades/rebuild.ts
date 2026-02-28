@@ -68,7 +68,7 @@ export async function rebuildFromEvents(tradeId: string): Promise<RebuildResult>
   for (const event of events) {
     const price = safeParseFloat(event.price);
     const qty = event.quantity ?? 0;
-    const meta = event.metadata as Record<string, unknown> | null;
+    const meta = event.metadata;
 
     switch (event.action) {
       case 'OPEN':

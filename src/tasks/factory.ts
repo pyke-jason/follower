@@ -1,6 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { isTrackedTrader } from '../config/traders.js';
 import type { Message, TaskContext } from '../db/schema.js';
+import { getDetectedStrategies } from '../db/accessors.js';
 import { safeParseFloat } from '../lib/numbers.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -35,7 +36,7 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
     symbols: (message.symbols as string[]) || [],
     actionHint: message.actionHint,
     directionHint: message.directionHint,
-    detectedStrategies: (message.detectedStrategies as any[]) || [],
+    detectedStrategies: getDetectedStrategies(message),
     confidence,
   };
 

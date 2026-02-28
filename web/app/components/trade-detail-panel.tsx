@@ -106,7 +106,7 @@ export function TradeDetailPanel({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto px-4 py-4 space-y-5">
+      <div className="flex-1 overflow-auto px-4 py-4 space-y-5 min-w-0">
         {isLoading ? (
           <p className="text-sm text-muted-foreground text-center py-6">Loading...</p>
         ) : story ? (

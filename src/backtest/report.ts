@@ -2,6 +2,7 @@ import type { BacktestConfig, BacktestReport, TraderStats, StrategyStats, Equity
 import type { CommissionSchedule } from '../db/schema.js';
 import { safeParseFloat, roundCents, PROFIT_FACTOR_INF, pctDisplay } from '../lib/numbers.js';
 import { computeTradeCommission, computeEntrySideCommission } from '../lib/commission.js';
+import { isoToDateKey } from '../lib/et-date.js';
 
 export type MtmSnapshot = {
   date: string;
@@ -185,7 +186,7 @@ export function computeCoreStats<T extends {
   // Merge realized trade days AND unrealized-only MTM days so the curve has no gaps.
   const dailyMap = new Map<string, { pnl: number; trades: number }>();
   for (const t of sortedClosed) {
-    const date = t.closedAt?.split('T')[0] ?? 'unknown';
+    const date = t.closedAt ? isoToDateKey(t.closedAt) : 'unknown';
     const existing = dailyMap.get(date) ?? { pnl: 0, trades: 0 };
     existing.pnl += netPnlOf(t);
     existing.trades++;
@@ -249,7 +250,7 @@ export function generateReportFromTrades(params: {
   trades: { pnl: string | null; status: string; trader: string; strategy: string;
             quantity: number | null; legs: unknown[] | null;
             entryPrice: string | null; openedAt: string | null; closedAt: string | null }[];
-  decisions: { event?: string | null; phase: string | null; outcome: string | null; inputTokens: number | null }[];
+  decisions: { phase: string | null; outcome: string | null; inputTokens: number | null }[];
   mtmSnapshots?: MtmSnapshot[];
   startingEquity: number;
   commissionSchedule?: CommissionSchedule;
@@ -257,12 +258,11 @@ export function generateReportFromTrades(params: {
   const { trades, decisions, mtmSnapshots, startingEquity, commissionSchedule } = params;
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, commissionSchedule);
 
-  // Derive execution stats from SETTLED decisions only
-  const settled = decisions.filter((d) => !d.event || d.event === 'SETTLED');
+  // Derive execution stats from decisions
   const isClassified = (d: { inputTokens: number | null }) => d.inputTokens != null;
-  const agentTrades = settled.filter((d) => isClassified(d) && d.outcome === 'EXECUTE').length;
-  const agentCallsUsed = settled.filter((d) => isClassified(d)).length;
-  const skipped = settled.filter((d) => d.outcome === 'SKIP').length;
+  const agentTrades = decisions.filter((d) => isClassified(d) && d.outcome === 'EXECUTE').length;
+  const agentCallsUsed = decisions.filter((d) => isClassified(d)).length;
+  const skipped = decisions.filter((d) => d.outcome === 'SKIP').length;
 
   // Extended metrics (use net PnL from core summary)
   const netPnlOf = (t: typeof sortedClosed[number]) =>
@@ -301,7 +301,7 @@ export function printReport(report: BacktestReport): void {
   console.log('\n' + '='.repeat(60));
   console.log('  BACKTEST REPORT');
   console.log('='.repeat(60));
-  console.log(`  Period:     ${report.config.startDate.split('T')[0]} to ${report.config.endDate.split('T')[0]}`);
+  console.log(`  Period:     ${isoToDateKey(report.config.startDate)} to ${isoToDateKey(report.config.endDate)}`);
   console.log(`  Traders:    ${report.config.traders.join(', ')}`);
   console.log(`  Agent:      ${report.config.agentProvider ?? 'anthropic'}/${report.config.agentModel ?? 'default'}`);
   console.log('');

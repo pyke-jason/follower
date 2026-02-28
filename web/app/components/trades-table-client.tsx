@@ -3,6 +3,7 @@
 import { useState, Fragment } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { TradeRow } from './trade-row';
 import { EventSubRows } from './event-sub-rows';
 import { TradeDetailPanel } from './trade-detail-panel';
@@ -33,13 +34,15 @@ export function TradesTableClient({
   }
 
   return (
+    <TooltipProvider>
     <Card className="py-0 gap-0 overflow-hidden flex flex-col">
       <div className="flex flex-1 min-h-0">
         {/* Table */}
-        <CardContent className={`p-0 overflow-auto flex-1 min-h-0 ${selectedTrade ? 'max-w-[calc(100%-380px)]' : ''}`}>
+        <CardContent className={`p-0 overflow-auto flex-1 min-h-0 ${selectedTrade ? 'max-w-[calc(100%-480px)]' : ''}`}>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-6" />
                 <TableHead>Symbol</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="hidden md:table-cell">Legs</TableHead>
@@ -65,8 +68,8 @@ export function TradesTableClient({
                       runId={runId}
                       commissionSchedule={commissionSchedule}
                       startingEquity={startingEquity}
-                      onSelect={() => setSelectedId(selectedId === t.id ? null : t.id)}
-                      isSelected={selectedId === t.id}
+                      onExpand={() => setSelectedId(selectedId === t.id ? null : t.id)}
+                      isExpanded={selectedId === t.id}
                     />
                     <EventSubRows events={events} closeMessageId={t.closeMessageId} />
                   </Fragment>
@@ -78,7 +81,7 @@ export function TradesTableClient({
 
         {/* Detail panel */}
         {selectedTrade && (
-          <div className="w-[380px] shrink-0 border-l border-border overflow-auto bg-background">
+          <div className="w-[480px] shrink-0 border-l border-border overflow-auto bg-background">
             <TradeDetailPanel
               trade={selectedTrade}
               runId={runId}
@@ -89,5 +92,6 @@ export function TradesTableClient({
         )}
       </div>
     </Card>
+    </TooltipProvider>
   );
 }

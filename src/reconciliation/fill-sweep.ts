@@ -1,7 +1,6 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
-import type { TradeMetadata } from '../db/schema.js';
 import { enrichTradeWithFill } from '../tasks/recorder.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { createLogger } from '../lib/logger.js';
@@ -54,7 +53,7 @@ export class FillSweep {
 
     let enriched = 0;
     for (const trade of trades) {
-      const metadata = (trade.metadata ?? {}) as TradeMetadata;
+      const metadata = trade.metadata ?? {};
       if (!metadata.brokerOrderId) continue;
 
       try {

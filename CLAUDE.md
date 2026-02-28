@@ -39,7 +39,11 @@
   - CLEAN AS YOU GO: Fix dead exports, duplicate logic, and leaky abstractions in the files you are already touching. Do not go on refactor safaris outside current files.
   - DRY / ONE CONCEPT, ONE PLACE: If two modules do the same thing, delete one. Do not abstract ahead of need.
   - NO INLINE TYPE IMPORTS: Always use top-level `import type { Type } from 'path'`.
-  - DRIZZLE JSON TYPES: Use Drizzle `$type<>()` annotations for JSON columns. No type casts.
+  - DRIZZLE JSON COLUMNS: `$type<>()` does NOT propagate through `select()`. Create a typed accessor per JSON column (e.g., `getLegs(row): TradeLeg[]`) in `db/accessors.ts`. Cast/parse happens ONCE inside the accessor; call sites never cast.
+  - NO INDEX SIGNATURES ON TYPED INTERFACES: `[key: string]: unknown` destroys typed access. For action-varying metadata, use a discriminated union. Unknown extras go in an explicit `extra?: Record<string, unknown>` field.
+  - DERIVE, DON'T DUPLICATE TYPES: Downstream types use `Pick`, `Omit`, `Extract`, or Zod `.infer` from the canonical type. If two types share 80%+ fields, one derives from the other. Inline anonymous object types are banned in cross-module signatures — name them.
+  - TWO CASTS = HELPER, THREE = BUG: If the same `as X` cast appears twice, extract an accessor. Three times means the type should flow correctly from the source. `as any` requires `// SAFETY:` comment. Prefer Zod `.parse()` over `as` at CLI/env boundaries.
+  - FIELD NAME CONSISTENCY: Same concept (e.g., BUY/SELL on a leg) uses the same field name everywhere. If DB says `action` and orchestrator says `side`, pick one or make the adapter the SINGLE named conversion point.
   - ONE LOG LINE PER EVENT: When multiple layers handle the same event (e.g., broker fill → order manager → record-trade), only the authoritative layer logs at info level. Others use debug or stay silent. The authoritative layer is the one that owns the state change.
   - WARN MEANS ACTIONABLE: `log.warn` is reserved for conditions a human should investigate. Expected behavior (dedup hits, API 206 responses, timing metrics) belongs at info or debug.
 </coding_standards>

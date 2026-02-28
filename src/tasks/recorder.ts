@@ -1,6 +1,5 @@
 import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
-import type { TradeMetadata } from '../db/schema.js';
 import type { OrderResult } from '../broker/types.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
 
@@ -30,6 +29,15 @@ export async function failTask(
     .where(eq(schema.tasks.id, taskId));
 }
 
+export async function startTask(taskId: string): Promise<void> {
+  await db.update(schema.tasks)
+    .set({
+      status: 'IN_PROGRESS',
+      startedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.tasks.id, taskId));
+}
+
 /**
  * Enrich a trade record with broker fill data.
  * Computes slippage between requested entry price and actual broker fill price.
@@ -45,7 +53,7 @@ export async function enrichTradeWithFill(
 
   if (!trade) return;
 
-  const metadata = (trade.metadata ?? {}) as TradeMetadata;
+  const metadata = trade.metadata ?? {};
 
   // Compute slippage if we have both entry and fill prices
   let slippage: number | undefined;

@@ -6,9 +6,19 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots } from '@/lib/queries';
 import { generateReportFromTrades } from '../../../src/backtest/report';
-import type { BacktestRunConfig, CommissionSchedule } from '../../../src/db/schema';
+import type { CommissionSchedule } from '../../../src/db/schema';
+import { getConfig } from '../../../src/db/accessors';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
+
+/** Delete messageIntents for a batch of messageIds, chunked for SQLite variable limits. */
+async function deleteIntentsByMessageIds(ids: string[]) {
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    await db.delete(schema.messageIntents).where(inArray(schema.messageIntents.messageId, chunk));
+  }
+}
 
 export async function startBacktest(formData: FormData) {
   const startDate = formData.get('startDate') as string;
@@ -19,6 +29,7 @@ export async function startBacktest(formData: FormData) {
   const agentModel = (formData.get('agentModel') as string) || undefined;
   const logLevel = (formData.get('logLevel') as string) || 'debug';
   const disableRiskLimits = formData.get('disableRiskLimits') === 'on';
+  const clearIntentCache = formData.get('clearIntentCache') === 'on';
   const maxOnSymbol = formData.get('maxOnSymbol') ? Number(formData.get('maxOnSymbol')) : undefined;
   const maxTotalPositions = formData.get('maxTotalPositions') ? Number(formData.get('maxTotalPositions')) : undefined;
   const maxDrawdownPct = formData.get('maxDrawdownPct') ? Number(formData.get('maxDrawdownPct')) : undefined;
@@ -61,6 +72,24 @@ export async function startBacktest(formData: FormData) {
     ...(startingEquity != null ? { startingEquity } : {}),
     ...(commissionSchedule ? { commissionSchedule } : {}),
   };
+
+  // Clear cached intents for matching messages if requested
+  if (clearIntentCache) {
+    const messages = await db
+      .select({ id: schema.messages.id })
+      .from(schema.messages)
+      .where(
+        and(
+          inArray(schema.messages.author, traders),
+          gte(schema.messages.timestamp, new Date(startDate + 'T00:00:00Z').toISOString()),
+          lte(schema.messages.timestamp, new Date(endDate + 'T23:59:59Z').toISOString()),
+        ),
+      );
+
+    if (messages.length > 0) {
+      await deleteIntentsByMessageIds(messages.map((m) => m.id));
+    }
+  }
 
   const runId = crypto.randomUUID();
   await db.insert(schema.backtestRuns).values({
@@ -143,12 +172,13 @@ export async function cancelBacktestRun(formData: FormData) {
     const decisions = rawDecisions.map((d) => ({
       path: d.decision.phase,
       decision: d.decision.outcome,
+      inputTokens: d.decision.inputTokens,
     }));
     const [cancelledRun] = await db
       .select({ config: schema.backtestRuns.config })
       .from(schema.backtestRuns)
       .where(eq(schema.backtestRuns.id, runId));
-    const cancelledConfig = cancelledRun?.config as BacktestRunConfig | undefined;
+    const cancelledConfig = cancelledRun ? getConfig(cancelledRun) : undefined;
 
     const report = generateReportFromTrades({
       trades: trades.map((t) => ({
@@ -197,6 +227,7 @@ export async function deleteBacktestRun(formData: FormData) {
     });
   }
 
+  // Delete associated trades and tasks first
   await db.delete(schema.trades).where(eq(schema.trades.backtestRunId, runId));
   await db.delete(schema.tasks).where(eq(schema.tasks.backtestRunId, runId));
   await db.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
@@ -245,6 +276,7 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
     }
   }
 
+  // Delete associated data
   await db.delete(schema.trades).where(inArray(schema.trades.backtestRunId, runIds));
   await db.delete(schema.tasks).where(inArray(schema.tasks.backtestRunId, runIds));
   await db.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.backtestRunId, runIds));
@@ -258,4 +290,36 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
   revalidatePath('/backtests');
 }
 
+export async function invalidateIntentCache(formData: FormData) {
+  const runId = formData.get('runId') as string;
+  if (!runId) return;
+
+  const [run] = await db
+    .select({ config: schema.backtestRuns.config })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, runId));
+
+  if (!run) return;
+
+  const config = getConfig(run);
+
+  // Find message IDs that fall within this backtest's scope
+  const messages = await db
+    .select({ id: schema.messages.id })
+    .from(schema.messages)
+    .where(
+      and(
+        inArray(schema.messages.author, config.traders),
+        gte(schema.messages.timestamp, config.startDate),
+        lte(schema.messages.timestamp, config.endDate),
+      ),
+    );
+
+  if (messages.length === 0) return;
+
+  // Delete in chunks (SQLite variable limit)
+  await deleteIntentsByMessageIds(messages.map((m) => m.id));
+
+  revalidatePath(`/backtests/${runId}`);
+}
 

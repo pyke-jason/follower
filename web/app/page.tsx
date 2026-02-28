@@ -15,6 +15,7 @@ import {
 } from '@/lib/queries';
 import { formatCurrency, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
+import { getEquityCurve } from '../../src/db/accessors';
 import { OverviewEquityCurve } from './components/overview-equity-curve';
 import { TraderLeaderboard } from './components/trader-leaderboard';
 import { RiskPanel } from './components/risk-panel';
@@ -70,10 +71,10 @@ export default async function OverviewPage({
 
   if (runId && backtestRun?.equityCurve) {
     // Backtest mode: use the run's equity curve
-    const curve = backtestRun.equityCurve as { date: string; cumulativePnl?: number; equity?: number }[];
+    const curve = getEquityCurve(backtestRun) ?? [];
     equityData = curve.map((pt) => ({
       date: pt.date,
-      equity: pt.cumulativePnl ?? pt.equity ?? 0,
+      equity: pt.cumPnl ?? pt.equity ?? 0,
     }));
   } else if (dailyBalances.length > 0) {
     // Live mode: use daily balance snapshots

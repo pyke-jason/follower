@@ -5,7 +5,7 @@ import type { TradeEvent } from '../../../src/db/schema';
 
 function EventLine({ event, index, closeMessageId }: { event: TradeEvent; index: number; closeMessageId?: string | null }) {
   const price = safeParseFloat(event.price);
-  const meta = event.metadata as Record<string, unknown> | null;
+  const meta = event.metadata;
 
   let detail: React.ReactNode = null;
 

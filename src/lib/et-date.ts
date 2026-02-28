@@ -132,6 +132,11 @@ export function getNextTradingDayKey(dayKey: string, maxCalendarDays = 10): stri
   return null;
 }
 
+/** Extract YYYY-MM-DD from an ISO timestamp string, or pass through if already a date key. */
+export function isoToDateKey(iso: string): string {
+  return iso.split('T')[0];
+}
+
 /** Parse a YYYY-MM-DD string to a Date (noon UTC to avoid DST ambiguity). */
 export function parseDateKey(day: string): Date {
   return new Date(`${day}T12:00:00Z`);

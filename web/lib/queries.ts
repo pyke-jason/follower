@@ -4,7 +4,8 @@ import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
-import type { BacktestRunConfig } from '../../src/db/schema';
+import { getConfig } from '../../src/db/accessors';
+import { isoToDateKey } from './format';
 
 /** Scoping helper: when runId is set, show that backtest's data. Otherwise, live only. */
 function tradeScope(runId?: string): SQL {
@@ -94,39 +95,45 @@ export async function getTradeByTaskId(taskId: string) {
   return trade ?? null;
 }
 
-export async function getDecisionsForTrade(trade: {
-  id: string;
-  sourceMessageId: string | null;
-  closeMessageId: string | null;
-  backtestRunId: string | null;
-  taskId: string | null;
-}) {
-  const scopeFilter = trade.backtestRunId
-    ? eq(schema.runDecisions.backtestRunId, trade.backtestRunId)
-    : trade.taskId
-      ? eq(schema.runDecisions.taskId, trade.taskId)
-      : null;
-  if (!scopeFilter) return [];
+/** Look up the run_decision for a message. Accepts backtestRunId as a plain string for convenience. */
+export async function getRunDecisionForTask(
+  messageId: string,
+  opts?: string | { backtestRunId?: string; taskId?: string },
+) {
+  const { backtestRunId, taskId } = typeof opts === 'string'
+    ? { backtestRunId: opts, taskId: undefined }
+    : (opts ?? {});
 
-  // Step 1: Find all messageIds that produced decisions linked to this trade
-  // (catches intermediate messages like leg-off that aren't source or close)
-  const linkedRows = await db
-    .selectDistinct({ messageId: schema.runDecisions.messageId })
-    .from(schema.runDecisions)
-    .where(and(eq(schema.runDecisions.tradeId, trade.id), scopeFilter));
+  // Prefer backtestRunId lookup; fall back to taskId via trades table
+  if (backtestRunId) {
+    const [decision] = await db
+      .select()
+      .from(schema.runDecisions)
+      .where(
+        and(
+          eq(schema.runDecisions.messageId, messageId),
+          eq(schema.runDecisions.backtestRunId, backtestRunId),
+        )
+      );
+    return decision ?? null;
+  }
 
-  const messageIds = new Set(linkedRows.map(r => r.messageId));
-  if (trade.sourceMessageId) messageIds.add(trade.sourceMessageId);
-  if (trade.closeMessageId) messageIds.add(trade.closeMessageId);
-  if (messageIds.size === 0) return [];
+  if (taskId) {
+    // Live trade: find the run decision via the trade's taskId
+    const [decision] = await db
+      .select({ rd: schema.runDecisions })
+      .from(schema.runDecisions)
+      .innerJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
+      .where(
+        and(
+          eq(schema.runDecisions.messageId, messageId),
+          eq(schema.trades.taskId, taskId),
+        )
+      );
+    return decision?.rd ?? null;
+  }
 
-  // Step 2: Get ALL events for those messages (catches PARSED events that have no trade_id)
-  return db.select().from(schema.runDecisions)
-    .where(and(
-      inArray(schema.runDecisions.messageId, [...messageIds]),
-      scopeFilter,
-    ))
-    .orderBy(asc(schema.runDecisions.createdAt), asc(schema.runDecisions.signalIndex));
+  return null;
 }
 
 /** All messages from a specific author mentioning a specific symbol, ordered by time. */
@@ -183,7 +190,7 @@ export async function getMessages(opts: {
   startDate?: string;
   endDate?: string;
   signalsOnly?: boolean;
-  labelFilter?: 'labeled' | 'unlabeled';
+  labelFilter?: 'labeled' | 'unlabeled' | 'needs-review';
 } = {}) {
   const conditions: SQL[] = [];
 
@@ -256,6 +263,22 @@ export async function getMessages(opts: {
 
     const rows = await query.where(and(...conditions));
     return rows.map((r) => r.messages);
+  }
+
+  if (opts.labelFilter === 'needs-review') {
+    // EXISTS subquery avoids duplicates from multiple intent versions
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM ${schema.messageIntents} WHERE ${schema.messageIntents.messageId} = ${schema.messages.id} AND ${schema.messageIntents.decision} = 'MANUAL_REVIEW')`,
+    );
+
+    const query = db
+      .select()
+      .from(schema.messages)
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+
+    return query.where(and(...conditions));
   }
 
   const query = db
@@ -339,6 +362,30 @@ export async function getMessagesByIds(ids: string[]) {
   return all.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
+export async function getLatestIntents(messageIds: string[]) {
+  if (messageIds.length === 0) return {};
+  // Fetch all intents for these messages, dedupe to latest version per message in JS
+  const CHUNK = 500;
+  const all: (typeof schema.messageIntents.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageIntents)
+      .where(inArray(schema.messageIntents.messageId, chunk));
+    all.push(...rows);
+  }
+  // Keep highest version per messageId
+  const map: Record<string, typeof schema.messageIntents.$inferSelect> = {};
+  for (const row of all) {
+    const existing = map[row.messageId];
+    if (!existing || row.version > existing.version) {
+      map[row.messageId] = row;
+    }
+  }
+  return map;
+}
+
 export async function getLabelsForMessages(messageIds: string[]) {
   if (messageIds.length === 0) return {};
   const CHUNK = 500;
@@ -384,7 +431,7 @@ export async function getRunCommissionSchedule(runId: string) {
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, runId));
   if (!run) return undefined;
-  return (run.config as BacktestRunConfig).commissionSchedule;
+  return getConfig(run).commissionSchedule;
 }
 
 export async function getBacktestRuns(opts: { limit?: number; offset?: number } = {}) {
@@ -421,39 +468,8 @@ export async function getRunDecisions(backtestRunId: string) {
     .from(schema.runDecisions)
     .innerJoin(schema.messages, eq(schema.runDecisions.messageId, schema.messages.id))
     .leftJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
-    .where(and(
-      eq(schema.runDecisions.backtestRunId, backtestRunId),
-      eq(schema.runDecisions.event, 'SETTLED'),
-    ))
+    .where(eq(schema.runDecisions.backtestRunId, backtestRunId))
     .orderBy(desc(schema.runDecisions.createdAt));
-}
-
-/** Get the full event timeline for a message (all events, not just SETTLED). */
-/** Get the SETTLED decision for a message (used by task detail / trade story). */
-export async function getRunDecisionForTask(messageId: string, opts?: { backtestRunId?: string; taskId?: string }) {
-  const conditions: SQL[] = [
-    eq(schema.runDecisions.messageId, messageId),
-    eq(schema.runDecisions.event, 'SETTLED'),
-  ];
-  if (opts?.backtestRunId) conditions.push(eq(schema.runDecisions.backtestRunId, opts.backtestRunId));
-  else conditions.push(isNull(schema.runDecisions.backtestRunId));
-  if (opts?.taskId) conditions.push(eq(schema.runDecisions.taskId, opts.taskId));
-
-  const [row] = await db.select().from(schema.runDecisions)
-    .where(and(...conditions))
-    .limit(1);
-  return row ?? null;
-}
-
-/** Get the full event timeline for a message (all events, not just SETTLED). */
-export async function getDecisionTimeline(messageId: string, opts?: { backtestRunId?: string; taskId?: string }) {
-  const conditions = [eq(schema.runDecisions.messageId, messageId)];
-  if (opts?.backtestRunId) conditions.push(eq(schema.runDecisions.backtestRunId, opts.backtestRunId));
-  if (opts?.taskId) conditions.push(eq(schema.runDecisions.taskId, opts.taskId));
-
-  return db.select().from(schema.runDecisions)
-    .where(and(...conditions))
-    .orderBy(asc(schema.runDecisions.createdAt), asc(schema.runDecisions.signalIndex));
 }
 
 export async function getMtmSnapshots(backtestRunId: string) {
@@ -587,7 +603,7 @@ export async function getBacktestRunBrief(id: string) {
     .from(schema.trades)
     .where(eq(schema.trades.backtestRunId, id));
 
-  const config = run.config as BacktestRunConfig;
+  const config = getConfig(run);
   const closed = stats?.closed ?? 0;
   const wins = stats?.wins ?? 0;
   return {
@@ -595,8 +611,8 @@ export async function getBacktestRunBrief(id: string) {
     name: run.name,
     status: run.status,
     traders: config.traders ?? [],
-    startDate: config.startDate?.split('T')[0] ?? '',
-    endDate: config.endDate?.split('T')[0] ?? '',
+    startDate: config.startDate ? isoToDateKey(config.startDate) : '',
+    endDate: config.endDate ? isoToDateKey(config.endDate) : '',
     agentModel: config.agentModel ?? 'default',
     totalPnl: safeParseFloat(stats?.totalPnl),
     winRate: closed > 0 ? wins / closed : 0,
@@ -607,7 +623,7 @@ export async function getBacktestRunBrief(id: string) {
 // ─── Risk & Account Health ───────────────────────────
 
 export async function getRiskSnapshot() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = isoToDateKey(new Date().toISOString());
 
   const [latestBalance] = await db
     .select()
@@ -737,7 +753,7 @@ export async function getReconAlertStats() {
 export async function getDecisionDiff(runIdA: string, runIdB: string) {
   const a = schema.runDecisions;
 
-  // Get SETTLED decisions for both runs, keyed by messageId
+  // Get decisions for both runs, keyed by messageId
   const decisionsA = await db
     .select({
       messageId: a.messageId,
@@ -746,7 +762,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       reasoning: a.reasoning,
     })
     .from(a)
-    .where(and(eq(a.backtestRunId, runIdA), eq(a.event, 'SETTLED')));
+    .where(eq(a.backtestRunId, runIdA));
 
   const decisionsB = await db
     .select({
@@ -756,7 +772,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       reasoning: a.reasoning,
     })
     .from(a)
-    .where(and(eq(a.backtestRunId, runIdB), eq(a.event, 'SETTLED')));
+    .where(eq(a.backtestRunId, runIdB));
 
   const mapA = new Map(decisionsA.map((d) => [d.messageId, d]));
   const mapB = new Map(decisionsB.map((d) => [d.messageId, d]));
@@ -764,8 +780,8 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
   const allMessageIds = new Set([...mapA.keys(), ...mapB.keys()]);
   const diffs: {
     messageId: string;
-    outcomeA: string | null;
-    outcomeB: string | null;
+    decisionA: string | null;
+    decisionB: string | null;
     pnlA: number;
     pnlB: number;
     delta: number;
@@ -781,8 +797,8 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       const pnlB = safeParseFloat(dB?.pnl);
       diffs.push({
         messageId: msgId,
-        outcomeA: dA?.outcome ?? null,
-        outcomeB: dB?.outcome ?? null,
+        decisionA: dA?.outcome ?? null,
+        decisionB: dB?.outcome ?? null,
         pnlA,
         pnlB,
         delta: pnlB - pnlA,
@@ -849,7 +865,7 @@ export async function getTraderEquityCurve(trader: string, runId?: string) {
   return trades.map((t) => {
     cumPnl += safeParseFloat(t.pnl);
     return {
-      date: t.closedAt?.split('T')[0] ?? '',
+      date: t.closedAt ? isoToDateKey(t.closedAt) : '',
       pnl: safeParseFloat(t.pnl),
       cumPnl,
     };
@@ -910,6 +926,31 @@ export async function getTradeEventsForTrades(tradeIds: string[]) {
   return grouped;
 }
 
+/** All run_decisions linked to a trade (by tradeId or sourceMessageId). */
+export async function getDecisionsForTrade(trade: { id: string; sourceMessageId: string | null; backtestRunId: string | null }) {
+  const conditions: SQL[] = [];
+
+  // Match by tradeId OR by sourceMessageId
+  const matchCondition = trade.sourceMessageId
+    ? or(
+        eq(schema.runDecisions.tradeId, trade.id),
+        eq(schema.runDecisions.messageId, trade.sourceMessageId),
+      )!
+    : eq(schema.runDecisions.tradeId, trade.id);
+  conditions.push(matchCondition);
+
+  if (trade.backtestRunId) {
+    conditions.push(eq(schema.runDecisions.backtestRunId, trade.backtestRunId));
+  }
+
+  return db
+    .select()
+    .from(schema.runDecisions)
+    .where(and(...conditions))
+    .orderBy(asc(schema.runDecisions.createdAt));
+}
+
+
 // ─── Enriched Messages (trade-overlay chat feed) ────
 
 export async function getEnrichedMessages(opts: {
@@ -934,19 +975,13 @@ export async function getEnrichedMessages(opts: {
     conditions.push(lt(schema.messages.timestamp, opts.cursor));
   }
 
-  // Build LEFT JOIN conditions for runDecisions — works for both backtest and live
-  // Filter to SETTLED events only so summary views get one row per signal
+  // Build LEFT JOIN conditions for runDecisions (backtest-only)
   const decisionJoin = opts.runId
     ? and(
         eq(schema.runDecisions.messageId, schema.messages.id),
         eq(schema.runDecisions.backtestRunId, opts.runId),
-        eq(schema.runDecisions.event, 'SETTLED'),
       )
-    : and(
-        eq(schema.runDecisions.messageId, schema.messages.id),
-        isNull(schema.runDecisions.backtestRunId),
-        eq(schema.runDecisions.event, 'SETTLED'),
-      );
+    : sql`0 = 1`; // never match for live — live doesn't use runDecisions
 
   // Role-based server-side filtering
   if (opts.roleFilter === 'processed') {
@@ -1017,3 +1052,88 @@ export async function getEnrichedMessages(opts: {
   };
 }
 
+export async function computeBacktestAccuracy(backtestRunId: string) {
+  const { compareLabelsVsIntents } = await import('../../src/lib/eval');
+
+  // 1. Get all message IDs that have a decision in this backtest run
+  const decisionRows = await db
+    .select({
+      messageId: schema.runDecisions.messageId,
+      outcome: schema.runDecisions.outcome,
+    })
+    .from(schema.runDecisions)
+    .where(eq(schema.runDecisions.backtestRunId, backtestRunId));
+
+  if (decisionRows.length === 0) return null;
+
+  const messageIds = decisionRows.map((d) => d.messageId);
+
+  // 2. Load reviewed labels for those messages
+  const CHUNK = 500;
+  const labelRows: (typeof schema.messageLabels.$inferSelect)[] = [];
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageLabels)
+      .where(and(
+        inArray(schema.messageLabels.messageId, chunk),
+        eq(schema.messageLabels.reviewed, true),
+      ));
+    labelRows.push(...rows);
+  }
+
+  if (labelRows.length === 0) return null;
+
+  const labelMap = new Map(labelRows.map((l) => [l.messageId, l]));
+  const labeledMessageIds = [...labelMap.keys()];
+
+  // 3. Load latest intents for labeled messages
+  const intentRows: (typeof schema.messageIntents.$inferSelect)[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select()
+      .from(schema.messageIntents)
+      .where(inArray(schema.messageIntents.messageId, chunk));
+    intentRows.push(...rows);
+  }
+
+  // Keep highest version per message
+  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
+  for (const row of intentRows) {
+    const existing = intentMap.get(row.messageId);
+    if (!existing || row.version > existing.version) {
+      intentMap.set(row.messageId, row);
+    }
+  }
+
+  // 4. Load message text for failure reporting
+  const msgRows: { id: string; cleanText: string }[] = [];
+  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
+    const chunk = labeledMessageIds.slice(i, i + CHUNK);
+    const rows = await db
+      .select({ id: schema.messages.id, cleanText: schema.messages.cleanText })
+      .from(schema.messages)
+      .where(inArray(schema.messages.id, chunk));
+    msgRows.push(...rows);
+  }
+  const msgMap = new Map(msgRows.map((m) => [m.id, m.cleanText]));
+
+  // 5. Build pairs and compare
+  const pairs = labeledMessageIds
+    .filter((mid) => intentMap.has(mid))
+    .map((mid) => ({
+      label: labelMap.get(mid)!,
+      intent: intentMap.get(mid)!,
+      cleanText: msgMap.get(mid) ?? '',
+    }));
+
+  if (pairs.length === 0) return null;
+
+  return {
+    ...compareLabelsVsIntents(pairs),
+    totalMessages: decisionRows.length,
+    labeledMessages: labelRows.length,
+  };
+}

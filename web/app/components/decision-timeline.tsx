@@ -11,174 +11,23 @@ import type { RunDecision, TradeEvent } from '../../../src/db/schema';
 
 function fmtMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`; }
 
-function stripNoise(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj))
-    if (v != null && v !== false && v !== '' && !(Array.isArray(v) && v.length === 0)) out[k] = v;
-  return out;
-}
-
-type LegRow = { symbol?: string; strike?: number; expiry?: string; type?: string; action?: string; side?: string; quantity?: number };
-
-// ─── Compact data display ────────────────────────────
-
-function Kv({ k, v }: { k: string; v: string }) {
-  return (
-    <span className="inline-flex items-baseline gap-1 text-[11px]">
-      {k && <span className="text-muted-foreground">{k}</span>}
-      <span className="text-foreground tabular-nums">{v}</span>
-    </span>
-  );
-}
-
-function LegChip({ leg }: { leg: LegRow }) {
-  const action = leg.action ?? leg.side;
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] bg-muted/50 border border-border/40 rounded px-1.5 py-0.5">
-      <span className={cn(
-        'font-semibold text-[10px]',
-        action === 'BUY' ? 'text-profit' : 'text-loss',
-      )}>{action}</span>
-      <span className="font-medium text-foreground tabular-nums">{leg.quantity ?? 1}</span>
-      <span className="text-foreground/80 tabular-nums">{leg.symbol}</span>
-      {leg.strike != null && <span className="text-foreground/60 tabular-nums">{leg.strike}</span>}
-      {leg.type && leg.type !== 'stock' && <span className="text-foreground/60 uppercase text-[9px]">{leg.type}</span>}
-    </span>
-  );
-}
-
-// ─── Event detail renderers ──────────────────────────
-
-function ParseDetail({ snap }: { snap: Record<string, unknown> }) {
-  const clean = stripNoise(snap);
-  const strategy = clean.strategy ? String(clean.strategy) : null;
-  const isStock = strategy?.toUpperCase() === 'STOCK';
-  const route = clean.route ? String(clean.route) : null;
-  const items: React.ReactNode[] = [];
-  const shown = new Set<string>();
-
-  // Route badge first — tells you how the message was processed
-  if (route) {
-    items.push(
-      <span key="route" className={cn(
-        'text-[9px] font-bold uppercase tracking-wider px-1 py-px rounded',
-        route === 'deterministic' ? 'bg-[oklch(0.48_0.14_148)]/15 text-[oklch(0.60_0.14_148)]'
-          : route === 'llm' ? 'bg-[oklch(0.55_0.12_300)]/15 text-[oklch(0.65_0.12_300)]'
-          : 'bg-muted text-muted-foreground',
-      )}>{route === 'hard-skip' ? 'SKIP' : route}</span>
-    );
-    shown.add('route');
-  }
-
-  for (const f of ['action', 'direction', 'strategy'] as const) {
-    if (clean[f] != null) { items.push(<Badge key={f} label={String(clean[f])} />); shown.add(f); }
-  }
-  if (clean.symbol != null) { items.push(<Kv key="sym" k="" v={String(clean.symbol)} />); shown.add('symbol'); }
-  const price = clean.premiumHint ?? clean.price;
-  if (price != null) { items.push(<Kv key="px" k="~" v={formatCurrency(price as number)} />); shown.add('premiumHint'); shown.add('price'); }
-  if (Array.isArray(clean.strikes) && !isStock) {
-    items.push(<Kv key="str" k="strikes" v={(clean.strikes as number[]).join('/')} />);
-  }
-  shown.add('strikes');
-  for (const f of ['expiry', 'expiryHint'] as const) {
-    if (clean[f] != null) { items.push(<Kv key={f} k={f} v={String(clean[f])} />); shown.add(f); }
-  }
-  if (clean.exitPercent != null) {
-    items.push(<Kv key="exit" k="exit" v={`${Math.round(Number(clean.exitPercent) * 100)}%`} />); shown.add('exitPercent');
-  }
-  if (clean.quantity != null) { items.push(<Kv key="qty" k="qty" v={String(clean.quantity)} />); shown.add('quantity'); }
-  if (typeof clean.confidence === 'number') {
-    items.push(<Kv key="conf" k="conf" v={`${(clean.confidence * 100).toFixed(0)}%`} />); shown.add('confidence');
-  }
-  for (const skip of ['isLotto', 'isStrangle', 'isHardSkip', 'complexityFlags']) shown.add(skip);
-  for (const [k, v] of Object.entries(clean)) {
-    if (!shown.has(k)) items.push(<Kv key={k} k={k} v={typeof v === 'object' ? JSON.stringify(v) : String(v)} />);
-  }
-  if (items.length === 0) return null;
-  return <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap">{items}</div>;
-}
-
-function SignalDetail({ snap }: { snap: Record<string, unknown> }) {
-  const legs = Array.isArray(snap.legs) ? (snap.legs as LegRow[]) : [];
-  return (
-    <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
-      {snap.orderType != null && <Badge label={String(snap.orderType)} />}
-      {snap.limitPrice != null && <Kv k="limit" v={formatCurrency(snap.limitPrice as number)} />}
-      {legs.map((leg, i) => <LegChip key={i} leg={leg} />)}
-    </div>
-  );
-}
-
-function AdjustDetail({ snap }: { snap: Record<string, unknown> }) {
-  return (
-    <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[11px]">
-      {snap.fromPrice != null && snap.toPrice != null && (
-        <span className="tabular-nums text-foreground/80">
-          {formatCurrency(snap.fromPrice as number)}
-          <span className="text-muted-foreground mx-1">&rarr;</span>
-          {formatCurrency(snap.toPrice as number)}
-        </span>
-      )}
-      {snap.step != null && (
-        <span className="text-muted-foreground/70 tabular-nums">&times;{String(snap.step)}</span>
-      )}
-    </div>
-  );
-}
-
-function DecisionDetail({ d }: { d: RunDecision }) {
-  const event = d.event ?? 'SETTLED';
-  const snap = d.snapshot ? stripNoise(d.snapshot as Record<string, unknown>) : {};
-  if (Object.keys(snap).length === 0) return null;
-
-  const isParse = 'symbol' in snap && ('strategy' in snap || 'action' in snap || 'isLotto' in snap);
-  const isSignal = 'orderType' in snap && 'legs' in snap;
-
-  if (event === 'PARSED' || isParse) return <ParseDetail snap={snap} />;
-  if (event === 'SIGNAL_RESOLVED' || isSignal) return <SignalDetail snap={snap} />;
-  if (event === 'ORDER_ADJUSTED') return <AdjustDetail snap={snap} />;
-
-  // SETTLED: only show non-duplicate data — skip signal/outcome (already shown above)
-  if (event === 'SETTLED') {
-    const rest = Object.entries(snap).filter(([k]) => !['outcome', 'signal', 'parseResult'].includes(k));
-    if (rest.length === 0) return null;
-    return (
-      <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-        {rest.map(([k, v]) => <Kv key={k} k={k} v={typeof v === 'object' ? JSON.stringify(v) : String(v)} />)}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-      {Object.entries(snap).map(([k, v]) => (
-        <Kv key={k} k={k} v={typeof v === 'object' ? JSON.stringify(v) : String(v)} />
-      ))}
-    </div>
-  );
-}
-
 // ─── Decision Popover ────────────────────────────────
 
-function fmtValue(v: unknown): string {
-  if (v == null) return '--';
-  if (typeof v === 'object') return JSON.stringify(v, null, 2);
-  return String(v);
-}
+const PATH_LABEL: Record<string, string> = {
+  orchestrator: 'Agent', deterministic: 'Deterministic',
+  skipped: 'Hard Skip', pipeline_failure: 'Pipeline Fail',
+};
 
 function DecisionPopover({ d }: { d: RunDecision }) {
-  const event = d.event ?? 'SETTLED';
-  const snap = d.snapshot ? stripNoise(d.snapshot as Record<string, unknown>) : {};
-  const hasSnap = Object.keys(snap).length > 0;
-
+  const hasContent = d.outcome || d.reasoning || d.skipCategory || d.phase;
   return (
     <PopoverContent align="start" side="right" className="w-96 max-h-[420px] overflow-auto p-0">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
-        <Badge label={event} />
         {d.outcome && <Badge label={d.outcome} />}
-        {d.signalIndex != null && d.signalIndex > 0 && (
-          <span className="text-[10px] text-muted-foreground tabular-nums">#{d.signalIndex}</span>
+        {d.phase && <Badge label={PATH_LABEL[d.phase] ?? d.phase} />}
+        {d.skipCategory && (
+          <span className="text-[10px] text-muted-foreground">{d.skipCategory}</span>
         )}
         <div className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
           {d.durationMs != null && d.durationMs > 10 && <span>{fmtMs(d.durationMs)}</span>}
@@ -197,19 +46,9 @@ function DecisionPopover({ d }: { d: RunDecision }) {
           </div>
         )}
 
-        {/* Snapshot */}
-        {hasSnap && (
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Snapshot</p>
-            <div className="space-y-0.5">
-              {Object.entries(snap).map(([k, v]) => (
-                <div key={k} className="flex gap-2 text-[11px]">
-                  <span className="text-muted-foreground shrink-0">{k}</span>
-                  <span className="text-foreground tabular-nums break-all">{fmtValue(v)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* No useful data fallback */}
+        {!hasContent && (
+          <p className="text-xs text-muted-foreground/50 italic">No decision data recorded for this entry.</p>
         )}
 
         {/* IDs */}
@@ -246,6 +85,51 @@ const DOT: Record<string, string> = {
   LEG_OFF: 'bg-[oklch(0.50_0.10_328)]',
 };
 
+// ─── Legacy field access ─────────────────────────────
+// The DB still has `event` and `signalIndex` columns from the old emitter,
+// but they were removed from the Drizzle schema. Access via runtime cast.
+type DecisionWithLegacy = RunDecision & { event?: string; signalIndex?: number };
+function asLegacy(d: RunDecision): DecisionWithLegacy { return d as DecisionWithLegacy; }
+
+// ─── Deduplication ───────────────────────────────────
+
+/** Merge multiple run_decision rows per messageId into one best row. */
+function deduplicateDecisions(decisions: RunDecision[]): RunDecision[] {
+  const groups = new Map<string, RunDecision[]>();
+  const noMsg: RunDecision[] = [];
+
+  for (const d of decisions) {
+    if (!d.messageId) { noMsg.push(d); continue; }
+    const list = groups.get(d.messageId) ?? [];
+    list.push(d);
+    groups.set(d.messageId, list);
+  }
+
+  const result: RunDecision[] = [...noMsg];
+
+  for (const rows of groups.values()) {
+    if (rows.length === 1) { result.push(rows[0]); continue; }
+
+    // Primary = the row with phase + outcome (the final summary row)
+    const primary = rows.find(r => r.phase && r.outcome) ?? rows[0];
+    const merged = { ...primary };
+
+    // Fill in fields from sibling rows
+    for (const row of rows) {
+      if (!merged.reasoning && row.reasoning) merged.reasoning = row.reasoning;
+      if (merged.inputTokens == null && row.inputTokens != null) merged.inputTokens = row.inputTokens;
+      if (merged.outputTokens == null && row.outputTokens != null) merged.outputTokens = row.outputTokens;
+      if (!merged.tradeId && row.tradeId) merged.tradeId = row.tradeId;
+      if (!merged.skipCategory && row.skipCategory) merged.skipCategory = row.skipCategory;
+      if (!merged.pnl && row.pnl) merged.pnl = row.pnl;
+    }
+
+    result.push(merged);
+  }
+
+  return result;
+}
+
 // ─── Unified timeline ────────────────────────────────
 
 export type TimelineMessage = { id: string; cleanText: string; author: string; timestamp: string };
@@ -268,6 +152,7 @@ export function UnifiedTimeline({
 }) {
   const msgMap = new Map((messages ?? []).map(m => [m.id, m]));
   const tradeActionSet = new Set(tradeEvents.map(e => e.action));
+  const deduped = deduplicateDecisions(decisions);
 
   const eventOrder: Record<string, number> = {
     PARSED: 0, SIGNAL_RESOLVED: 1, SIZED: 2, ORDER_PLACED: 3,
@@ -277,16 +162,22 @@ export function UnifiedTimeline({
 
   const entries: Entry[] = [];
 
-  for (const d of decisions) {
+  for (const d of deduped) {
+    const dl = asLegacy(d);
     const msg = d.messageId ? msgMap.get(d.messageId) : null;
-    const event = d.event ?? 'SETTLED';
+    const event = dl.event ?? 'SETTLED';
 
     // Hide SETTLED FAIL when trade events prove the order actually filled
     if (event === 'SETTLED' && d.outcome === 'FAIL' && tradeActionSet.has('OPEN')) continue;
 
+    // Hide entries with no visible content (empty shell rows from transitional emitter).
+    const dec = d.outcome as string | null;
+    const hasVisibleData = dec || d.reasoning || d.skipCategory || d.pnl || d.inputTokens != null;
+    if (event === 'SETTLED' && !hasVisibleData) continue;
+
     const baseTs = msg?.timestamp ?? d.createdAt ?? '';
     const order = eventOrder[event] ?? 5;
-    const sortKey = `${baseTs}|0|${String(order).padStart(2, '0')}|${d.signalIndex ?? 0}`;
+    const sortKey = `${baseTs}|0|${String(order).padStart(2, '0')}|${dl.signalIndex ?? 0}`;
     entries.push({ kind: 'decision', sortKey, data: d });
   }
 
@@ -306,12 +197,12 @@ export function UnifiedTimeline({
   // Decision dots: 8px → left edge at 12-4=8 → from content: -(30-8)=-22
 
   return (
-    <div>
+    <div className="min-w-0 overflow-hidden">
       <h3 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">
         Execution Timeline
       </h3>
 
-      <div className="relative pl-[30px]">
+      <div className="relative pl-[30px] min-w-0">
         {/* Vertical rail */}
         <div className="absolute top-0 bottom-0 w-px bg-border/40" style={{ left: '12px' }} />
 
@@ -362,14 +253,14 @@ export function UnifiedTimeline({
 
             // ─── Decision entry ──────────────────────
             const d = entry.data;
-            const event = d.event ?? 'SETTLED';
-            const isFail = d.outcome === 'FAIL' || event === 'QUOTE_FAILED';
-            const isSkip = d.outcome === 'SKIP' || (d.snapshot as Record<string, unknown> | null)?.outcome === 'SKIP';
+            const event = asLegacy(d).event ?? 'SETTLED';
+            const isFail = d.outcome === 'FAIL';
+            const isSkip = d.outcome === 'SKIP';
 
             return (
               <Popover key={d.id}>
                 <div className={cn(
-                  'relative',
+                  'relative min-w-0 overflow-hidden',
                   isPhaseBreak && 'mt-4 pt-3 before:absolute before:left-[-30px] before:right-0 before:top-0 before:h-px before:bg-border/50',
                   !isPhaseBreak && i > 0 && 'mt-0',
                   !isLast && 'pb-2.5',
@@ -392,8 +283,8 @@ export function UnifiedTimeline({
                     </PopoverTrigger>
 
                     {d.outcome && <Badge label={d.outcome} />}
-                    {d.signalIndex != null && d.signalIndex > 0 && (
-                      <span className="text-[10px] text-muted-foreground/50 tabular-nums">#{d.signalIndex}</span>
+                    {d.skipCategory && (
+                      <span className="text-[10px] text-muted-foreground/60 truncate max-w-[180px]">{d.skipCategory}</span>
                     )}
 
                     <div className="flex items-center gap-1.5 ml-auto shrink-0">
@@ -409,15 +300,10 @@ export function UnifiedTimeline({
                     </div>
                   </div>
 
-                  {/* Structured detail (badges, chips, prices) */}
-                  <div className="mt-0.5">
-                    <DecisionDetail d={d} />
-                  </div>
-
                   {/* Reasoning on its own line — not crammed with badges */}
                   {d.reasoning && (
                     <p className={cn(
-                      'text-[11px] mt-1 leading-relaxed line-clamp-2',
+                      'text-[11px] mt-1 leading-relaxed line-clamp-2 break-words',
                       isFail ? 'text-loss/60' : isSkip ? 'text-muted-foreground/50' : 'text-foreground/60',
                     )}>
                       {d.reasoning}
@@ -428,7 +314,7 @@ export function UnifiedTimeline({
                   {event === 'PARSED' && d.messageId && msgMap.has(d.messageId) && (() => {
                     const msg = msgMap.get(d.messageId)!;
                     return (
-                      <p className="mt-1.5 text-[11px] text-foreground/50 italic line-clamp-2 border-l-2 border-foreground/20 pl-2">
+                      <p className="mt-1.5 text-[11px] text-foreground/50 italic line-clamp-2 border-l-2 border-foreground/20 pl-2 break-words">
                         {msg.cleanText}
                       </p>
                     );

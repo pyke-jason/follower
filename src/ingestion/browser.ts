@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import { sendSystemAlert } from '../lib/alert.js';
 import { PATHS } from '../lib/paths.js';
+import { isoToDateKey } from '../lib/et-date.js';
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated';
 
@@ -44,7 +45,7 @@ async function checkAuth(p: Page): Promise<AuthState> {
   }
 
   // Verify with API call
-  const today = new Date().toISOString().split('T')[0];
+  const today = isoToDateKey(new Date().toISOString());
   const testUrl = `https://app.oneoption.com/chat/search-messages?term=&author=&since=${today}&until=${today}`;
 
   const result = await p.evaluate(async (fetchUrl: string) => {

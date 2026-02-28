@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
-import type { ExtendedMetrics, LiveMetrics } from '../backtest/types.js';
+import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
 import { LegTypeSchema, LegActionSchema } from '../lib/enums.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 export type { PositionSizingConfig } from '../position-sizing/index.js';
@@ -139,9 +139,9 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   status:          text('status').notNull().default('PENDING'), // PENDING | RUNNING | COMPLETED | FAILED
   config:          text('config', { mode: 'json' }).$type<BacktestRunConfig>().notNull(),
   summary:         text('summary', { mode: 'json' }).$type<BacktestRunSummary | null>(),
-  byTrader:        text('by_trader', { mode: 'json' }).$type<Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> | null>(),
-  byStrategy:      text('by_strategy', { mode: 'json' }).$type<Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> | null>(),
-  equityCurve:     text('equity_curve', { mode: 'json' }).$type<{ date: string; pnl: number; cumPnl: number; trades: number; unrealizedPnl?: number; equity?: number }[] | null>(),
+  byTrader:        text('by_trader', { mode: 'json' }).$type<Record<string, TraderStats> | null>(),
+  byStrategy:      text('by_strategy', { mode: 'json' }).$type<Record<string, StrategyStats> | null>(),
+  equityCurve:     text('equity_curve', { mode: 'json' }).$type<EquityPoint[] | null>(),
   createdAt:       text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:       text('started_at'),
   completedAt:     text('completed_at'),
@@ -163,26 +163,29 @@ export const backtestRuns = sqliteTable('backtest_runs', {
 
 export const runDecisions = sqliteTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id),  // nullable — null for live
-  taskId:         text('task_id').references(() => tasks.id),                 // nullable — for live trade story lookups
+  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id),
+  taskId:         text('task_id').references(() => tasks.id),
   messageId:      text('message_id').references(() => messages.id).notNull(),
-  event:          text('event').notNull().default('SETTLED'),  // discriminator: PARSED | SIGNAL_RESOLVED | SIZED | ORDER_PLACED | ORDER_ADJUSTED | ORDER_FILLED | ORDER_CANCELLED | SETTLED | etc.
-  signalIndex:    integer('signal_index'),           // null = message-level (skip/flag), 0+ = per-signal
-  outcome:        text('outcome'),                    // 'EXECUTE' | 'SKIP' | 'FAIL' — only meaningful on SETTLED events
-  phase:          text('phase'),                      // 'orchestrator' | 'pipeline' | 'order' — legacy, nullable for events
+  event:          text('event').notNull().default('SETTLED'),
+  signalIndex:    integer('signal_index'),
+  outcome:        text('outcome'),
+  phase:          text('phase'),
   reasoning:      text('reasoning'),
-  tradeId:        text('trade_id'),                   // FK to resulting trade (null unless EXECUTE)
-  pnl:            text('pnl'),                        // backfilled after close
-  snapshot:       text('snapshot', { mode: 'json' }).$type<Record<string, unknown>>(),
+  tradeId:        text('trade_id'),                // FK to resulting trade (null if SKIP)
+  pnl:            text('pnl'),                     // outcome P&L, back-filled after close
+  snapshot:       text('snapshot', { mode: 'json' }).$type<Record<string, unknown> | null>(),
   durationMs:     integer('duration_ms'),
-  inputTokens:    integer('input_tokens'),
-  outputTokens:   integer('output_tokens'),
+  inputTokens:    integer('input_tokens'),          // LLM input tokens (null for deterministic skips)
+  outputTokens:   integer('output_tokens'),         // LLM output tokens (null for deterministic skips)
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
+  path:           text('path'),                    // LEGACY
+  decision:       text('decision'),                // LEGACY
+  skipCategory:   text('skip_category'),           // LEGACY
 }, (table) => [
   index('idx_run_decisions_run').on(table.backtestRunId),
-  index('idx_run_decisions_task').on(table.taskId),
   index('idx_run_decisions_message').on(table.messageId),
   index('idx_run_decisions_run_message').on(table.backtestRunId, table.messageId),
+  index('idx_run_decisions_task').on(table.taskId),
   index('idx_run_decisions_settled').on(table.backtestRunId, table.event),
 ]);
 
@@ -282,6 +285,36 @@ export const historicalFetchChunks = sqliteTable('historical_fetch_chunks', {
   index('idx_fetch_chunks_status').on(table.status),
 ]);
 
+// ─── Message Intents (Phase 1: classification cache) ─
+
+export const messageIntents = sqliteTable('message_intents', {
+  id:           text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  messageId:    text('message_id').references(() => messages.id).notNull(),
+  model:        text('model').notNull(),              // e.g. "grok-4-1-fast-non-reasoning"
+  version:      integer('version').notNull().default(1), // bump when classification prompt changes
+  decision:     text('decision').notNull(),            // EXECUTE | SKIP | MANUAL_REVIEW
+  reasoning:    text('reasoning'),
+  signals:      text('signals', { mode: 'json' }).$type<Signal[]>(),
+  durationMs:   integer('duration_ms'),
+  inputTokens:  integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  turns:        integer('turns'),
+  steps:        text('steps', { mode: 'json' }).$type<IntentStep[]>(),
+  createdAt:    text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_intents_message').on(table.messageId),
+  index('idx_intents_model_version').on(table.model, table.version),
+  uniqueIndex('idx_intents_unique').on(table.messageId, table.model, table.version),
+]);
+
+export type IntentStep = {
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  reasoning?: string;
+  durationMs?: number;
+};
+
 // ─── Commission Schedule ─────────────────────────────
 
 export type CommissionSchedule = {
@@ -370,6 +403,12 @@ export type TaskContext = {
   [key: string]: unknown;
 };
 
+export type TaskResult = {
+  decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
+  reasoning: string;
+  signals?: Signal[];
+};
+
 export type TradeMetadata = {
   slippage?: number;
   fillQuality?: string;
@@ -380,7 +419,22 @@ export type TradeMetadata = {
   /** Original leg count at open time. Set during LEG_OFF so commission
    *  can compute the open-side cost correctly after legs shrink. */
   openLegCount?: number;
-  [key: string]: unknown;
+  /** For LEG_OFF: the strategy after removing the closed leg (CALL or PUT). */
+  targetStrategy?: Strategy;
+  /** For LEG_OFF: the leg that was closed/bought back. */
+  closedLeg?: TradeLeg;
+  /** For LEG_OFF: the leg that remains open. */
+  keptLeg?: TradeLeg;
+  /** Final broker order status when order was rejected/cancelled (from fill sweep). */
+  brokerFinalStatus?: string;
+  /** Set when trade was force-exited via local API. */
+  forceExit?: boolean;
+  /** Broker order ID from a force-exit. */
+  forceExitOrderId?: string;
+  /** Broker order status from a force-exit. */
+  forceExitStatus?: string;
+  /** Catch-all for genuinely unknown future fields. */
+  extra?: Record<string, unknown>;
 };
 
 // ─── Inferred Types ──────────────────────────────────
@@ -399,5 +453,6 @@ export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
-export type DecisionInsert = typeof runDecisions.$inferInsert;
 export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;
+export type MessageIntent = typeof messageIntents.$inferSelect;
+export type NewMessageIntent = typeof messageIntents.$inferInsert;

@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { startBacktest } from '../actions';
+import { isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
 import type { BacktestRunConfig } from '../../../../src/db/schema';
 import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '../../../../src/config/risk-defaults';
@@ -55,7 +56,7 @@ export function BacktestForm({
             name="startDate"
             type="date"
             required
-            defaultValue={defaultConfig?.startDate?.split('T')[0] ?? '2025-09-01'}
+            defaultValue={defaultConfig?.startDate ? isoToDateKey(defaultConfig.startDate) : '2025-09-01'}
             className="h-9"
           />
         </div>
@@ -65,7 +66,7 @@ export function BacktestForm({
             name="endDate"
             type="date"
             required
-            defaultValue={defaultConfig?.endDate?.split('T')[0] ?? '2025-09-30'}
+            defaultValue={defaultConfig?.endDate ? isoToDateKey(defaultConfig.endDate) : '2025-09-30'}
             className="h-9"
           />
         </div>

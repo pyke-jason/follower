@@ -42,6 +42,21 @@ const orderManager = new OrderManager({
     const pending = pendingIntents.get(order.orderId);
     if (!pending) return;
     pendingIntents.delete(order.orderId);
+    const emitter = createEmitter({ messageId: pending.messageId ?? '', taskId: undefined });
+    await emitter.emit('ORDER_FILLED', {
+      orderId: order.orderId,
+      symbol: order.params.symbol,
+      strategy: order.params.strategy,
+      direction: order.params.direction,
+      filledPrice: order.filledPrice,
+      filledAt: order.filledAt.toISOString(),
+      filledQuantity: order.filledQuantity,
+      commission: order.commission,
+      legFills: order.legFills,
+      adjustmentCount: order.adjustmentCount,
+      originalLimitPrice: order.params.limitPrice,
+      immediatelyFilled: false,
+    }, { signalIndex: pending.signalIndex ?? null });
     await pending.recordFill(order.filledPrice, order.filledAt);
   },
   onCancel: (order) => {

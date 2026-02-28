@@ -236,7 +236,7 @@ export function compareLabelsVsIntents(
 
   const totalLabels = pairs.length;
 
-  const fieldResults: Record<FieldName, FieldResult> = {} as any;
+  const fieldResults = {} as Record<FieldName, FieldResult>;
   for (const [name, result] of Object.entries(fields)) {
     fieldResults[name as FieldName] = {
       ...result,

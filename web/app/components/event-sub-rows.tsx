@@ -13,8 +13,11 @@ function EventRow({ event, closeMessageId }: { event: TradeEvent; closeMessageId
 
   return (
     <TableRow className="bg-muted/30 hover:bg-muted/50 h-7">
+      {/* Chevron spacer */}
+      <TableCell className="w-6" />
+
       {/* Action badge (Symbol col) */}
-      <TableCell className="pl-6">
+      <TableCell>
         <span className="flex items-center gap-1.5">
           <span className="text-muted-foreground/30 text-[10px] mr-0.5">┊</span>
           <Badge label={event.action} />

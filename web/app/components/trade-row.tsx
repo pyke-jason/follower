@@ -1,11 +1,13 @@
 import Link from 'next/link';
-import { AlertTriangle } from 'lucide-react';
+import { ChevronRight, AlertTriangle } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
-import type { Trade, CommissionSchedule, TradeLeg } from '../../../src/db/schema';
+import type { Trade, CommissionSchedule } from '../../../src/db/schema';
+import { getLegs } from '../../../src/db/accessors';
 import { safeParseFloat } from '../../../src/lib/numbers';
 import { computeTradeCommission } from '../../../src/lib/commission';
 import { notionalValue } from '../../../src/lib/trade';
@@ -21,15 +23,15 @@ export function TradeRow({
   runId,
   commissionSchedule,
   startingEquity,
-  onSelect,
-  isSelected,
+  onExpand,
+  isExpanded,
 }: {
   trade: Trade;
   runId?: string;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
-  onSelect?: () => void;
-  isSelected?: boolean;
+  onExpand?: () => void;
+  isExpanded?: boolean;
 }) {
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
@@ -46,9 +48,16 @@ export function TradeRow({
 
   return (
     <TableRow
-      className={`hover:bg-accent/40 transition-colors ${onSelect ? 'cursor-pointer' : ''} ${isSelected ? 'bg-accent/30' : ''}`}
-      onClick={onSelect}
+      className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''}`}
+      onClick={onExpand}
     >
+      {/* Expand chevron */}
+      <TableCell className="w-6">
+        {onExpand ? (
+          <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+        ) : null}
+      </TableCell>
+
       {/* Symbol */}
       <TableCell>
         <Link
@@ -65,16 +74,19 @@ export function TradeRow({
         <span className="inline-flex items-center gap-1">
           <Badge label={trade.status} />
           {trade.status === 'CLOSED' && !trade.closeMessageId && (
-            <span title="Auto-closed (no exit signal)">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /></span>
+              </TooltipTrigger>
+              <TooltipContent side="top">Auto-closed (no exit signal)</TooltipContent>
+            </Tooltip>
           )}
         </span>
       </TableCell>
 
       {/* Legs */}
       <TableCell className="hidden md:table-cell text-muted-foreground">
-        <LegsIndicator legs={trade.legs as TradeLeg[]} strategy={trade.strategy} />
+        <LegsIndicator legs={getLegs(trade)} strategy={trade.strategy} />
       </TableCell>
 
       {/* Trader */}
@@ -110,16 +122,16 @@ export function TradeRow({
       <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.exitPrice)}</TableCell>
 
       {/* Notional */}
-      <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs text-muted-foreground">
+      <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs">
         {notional > 0 ? (
-          <>
-            {formatCurrency(notional)}
+          <span className="flex flex-col items-end gap-0.5">
+            <span className="text-muted-foreground">{formatCurrency(notional)}</span>
             {notionalPct != null && (
-              <span className={`ml-1 text-[10px] ${notionalConcentrationColor(notionalPct)}`}>
+              <span className={`text-[10px] ${notionalConcentrationColor(notionalPct)}`}>
                 {(notionalPct * 100).toFixed(1)}%
               </span>
             )}
-          </>
+          </span>
         ) : '--'}
       </TableCell>
 

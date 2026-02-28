@@ -11,7 +11,7 @@ import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
-import type { TradeLeg } from '../db/schema.js';
+import type { TradeLeg, TradeMetadata } from '../db/schema.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 
 const log = createLogger('RecordTrade');
@@ -41,7 +41,7 @@ export type RecordTradeInput = {
   taskId?: string;
   backtestRunId?: string;
   isBacktest?: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: TradeMetadata;
 };
 
 export type RecordTradeResult = {
@@ -454,9 +454,9 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const entry = safeParseFloat(existing.entryPrice);
 
     // Try metadata first (explicit LEG_OFF from caller), then derive from legs
-    let targetStrategy = (metadata as Record<string, unknown>)?.targetStrategy as Strategy | undefined;
-    let closedLeg = (metadata as Record<string, unknown>)?.closedLeg as TradeLeg | undefined;
-    let keptLeg = (metadata as Record<string, unknown>)?.keptLeg as TradeLeg | undefined;
+    let targetStrategy = metadata?.targetStrategy;
+    let closedLeg = metadata?.closedLeg;
+    let keptLeg = metadata?.keptLeg;
 
     if ((!targetStrategy || !keptLeg) && incomingLegs.length > 0 && existingLegs.length >= 2) {
       // Derive from leg comparison (same logic as old CLOSE-branch auto-detect)

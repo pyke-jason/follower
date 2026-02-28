@@ -4,6 +4,7 @@ import { fetchJson } from './resilient-fetcher.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
 import type { SignalRMessage } from './signalr.js';
+import { isoToDateKey } from '../lib/et-date.js';
 
 const SEARCH_URL = 'https://app.oneoption.com/chat/search-messages';
 const CHUNK_DELAY_MS = 500;
@@ -259,7 +260,7 @@ function generateDateRange(since: string, until: string): string[] {
   const end = new Date(until + 'T00:00:00Z');
 
   while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
+    dates.push(isoToDateKey(current.toISOString()));
     current.setUTCDate(current.getUTCDate() + 1);
   }
 

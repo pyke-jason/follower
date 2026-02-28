@@ -8,7 +8,7 @@
 
 import type { Task } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
-import type { ResolvedSignal, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
+import type { OrchestratorResult, ResolvedSignal, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult } from './execute-resolved.js';
 
 import { db, schema } from '../db/client.js';
@@ -19,8 +19,7 @@ import { executeResolvedSignals } from './execute-resolved.js';
 // ─── Types ──────────────────────────────────────────
 
 export type ProcessTaskResult =
-  | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
+  | Extract<OrchestratorResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>
   | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[] };
 
 export type TaskEnv = {

@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Input } from '@/components/ui/input';
 import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
 import { Users, X, Check } from 'lucide-react';
+import { isoToDateKey } from '@/lib/format';
 import type { MessageFilters, LabelFilter } from './actions';
 import type { FilterConstraints } from './chat-room';
 
@@ -25,10 +26,6 @@ function getDateRange(period: TimePeriod): { startDate?: string; endDate?: strin
     start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   }
   return { startDate: start.toISOString() };
-}
-
-function formatDateCompact(iso: string): string {
-  return iso.split('T')[0];
 }
 
 type DecisionSummary = {
@@ -115,7 +112,7 @@ export function ChatFilters({
       {/* Date scope: locked range label OR time period toggle */}
       {hasDateConstraint ? (
         <span className="text-xs text-muted-foreground tabular-nums">
-          {formatDateCompact(constraints!.startDate!)} &ndash; {formatDateCompact(constraints!.endDate!)}
+          {isoToDateKey(constraints!.startDate!)} &ndash; {isoToDateKey(constraints!.endDate!)}
         </span>
       ) : (
         <ToggleGroup

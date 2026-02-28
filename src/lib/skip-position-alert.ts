@@ -8,7 +8,8 @@
  * - alertIfSkippedWithActivePosition() — live-only alert sender
  */
 
-import type { Message, Trade, TradeLeg, TaskContext } from '../db/schema.js';
+import type { Message, Trade, TaskContext } from '../db/schema.js';
+import { getLegs } from '../db/accessors.js';
 import type { PrefetchedData, PrefetchedQuote } from '../agent/prefetch.js';
 import { sendSystemAlert } from './alert.js';
 import { toDateKeyET } from './et-date.js';
@@ -77,8 +78,8 @@ function hasNearExpiryLegs(positions: Trade[], now: Date): boolean {
   if (dayAfter) nearDates.add(dayAfter);
 
   for (const pos of positions) {
-    const legs = pos.legs as TradeLeg[] | null;
-    if (!legs?.length) continue;
+    const legs = getLegs(pos);
+    if (!legs.length) continue;
     for (const leg of legs) {
       if (leg.expiry && nearDates.has(leg.expiry)) return true;
     }
@@ -122,7 +123,7 @@ export async function buildSkipPositionContext(
   const matchingSymbolSet = new Set(matchingSymbols);
   const matchingTrades = positions.filter(p => matchingSymbolSet.has(p.symbol));
   const matchingPositions = matchingTrades.map(p => {
-    const legs = (p.legs as TradeLeg[] | null) ?? [];
+    const legs = getLegs(p);
     return {
       symbol: p.symbol,
       strategy: p.strategy,

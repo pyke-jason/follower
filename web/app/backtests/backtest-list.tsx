@@ -1,15 +1,16 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { Badge } from '../components/badge';
 import { Sparkline } from '../components/sparkline';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { formatCurrency, formatDate } from '@/lib/format';
+import { formatCurrency, formatDate, isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
-import { Star, Trash2 } from 'lucide-react';
-import type { BacktestRunConfig, BacktestRunSummary } from '../../../src/db/schema';
+import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
+import { getConfig, getSummary, getEquityCurve } from '../../../src/db/accessors';
 import { pctDisplay, PROFIT_FACTOR_INF } from '../../../src/lib/numbers';
 import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
@@ -41,6 +42,7 @@ export function BacktestList({
   runs: Run[];
   experimentTags: string[];
 }) {
+  const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [deleting, startDelete] = useTransition();
@@ -76,6 +78,11 @@ export function BacktestList({
         return next;
       });
     }
+  }
+
+  function handleCompare() {
+    const ids = Array.from(selected).slice(0, 3).join(',');
+    router.push(`/backtests/compare?ids=${ids}`);
   }
 
   function handleBulkDelete() {
@@ -127,6 +134,12 @@ export function BacktestList({
             Delete ({selected.size})
           </Button>
         )}
+        {selected.size >= 2 && selected.size <= 3 && (
+          <Button size="sm" variant="outline" onClick={handleCompare} className="gap-1.5">
+            <GitCompareArrows className="h-3.5 w-3.5" />
+            Compare ({selected.size})
+          </Button>
+        )}
         <Button size="sm" asChild>
           <Link href="/backtests/new">New Backtest</Link>
         </Button>
@@ -163,12 +176,12 @@ export function BacktestList({
             </TableHeader>
             <TableBody>
               {filteredRuns.map((run) => {
-                const config = run.config as BacktestRunConfig;
-                const summary = run.summary as BacktestRunSummary | null;
-                const equityCurve = run.equityCurve as { date: string; pnl: number; cumPnl: number }[] | null;
+                const config = getConfig(run);
+                const summary = getSummary(run);
+                const equityCurve = getEquityCurve(run);
                 const sparkData = equityCurve?.map((e) => e.cumPnl) ?? [];
-                const startDate = config.startDate.split('T')[0];
-                const endDate = config.endDate.split('T')[0];
+                const startDate = isoToDateKey(config.startDate);
+                const endDate = isoToDateKey(config.endDate);
                 const displayPnl = summary
                   ? ((summary.totalCommissions ?? 0) > 0 ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl)
                   : 0;

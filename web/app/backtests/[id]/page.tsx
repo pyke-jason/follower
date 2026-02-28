@@ -7,8 +7,8 @@ import { AutoRefresh } from '../../components/auto-refresh';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { formatCurrency } from '@/lib/format';
-import { deleteBacktestRun, cancelBacktestRun } from '../actions';
+import { formatCurrency, isoToDateKey } from '@/lib/format';
+import { deleteBacktestRun, cancelBacktestRun, invalidateIntentCache } from '../actions';
 import { LogViewer } from './log-viewer';
 import { BacktestTabs } from './backtest-tabs';
 import { EquityCurveChart } from './equity-curve-chart';
@@ -18,11 +18,12 @@ import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
 import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
+import { DecisionScatter } from './decision-scatter';
 import { TradesTableClient } from '../../components/trades-table-client';
 import Link from 'next/link';
-import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft } from 'lucide-react';
-import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
-import type { LiveMetrics } from '../../../../src/backtest/types';
+import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
+import type { CommissionSchedule } from '../../../../src/db/schema';
+import { getConfig, getLiveMetrics } from '../../../../src/db/accessors';
 
 import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
 import { computeCoreStats } from '../../../../src/backtest/report';
@@ -40,9 +41,9 @@ export default async function BacktestDetailPage({
   const run = await getBacktestRunById(id);
   if (!run) notFound();
 
-  const config = run.config as BacktestRunConfig;
+  const config = getConfig(run);
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
-  const liveMetrics = run.liveMetrics as LiveMetrics | null;
+  const liveMetrics = getLiveMetrics(run);
   const lastProcessedTs = run.status !== 'COMPLETED'
     ? liveMetrics?.lastProcessedMessageTs ?? null
     : null;
@@ -70,9 +71,9 @@ export default async function BacktestDetailPage({
 
   // Clamp closedAt dates to the backtest end date so charts don't extend
   // to today's wall-clock time (backtest trades use real timestamps).
-  const backtestEnd = config.endDate.split('T')[0];
+  const backtestEnd = isoToDateKey(config.endDate);
   const clampedTrades = allTrades.map((t) => {
-    if (!t.closedAt || t.closedAt.split('T')[0] <= backtestEnd) return t;
+    if (!t.closedAt || isoToDateKey(t.closedAt) <= backtestEnd) return t;
     return { ...t, closedAt: `${backtestEnd}T16:00:00.000Z` };
   });
 
@@ -160,14 +161,32 @@ export default async function BacktestDetailPage({
     return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
   })();
 
+  const scatterData = decisions
+    .filter((r) => r.decision.pnl != null)
+    .map((r) => ({
+      date: isoToDateKey(r.message.timestamp),
+      pnl: safeParseFloat(r.decision.pnl),
+      decision: r.decision.outcome,
+      message: r.message.cleanText.slice(0, 60),
+    }));
 
   const messagesContent = (
     <div className="space-y-3 flex flex-col flex-1 min-h-0">
-
+      {scatterData.length > 0 && (
+        <Card className="py-0 gap-0">
+          <CardHeader className="border-b py-3 px-4">
+            <CardTitle className="text-sm">Decision Outcomes</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 pb-2 px-2">
+            <DecisionScatter data={scatterData} />
+          </CardContent>
+        </Card>
+      )}
       <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
         <ChatRoom
           initialMessages={chatData.messages}
           initialCursor={chatData.cursor}
+          initialIntents={chatData.intents}
           initialLabels={chatData.labels}
           initialEnrichment={chatData.enrichment}
           authors={chatData.authors}
@@ -211,6 +230,12 @@ export default async function BacktestDetailPage({
                 <Copy className="size-3" /> Clone &amp; Edit
               </Link>
             </Button>
+            <form action={invalidateIntentCache}>
+              <input type="hidden" name="runId" value={run.id} />
+              <Button type="submit" variant="ghost" size="xs">
+                <RotateCcw className="size-3" /> Clear Intent Cache
+              </Button>
+            </form>
             <Separator orientation="vertical" className="!h-4 mx-1" />
             <Button variant="ghost" size="xs" asChild>
               <Link href={`/?run=${run.id}`}>
@@ -258,7 +283,7 @@ export default async function BacktestDetailPage({
           {/* Config */}
           <span className="text-foreground font-medium">{config.traders.join(', ')}</span>
           <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground tabular-nums">{config.startDate.split('T')[0]} &ndash; {config.endDate.split('T')[0]}</span>
+          <span className="text-muted-foreground tabular-nums">{isoToDateKey(config.startDate)} &ndash; {isoToDateKey(config.endDate)}</span>
           <Separator orientation="vertical" className="!h-4" />
           <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
           <Separator orientation="vertical" className="!h-4" />
@@ -363,19 +388,19 @@ type TradeRow = {
 
 export type TradeScatterPoint = { date: string; pnl: number; strategy: string; direction: string; quantity: number; symbol: string; trader: string };
 export type RollingWinRatePoint = { tradeNum: number; date: string; winRate: number; windowSize: number };
+export type StrategyEquityPoint = Record<string, number | string>;
 
 function computeFromTrades(
   allTrades: TradeRow[],
-  decisions: { decision: { phase: string; outcome: string; inputTokens?: number | null } }[],
+  decisions: { decision: { phase: string; outcome: string } }[],
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
   commissionSchedule?: CommissionSchedule,
 ) {
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, commissionSchedule);
 
-  // Execution stats from already-loaded decisions — use inputTokens to identify LLM-involved decisions
-  const isLLMInvolved = (d: { decision: { inputTokens?: number | null } }) => d.decision.inputTokens != null;
-  const agentCallsUsed = decisions.filter(isLLMInvolved).length;
-  const agentTrades = decisions.filter((d) => isLLMInvolved(d) && d.decision.outcome === 'EXECUTE').length;
+  // Execution stats from already-loaded decisions — no precomputed fallback
+  const agentCallsUsed = decisions.filter((d) => d.decision.phase === 'agent').length;
+  const agentTrades = decisions.filter((d) => d.decision.phase === 'agent' && d.decision.outcome === 'EXECUTE').length;
   const skipped = decisions.filter((d) => d.decision.outcome === 'SKIP').length;
 
   const summary = { ...core, totalMessages: 0, tradedMessages: 0, agentCallsUsed, agentTrades, skipped };
@@ -384,7 +409,7 @@ function computeFromTrades(
   const netPnlOf = (t: TradeRow) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
 
   const tradeScatter: TradeScatterPoint[] = sortedClosed.map((t) => ({
-    date: (t.closedAt ?? t.openedAt ?? '').split('T')[0],
+    date: isoToDateKey(t.closedAt ?? t.openedAt ?? ''),
     pnl: netPnlOf(t),
     strategy: t.strategy,
     direction: t.direction,
@@ -401,10 +426,30 @@ function computeFromTrades(
       const windowWins = window.filter((t) => netPnlOf(t) > 0).length;
       rollingWinRate.push({
         tradeNum: i + 1,
-        date: (sortedClosed[i].closedAt ?? '').split('T')[0],
+        date: isoToDateKey(sortedClosed[i].closedAt ?? ''),
         winRate: roundCents(windowWins / windowSize),
         windowSize,
       });
+    }
+  }
+
+  const strategies = [...new Set(sortedClosed.map((t) => t.strategy))];
+  const strategyEquity: StrategyEquityPoint[] = [];
+  if (strategies.length >= 2) {
+    const cumByStrategy: Record<string, number> = {};
+    for (const s of strategies) cumByStrategy[s] = 0;
+    const dateGroups = new Map<string, TradeRow[]>();
+    for (const t of sortedClosed) {
+      const date = isoToDateKey(t.closedAt ?? '');
+      let group = dateGroups.get(date);
+      if (!group) { group = []; dateGroups.set(date, group); }
+      group.push(t);
+    }
+    for (const [date, trades] of [...dateGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      for (const t of trades) cumByStrategy[t.strategy] += netPnlOf(t);
+      const point: StrategyEquityPoint = { date };
+      for (const s of strategies) point[s] = roundCents(cumByStrategy[s]);
+      strategyEquity.push(point);
     }
   }
 
@@ -416,5 +461,7 @@ function computeFromTrades(
     equityCurve: equityCurve.length > 0 ? equityCurve : null,
     tradeScatter,
     rollingWinRate,
+    strategyEquity,
+    strategies,
   };
 }
