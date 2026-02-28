@@ -1,7 +1,7 @@
 'use server';
 
 import { db, schema } from '@/lib/db';
-import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext } from '@db/schema';
+import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, RunDecision } from '@db/schema';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import {
@@ -10,7 +10,9 @@ import {
   getTaskById,
   getMessagesByAuthorAndSymbol,
   getMessageById,
+  getMessagesByIds,
   getRunDecisionForTask,
+  getDecisionsForTrade,
 } from '@/lib/queries';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
@@ -58,6 +60,21 @@ export async function forceExitTrade(formData: FormData) {
 
 // ─── Trade Story (expanded row data) ────────────────
 
+export type TradeStoryDecision = {
+  outcome: string | null;
+  reasoning: string | null;
+  phase: string | null;
+  durationMs: number | null;
+  pnl: string | null;
+};
+
+export type TimelineMessage = {
+  id: string;
+  cleanText: string;
+  author: string;
+  timestamp: string;
+};
+
 export type TradeStory = {
   trade: Trade;
   events: TradeEvent[];
@@ -66,13 +83,9 @@ export type TradeStory = {
   sourceMessage: Message | null;
   closeMessage: Message | null;
   nearbyMessages: Message[];
-  decision: {
-    outcome: string | null;
-    reasoning: string | null;
-    phase: string | null;
-    durationMs: number | null;
-    pnl: string | null;
-  } | null;
+  decision: TradeStoryDecision | null;
+  decisions: RunDecision[];
+  timelineMessages: TimelineMessage[];
 };
 
 export async function fetchTradeStory(tradeId: string, runId?: string): Promise<TradeStory | null> {
@@ -100,7 +113,7 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
   ]);
 
   // Extract decision from run_decisions (works for both backtest and live)
-  let decision: TradeStory['decision'] = null;
+  let decision: TradeStoryDecision | null = null;
   if (runDecisionRow) {
     decision = {
       outcome: runDecisionRow.outcome,
@@ -113,6 +126,16 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
 
   const taskContext = task?.context ?? null;
 
-  return { trade, events, task, taskContext, sourceMessage, closeMessage, nearbyMessages, decision };
+  // Fetch full decisions for the execution timeline
+  const decisions = await getDecisionsForTrade(trade);
+  const knownMessageIds = new Set([trade.sourceMessageId, trade.closeMessageId].filter(Boolean));
+  const intermediateIds = [...new Set(decisions.map(d => d.messageId))].filter(id => !knownMessageIds.has(id));
+  const intermediateMessages = intermediateIds.length > 0 ? await getMessagesByIds(intermediateIds) : [];
+
+  const timelineMessages: TimelineMessage[] = [sourceMessage, closeMessage, ...intermediateMessages]
+    .filter((m): m is NonNullable<typeof m> => m != null)
+    .map(m => ({ id: m.id, cleanText: m.cleanText, author: m.author, timestamp: m.timestamp }));
+
+  return { trade, events, task, taskContext, sourceMessage, closeMessage, nearbyMessages, decision, decisions, timelineMessages };
 }
 

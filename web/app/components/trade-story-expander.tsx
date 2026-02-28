@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition } from 'react';
 import { fetchTradeStory } from '../trades/actions';
-import type { TradeStory } from '../trades/actions';
+import type { TradeStory, TradeStoryDecision } from '../trades/actions';
 import { SignalDecisionSummary } from './signal-decision-summary';
 import { CompactEventChain } from './compact-event-chain';
 import { OutcomeLegsSummary } from './outcome-legs-summary';
@@ -100,7 +100,7 @@ export function TradeStoryExpander({
                       author: story.sourceMessage.author,
                       timestamp: formatDate(story.sourceMessage.timestamp),
                     } : null}
-                    decision={story.decision}
+                    decision={story.decision?.outcome ? { ...story.decision, outcome: story.decision.outcome } : null}
                     taskId={story.task?.id}
                     runId={runId}
                   />

@@ -1,4 +1,4 @@
-import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule } from '@/lib/queries';
+import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule, getTradeEventsForTrades } from '@/lib/queries';
 import { TradesTableClient } from '../components/trades-table-client';
 import { MetricStrip } from '../components/metric-strip';
 import type { Metric } from '../components/metric-strip';
@@ -40,6 +40,8 @@ export default async function TradeHistoryPage({
     }),
     runId ? getRunCommissionSchedule(runId) : undefined,
   ]);
+
+  const eventsByTradeId = await getTradeEventsForTrades(trades.map((t) => t.id));
 
   const metrics: Metric[] = [
     {
@@ -123,7 +125,7 @@ export default async function TradeHistoryPage({
       </div>
 
       <div className="animate-in-up">
-        <TradesTableClient trades={trades} runId={runId} commissionSchedule={commissionSchedule} />
+        <TradesTableClient trades={trades} eventsByTradeId={eventsByTradeId} runId={runId} commissionSchedule={commissionSchedule} />
         {trades.length === 0 && hasFilters && (
           <p className="px-4 py-6 text-sm text-muted-foreground text-center">
             No closed trades matching filters

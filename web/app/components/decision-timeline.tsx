@@ -1,6 +1,8 @@
+'use client';
+
 import { Badge } from './badge';
 import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '../../../src/lib/numbers';
 import type { RunDecision, TradeEvent } from '../../../src/db/schema';
@@ -156,6 +158,71 @@ function DecisionDetail({ d }: { d: RunDecision }) {
   );
 }
 
+// ─── Decision Popover ────────────────────────────────
+
+function fmtValue(v: unknown): string {
+  if (v == null) return '--';
+  if (typeof v === 'object') return JSON.stringify(v, null, 2);
+  return String(v);
+}
+
+function DecisionPopover({ d }: { d: RunDecision }) {
+  const event = d.event ?? 'SETTLED';
+  const snap = d.snapshot ? stripNoise(d.snapshot as Record<string, unknown>) : {};
+  const hasSnap = Object.keys(snap).length > 0;
+
+  return (
+    <PopoverContent align="start" side="right" className="w-96 max-h-[420px] overflow-auto p-0">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+        <Badge label={event} />
+        {d.outcome && <Badge label={d.outcome} />}
+        {d.signalIndex != null && d.signalIndex > 0 && (
+          <span className="text-[10px] text-muted-foreground tabular-nums">#{d.signalIndex}</span>
+        )}
+        <div className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
+          {d.durationMs != null && d.durationMs > 10 && <span>{fmtMs(d.durationMs)}</span>}
+          {d.inputTokens != null && d.outputTokens != null && (
+            <span>{d.inputTokens.toLocaleString()}/{d.outputTokens.toLocaleString()} tok</span>
+          )}
+        </div>
+      </div>
+
+      <div className="px-3 py-2 space-y-3">
+        {/* Reasoning */}
+        {d.reasoning && (
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Reasoning</p>
+            <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">{d.reasoning}</p>
+          </div>
+        )}
+
+        {/* Snapshot */}
+        {hasSnap && (
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Snapshot</p>
+            <div className="space-y-0.5">
+              {Object.entries(snap).map(([k, v]) => (
+                <div key={k} className="flex gap-2 text-[11px]">
+                  <span className="text-muted-foreground shrink-0">{k}</span>
+                  <span className="text-foreground tabular-nums break-all">{fmtValue(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* IDs */}
+        <div className="border-t border-border pt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground/60 tabular-nums">
+          {d.messageId && <span>msg {d.messageId.slice(0, 8)}</span>}
+          {d.tradeId && <span>trade {d.tradeId.slice(0, 8)}</span>}
+          <span>id {d.id.slice(0, 8)}</span>
+        </div>
+      </div>
+    </PopoverContent>
+  );
+}
+
 // ─── Visual constants ────────────────────────────────
 
 const EVENT_LABEL: Record<string, string> = {
@@ -239,15 +306,14 @@ export function UnifiedTimeline({
   // Decision dots: 8px → left edge at 12-4=8 → from content: -(30-8)=-22
 
   return (
-    <Card className="py-4 gap-0">
-      <CardContent>
-        <h3 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">
-          Execution Timeline
-        </h3>
+    <div>
+      <h3 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-4">
+        Execution Timeline
+      </h3>
 
-        <div className="relative pl-[30px]">
-          {/* Vertical rail */}
-          <div className="absolute top-0 bottom-0 w-px bg-border/40" style={{ left: '12px' }} />
+      <div className="relative pl-[30px]">
+        {/* Vertical rail */}
+        <div className="absolute top-0 bottom-0 w-px bg-border/40" style={{ left: '12px' }} />
 
           {entries.map((entry, i) => {
             const isLast = i === entries.length - 1;
@@ -368,8 +434,7 @@ export function UnifiedTimeline({
               </div>
             );
           })}
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronRight, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
@@ -21,15 +21,15 @@ export function TradeRow({
   runId,
   commissionSchedule,
   startingEquity,
-  onExpand,
-  isExpanded,
+  onSelect,
+  isSelected,
 }: {
   trade: Trade;
   runId?: string;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
-  onExpand?: () => void;
-  isExpanded?: boolean;
+  onSelect?: () => void;
+  isSelected?: boolean;
 }) {
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
@@ -46,16 +46,9 @@ export function TradeRow({
 
   return (
     <TableRow
-      className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''}`}
-      onClick={onExpand}
+      className={`hover:bg-accent/40 transition-colors ${onSelect ? 'cursor-pointer' : ''} ${isSelected ? 'bg-accent/30' : ''}`}
+      onClick={onSelect}
     >
-      {/* Expand chevron */}
-      <TableCell className="w-6">
-        {onExpand ? (
-          <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
-        ) : null}
-      </TableCell>
-
       {/* Symbol */}
       <TableCell>
         <Link
@@ -117,16 +110,16 @@ export function TradeRow({
       <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.exitPrice)}</TableCell>
 
       {/* Notional */}
-      <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs">
+      <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs text-muted-foreground">
         {notional > 0 ? (
-          <span className="flex flex-col items-end gap-0.5">
-            <span className="text-muted-foreground">{formatCurrency(notional)}</span>
+          <>
+            {formatCurrency(notional)}
             {notionalPct != null && (
-              <span className={`text-[10px] ${notionalConcentrationColor(notionalPct)}`}>
+              <span className={`ml-1 text-[10px] ${notionalConcentrationColor(notionalPct)}`}>
                 {(notionalPct * 100).toFixed(1)}%
               </span>
             )}
-          </span>
+          </>
         ) : '--'}
       </TableCell>
 

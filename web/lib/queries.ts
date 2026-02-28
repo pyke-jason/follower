@@ -894,6 +894,22 @@ export async function getTradeEvents(tradeId: string) {
     .orderBy(asc(schema.tradeEvents.timestamp));
 }
 
+export async function getTradeEventsForTrades(tradeIds: string[]) {
+  if (tradeIds.length === 0) return new Map<string, (typeof schema.tradeEvents.$inferSelect)[]>();
+  const rows = await db
+    .select()
+    .from(schema.tradeEvents)
+    .where(inArray(schema.tradeEvents.tradeId, tradeIds))
+    .orderBy(asc(schema.tradeEvents.timestamp));
+  const grouped = new Map<string, (typeof schema.tradeEvents.$inferSelect)[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.tradeId) ?? [];
+    list.push(row);
+    grouped.set(row.tradeId, list);
+  }
+  return grouped;
+}
+
 // ─── Enriched Messages (trade-overlay chat feed) ────
 
 export async function getEnrichedMessages(opts: {

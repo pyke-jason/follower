@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -16,7 +16,6 @@ import { DrawdownChart } from './drawdown-chart';
 import { BreakdownCharts } from './breakdown-charts';
 import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
-import { StrategyEquityChart } from './strategy-equity';
 import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { TradesTableClient } from '../../components/trades-table-client';
@@ -66,6 +65,7 @@ export default async function BacktestDetailPage({
     getMtmSnapshots(id),
   ]);
 
+  const eventsByTradeId = await getTradeEventsForTrades(allTrades.map((t) => t.id));
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
 
   // Clamp closedAt dates to the backtest end date so charts don't extend
@@ -78,7 +78,7 @@ export default async function BacktestDetailPage({
 
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, mtmSnapshots, config.commissionSchedule);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate } = computeFromTrades(clampedTrades, decisions, mtmSnapshots, config.commissionSchedule);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -150,17 +150,6 @@ export default async function BacktestDetailPage({
       {/* Row 3: Breakdown Charts */}
       <BreakdownCharts byTrader={byTrader} byStrategy={byStrategy} runId={id} />
 
-      {/* Row 4: Strategy Equity (only if 2+ strategies) */}
-      {strategyEquity.length > 0 && strategies.length >= 2 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Strategy Equity</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <StrategyEquityChart data={strategyEquity} strategies={strategies} />
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 
@@ -196,7 +185,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTableClient trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
+  const tradesContent = <TradesTableClient trades={allTrades} eventsByTradeId={eventsByTradeId} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -374,7 +363,6 @@ type TradeRow = {
 
 export type TradeScatterPoint = { date: string; pnl: number; strategy: string; direction: string; quantity: number; symbol: string; trader: string };
 export type RollingWinRatePoint = { tradeNum: number; date: string; winRate: number; windowSize: number };
-export type StrategyEquityPoint = Record<string, number | string>;
 
 function computeFromTrades(
   allTrades: TradeRow[],
@@ -420,26 +408,6 @@ function computeFromTrades(
     }
   }
 
-  const strategies = [...new Set(sortedClosed.map((t) => t.strategy))];
-  const strategyEquity: StrategyEquityPoint[] = [];
-  if (strategies.length >= 2) {
-    const cumByStrategy: Record<string, number> = {};
-    for (const s of strategies) cumByStrategy[s] = 0;
-    const dateGroups = new Map<string, TradeRow[]>();
-    for (const t of sortedClosed) {
-      const date = (t.closedAt ?? '').split('T')[0];
-      let group = dateGroups.get(date);
-      if (!group) { group = []; dateGroups.set(date, group); }
-      group.push(t);
-    }
-    for (const [date, trades] of [...dateGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      for (const t of trades) cumByStrategy[t.strategy] += netPnlOf(t);
-      const point: StrategyEquityPoint = { date };
-      for (const s of strategies) point[s] = roundCents(cumByStrategy[s]);
-      strategyEquity.push(point);
-    }
-  }
-
   const hasTrades = allTrades.length > 0;
   return {
     summary: hasTrades ? summary : null,
@@ -448,7 +416,5 @@ function computeFromTrades(
     equityCurve: equityCurve.length > 0 ? equityCurve : null,
     tradeScatter,
     rollingWinRate,
-    strategyEquity,
-    strategies,
   };
 }

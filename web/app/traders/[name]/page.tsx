@@ -4,6 +4,7 @@ import {
   getTraderStrategyBreakdown,
   getTradeHistorySummary,
   getClosedTrades,
+  getTradeEventsForTrades,
 } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { InfoChip } from '../../components/info-chip';
@@ -36,6 +37,8 @@ export default async function TraderDetailPage({
     getTraderStrategyBreakdown(decodedName, runId),
     getClosedTrades({ trader: decodedName, limit: 20, runId }),
   ]);
+
+  const recentEventsByTradeId = await getTradeEventsForTrades(recentTrades.map((t) => t.id));
 
   const equityData = equityCurve.map((pt) => ({
     date: pt.date,
@@ -122,7 +125,7 @@ export default async function TraderDetailPage({
       {recentTrades.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-foreground mb-3">Recent Trades</h3>
-          <TradesTableClient trades={recentTrades} runId={runId} />
+          <TradesTableClient trades={recentTrades} eventsByTradeId={recentEventsByTradeId} runId={runId} />
         </div>
       )}
 
