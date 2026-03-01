@@ -1,8 +1,8 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { StatItem } from '../../components/stat-item';
 import { formatCurrency } from '@/lib/format';
-import type { Trade } from '../../../../src/db/schema';
-import { safeParseFloat } from '../../../../src/lib/numbers';
+import type { Trade } from '@src/db/schema';
+import { safeParseFloat } from '@src/lib/numbers';
 
 export function FillQuality({ trade }: { trade: Trade }) {
   const expectedPrice = safeParseFloat(trade.entryPrice);

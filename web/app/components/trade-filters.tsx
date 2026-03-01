@@ -7,7 +7,7 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronsUpDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Trade } from '../../../src/db/schema';
+import type { Trade } from '@src/db/schema';
 
 // ── Filter values ──────────────────────────────────────────────────
 

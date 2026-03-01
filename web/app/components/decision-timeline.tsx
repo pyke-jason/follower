@@ -4,8 +4,8 @@ import { Badge } from './badge';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
-import { safeParseFloat } from '../../../src/lib/numbers';
-import type { RunDecision, TradeEvent } from '../../../src/db/schema';
+import { safeParseFloat } from '@src/lib/numbers';
+import type { RunDecision, TradeEvent } from '@src/db/schema';
 import type { TimelineMessage } from '../trades/actions';
 import {
   ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,

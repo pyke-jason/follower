@@ -7,7 +7,7 @@ import { EnrichedChatBubble } from '../components/enriched-chat-bubble';
 import { DateSeparator } from './date-separator';
 import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 import type { MessageEnrichment } from './actions';
 
 type FeedItem =

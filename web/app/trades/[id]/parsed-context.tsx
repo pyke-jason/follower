@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import {
   Accordion, AccordionItem, AccordionTrigger, AccordionContent,
 } from '@/components/ui/accordion';
-import type { TaskContext } from '../../../../src/db/schema';
+import type { TaskContext } from '@src/db/schema';
 
 export function ParsedContext({ context }: { context: TaskContext }) {
   const hasContent =

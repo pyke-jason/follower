@@ -2,8 +2,8 @@ import { getTrackedTraders, getBacktestRunById } from '@/lib/queries';
 import { Card, CardContent } from '@/components/ui/card';
 import { BacktestForm } from './backtest-form';
 import Link from 'next/link';
-import type { BacktestRunConfig } from '../../../../src/db/schema';
-import { getConfig } from '../../../../src/db/accessors';
+import type { BacktestRunConfig } from '@src/db/schema';
+import { getConfig } from '@src/db/accessors';
 
 export const dynamic = 'force-dynamic';
 

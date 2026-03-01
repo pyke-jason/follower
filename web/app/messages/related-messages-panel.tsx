@@ -3,7 +3,7 @@
 import { ChatFeed } from './chat-feed';
 import { Card } from '@/components/ui/card';
 import { X } from 'lucide-react';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 
 type RelatedContext = {
   messages: Message[];

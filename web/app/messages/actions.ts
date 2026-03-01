@@ -4,9 +4,9 @@ import { getMessages, getMessageById, getMessagesBySymbols, getLabelsForMessages
 import { db, schema } from '@/lib/db';
 import { PAGE_SIZE } from './load-chat-data';
 import { revalidatePath } from 'next/cache';
-import type { Message, MessageLabel } from '../../../src/db/schema';
-import type { Signal } from '../../../src/agent/schemas';
-import type { TradeOutcome, MessageDecision } from '../../../src/lib/enriched-message';
+import type { Message, MessageLabel } from '@src/db/schema';
+import type { Signal } from '@src/agent/schemas';
+import type { TradeOutcome, MessageDecision } from '@src/lib/enriched-message';
 
 export type LabelFilter = 'labeled' | 'unlabeled';
 

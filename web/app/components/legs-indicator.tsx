@@ -1,4 +1,4 @@
-import type { TradeLeg } from '../../../src/db/schema';
+import type { TradeLeg } from '@src/db/schema';
 
 export function LegsIndicator({ legs, strategy }: { legs: TradeLeg[] | null; strategy: string }) {
   if (strategy === 'STOCK' || !legs || legs.length === 0) return null;

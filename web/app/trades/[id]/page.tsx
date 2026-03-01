@@ -13,10 +13,10 @@ import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
-import { safeParseFloat } from '../../../../src/lib/numbers';
-import { computeTradeCommission } from '../../../../src/lib/commission';
-import type { CommissionSchedule } from '../../../../src/db/schema';
-import { getConfig } from '../../../../src/db/accessors';
+import { safeParseFloat } from '@src/lib/numbers';
+import { computeTradeCommission } from '@src/lib/commission';
+import type { CommissionSchedule } from '@src/db/schema';
+import { getConfig } from '@src/db/accessors';
 
 export const dynamic = 'force-dynamic';
 

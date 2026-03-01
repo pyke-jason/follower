@@ -5,7 +5,7 @@ import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
 import { RelatedMessagesPanel } from './related-messages-panel';
 import { fetchMessages, fetchRelatedMessages, type MessageFilters, type MessageEnrichment } from './actions';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 
 const START_INDEX = 100_000;
 

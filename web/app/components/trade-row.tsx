@@ -6,11 +6,11 @@ import { TableRow, TableCell } from '@/components/ui/table';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
-import type { Trade, TradeEvent, CommissionSchedule } from '../../../src/db/schema';
-import { getLegs } from '../../../src/db/accessors';
-import { safeParseFloat } from '../../../src/lib/numbers';
-import { computeTradeCommission } from '../../../src/lib/commission';
-import { notionalValue } from '../../../src/lib/trade';
+import type { Trade, TradeEvent, CommissionSchedule } from '@src/db/schema';
+import { getLegs } from '@src/db/accessors';
+import { safeParseFloat } from '@src/lib/numbers';
+import { computeTradeCommission } from '@src/lib/commission';
+import { notionalValue } from '@src/lib/trade';
 import type { LucideIcon } from 'lucide-react';
 
 function notionalConcentrationColor(pct: number): string {

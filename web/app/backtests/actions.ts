@@ -5,9 +5,9 @@ import { eq, inArray, and, gte, lte, sql } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots } from '@/lib/queries';
-import { generateReportFromTrades } from '../../../src/backtest/report';
-import type { CommissionSchedule } from '../../../src/db/schema';
-import { getConfig } from '../../../src/db/accessors';
+import { generateReportFromTrades } from '@src/backtest/report';
+import type { CommissionSchedule } from '@src/db/schema';
+import { getConfig } from '@src/db/accessors';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 

@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate, isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
 import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
-import { getConfig, getSummary, getEquityCurve } from '../../../src/db/accessors';
-import { pctDisplay, PROFIT_FACTOR_INF } from '../../../src/lib/numbers';
+import { getConfig, getSummary, getEquityCurve } from '@src/db/accessors';
+import { pctDisplay, PROFIT_FACTOR_INF } from '@src/lib/numbers';
 import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
 function formatDuration(ms: number | null): string {

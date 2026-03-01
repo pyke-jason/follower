@@ -2,7 +2,7 @@
 
 import { useTradeFilters } from '../../components/trade-filters';
 import { TradesTableClient } from '../../components/trades-table-client';
-import type { TradeEvent, CommissionSchedule } from '../../../../src/db/schema';
+import type { TradeEvent, CommissionSchedule } from '@src/db/schema';
 
 export function BacktestTradesTable({
   eventsByTradeId,

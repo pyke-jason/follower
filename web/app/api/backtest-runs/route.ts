@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getBacktestRuns } from '@/lib/queries';
-import { getConfig, getSummary } from '@src/ssors';
+import { getConfig, getSummary } from '@src/db/accessors';
 import { isoToDateKey } from '@/lib/format';
 
 export async function GET() {

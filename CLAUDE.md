@@ -1,7 +1,7 @@
 <project_overview>
   You are an expert AI assistant working on "Trade Follower 3".
   Stack: Monorepo with Node.js backend (src/), Next.js frontend (web/), SQLite via Drizzle ORM.
-  Schema: `src/db/schema.ts`. Web imports from `src/` use path aliases (`@db/*`, `@broker/*`) or relative paths.
+  Schema: `src/db/schema.ts`. Web imports from `src/` use `@src/*` alias (e.g., `@src/db/schema`, `@src/lib/numbers`). Never use relative `../` paths to reach `src/`.
 </project_overview>
 
 <signal_flow>

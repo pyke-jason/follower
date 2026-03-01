@@ -3,7 +3,7 @@ import { AuthorAvatar } from './author-avatar';
 import { MessageContent } from './message-content';
 import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 
 function getAccentBorder(message: Message): string {
   const action = message.actionHint;

@@ -23,13 +23,13 @@ import { TradeFilterProvider, TradeFilters } from '../../components/trade-filter
 import { BacktestTradesTable } from './backtest-trades-table';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
-import type { CommissionSchedule } from '../../../../src/db/schema';
-import { getConfig, getLiveMetrics } from '../../../../src/db/accessors';
+import type { CommissionSchedule } from '@src/db/schema';
+import { getConfig, getLiveMetrics } from '@src/db/accessors';
 
-import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
-import { computeCoreStats } from '../../../../src/backtest/report';
-import { computeTradeCommission } from '../../../../src/lib/commission';
-import { tradeQty } from '../../../../src/lib/trade';
+import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '@src/lib/numbers';
+import { computeCoreStats } from '@src/backtest/report';
+import { computeTradeCommission } from '@src/lib/commission';
+import { tradeQty } from '@src/lib/trade';
 
 export const dynamic = 'force-dynamic';
 

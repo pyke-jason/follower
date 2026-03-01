@@ -1,5 +1,5 @@
 import { getMessages, getDistinctAuthors, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 import type { MessageEnrichment, LabelFilter } from './actions';
 
 export const PAGE_SIZE = 50;

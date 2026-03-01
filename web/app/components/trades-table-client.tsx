@@ -8,7 +8,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { TradeRow } from './trade-row';
 import { EventSubRows } from './event-sub-rows';
 import { TradeDetailPanel } from './trade-detail-panel';
-import type { Trade, TradeEvent, CommissionSchedule } from '../../../src/db/schema';
+import type { Trade, TradeEvent, CommissionSchedule } from '@src/db/schema';
 
 export function TradesTableClient({
   trades,

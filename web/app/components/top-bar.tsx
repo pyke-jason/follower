@@ -8,7 +8,7 @@ import { SignalSheet } from './signal-sheet';
 import { ThemeToggle } from './theme-toggle';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useRunScope } from './run-scope-provider';
-import { pctDisplay } from '../../../src/lib/numbers';
+import { pctDisplay } from '@src/lib/numbers';
 
 export function TopBar() {
   const { runId, runBrief: brief, status, selectRun } = useRunScope();

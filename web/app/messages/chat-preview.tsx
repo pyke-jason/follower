@@ -5,7 +5,7 @@ import { useState, useCallback, useTransition, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { fetchMessages, fetchMessage } from './actions';
 import Link from 'next/link';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 
 const ChatFeed = dynamic(
   () => import('./chat-feed').then((m) => ({ default: m.ChatFeed })),

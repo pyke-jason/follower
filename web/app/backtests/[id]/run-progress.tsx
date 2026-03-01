@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { InfoChip } from '../../components/info-chip';
 import { formatBytes, formatCurrency, formatDateShort, isoToDateKey } from '@/lib/format';
-import { estimateLlmCost } from '../../../../src/lib/llm-cost';
-import type { LiveMetrics } from '../../../../src/backtest/types';
+import { estimateLlmCost } from '@src/lib/llm-cost';
+import type { LiveMetrics } from '@src/backtest/types';
 import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain } from 'lucide-react';
 
 interface RunProgressProps {

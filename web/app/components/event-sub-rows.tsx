@@ -1,8 +1,8 @@
 import { Badge } from './badge';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/format';
-import { safeParseFloat } from '../../../src/lib/numbers';
-import type { TradeEvent } from '../../../src/db/schema';
+import { safeParseFloat } from '@src/lib/numbers';
+import type { TradeEvent } from '@src/db/schema';
 
 function EventRow({ event, closeMessageId }: { event: TradeEvent; closeMessageId?: string | null }) {
   const price = safeParseFloat(event.price);

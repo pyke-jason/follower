@@ -15,8 +15,8 @@ import {
 import { startBacktest } from '../actions';
 import { isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
-import type { BacktestRunConfig } from '../../../../src/db/schema';
-import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '../../../../src/config/risk-defaults';
+import type { BacktestRunConfig } from '@src/db/schema';
+import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: [

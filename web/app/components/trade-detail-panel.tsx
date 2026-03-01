@@ -8,7 +8,7 @@ import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from './badge';
 import { formatDate } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { Trade, CommissionSchedule, Message } from '../../../src/db/schema';
+import type { Trade, CommissionSchedule, Message } from '@src/db/schema';
 
 const INITIAL_VISIBLE = 3;
 
