@@ -62,10 +62,10 @@ src/
 │   ├── badges.ts               # Extract trade signal badges
 │   ├── symbols.ts              # Extract ticker symbols
 │   └── strategy.ts             # Regex-based strategy detection (CDS, PDS, etc.)
-├── tasks/
+├── live/
 │   ├── factory.ts              # Message → Task (EXECUTE_TRADE or REVIEW_MESSAGE)
 │   ├── runner.ts               # Poll pending tasks, dispatch to agent, record trades
-│   └── recorder.ts             # Write steps + results + fill enrichment to DB
+│   └── recorder.ts             # Write task status (complete/fail/start) to DB
 ├── orders/
 │   └── risk-check.ts           # Pre-trade risk limits (max positions, drawdown, notional)
 ├── position-sizing/

@@ -148,6 +148,7 @@ export function TradeDetailPanel({
                   tradeEvents={story.events}
                   closeMessageId={story.trade.closeMessageId}
                   messages={story.timelineMessages}
+                  tradePnl={story.trade.pnl}
                 />
               </section>
             )}

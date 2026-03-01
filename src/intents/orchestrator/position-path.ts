@@ -281,12 +281,19 @@ export async function resolvePositionPath(
 
   // Step 4: Build reversal legs based on action
   let legs: Leg[];
+  let trimExitPercent: number | undefined;
 
   if (action === 'CLOSE') {
     legs = buildCloseLegs(position, symbol);
   } else if (action === 'TRIM') {
-    const exitPercent = parse.exitPercent ?? 0.5;
-    const result = buildTrimLegs(position, symbol, exitPercent);
+    if (parse.exitPercent === null || parse.exitPercent === undefined) {
+      return {
+        outcome: 'MANUAL_REVIEW',
+        reason: 'TRIM without explicit exit percentage',
+      };
+    }
+    trimExitPercent = parse.exitPercent;
+    const result = buildTrimLegs(position, symbol, trimExitPercent);
     if ('flagReason' in result) {
       return { outcome: 'MANUAL_REVIEW', reason: result.flagReason };
     }
@@ -320,7 +327,7 @@ export async function resolvePositionPath(
     legs,
     action,
     tradeId: position.id,
-    ...(action === 'TRIM' && { exitPercent: parse.exitPercent ?? 0.5 }),
+    ...(action === 'TRIM' && { exitPercent: trimExitPercent }),
   };
 
   return { outcome: 'EXECUTE', signals: [signal] };

@@ -7,7 +7,7 @@ import { checkRiskLimits } from '../orders/risk-check.js';
 import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import { toDateKeyET, parseDateKey, isoToDateKey } from '../lib/et-date.js';
+import { toDateKeyET, parseDateKey, isoToDateKey, marketCloseUTC } from '../lib/et-date.js';
 import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
@@ -15,6 +15,7 @@ import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
 import { getTrader } from '../config/traders.js';
 import { OrderManager } from '../orders/order-manager.js';
+import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
@@ -194,38 +195,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     broker,
     clock: () => clock.now(),
     manualTick: true,
-    onFill: async (order) => {
-      const pending = pendingIntents.get(order.orderId);
-      if (!pending) return;
-      pendingIntents.delete(order.orderId);
-      const emitter = createEmitter({ messageId: pending.messageId ?? '', backtestRunId: runId });
-      await emitter.emit('ORDER_FILLED', {
-        orderId: order.orderId,
-        symbol: order.params.symbol,
-        strategy: order.params.strategy,
-        direction: order.params.direction,
-        filledPrice: order.filledPrice,
-        filledAt: order.filledAt.toISOString(),
-        filledQuantity: order.filledQuantity,
-        commission: order.commission,
-        legFills: order.legFills,
-        adjustmentCount: order.adjustmentCount,
-        originalLimitPrice: order.params.limitPrice,
-        immediatelyFilled: false,
-      }, { signalIndex: pending.signalIndex ?? null });
-      await pending.recordFill(order.filledPrice, order.filledAt);
-    },
-    onCancel: (order) => {
-      pendingIntents.delete(order.orderId);
-    },
-    onAdjust: async (order, fromPrice, toPrice, step) => {
-      const pending = pendingIntents.get(order.orderId);
-      if (!pending) return;
-      const emitter = createEmitter({ messageId: pending.messageId ?? '', backtestRunId: runId });
-      await emitter.emit('ORDER_ADJUSTED', {
-        orderId: order.orderId, fromPrice, toPrice, step,
-      }, { signalIndex: pending.signalIndex ?? null });
-    },
+    ...buildOrderCallbacks({
+      pendingIntents,
+      createScopedEmitter: (messageId) =>
+        createEmitter({ messageId, backtestRunId: runId }),
+    }),
   });
 
   const agentIdentity = {
@@ -292,6 +266,13 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     if (lastMsgDay && msgDay !== lastMsgDay) {
       log.info(`Day ${lastMsgDay} → ${msgDay}`);
 
+      // Give working orders a final chance to fill against remaining intraday ticks.
+      // The backtest is event-driven (time only moves on tradable messages), so orders
+      // placed during the last message of the day get zero tick evaluations without this.
+      const prevDayClose = marketCloseUTC(parseDateKey(lastMsgDay));
+      await broker.advanceTo(prevDayClose);
+      await orderManager.tick(prevDayClose);
+
       const cancelledCloseCallbacks = new Map<string, (price: number, at: Date) => Promise<void>>();
       const workingOrders = orderManager.getWorkingOrders();
       for (const wo of workingOrders) {
@@ -304,7 +285,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           }
           log.info(`Day boundary: cancelling unfilled close order ${wo.orderId} ${wo.params.symbol}`);
           await broker.cancelOrder(wo.orderId);
-          pendingIntents.delete(wo.orderId);
         } else {
           const hasExpiredLeg = wo.params.legs.some(leg =>
             leg.type !== 'STOCK' && leg.expiry && leg.expiry < msgDay
@@ -312,7 +292,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           if (hasExpiredLeg) {
             log.info(`Day boundary: cancelling expired-leg order ${wo.orderId} ${wo.params.symbol} (legs expired before ${msgDay})`);
             await broker.cancelOrder(wo.orderId);
-            pendingIntents.delete(wo.orderId);
           }
         }
       }
@@ -342,7 +321,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           log.info(`Swept ${expiredCount} expired option(s) through ${sweepThrough}`);
         }
 
-        const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
+        const eodTime = marketCloseUTC(parseDateKey(lastMsgDay));
         const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
         await db.insert(schema.backtestMtmSnapshots).values({
           backtestRunId: runId,
@@ -427,7 +406,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         log.info(`Swept ${expiredCount} expired option(s) on ${lastMsgDay} (final)`);
       }
 
-      const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
+      const eodTime = marketCloseUTC(parseDateKey(lastMsgDay));
       const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
       await db.insert(schema.backtestMtmSnapshots).values({
         backtestRunId: runId,

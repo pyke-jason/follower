@@ -7,8 +7,11 @@ import { eq, asc } from 'drizzle-orm';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { contractMultiplier } from '../lib/trade.js';
+import { createLogger } from '../lib/logger.js';
 import type { TradeLeg } from '../db/schema.js';
 import type { Direction } from '../lib/enums.js';
+
+const log = createLogger('Rebuild');
 
 export type RebuiltState = {
   status: string;
@@ -72,8 +75,17 @@ export async function rebuildFromEvents(tradeId: string): Promise<RebuildResult>
 
     switch (event.action) {
       case 'OPEN':
-        state.direction = event.direction ?? 'LONG';
-        state.strategy = event.strategy ?? 'STOCK';
+        if (event.direction == null || event.strategy == null) {
+          log.warn('OPEN event missing direction or strategy — skipping corrupted event', {
+            tradeId,
+            eventId: event.id,
+            direction: event.direction,
+            strategy: event.strategy,
+          });
+          continue;
+        }
+        state.direction = event.direction;
+        state.strategy = event.strategy;
         state.entryPrice = price;
         state.quantity = qty;
         state.legs = (event.legs as TradeLeg[]) ?? [];

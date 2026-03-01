@@ -11,11 +11,22 @@ import type { Trade } from '@src/db/schema';
 
 // ── Filter values ──────────────────────────────────────────────────
 
+export type TradeFlag = 'closeFailed' | 'autoClose' | 'legOff' | 'trimmed' | 'added';
+
+const FLAG_LABELS: Record<TradeFlag, string> = {
+  closeFailed: 'Close failed',
+  autoClose: 'Auto-close',
+  legOff: 'Leg off',
+  trimmed: 'Trimmed',
+  added: 'Added',
+};
+
 export interface TradeFilterValues {
   traders: string[];
   symbol: string;
   strategies: string[];
   directions: string[];
+  flags: TradeFlag[];
 }
 
 const EMPTY_FILTERS: TradeFilterValues = {
@@ -23,14 +34,23 @@ const EMPTY_FILTERS: TradeFilterValues = {
   symbol: '',
   strategies: [],
   directions: [],
+  flags: [],
 };
 
-export function applyTradeFilters(trades: Trade[], filters: TradeFilterValues): Trade[] {
+export function applyTradeFilters(
+  trades: Trade[],
+  filters: TradeFilterValues,
+  flagsByTradeId?: Record<string, TradeFlag[]>,
+): Trade[] {
   return trades.filter((t) => {
     if (filters.traders.length > 0 && !filters.traders.includes(t.trader)) return false;
     if (filters.symbol && !t.symbol.toLowerCase().includes(filters.symbol.toLowerCase())) return false;
     if (filters.strategies.length > 0 && !filters.strategies.includes(t.strategy)) return false;
     if (filters.directions.length > 0 && !filters.directions.includes(t.direction)) return false;
+    if (filters.flags.length > 0 && flagsByTradeId) {
+      const tradeFlags = flagsByTradeId[t.id] ?? [];
+      if (!filters.flags.some(f => tradeFlags.includes(f))) return false;
+    }
     return true;
   });
 }
@@ -41,16 +61,26 @@ interface TradeFilterContextValue {
   filters: TradeFilterValues;
   setFilters: (f: TradeFilterValues) => void;
   toggleMulti: (key: 'traders' | 'strategies' | 'directions', value: string) => void;
+  toggleFlag: (flag: TradeFlag) => void;
   setSymbol: (value: string) => void;
   clearFilters: () => void;
   hasFilters: boolean;
   allTrades: Trade[];
   filteredTrades: Trade[];
+  availableFlags: TradeFlag[];
 }
 
 const TradeFilterContext = createContext<TradeFilterContextValue | null>(null);
 
-export function TradeFilterProvider({ trades, children }: { trades: Trade[]; children: ReactNode }) {
+export function TradeFilterProvider({
+  trades,
+  flagsByTradeId,
+  children,
+}: {
+  trades: Trade[];
+  flagsByTradeId?: Record<string, TradeFlag[]>;
+  children: ReactNode;
+}) {
   const [filters, setFilters] = useState<TradeFilterValues>(EMPTY_FILTERS);
 
   const toggleMulti = useCallback((key: 'traders' | 'strategies' | 'directions', value: string) => {
@@ -60,21 +90,38 @@ export function TradeFilterProvider({ trades, children }: { trades: Trade[]; chi
     });
   }, []);
 
+  const toggleFlag = useCallback((flag: TradeFlag) => {
+    setFilters((prev) => {
+      const arr = prev.flags;
+      return { ...prev, flags: arr.includes(flag) ? arr.filter((f) => f !== flag) : [...arr, flag] };
+    });
+  }, []);
+
   const setSymbol = useCallback((value: string) => {
     setFilters((prev) => ({ ...prev, symbol: value }));
   }, []);
 
   const clearFilters = useCallback(() => setFilters(EMPTY_FILTERS), []);
-  const hasFilters = filters.traders.length > 0 || filters.symbol !== '' || filters.strategies.length > 0 || filters.directions.length > 0;
+  const hasFilters = filters.traders.length > 0 || filters.symbol !== '' || filters.strategies.length > 0 || filters.directions.length > 0 || filters.flags.length > 0;
 
   const filteredTrades = useMemo(
-    () => applyTradeFilters(trades, filters),
-    [trades, filters],
+    () => applyTradeFilters(trades, filters, flagsByTradeId),
+    [trades, filters, flagsByTradeId],
   );
 
+  // Only show flag toggles for flags that actually appear on at least one trade
+  const availableFlags = useMemo(() => {
+    if (!flagsByTradeId) return [];
+    const seen = new Set<TradeFlag>();
+    for (const flags of Object.values(flagsByTradeId)) {
+      for (const f of flags) seen.add(f);
+    }
+    return (Object.keys(FLAG_LABELS) as TradeFlag[]).filter(f => seen.has(f));
+  }, [flagsByTradeId]);
+
   const value = useMemo(
-    () => ({ filters, setFilters, toggleMulti, setSymbol, clearFilters, hasFilters, allTrades: trades, filteredTrades }),
-    [filters, toggleMulti, setSymbol, clearFilters, hasFilters, trades, filteredTrades],
+    () => ({ filters, setFilters, toggleMulti, toggleFlag, setSymbol, clearFilters, hasFilters, allTrades: trades, filteredTrades, availableFlags }),
+    [filters, toggleMulti, toggleFlag, setSymbol, clearFilters, hasFilters, trades, filteredTrades, availableFlags],
   );
 
   return <TradeFilterContext value={value}>{children}</TradeFilterContext>;
@@ -215,7 +262,7 @@ function SymbolCombobox({
 // ── TradeFilters UI ────────────────────────────────────────────────
 
 export function TradeFilters({ className }: { className?: string }) {
-  const { filters, toggleMulti, setSymbol, clearFilters, hasFilters, allTrades, filteredTrades } = useTradeFilters();
+  const { filters, toggleMulti, toggleFlag, setSymbol, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags } = useTradeFilters();
 
   const options = useMemo(() => ({
     traders: [...new Set(allTrades.map((t) => t.trader))].sort(),
@@ -230,6 +277,29 @@ export function TradeFilters({ className }: { className?: string }) {
       <SymbolCombobox value={filters.symbol} onChange={setSymbol} symbols={options.symbols} />
       <MultiSelect selected={filters.strategies} onToggle={(v) => toggleMulti('strategies', v)} options={options.strategies} label="Strategy" />
       <MultiSelect selected={filters.directions} onToggle={(v) => toggleMulti('directions', v)} options={options.directions} label="Direction" />
+      {availableFlags.length > 0 && (
+        <>
+          <span className="w-px h-4 bg-border/50" />
+          {availableFlags.map((flag) => {
+            const active = filters.flags.includes(flag);
+            return (
+              <button
+                key={flag}
+                type="button"
+                onClick={() => toggleFlag(flag)}
+                className={cn(
+                  'h-7 text-[11px] px-2 rounded-md border transition-colors',
+                  active
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-transparent text-muted-foreground border-border/50 hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {FLAG_LABELS[flag]}
+              </button>
+            );
+          })}
+        </>
+      )}
       {/* Always reserve space for count + clear to prevent layout shift */}
       <span className={cn('text-xs tabular-nums min-w-[4ch] text-right', hasFilters ? 'text-muted-foreground' : 'invisible')}>
         {filteredTrades.length}/{allTrades.length}

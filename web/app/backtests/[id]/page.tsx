@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -20,6 +20,7 @@ import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { DecisionScatter } from './decision-scatter';
 import { TradeFilterProvider, TradeFilters } from '../../components/trade-filters';
+import type { TradeFlag } from '../../components/trade-filters';
 import { BacktestTradesTable } from './backtest-trades-table';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
@@ -67,7 +68,23 @@ export default async function BacktestDetailPage({
     getMtmSnapshots(id),
   ]);
 
-  const eventsByTradeId = await getTradeEventsForTrades(allTrades.map((t) => t.id));
+  const [eventsByTradeId, cancelledTradeIds] = await Promise.all([
+    getTradeEventsForTrades(allTrades.map((t) => t.id)),
+    getCancelledCloseTradeIds(allTrades.map((t) => t.id)),
+  ]);
+  // Compute per-trade flags for filter toggles
+  const flagsByTradeId: Record<string, TradeFlag[]> = {};
+  for (const t of allTrades) {
+    const flags: TradeFlag[] = [];
+    if (cancelledTradeIds.has(t.id)) flags.push('closeFailed');
+    if (t.status === 'CLOSED' && !t.closeMessageId) flags.push('autoClose');
+    const actions = new Set(eventsByTradeId.get(t.id)?.map(e => e.action));
+    if (actions.has('LEG_OFF')) flags.push('legOff');
+    if (actions.has('TRIM')) flags.push('trimmed');
+    if (actions.has('ADD')) flags.push('added');
+    if (flags.length > 0) flagsByTradeId[t.id] = flags;
+  }
+
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
 
   // Clamp closedAt dates to the backtest end date so charts don't extend
@@ -205,7 +222,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
+  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} cancelledTradeIds={cancelledTradeIds} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -355,7 +372,7 @@ export default async function BacktestDetailPage({
         )}
 
         {/* Tabs — always in this slot when data exists */}
-      <TradeFilterProvider trades={allTrades}>
+      <TradeFilterProvider trades={allTrades} flagsByTradeId={flagsByTradeId}>
         <BacktestTabs
           performance={performanceContent}
           messages={messagesContent}

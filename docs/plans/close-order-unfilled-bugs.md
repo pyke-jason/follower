@@ -132,7 +132,7 @@ onCancel: async (order) => {
 
 ### B3. Live runner `onCancel` callback
 
-**File**: `src/tasks/runner.ts` — apply same pattern for live parity.
+**File**: `src/live/runner.ts` — apply same pattern for live parity.
 
 ---
 
@@ -202,7 +202,7 @@ if (event === 'SETTLED' && d.outcome === 'FAIL') {
 |---|---|
 | `src/backtest/runner.ts` | advanceTo(EOD) before day boundary; onCancel emits event; EOD hardcode fix |
 | `src/orders/order-manager.ts` | `onCancel` becomes async, await calls |
-| `src/tasks/runner.ts` | onCancel emits event (live parity) |
+| `src/live/runner.ts` | onCancel emits event (live parity) |
 | `web/app/components/decision-timeline.tsx` | Add ORDER_CANCELLED label/color/order; fix SETTLED filtering |
 | `web/app/components/snapshot-detail.tsx` | Add OrderCancelledView |
 

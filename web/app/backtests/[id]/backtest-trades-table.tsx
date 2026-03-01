@@ -6,11 +6,13 @@ import type { TradeEvent, CommissionSchedule } from '@src/db/schema';
 
 export function BacktestTradesTable({
   eventsByTradeId,
+  cancelledTradeIds,
   runId,
   commissionSchedule,
   startingEquity,
 }: {
   eventsByTradeId: Map<string, TradeEvent[]>;
+  cancelledTradeIds?: Set<string>;
   runId: string;
   commissionSchedule?: CommissionSchedule;
   startingEquity: number;
@@ -29,6 +31,7 @@ export function BacktestTradesTable({
     <TradesTableClient
       trades={filteredTrades}
       eventsByTradeId={eventsByTradeId}
+      cancelledTradeIds={cancelledTradeIds}
       runId={runId}
       commissionSchedule={commissionSchedule}
       startingEquity={startingEquity}

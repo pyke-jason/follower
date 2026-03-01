@@ -926,6 +926,20 @@ export async function getTradeEventsForTrades(tradeIds: string[]) {
   return grouped;
 }
 
+/** Trade IDs that have at least one ORDER_CANCELLED event in run_decisions. */
+export async function getCancelledCloseTradeIds(tradeIds: string[]): Promise<Set<string>> {
+  if (tradeIds.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ tradeId: schema.runDecisions.tradeId })
+    .from(schema.runDecisions)
+    .where(and(
+      eq(schema.runDecisions.event, 'ORDER_CANCELLED'),
+      isNotNull(schema.runDecisions.tradeId),
+      inArray(schema.runDecisions.tradeId, tradeIds),
+    ));
+  return new Set(rows.map(r => r.tradeId!));
+}
+
 /** All run_decisions linked to a trade (by tradeId or sourceMessageId).
  *  Two-pass: first find all message IDs linked to the trade, then fetch
  *  ALL decision events for those messages (so intermediate signals like

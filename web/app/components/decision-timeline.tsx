@@ -9,7 +9,7 @@ import type { RunDecision, TradeEvent } from '@src/db/schema';
 import type { TimelineMessage } from '../trades/actions';
 import {
   ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,
-  ErrorView, FallbackJson,
+  OrderCancelledView, ErrorView, FallbackJson,
 } from './snapshot-detail';
 
 // ─── Utilities ───────────────────────────────────────
@@ -21,7 +21,7 @@ function fmtMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFix
 const EVENT_LABEL: Record<string, string> = {
   PARSED: 'PARSED', SIGNAL_RESOLVED: 'SIGNAL', SIZED: 'SIZED',
   ORDER_PLACED: 'ORDER', ORDER_ADJUSTED: 'CHASE', ORDER_FILLED: 'FILLED',
-  QUOTE_FAILED: 'QUOTE FAIL', RETRY_LLM: 'RETRY', SETTLED: 'RESULT',
+  ORDER_CANCELLED: 'CANCELLED', QUOTE_FAILED: 'QUOTE FAIL', RETRY_LLM: 'RETRY', SETTLED: 'RESULT',
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -37,7 +37,7 @@ const DOT: Record<string, string> = {
   PARSED: 'bg-[oklch(0.62_0.05_248)]', SIGNAL_RESOLVED: 'bg-[oklch(0.58_0.07_328)]',
   SIZED: 'bg-[oklch(0.58_0.06_178)]', ORDER_PLACED: 'bg-[oklch(0.55_0.08_148)]',
   ORDER_ADJUSTED: 'bg-[oklch(0.60_0.08_75)]', ORDER_FILLED: 'bg-[oklch(0.52_0.10_148)]',
-  QUOTE_FAILED: 'bg-[oklch(0.52_0.12_30)]', RETRY_LLM: 'bg-[oklch(0.60_0.08_75)]',
+  ORDER_CANCELLED: 'bg-[oklch(0.55_0.15_25)]', QUOTE_FAILED: 'bg-[oklch(0.52_0.12_30)]', RETRY_LLM: 'bg-[oklch(0.60_0.08_75)]',
   SETTLED: 'bg-[oklch(0.50_0.02_65)]',
   OPEN: 'bg-[oklch(0.48_0.14_148)]', CLOSE: 'bg-[oklch(0.48_0.12_248)]',
   ADD: 'bg-[oklch(0.48_0.10_178)]', TRIM: 'bg-[oklch(0.55_0.12_75)]',
@@ -87,6 +87,17 @@ function getInlineSummary(d: RunDecision): string | null {
       return snap.occSymbol ? String(snap.occSymbol) : null;
     case 'RETRY_LLM':
       return snap.reason ? String(snap.reason) : null;
+    case 'ORDER_CANCELLED': {
+      const parts: string[] = [];
+      if (snap.symbol) parts.push(String(snap.symbol));
+      if (snap.originalLimitPrice != null && snap.finalLimitPrice != null &&
+          snap.originalLimitPrice !== snap.finalLimitPrice) {
+        parts.push(`$${snap.originalLimitPrice} → $${snap.finalLimitPrice}`);
+      } else if (snap.finalLimitPrice != null) {
+        parts.push(`$${snap.finalLimitPrice}`);
+      }
+      return parts.length > 0 ? parts.join(' ') : null;
+    }
     default:
       return null;
   }
@@ -137,6 +148,8 @@ function SnapshotDispatch({ event, snapshot }: { event: string; snapshot: Record
       return <OrderPlacedView data={snapshot} />;
     case 'ORDER_FILLED':
       return <OrderFilledView data={snapshot} />;
+    case 'ORDER_CANCELLED':
+      return <OrderCancelledView data={snapshot} />;
     case 'ORDER_ADJUSTED':
       return (
         <div className="flex items-center gap-2 text-xs">
@@ -224,12 +237,13 @@ type Entry =
   | { kind: 'trade'; sortKey: string; data: TradeEvent };
 
 export function UnifiedTimeline({
-  decisions, tradeEvents, closeMessageId, messages,
+  decisions, tradeEvents, closeMessageId, messages, tradePnl,
 }: {
   decisions: RunDecision[];
   tradeEvents: TradeEvent[];
   closeMessageId?: string | null;
   messages?: TimelineMessage[];
+  tradePnl?: string | null;
 }) {
   const msgMap = new Map((messages ?? []).map(m => [m.id, m]));
   const tradeActionSet = new Set(tradeEvents.map(e => e.action));
@@ -237,7 +251,7 @@ export function UnifiedTimeline({
 
   const eventOrder: Record<string, number> = {
     PARSED: 0, SIGNAL_RESOLVED: 1, SIZED: 2, ORDER_PLACED: 3,
-    ORDER_ADJUSTED: 4, ORDER_FILLED: 5, SETTLED: 6,
+    ORDER_ADJUSTED: 4, ORDER_CANCELLED: 5, ORDER_FILLED: 5, SETTLED: 6,
     QUOTE_FAILED: 4, RETRY_LLM: 4,
   };
 
@@ -246,8 +260,13 @@ export function UnifiedTimeline({
   for (const d of filtered) {
     const event = d.event ?? 'SETTLED';
 
-    // Hide SETTLED FAIL when trade events prove the order actually filled
-    if (event === 'SETTLED' && d.outcome === 'FAIL' && tradeActionSet.has('OPEN')) continue;
+    // Hide SETTLED FAIL when a more specific event already explains the outcome
+    if (event === 'SETTLED' && d.outcome === 'FAIL') {
+      const sameSignal = (other: RunDecision) =>
+        other.messageId === d.messageId && other.signalIndex === d.signalIndex;
+      if (filtered.some(o => o.event === 'ORDER_FILLED' && sameSignal(o))) continue;
+      if (filtered.some(o => o.event === 'ORDER_CANCELLED' && sameSignal(o))) continue;
+    }
 
     // Hide entries with no visible content (empty shell rows from transitional emitter)
     const dec = d.outcome as string | null;
@@ -311,6 +330,11 @@ export function UnifiedTimeline({
                     <span className="text-[13px] font-semibold text-foreground/90 tabular-nums">
                       {ev.action === 'TRIM' && '\u2212'}{ev.action === 'ADD' && '+'}{ev.quantity} @ {formatCurrency(price)}
                     </span>
+                    {ev.action === 'CLOSE' && tradePnl != null && parseFloat(tradePnl) !== 0 && (
+                      <span className={cn('text-xs font-semibold tabular-nums', pnlColor(tradePnl))}>
+                        {formatCurrency(tradePnl)}
+                      </span>
+                    )}
                     {trimPnl != null && (
                       <span className={cn('text-xs font-semibold tabular-nums', trimPnl > 0 ? 'text-profit' : 'text-loss')}>
                         {formatCurrency(trimPnl)}
@@ -370,9 +394,7 @@ export function UnifiedTimeline({
                     )}
 
                     <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                      {d.pnl != null && parseFloat(d.pnl) !== 0 && (
-                        <span className={cn('text-xs font-semibold tabular-nums', pnlColor(d.pnl))}>{formatCurrency(d.pnl)}</span>
-                      )}
+                      {/* PnL intentionally not shown here — displayed on the CLOSE trade event instead */}
                       {d.inputTokens != null && d.outputTokens != null && (
                         <span className="text-[10px] text-muted-foreground/50 tabular-nums">{d.inputTokens.toLocaleString()}/{d.outputTokens.toLocaleString()}</span>
                       )}

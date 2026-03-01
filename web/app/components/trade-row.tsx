@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight } from 'lucide-react';
+import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
@@ -67,6 +67,13 @@ const FLAG_DEFS = {
     color: 'text-amber-300',
     bgColor: 'bg-amber-400/15 border border-amber-400/25',
   },
+  closeCancelled: {
+    icon: XCircle,
+    label: 'Close failed',
+    tooltip: 'A close order was cancelled without filling — trade stayed open longer than intended',
+    color: 'text-rose-400',
+    bgColor: 'bg-rose-400/15 border border-rose-400/25',
+  },
 } as const satisfies Record<string, FlagDef>;
 
 function FlagChip({ flag, tooltip }: { flag: FlagDef; tooltip?: string }) {
@@ -89,6 +96,7 @@ function FlagChip({ flag, tooltip }: { flag: FlagDef; tooltip?: string }) {
 export function TradeRow({
   trade,
   events,
+  cancelledClose,
   runId,
   commissionSchedule,
   startingEquity,
@@ -97,6 +105,7 @@ export function TradeRow({
 }: {
   trade: Trade;
   events?: TradeEvent[];
+  cancelledClose?: boolean;
   runId?: string;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
@@ -132,7 +141,7 @@ export function TradeRow({
     Math.abs(slippage) >= SLIPPAGE_THRESHOLD_ABS
   );
 
-  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage;
+  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose;
 
   return (
     <TableRow
@@ -161,6 +170,7 @@ export function TradeRow({
       <TableCell>
         <span className="inline-flex items-center gap-1 flex-wrap">
           <Badge label={trade.status} />
+          {cancelledClose && <FlagChip flag={FLAG_DEFS.closeCancelled} />}
           {isAutoClose && <FlagChip flag={FLAG_DEFS.autoClose} />}
           {hasLegOff && <FlagChip flag={FLAG_DEFS.legOff} />}
           {hasTrim && <FlagChip flag={FLAG_DEFS.trim} />}

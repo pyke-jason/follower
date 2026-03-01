@@ -161,6 +161,17 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     throw new Error(`recordTrade: invalid closeQuantity ${closeQuantity} for ${action ?? 'unknown'} ${symbol} (must be positive)`);
   }
 
+  // Guard: OPEN trades must have explicit direction and strategy — defaulting
+  // silently would record e.g. a SHORT PUT as LONG STOCK.
+  if (isOpen_) {
+    if (!direction) {
+      throw new Error(`recordTrade: OPEN for ${symbol} missing direction (would have defaulted to LONG)`);
+    }
+    if (!strategy) {
+      throw new Error(`recordTrade: OPEN for ${symbol} missing strategy (would have defaulted to STOCK)`);
+    }
+  }
+
   // Guard: backtest trades must have explicit timestamps — never fall back to
   // wall-clock time, which collapses the equity curve to a single day.
   if (isBacktest || backtestRunId) {
@@ -195,8 +206,9 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       sourceMessageId: sourceMessageId ?? null,
       trader,
       symbol,
-      direction: direction ?? 'LONG',
-      strategy: strategy ?? 'STOCK',
+      // SAFETY: direction and strategy are guaranteed non-null by the isOpen_ guard above.
+      direction: direction!,
+      strategy: strategy!,
       legs: legs ?? [],
       status: 'OPEN',
       entryPrice: entryPrice != null ? String(entryPrice) : null,
@@ -216,13 +228,14 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       price: entryPrice,
       quantity: quantity ?? 1,
       legs: legs ?? [],
-      strategy: strategy ?? 'STOCK',
-      direction: direction ?? 'LONG',
+      // SAFETY: direction and strategy are guaranteed non-null by the isOpen_ guard above.
+      strategy: strategy!,
+      direction: direction!,
       messageId: sourceMessageId,
       timestamp: ts,
     });
     const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
-    log.debug(`OPEN: ${direction ?? 'LONG'} ${strategy ?? 'STOCK'} ${symbol} qty=${quantity ?? 1} @$${entryPrice} [${tradeId.slice(0, 8)}]`);
+    log.debug(`OPEN: ${direction} ${strategy} ${symbol} qty=${quantity ?? 1} @$${entryPrice} [${tradeId.slice(0, 8)}]`);
     return { tradeId, action: 'OPEN', trade };
   }
 
@@ -242,7 +255,11 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   const existingLegs = (existing.legs ?? []) as TradeLeg[];
   const incomingLegs = legs ?? [];
   const derived = deriveActionFromLegs(incomingLegs, existingLegs, tradeQty(existing.quantity));
-  const effectiveAction = derived ?? action ?? 'CLOSE';
+  const effectiveAction = derived ?? action;
+  if (!effectiveAction) {
+    log.debug(`Cannot determine action for ${symbol}/${trader}: derivation returned null and no caller hint [${existing.id.slice(0, 8)}]`);
+    return null;
+  }
 
   if (derived && derived !== action && action != null) {
     log.debug(`Action override: caller=${action} derived=${derived} for ${symbol} [${existing.id.slice(0, 8)}]`);

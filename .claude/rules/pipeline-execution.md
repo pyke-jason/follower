@@ -37,7 +37,7 @@ Position-reducing orders:
 broker, orderManager?, calculatePositionSize, checkRiskLimits, recordTrade, onPending?
 ```
 
-When adding a new dep, add it to **both** `src/backtest/runner.ts` AND `src/tasks/runner.ts`.
+When adding a new dep, add it to **both** `src/backtest/runner.ts` AND `src/live/runner.ts`.
 
 ## Direction Reversal on Close
 

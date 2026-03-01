@@ -47,8 +47,8 @@ export type ResolvedSignal = {
   orderType: 'SINGLE' | 'SPREAD' | 'STOCK';
   legs: Leg[];
   limitPrice?: number;
-  /** The trade action resolved by the orchestrator. Absent = OPEN (default). */
-  action?: TradeAction;
+  /** The trade action resolved by the orchestrator. Required — no implicit defaults. */
+  action: TradeAction;
   /** For position-reducing signals: the trade ID matched by the orchestrator. */
   tradeId?: string;
   /** For TRIM signals: the exit fraction (0.0–1.0) from the orchestrator parse. */

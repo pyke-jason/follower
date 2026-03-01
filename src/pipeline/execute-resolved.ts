@@ -186,9 +186,11 @@ function buildOrderParams(
   limitPrice: number | undefined,
   isPositionReducing: boolean,
 ): WorkingOrderParams {
-  const defaults = isPositionReducing
-    ? (CLOSE_ORDER_DEFAULTS[strategy] ?? CLOSE_ORDER_DEFAULTS.STOCK)
-    : (ORDER_DEFAULTS[strategy] ?? ORDER_DEFAULTS.STOCK);
+  const defaultsMap = isPositionReducing ? CLOSE_ORDER_DEFAULTS : ORDER_DEFAULTS;
+  const defaults = defaultsMap[strategy];
+  if (!defaults) {
+    throw new Error(`No order defaults for strategy=${strategy} — add it to ${isPositionReducing ? 'CLOSE_' : ''}ORDER_DEFAULTS`);
+  }
 
   const adjustmentRules: AdjustmentRule[] = limitPrice
     ? [{
@@ -218,7 +220,7 @@ function buildOrderParams(
     limitPrice,
     adjustmentRules: adjustmentRules.length > 0 ? adjustmentRules : undefined,
     cancelAfterSec: limitPrice && !isPositionReducing
-      ? (ORDER_DEFAULTS[strategy] ?? ORDER_DEFAULTS.STOCK).cancelAfterSec
+      ? ORDER_DEFAULTS[strategy]!.cancelAfterSec
       : undefined,
     isClosing: isPositionReducing || undefined,
   };
@@ -299,7 +301,7 @@ async function executeResolvedSignal(
   const symbol = deriveSymbol(signal.legs);
   const strategy = deriveStrategy(signal.legs);
   const direction = deriveDirection(signal.legs);
-  const signalAction = signal.action ?? 'OPEN';
+  const signalAction = signal.action;
   const isPositionReducing = signalAction === 'CLOSE' || signalAction === 'TRIM' || signalAction === 'LEG_OFF';
 
   // One info line per signal — the authoritative execution log

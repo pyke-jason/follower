@@ -1,5 +1,5 @@
 ---
-paths: src/tasks/**, src/broker/tradestation.ts, src/broker/auth.ts
+paths: src/live/**, src/broker/tradestation.ts, src/broker/auth.ts
 ---
 
 # Live Execution

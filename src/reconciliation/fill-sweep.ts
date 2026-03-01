@@ -1,7 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
-import { enrichTradeWithFill } from '../tasks/recorder.js';
+import { enrichTradeWithFill } from './fill-enrichment.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { createLogger } from '../lib/logger.js';
 

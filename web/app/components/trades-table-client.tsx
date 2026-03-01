@@ -13,12 +13,14 @@ import type { Trade, TradeEvent, CommissionSchedule } from '@src/db/schema';
 export function TradesTableClient({
   trades,
   eventsByTradeId,
+  cancelledTradeIds,
   runId,
   commissionSchedule,
   startingEquity,
 }: {
   trades: Trade[];
   eventsByTradeId?: Map<string, TradeEvent[]>;
+  cancelledTradeIds?: Set<string>;
   runId?: string;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
@@ -82,6 +84,7 @@ export function TradesTableClient({
                     <TradeRow
                       trade={t}
                       events={events}
+                      cancelledClose={cancelledTradeIds?.has(t.id)}
                       runId={runId}
                       commissionSchedule={commissionSchedule}
                       startingEquity={startingEquity}

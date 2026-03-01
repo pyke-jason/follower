@@ -10,7 +10,7 @@ export type OrderManagerConfig = {
   broker: BrokerService;
   clock: () => Date;
   onFill?: (order: FilledWorkingOrder) => void | Promise<void>;
-  onCancel?: (order: WorkingOrder) => void;
+  onCancel?: (order: WorkingOrder) => void | Promise<void>;
   onAdjust?: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
   manualTick?: boolean;
@@ -20,7 +20,7 @@ export class OrderManager {
   private broker: BrokerService;
   private clock: () => Date;
   private onFill?: (order: FilledWorkingOrder) => void | Promise<void>;
-  private onCancel?: (order: WorkingOrder) => void;
+  private onCancel?: (order: WorkingOrder) => void | Promise<void>;
   private onAdjust?: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   private manualTick: boolean;
   private workingOrders = new Map<string, WorkingOrder>();
@@ -105,7 +105,7 @@ export class OrderManager {
         order.status = status.status;
         order.cancelledAt = now;
         this.workingOrders.delete(orderId);
-        this.onCancel?.(order);
+        await this.onCancel?.(order);
         this.stopTimerIfEmpty();
         continue;
       }
@@ -119,7 +119,7 @@ export class OrderManager {
           order.status = 'CANCELLED';
           order.cancelledAt = now;
           this.workingOrders.delete(orderId);
-          this.onCancel?.(order);
+          await this.onCancel?.(order);
           this.stopTimerIfEmpty();
           continue;
         }

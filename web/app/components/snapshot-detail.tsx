@@ -264,6 +264,43 @@ export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+export function OrderCancelledView({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+      {data.orderId != null ? (
+        <StatItem label="Order ID">
+          <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
+        </StatItem>
+      ) : null}
+      {data.symbol != null ? (
+        <StatItem label="Symbol">
+          <InfoChip label={String(data.symbol)} />
+        </StatItem>
+      ) : null}
+      {data.originalLimitPrice != null ? (
+        <StatItem label="Original Limit">
+          <span className="text-foreground tabular-nums">${String(data.originalLimitPrice)}</span>
+        </StatItem>
+      ) : null}
+      {data.finalLimitPrice != null ? (
+        <StatItem label="Final Limit">
+          <span className="text-foreground tabular-nums">${String(data.finalLimitPrice)}</span>
+        </StatItem>
+      ) : null}
+      {data.adjustmentCount != null ? (
+        <StatItem label="Chases">
+          <span className="text-foreground tabular-nums">{String(data.adjustmentCount)}</span>
+        </StatItem>
+      ) : null}
+      {data.reason != null ? (
+        <StatItem label="Reason">
+          <Badge label={String(data.reason)} />
+        </StatItem>
+      ) : null}
+    </div>
+  );
+}
+
 export function ErrorView({ data }: { data: Record<string, unknown> }) {
   return (
     <p className="text-xs text-muted-foreground bg-destructive/5 border border-destructive/20 rounded px-2 py-1.5">

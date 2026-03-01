@@ -430,7 +430,7 @@ export async function resolveOpenPath(
   if (strategy === 'STOCK') {
     const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
     const stockLeg: StockLeg = { type: 'stock', symbol, side, quantity: 1 };
-    const signal: ResolvedSignal = { orderType: 'STOCK', legs: [stockLeg] };
+    const signal: ResolvedSignal = { action: 'OPEN', orderType: 'STOCK', legs: [stockLeg] };
     log.debug('open-path: built STOCK signal for %s', symbol);
     return { outcome: 'EXECUTE', signals: [signal] };
   }
@@ -459,6 +459,7 @@ export async function resolveOpenPath(
       log.debug('open-path: premium scan matched expiry %s for %s', expiry, symbol);
       const limitPrice = buildLimitPrice(result.limitPrice, strategy, direction);
       const signal: ResolvedSignal = {
+        action: 'OPEN',
         orderType: result.legs.length > 1 ? 'SPREAD' : 'SINGLE',
         legs: result.legs,
         ...(limitPrice !== undefined && { limitPrice }),
@@ -545,6 +546,7 @@ export async function resolveOpenPath(
   );
 
   const signal: ResolvedSignal = {
+    action: 'OPEN',
     orderType: isSpreadSignal ? 'SPREAD' : 'SINGLE',
     legs: resolvedLegs.legs,
     ...(limitPrice !== undefined && { limitPrice }),

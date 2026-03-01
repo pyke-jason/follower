@@ -581,7 +581,7 @@ describe('OrderManager concurrent order properties', () => {
             broker,
             clock: () => T0,
             onFill: (order) => { fillIds.push(order.orderId); },
-            onCancel: (order) => cancelIds.push(order.orderId),
+            onCancel: (order) => { cancelIds.push(order.orderId); },
             manualTick: true,
           });
 

@@ -7,6 +7,7 @@ import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { OrderManager } from '../orders/order-manager.js';
+import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
 import { liveService } from '../broker/tradestation.js';
 import { getTrader } from '../config/traders.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
@@ -38,38 +39,11 @@ const pendingIntents = new Map<string, ResolvedPendingContext>();
 const orderManager = new OrderManager({
   broker: liveService,
   clock: () => new Date(),
-  onFill: async (order) => {
-    const pending = pendingIntents.get(order.orderId);
-    if (!pending) return;
-    pendingIntents.delete(order.orderId);
-    const emitter = createEmitter({ messageId: pending.messageId ?? '', taskId: undefined });
-    await emitter.emit('ORDER_FILLED', {
-      orderId: order.orderId,
-      symbol: order.params.symbol,
-      strategy: order.params.strategy,
-      direction: order.params.direction,
-      filledPrice: order.filledPrice,
-      filledAt: order.filledAt.toISOString(),
-      filledQuantity: order.filledQuantity,
-      commission: order.commission,
-      legFills: order.legFills,
-      adjustmentCount: order.adjustmentCount,
-      originalLimitPrice: order.params.limitPrice,
-      immediatelyFilled: false,
-    }, { signalIndex: pending.signalIndex ?? null });
-    await pending.recordFill(order.filledPrice, order.filledAt);
-  },
-  onCancel: (order) => {
-    pendingIntents.delete(order.orderId);
-  },
-  onAdjust: async (order, fromPrice, toPrice, step) => {
-    const pending = pendingIntents.get(order.orderId);
-    if (!pending) return;
-    const emitter = createEmitter({ messageId: pending.messageId ?? '', taskId: undefined });
-    await emitter.emit('ORDER_ADJUSTED', {
-      orderId: order.orderId, fromPrice, toPrice, step,
-    }, { signalIndex: pending.signalIndex ?? null });
-  },
+  ...buildOrderCallbacks({
+    pendingIntents,
+    createScopedEmitter: (messageId) =>
+      createEmitter({ messageId, taskId: undefined }),
+  }),
 });
 
 export function destroyOrderManager(): void {

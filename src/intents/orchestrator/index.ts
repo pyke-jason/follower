@@ -383,6 +383,7 @@ async function resolveStrangleExit(
       };
     });
     signals.push({
+      action: 'CLOSE',
       orderType: legs.length > 1 ? 'SPREAD' : 'SINGLE',
       legs,
       tradeId: pos.id,
