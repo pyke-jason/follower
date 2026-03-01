@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Terminal } from 'lucide-react';
+import { Button } from '../../../components/ui/button';
 import { CopyButton } from '../../components/copy-button';
 import { ScrollToBottom } from '../../components/scroll-to-bottom';
 
@@ -115,18 +116,7 @@ export function LogViewer({
 
   return (
     <div className="sticky bottom-0 -mx-6 z-40 flex flex-col border-t border-border bg-card">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          if ((e.target as HTMLElement).closest('button')) return;
-          setOpen((o) => !o);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((o) => !o); }
-        }}
-        className="flex items-center gap-2 px-4 py-1.5 text-xs hover:bg-muted/40 transition-colors cursor-pointer select-none"
-      >
+      <div className="flex items-center gap-2 px-4 py-1.5 text-xs">
         <Terminal className="size-3 text-muted-foreground" />
         <span className="font-medium text-muted-foreground">Logs</span>
         {lineCount > 0 && (
@@ -141,10 +131,16 @@ export function LogViewer({
         {isRunning && !open && (
           <span className="size-1.5 rounded-full bg-profit animate-pulse" />
         )}
-        <div className="ml-auto flex items-center gap-1">
-          <CopyButton getText={getLogs} />
-          {open ? <ChevronDown className="size-3 text-muted-foreground" /> : <ChevronUp className="size-3 text-muted-foreground" />}
-        </div>
+        <CopyButton getText={getLogs} />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => setOpen((o) => !o)}
+          title={open ? 'Collapse logs' : 'Expand logs'}
+          className="ml-auto text-muted-foreground"
+        >
+          {open ? <ChevronDown /> : <ChevronUp />}
+        </Button>
       </div>
       {open && (
         <>

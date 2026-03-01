@@ -104,6 +104,16 @@ export type ExpiryAutoCloseStrategy = {
   getCloseTimestamp(expiryDateKey: string, symbol: string): Date;
 };
 
+export type AutoCloseResult = {
+  tradeId: string;
+  sourceMessageId: string | null;
+  exitPrice: number;
+  closeAt: Date;
+  symbol: string;
+  strategy: string;
+  expiryDate: string;
+};
+
 /** Symbols whose options trade until 4:15pm ET (vs 4:00pm for all others). */
 const BROAD_INDEX_ETFS = new Set(['SPY', 'QQQ', 'IWM']);
 
@@ -454,6 +464,7 @@ export class SimBroker implements BrokerService {
       tradeId,
       symbol: trade.symbol,
       trader: trade.trader,
+      action: 'CLOSE',
       exitPrice,
       closedAt,
       backtestRunId: this.backtestRunId,
@@ -552,14 +563,14 @@ export class SimBroker implements BrokerService {
    * Positions that can't be quoted at the strategy's timestamp are skipped —
    * sweepExpired() handles them as a fallback (closes at intrinsic).
    *
-   * Returns the count of positions closed.
+   * Returns details of each closed position.
    */
   async autoCloseExpiring(
     expiryDate: string,
     strategy: ExpiryAutoCloseStrategy,
     closeCallbacks?: Map<string, (price: number, at: Date) => Promise<void>>,
-  ): Promise<number> {
-    let closedCount = 0;
+  ): Promise<AutoCloseResult[]> {
+    const results: AutoCloseResult[] = [];
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
 
     for (const t of openTrades) {
@@ -581,20 +592,29 @@ export class SimBroker implements BrokerService {
         continue;
       }
 
+      const exitPrice = Math.max(0, roundCents(price));
       const callback = closeCallbacks?.get(t.id);
       if (callback) {
         // Preserve closeMessageId from the original exit signal by using recordFill
         // instead of closePositionAtPrice (which has no message context).
-        await callback(Math.max(0, roundCents(price)), closeAt);
+        await callback(exitPrice, closeAt);
         log.debug(`AUTO-CLOSE: ${t.id} ${t.symbol} ${t.strategy} at $${price.toFixed(2)} (${closeAt.toISOString()}) [close signal preserved]`);
       } else {
-        await this.closePositionAtPrice(t.id, Math.max(0, roundCents(price)), closeAt.toISOString());
+        await this.closePositionAtPrice(t.id, exitPrice, closeAt.toISOString());
         log.debug(`AUTO-CLOSE: ${t.id} ${t.symbol} ${t.strategy} at $${price.toFixed(2)} (${closeAt.toISOString()})`);
       }
-      closedCount++;
+      results.push({
+        tradeId: t.id,
+        sourceMessageId: t.sourceMessageId,
+        exitPrice,
+        closeAt,
+        symbol: t.symbol,
+        strategy: t.strategy,
+        expiryDate,
+      });
     }
 
-    return closedCount;
+    return results;
   }
 
   /** Force-close all open positions at current mark prices. Throws if any position has no mark. */

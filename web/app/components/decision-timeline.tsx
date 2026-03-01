@@ -269,6 +269,14 @@ export function UnifiedTimeline() {
       if (filtered.some(o => o.event === 'ORDER_CANCELLED' && sameSignal(o))) continue;
     }
 
+    // Hide orchestrator SUMMARY when ORDER_CANCELLED already provides the terminal state
+    if (event === 'SETTLED' && d.phase === 'orchestrator') {
+      const hasCancel = filtered.some(
+        o => o.event === 'ORDER_CANCELLED' && o.messageId === d.messageId,
+      );
+      if (hasCancel) continue;
+    }
+
     // Hide entries with no visible content (empty shell rows from transitional emitter)
     const dec = d.outcome as string | null;
     const hasVisibleData = dec || d.reasoning || d.skipCategory || d.pnl || d.inputTokens != null || d.snapshot;
@@ -350,13 +358,53 @@ export function UnifiedTimeline() {
             }
 
             // ─── Decision entry ──────────────────────
-            const d = entry.data;
+            const d = entry.data as RunDecision;
             const event = d.event ?? 'SETTLED';
             const isFail = d.outcome === 'FAIL';
             const isSkip = d.outcome === 'SKIP';
             const eventLabel = event === 'SETTLED' && d.phase === 'orchestrator' ? 'SUMMARY' : (EVENT_LABEL[event] ?? event);
             const inlineSummary = getInlineSummary(d);
             const msgTs = event === 'PARSED' && d.messageId ? msgMap.get(d.messageId)?.timestamp : undefined;
+
+            // ─── Promoted ORDER_CANCELLED — trade-event weight ───
+            if (event === 'ORDER_CANCELLED') {
+              const snap = d.snapshot as Record<string, unknown> | null;
+              const symbol = snap?.symbol ? String(snap.symbol) : null;
+              const parsedDecision = filtered.find(
+                o => o.event === 'PARSED' && o.messageId === d.messageId && o.signalIndex === d.signalIndex,
+              );
+              const parsedSnap = parsedDecision?.snapshot as Record<string, unknown> | null;
+              const action = parsedSnap?.action ? String(parsedSnap.action) : null;
+              const label = action === 'CLOSE' ? 'Close Failed' : action === 'OPEN' ? 'Open Failed' : 'Order Failed';
+              const cancelTs = d.messageId ? msgMap.get(d.messageId)?.timestamp : undefined;
+
+              return (
+                <Popover key={d.id}>
+                  <div className={cn('relative', i > 0 && 'mt-1.5', !isLast && 'pb-1.5')}>
+                    <div
+                      className="absolute w-[13px] h-[13px] rounded-full ring-2 ring-background bg-loss"
+                      style={{ left: '-24.5px', top: '2px' }}
+                    />
+                    <PopoverTrigger asChild>
+                      <button type="button" className="flex items-center gap-2 flex-wrap min-w-0 cursor-pointer hover:opacity-80 text-left">
+                        <span className="text-[13px] font-bold text-loss tracking-tight">
+                          {label}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          order cancelled{symbol ? ` — ${symbol}` : ''}
+                        </span>
+                        {cancelTs && (
+                          <span className="text-[11px] text-muted-foreground/60 tabular-nums ml-auto shrink-0">
+                            {formatDate(cancelTs)}
+                          </span>
+                        )}
+                      </button>
+                    </PopoverTrigger>
+                  </div>
+                  <DecisionPopover d={d} />
+                </Popover>
+              );
+            }
 
             return (
               <Popover key={d.id}>

@@ -4,10 +4,11 @@
 
 Backtest `b2de6318` showed message 464204 — sarcastic commentary by Hariseldon ("AAPL could announce they are **closing down** due to economic reasons...") — being parsed as action=CLOSE. The soft verb path (parser.ts:774) matched "closing" via `EXIT_VERB_RE`, and since AAPL symbol was extracted from the `<a>` tag, it set action=CLOSE and routed deterministically to position-path, which matched it to the open AAPL trade. Result: false trade, -$575 PnL.
 
-Three more false positives from the same run share the pattern:
+Two more false positives from the same run share the same root cause (EXIT_VERB_RE matching non-trade uses of "close/closing"):
 - msg 464911: "**Close to** yesterday's high" (proximity)
 - msg 467976: "MSFT to **drop into the close**" (market close = end of day)
-- msg 468691: conditional intent ("**If** I don't get the bounce...")
+
+A fourth false positive (msg 468691: "**If** I don't get the bounce I will exit /ES") is a different class — conditional future intent. That requires a separate fix (conditional-intent detection or LLM routing) and is out of scope here.
 
 ## Changes
 
@@ -34,14 +35,13 @@ if (EXIT_VERB_RE.test(cleanText) && !EXIT_VERB_FALSE_POSITIVE_RE.test(cleanText)
 
 ### 2. Eval fixtures — `src/intents/evals/fixtures/false-positive-exits.json`
 
-New fixture file with 4 cases from the real backtest, all expecting `outcome: SKIP`:
+New fixture file with 3 cases from the real backtest, all expecting `outcome: SKIP`:
 
 | ID | Pattern | Message excerpt |
 |---|---|---|
 | `fp-exit-001` | "closing down" (business) | "AAPL could announce they are closing down..." |
 | `fp-exit-002` | "close to" (proximity) | "Close to yesterday's high - also OSCR..." |
 | `fp-exit-003` | "into the close" (market) | "Now I just need MSFT to drop into the close" |
-| `fp-exit-004` | conditional intent | "If I don't get the market bounce..." |
 
 Use actual `rawHtml` from the messages table. Tag: `false-positive-exit`.
 
@@ -52,7 +52,7 @@ The badge path (Exit badge -> CLOSE) at line 756-768 doesn't need this filter be
 ## Files to modify
 
 - `src/intents/orchestrator/parser.ts` — add regex + gate condition
-- `src/intents/evals/fixtures/false-positive-exits.json` — new fixture file (4 cases)
+- `src/intents/evals/fixtures/false-positive-exits.json` — new fixture file (3 cases)
 
 ## Verification
 

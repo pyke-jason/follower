@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command';
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandSeparator } from '@/components/ui/command';
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronsUpDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -22,9 +22,11 @@ const FLAG_LABELS: Record<TradeFlag, string> = {
   marketDataFail: 'Market data fail',
 };
 
+type MultiFilterKey = 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags';
+
 export interface TradeFilterValues {
   traders: string[];
-  symbol: string;
+  symbols: string[];
   strategies: string[];
   directions: string[];
   flags: TradeFlag[];
@@ -32,7 +34,7 @@ export interface TradeFilterValues {
 
 const EMPTY_FILTERS: TradeFilterValues = {
   traders: [],
-  symbol: '',
+  symbols: [],
   strategies: [],
   directions: [],
   flags: [],
@@ -45,7 +47,7 @@ export function applyTradeFilters(
 ): Trade[] {
   return trades.filter((t) => {
     if (filters.traders.length > 0 && !filters.traders.includes(t.trader)) return false;
-    if (filters.symbol && !t.symbol.toLowerCase().includes(filters.symbol.toLowerCase())) return false;
+    if (filters.symbols.length > 0 && !filters.symbols.includes(t.symbol)) return false;
     if (filters.strategies.length > 0 && !filters.strategies.includes(t.strategy)) return false;
     if (filters.directions.length > 0 && !filters.directions.includes(t.direction)) return false;
     if (filters.flags.length > 0 && flagsByTradeId) {
@@ -60,10 +62,8 @@ export function applyTradeFilters(
 
 interface TradeFilterContextValue {
   filters: TradeFilterValues;
-  setFilters: (f: TradeFilterValues) => void;
-  toggleMulti: (key: 'traders' | 'strategies' | 'directions', value: string) => void;
-  toggleFlag: (flag: TradeFlag) => void;
-  setSymbol: (value: string) => void;
+  toggle: (key: MultiFilterKey, value: string) => void;
+  clearKey: (key: MultiFilterKey) => void;
   clearFilters: () => void;
   hasFilters: boolean;
   allTrades: Trade[];
@@ -84,26 +84,19 @@ export function TradeFilterProvider({
 }) {
   const [filters, setFilters] = useState<TradeFilterValues>(EMPTY_FILTERS);
 
-  const toggleMulti = useCallback((key: 'traders' | 'strategies' | 'directions', value: string) => {
+  const toggle = useCallback((key: MultiFilterKey, value: string) => {
     setFilters((prev) => {
-      const arr = prev[key];
+      const arr = prev[key] as string[];
       return { ...prev, [key]: arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value] };
     });
   }, []);
 
-  const toggleFlag = useCallback((flag: TradeFlag) => {
-    setFilters((prev) => {
-      const arr = prev.flags;
-      return { ...prev, flags: arr.includes(flag) ? arr.filter((f) => f !== flag) : [...arr, flag] };
-    });
-  }, []);
-
-  const setSymbol = useCallback((value: string) => {
-    setFilters((prev) => ({ ...prev, symbol: value }));
+  const clearKey = useCallback((key: MultiFilterKey) => {
+    setFilters((prev) => ({ ...prev, [key]: [] }));
   }, []);
 
   const clearFilters = useCallback(() => setFilters(EMPTY_FILTERS), []);
-  const hasFilters = filters.traders.length > 0 || filters.symbol !== '' || filters.strategies.length > 0 || filters.directions.length > 0 || filters.flags.length > 0;
+  const hasFilters = filters.traders.length > 0 || filters.symbols.length > 0 || filters.strategies.length > 0 || filters.directions.length > 0 || filters.flags.length > 0;
 
   const filteredTrades = useMemo(
     () => applyTradeFilters(trades, filters, flagsByTradeId),
@@ -121,8 +114,8 @@ export function TradeFilterProvider({
   }, [flagsByTradeId]);
 
   const value = useMemo(
-    () => ({ filters, setFilters, toggleMulti, toggleFlag, setSymbol, clearFilters, hasFilters, allTrades: trades, filteredTrades, availableFlags }),
-    [filters, toggleMulti, toggleFlag, setSymbol, clearFilters, hasFilters, trades, filteredTrades, availableFlags],
+    () => ({ filters, toggle, clearKey, clearFilters, hasFilters, allTrades: trades, filteredTrades, availableFlags }),
+    [filters, toggle, clearKey, clearFilters, hasFilters, trades, filteredTrades, availableFlags],
   );
 
   return <TradeFilterContext value={value}>{children}</TradeFilterContext>;
@@ -134,33 +127,33 @@ export function useTradeFilters() {
   return ctx;
 }
 
-// ── Multi-select popover ───────────────────────────────────────────
+// ── Multi-select combobox ───────────────────────────────────────────
 
 function MultiSelect({
   selected,
   onToggle,
+  onClear,
   options,
   label,
   labels,
+  searchable,
+  minWidth,
 }: {
   selected: string[];
   onToggle: (value: string) => void;
+  onClear: () => void;
   options: string[];
   label: string;
   labels?: Record<string, string>;
+  searchable?: boolean;
+  minWidth?: string;
 }) {
   const [open, setOpen] = useState(false);
 
   if (options.length <= 1) return null;
 
   const displayLabel = (opt: string) => labels?.[opt] ?? opt;
-
-  const hasSelection = selected.length > 0;
-  const triggerLabel = hasSelection
-    ? selected.length === 1
-      ? displayLabel(selected[0])
-      : `${selected.length} ${label.toLowerCase()}`
-    : label;
+  const count = selected.length;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -170,16 +163,35 @@ function MultiSelect({
           size="sm"
           className={cn(
             'h-7 text-xs px-2 gap-1 font-normal shadow-xs',
-            !hasSelection && 'text-muted-foreground',
+            !count && 'text-muted-foreground',
           )}
+          style={minWidth ? { minWidth } : undefined}
         >
-          {triggerLabel}
-          <ChevronsUpDown className="size-3 opacity-50" />
+          <span className="truncate">{label}</span>
+          <span className={cn(
+            'text-[10px] leading-none px-1 py-0.5 rounded-sm font-medium min-w-[1ch] text-center',
+            count > 0 ? 'bg-primary text-primary-foreground' : 'invisible',
+          )}>
+            {count || 0}
+          </span>
+          <ChevronsUpDown className="size-3 opacity-50 shrink-0" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-40 p-0" align="start">
+      <PopoverContent className="w-44 p-0" align="start">
         <Command>
+          {searchable && <CommandInput placeholder={`Search ${label.toLowerCase()}...`} className="text-xs" />}
           <CommandList>
+            {searchable && <CommandEmpty className="py-3 text-xs">No match</CommandEmpty>}
+            {count > 0 && (
+              <>
+                <CommandGroup>
+                  <CommandItem onSelect={onClear} className="text-muted-foreground text-xs justify-center">
+                    Clear {label.toLowerCase()}
+                  </CommandItem>
+                </CommandGroup>
+                <CommandSeparator />
+              </>
+            )}
             <CommandGroup>
               {options.map((opt) => {
                 const isSelected = selected.includes(opt);
@@ -207,67 +219,10 @@ function MultiSelect({
   );
 }
 
-// ── Symbol combobox ────────────────────────────────────────────────
-
-function SymbolCombobox({
-  value,
-  onChange,
-  symbols,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  symbols: string[];
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={cn(
-            'h-7 w-24 text-xs px-2 gap-1 font-normal justify-between shadow-xs',
-            !value && 'text-muted-foreground',
-          )}
-        >
-          <span className="truncate">{value || 'Symbol'}</span>
-          <ChevronsUpDown className="size-3 opacity-50 shrink-0" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-44 p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Search symbol..." className="text-xs" />
-          <CommandList>
-            <CommandEmpty className="py-3 text-xs">No match</CommandEmpty>
-            <CommandGroup>
-              {value && (
-                <CommandItem value="__clear__" onSelect={() => onChange('')} className="text-muted-foreground">
-                  Clear
-                </CommandItem>
-              )}
-              {symbols.map((sym) => (
-                <CommandItem
-                  key={sym}
-                  value={sym}
-                  onSelect={() => onChange(sym === value ? '' : sym)}
-                >
-                  <CheckIcon className={cn('size-3 mr-1', value === sym ? 'opacity-100' : 'opacity-0')} />
-                  {sym}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 // ── TradeFilters UI ────────────────────────────────────────────────
 
 export function TradeFilters({ className }: { className?: string }) {
-  const { filters, toggleMulti, toggleFlag, setSymbol, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags } = useTradeFilters();
+  const { filters, toggle, clearKey, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags } = useTradeFilters();
 
   const options = useMemo(() => ({
     traders: [...new Set(allTrades.map((t) => t.trader))].sort(),
@@ -278,31 +233,40 @@ export function TradeFilters({ className }: { className?: string }) {
 
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
-      <MultiSelect selected={filters.traders} onToggle={(v) => toggleMulti('traders', v)} options={options.traders} label="Trader" />
-      <SymbolCombobox value={filters.symbol} onChange={setSymbol} symbols={options.symbols} />
-      <MultiSelect selected={filters.strategies} onToggle={(v) => toggleMulti('strategies', v)} options={options.strategies} label="Strategy" />
-      <MultiSelect selected={filters.directions} onToggle={(v) => toggleMulti('directions', v)} options={options.directions} label="Direction" />
+      <MultiSelect selected={filters.traders} onToggle={(v) => toggle('traders', v)} onClear={() => clearKey('traders')} options={options.traders} label="Trader" />
+      <MultiSelect selected={filters.symbols} onToggle={(v) => toggle('symbols', v)} onClear={() => clearKey('symbols')} options={options.symbols} label="Symbol" searchable />
+      <MultiSelect selected={filters.strategies} onToggle={(v) => toggle('strategies', v)} onClear={() => clearKey('strategies')} options={options.strategies} label="Strategy" />
+      <MultiSelect selected={filters.directions} onToggle={(v) => toggle('directions', v)} onClear={() => clearKey('directions')} options={options.directions} label="Direction" />
       {availableFlags.length > 0 && (
         <MultiSelect
           selected={filters.flags}
-          onToggle={(v) => toggleFlag(v as TradeFlag)}
+          onToggle={(v) => toggle('flags', v)}
+          onClear={() => clearKey('flags')}
           options={availableFlags}
           label="Flags"
           labels={FLAG_LABELS}
         />
       )}
-      {/* Always reserve space for count + clear to prevent layout shift */}
-      <span className={cn('text-xs tabular-nums min-w-[4ch] text-right', hasFilters ? 'text-muted-foreground' : 'invisible')}>
-        {filteredTrades.length}/{allTrades.length}
-      </span>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={clearFilters}
-        className={cn('h-6 w-6 text-muted-foreground hover:text-foreground', !hasFilters && 'invisible')}
-      >
-        <X className="h-3 w-3" />
-      </Button>
+      {(() => {
+        const digits = String(allTrades.length).length;
+        // "{digits} / {digits}" = digits*2 + 3 chars for " / ", plus icon + gaps
+        const minWidth = `calc(${digits * 2 + 3}ch + 1rem)`;
+        return (
+          <button
+            type="button"
+            onClick={clearFilters}
+            disabled={!hasFilters}
+            className={cn(
+              'h-7 text-xs px-1 gap-1 inline-flex items-center justify-end tabular-nums whitespace-nowrap shrink-0',
+              hasFilters ? 'text-muted-foreground hover:text-foreground' : 'text-muted-foreground/40 pointer-events-none',
+            )}
+            style={{ minWidth }}
+          >
+            {filteredTrades.length} / {allTrades.length}
+            <X className={cn('size-3 shrink-0', !hasFilters && 'invisible')} />
+          </button>
+        );
+      })()}
     </div>
   );
 }

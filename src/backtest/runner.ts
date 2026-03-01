@@ -2,6 +2,7 @@ import { SimClock } from './clock.js';
 import { DatabentoMarketDataProvider } from './market-data.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker, cutoffMinus15Min } from './sim-broker.js';
+import type { AutoCloseResult } from './sim-broker.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
 import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
@@ -303,9 +304,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         const sweepThrough = new Date(parseDateKey(msgDay).getTime() - 86_400_000)
           .toISOString().slice(0, 10);
 
-        const autoClosedCount = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min, cancelledCloseCallbacks);
-        if (autoClosedCount > 0) {
-          log.info(`Auto-closed ${autoClosedCount} expiring position(s) on ${lastMsgDay} at market price`);
+        const autoClosed = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min, cancelledCloseCallbacks);
+        if (autoClosed.length > 0) {
+          log.info(`Auto-closed ${autoClosed.length} expiring position(s) on ${lastMsgDay} at market price`);
+          await emitAutoCloseDecisions(autoClosed, runId);
         }
 
         const openPositions = await broker.getOpenTrades();
@@ -389,8 +391,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     const openCount = await broker.getOpenPositionCount();
     if (openCount > 0) {
       const autoClosedFinal = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min);
-      if (autoClosedFinal > 0) {
-        log.info(`Auto-closed ${autoClosedFinal} expiring position(s) on ${lastMsgDay} at market price (final)`);
+      if (autoClosedFinal.length > 0) {
+        log.info(`Auto-closed ${autoClosedFinal.length} expiring position(s) on ${lastMsgDay} at market price (final)`);
+        await emitAutoCloseDecisions(autoClosedFinal, runId);
       }
 
       const finalOpenPositions = await broker.getOpenTrades();
@@ -580,4 +583,24 @@ async function processMessage(
       updateStats(stats);
     },
   });
+}
+
+/** Emit an AUTO_CLOSE run_decision for each auto-closed position that has a source message. */
+async function emitAutoCloseDecisions(results: AutoCloseResult[], runId: string): Promise<void> {
+  for (const ac of results) {
+    if (!ac.sourceMessageId) continue;
+    const emitter = createEmitter({ messageId: ac.sourceMessageId, backtestRunId: runId });
+    await emitter.emit('AUTO_CLOSE', {
+      exitPrice: ac.exitPrice,
+      closeAt: ac.closeAt.toISOString(),
+      symbol: ac.symbol,
+      strategy: ac.strategy,
+      expiryDate: ac.expiryDate,
+    }, {
+      outcome: 'EXECUTE',
+      phase: 'expiry',
+      tradeId: ac.tradeId,
+      reasoning: `Option expiring ${ac.expiryDate}, auto-closed at $${ac.exitPrice.toFixed(2)}`,
+    });
+  }
 }

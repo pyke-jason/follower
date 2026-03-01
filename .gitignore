@@ -67,6 +67,8 @@ logs/
 *.tmp
 .cache/
 .temp/
+scratchpad/
 
-# Claude Code user-specific settings
+# Claude Code
 .claude/settings.local.json
+.claude/worktrees/

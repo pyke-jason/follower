@@ -19,7 +19,6 @@ import { RollingWinRate } from './rolling-win-rate';
 import { ChatRoom } from '../../messages/chat-room';
 import { ChatHydrator } from '../../messages/chat-hydrator';
 import { loadInitialChatData } from '../../messages/load-chat-data';
-import { DecisionScatter } from './decision-scatter';
 import { TradeFilterProvider, TradeFilters } from '../../components/trade-filters';
 import type { TradeFlag } from '../../components/trade-filters';
 import { BacktestTradesTable } from './backtest-trades-table';
@@ -183,27 +182,8 @@ export default async function BacktestDetailPage({
     return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
   })();
 
-  const scatterData = decisions
-    .filter((r) => r.decision.pnl != null)
-    .map((r) => ({
-      date: isoToDateKey(r.message.timestamp),
-      pnl: safeParseFloat(r.decision.pnl),
-      decision: r.decision.outcome,
-      message: r.message.cleanText.slice(0, 60),
-    }));
-
   const messagesContent = (
     <div className="space-y-3 flex flex-col flex-1 min-h-0">
-      {scatterData.length > 0 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Decision Outcomes</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <DecisionScatter data={scatterData} />
-          </CardContent>
-        </Card>
-      )}
       <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
         <ChatHydrator data={{
           ...chatData,

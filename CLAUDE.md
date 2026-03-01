@@ -28,7 +28,7 @@
 
 <workflows>
   <debugging>
-    Use disposable scripts in `scripts/` to isolate suspects with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scripts/debug-xxx.ts`. Delete script when verified. Do not read `.env` directly; rely on environment variables.
+    Use disposable scripts in `scratchpad/` to isolate suspects with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete script when verified. Do not read `.env` directly; rely on environment variables.
   </debugging>
 
   <self_documentation>
