@@ -12,7 +12,7 @@ import { setLogLevel, createLogger, LogLevelSchema } from '../lib/logger.js';
 import type { BacktestConfig } from './types.js';
 import { FillModelSchema } from './types.js';
 import { db, schema } from '../db/client.js';
-import { DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
+import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '../config/risk-defaults.js';
 
 
 function parseArg(args: string[], flag: string): string | undefined {
@@ -89,12 +89,10 @@ async function main() {
     ...(maxDrawdownPctArg ? { maxDrawdownPct: parseFloat(maxDrawdownPctArg) } : {}),
     ...(maxAgentCallsArg ? { maxAgentCalls: parseInt(maxAgentCallsArg, 10) } : {}),
     startingEquity: startingEquityArg ? parseInt(startingEquityArg, 10) : DEFAULT_STARTING_EQUITY,
-    ...((commissionOptionArg || commissionStockArg) ? {
-      commissionSchedule: {
-        ...(commissionOptionArg ? { option: { perContract: parseFloat(commissionOptionArg) } } : {}),
-        ...(commissionStockArg ? { stock: { perShare: parseFloat(commissionStockArg) } } : {}),
-      },
-    } : {}),
+    commissionSchedule: {
+      option: { perContract: commissionOptionArg ? parseFloat(commissionOptionArg) : DEFAULT_COMMISSION_SCHEDULE.option.perContract },
+      stock: { perShare: commissionStockArg ? parseFloat(commissionStockArg) : DEFAULT_COMMISSION_SCHEDULE.stock.perShare },
+    },
   };
 
   if (!config.databentoApiKey) {

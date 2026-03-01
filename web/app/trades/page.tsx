@@ -1,4 +1,4 @@
-import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule, getTradeEventsForTrades, getCancelledCloseTradeIds } from '@/lib/queries';
+import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule, getTradeEventsForTrades, getCancelledCloseTradeIds, getTradesWithSubsequentMessages } from '@/lib/queries';
 import { TradesTableClient } from '../components/trades-table-client';
 import { TradesHydrator } from './trades-hydrator';
 import { MetricStrip } from '../components/metric-strip';
@@ -42,9 +42,10 @@ export default async function TradeHistoryPage({
     runId ? getRunCommissionSchedule(runId) : undefined,
   ]);
 
-  const [eventsByTradeId, cancelledTradeIds] = await Promise.all([
+  const [eventsByTradeId, cancelledTradeIds, subsequentMessageTradeIds] = await Promise.all([
     getTradeEventsForTrades(trades.map((t) => t.id)),
     getCancelledCloseTradeIds(trades.map((t) => t.id)),
+    getTradesWithSubsequentMessages(trades.map((t) => t.id)),
   ]);
 
   const metrics: Metric[] = [
@@ -129,7 +130,7 @@ export default async function TradeHistoryPage({
       </div>
 
       <div className="animate-in-up">
-        <TradesHydrator data={{ trades, eventsByTradeId, cancelledTradeIds, commissionSchedule, runId }} />
+        <TradesHydrator data={{ trades, eventsByTradeId, cancelledTradeIds, subsequentMessageTradeIds, commissionSchedule, runId }} />
         <TradesTableClient />
         {trades.length === 0 && hasFilters && (
           <p className="px-4 py-6 text-sm text-muted-foreground text-center">

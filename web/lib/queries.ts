@@ -51,25 +51,26 @@ export async function getStats(runId?: string) {
 
 const tradeColumns = getTableColumns(schema.trades);
 
-const hasSubsequentMessage = sql<boolean>`EXISTS (
+/** EXISTS subquery: did the trader post about this symbol after opening? */
+const subsequentMessageExists = sql<boolean>`EXISTS (
   SELECT 1 FROM messages m
   WHERE m.author = ${schema.trades.trader}
   AND m.timestamp > ${schema.trades.openedAt}
   AND m.id != COALESCE(${schema.trades.sourceMessageId}, '')
   AND EXISTS (SELECT 1 FROM json_each(m.symbols) WHERE json_each.value = ${schema.trades.symbol})
-)`.as('has_subsequent_message');
+)`;
+
+const hasSubsequentMessage = subsequentMessageExists.as('has_subsequent_message');
 
 export type OpenTradeRow = Trade & { hasSubsequentMessage: boolean };
 
 export async function getOpenTrades(limit = 50, runId?: string): Promise<OpenTradeRow[]> {
-  // SAFETY: tradeColumns spread provides all Trade columns at runtime;
-  // Drizzle 1.0-beta doesn't infer the spread through select()
   return db
     .select({ ...tradeColumns, hasSubsequentMessage })
     .from(schema.trades)
     .where(and(isOpen, tradeScope(runId)))
     .orderBy(desc(schema.trades.openedAt))
-    .limit(limit) as unknown as Promise<OpenTradeRow[]>;
+    .limit(limit) as Promise<OpenTradeRow[]>;
 }
 
 export async function getClosedTrades(opts: {
@@ -939,6 +940,19 @@ export async function getTradeEventsForTrades(tradeIds: string[]) {
     grouped.set(row.tradeId, list);
   }
   return grouped;
+}
+
+/** Trade IDs where the trader posted about the same symbol after opening. */
+export async function getTradesWithSubsequentMessages(tradeIds: string[]): Promise<Set<string>> {
+  if (tradeIds.length === 0) return new Set();
+  const rows = await db
+    .select({ id: schema.trades.id })
+    .from(schema.trades)
+    .where(and(
+      inArray(schema.trades.id, tradeIds),
+      subsequentMessageExists,
+    ));
+  return new Set(rows.map(r => r.id));
 }
 
 /** Trade IDs that have at least one ORDER_CANCELLED event in run_decisions. */

@@ -7,6 +7,7 @@ export type TradesHydration = {
   trades: Trade[];
   eventsByTradeId: Map<string, TradeEvent[]>;
   cancelledTradeIds: Set<string>;
+  subsequentMessageTradeIds?: Set<string>;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
   runId?: string;
@@ -16,6 +17,7 @@ interface TradesState {
   trades: Trade[];
   eventsByTradeId: Map<string, TradeEvent[]>;
   cancelledTradeIds: Set<string>;
+  subsequentMessageTradeIds: Set<string>;
   commissionSchedule: CommissionSchedule | null;
   startingEquity: number | null;
   runId: string | null;
@@ -33,6 +35,7 @@ export const useTradesStore = create<TradesState>((set, get) => ({
   trades: [],
   eventsByTradeId: new Map(),
   cancelledTradeIds: new Set(),
+  subsequentMessageTradeIds: new Set(),
   commissionSchedule: null,
   startingEquity: null,
   runId: null,
@@ -46,6 +49,7 @@ export const useTradesStore = create<TradesState>((set, get) => ({
       trades: data.trades,
       eventsByTradeId: data.eventsByTradeId,
       cancelledTradeIds: data.cancelledTradeIds,
+      subsequentMessageTradeIds: data.subsequentMessageTradeIds ?? new Set(),
       commissionSchedule: data.commissionSchedule ?? null,
       startingEquity: data.startingEquity ?? null,
       runId: data.runId ?? null,

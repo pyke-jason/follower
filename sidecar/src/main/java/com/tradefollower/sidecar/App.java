@@ -43,8 +43,11 @@ public class App {
                 "accountId", bridge.getAccountId() != null ? bridge.getAccountId() : "",
                 "serverVersion", bridge.getServerVersion(),
                 "wsClients", wsHandler.getClientCount(),
-                "maintenance", bridge.isInMaintenanceWindow()
+                "maintenance", bridge.isInMaintenanceWindow(),
+                "lastHeartbeat", bridge.getLastHeartbeatResponse()
         )));
+
+        app.before("/api/*", ctx -> Guards.requireReady(ctx, bridge));
 
         // Register route groups
         new ContractRoutes(bridge).register(app);

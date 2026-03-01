@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -26,6 +27,16 @@ public class OrderRoutes {
 
     private final TwsBridge bridge;
 
+    private static final long IDEMPOTENCY_TTL_MS = 60_000;
+
+    private record IdempotencyEntry(int orderId, long createdAt) {}
+    private final ConcurrentHashMap<String, IdempotencyEntry> recentOrders = new ConcurrentHashMap<>();
+
+    private void evictStaleRefs() {
+        long cutoff = System.currentTimeMillis() - IDEMPOTENCY_TTL_MS;
+        recentOrders.entrySet().removeIf(e -> e.getValue().createdAt() < cutoff);
+    }
+
     public OrderRoutes(TwsBridge bridge) {
         this.bridge = bridge;
     }
@@ -36,19 +47,6 @@ public class OrderRoutes {
         app.get("/api/orders/{orderId}", this::getStatus);
         app.put("/api/orders/{orderId}", this::modify);
         app.delete("/api/orders/{orderId}", this::cancel);
-    }
-
-    /** Returns true if request should be aborted (already sent error response). */
-    private boolean guardNotReady(Context ctx) {
-        if (!bridge.isConnected()) {
-            ctx.status(503).json(Map.of("error", "Not connected to IB Gateway"));
-            return true;
-        }
-        if (bridge.isInMaintenanceWindow()) {
-            ctx.status(503).json(Map.of("error", "Maintenance window", "retryAfter", maintenanceRetrySeconds()));
-            return true;
-        }
-        return false;
     }
 
     /** Await order future with standard timeout/error handling. */
@@ -65,9 +63,19 @@ public class OrderRoutes {
 
     @SuppressWarnings("unchecked")
     private void placeSingle(Context ctx) {
-        if (guardNotReady(ctx)) return;
-
         Map<String, Object> body = ctx.bodyAsClass(Map.class);
+
+        String clientOrderRef = (String) body.get("clientOrderRef");
+        if (clientOrderRef != null) {
+            evictStaleRefs();
+            IdempotencyEntry existing = recentOrders.get(clientOrderRef);
+            if (existing != null) {
+                log.info("AUDIT idempotent-hit clientOrderRef={} existingOrderId={}", clientOrderRef, existing.orderId());
+                Map<String, Object> status = bridge.getOrderStatus(existing.orderId());
+                ctx.json(status != null ? status : Map.of("orderId", existing.orderId(), "status", "PendingSubmit"));
+                return;
+            }
+        }
 
         Contract contract = new Contract();
         contract.conid(((Number) body.get("conId")).intValue());
@@ -84,10 +92,16 @@ public class OrderRoutes {
         }
 
         int orderId = bridge.getNextReqId();
+
+        if (clientOrderRef != null) {
+            recentOrders.put(clientOrderRef, new IdempotencyEntry(orderId, System.currentTimeMillis()));
+            order.orderRef(clientOrderRef);
+        }
+
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
-        log.info("Placing single order: {} {} qty={} @ {} (orderId={})",
-                order.action(), contract.conid(), order.totalQuantity(), order.lmtPrice(), orderId);
+        log.info("AUDIT placeOrder orderId={} conId={} action={} qty={} orderType={} limitPrice={} tif={} clientOrderRef={}",
+                orderId, contract.conid(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), clientOrderRef);
 
         bridge.getClient().placeOrder(orderId, contract, order);
         bridge.storeOrder(orderId, contract, order);
@@ -96,9 +110,19 @@ public class OrderRoutes {
 
     @SuppressWarnings("unchecked")
     private void placeCombo(Context ctx) {
-        if (guardNotReady(ctx)) return;
-
         Map<String, Object> body = ctx.bodyAsClass(Map.class);
+
+        String clientOrderRef = (String) body.get("clientOrderRef");
+        if (clientOrderRef != null) {
+            evictStaleRefs();
+            IdempotencyEntry existing = recentOrders.get(clientOrderRef);
+            if (existing != null) {
+                log.info("AUDIT idempotent-hit clientOrderRef={} existingOrderId={}", clientOrderRef, existing.orderId());
+                Map<String, Object> status = bridge.getOrderStatus(existing.orderId());
+                ctx.json(status != null ? status : Map.of("orderId", existing.orderId(), "status", "PendingSubmit"));
+                return;
+            }
+        }
 
         // Build BAG contract with ComboLegs
         Contract contract = new Contract();
@@ -135,11 +159,16 @@ public class OrderRoutes {
         order.smartComboRoutingParams(smartParams);
 
         int orderId = bridge.getNextReqId();
+
+        if (clientOrderRef != null) {
+            recentOrders.put(clientOrderRef, new IdempotencyEntry(orderId, System.currentTimeMillis()));
+            order.orderRef(clientOrderRef);
+        }
+
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
-        log.info("Placing combo order: {} {} legs={} qty={} @ {} (orderId={})",
-                order.action(), contract.symbol(), comboLegs.size(),
-                order.totalQuantity(), order.lmtPrice(), orderId);
+        log.info("AUDIT placeOrder orderId={} symbol={} action={} qty={} orderType={} limitPrice={} tif={} legs={} clientOrderRef={}",
+                orderId, contract.symbol(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), comboLegs.size(), clientOrderRef);
 
         bridge.getClient().placeOrder(orderId, contract, order);
         bridge.storeOrder(orderId, contract, order);
@@ -158,39 +187,33 @@ public class OrderRoutes {
 
     @SuppressWarnings("unchecked")
     private void modify(Context ctx) {
-        if (guardNotReady(ctx)) return;
-
         int orderId = Integer.parseInt(ctx.pathParam("orderId"));
-        TwsBridge.StoredOrder stored = bridge.getStoredOrder(orderId);
-        if (stored == null) {
-            ctx.status(404).json(Map.of("error", "Order not in store — cannot modify", "orderId", orderId));
+        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+
+        if (!body.containsKey("limitPrice")) {
+            ctx.status(400).json(Map.of("error", "limitPrice is required", "orderId", orderId));
             return;
         }
 
-        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        double newPrice = roundToOptionTick(((Number) body.get("limitPrice")).doubleValue());
+        CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
-        // TWS Order is mutable — update only limitPrice, re-submit with same orderId
-        Order updated = stored.order();
-        if (body.containsKey("limitPrice")) {
-            updated.lmtPrice(roundToOptionTick(((Number) body.get("limitPrice")).doubleValue()));
+        TwsBridge.StoredOrder stored = bridge.modifyOrderPrice(orderId, newPrice);
+        if (stored == null) {
+            bridge.failRequest(orderId, new RuntimeException("Order not in store"));
+            ctx.status(404).json(Map.of("error", "Order not in store", "orderId", orderId));
+            return;
         }
 
-        CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
-        log.info("Modifying order {} (limitPrice={})", orderId, updated.lmtPrice());
-        bridge.getClient().placeOrder(orderId, stored.contract(), updated);
-        bridge.storeOrder(orderId, stored.contract(), updated);
+        log.info("AUDIT modifyOrder orderId={} conId={} newLimitPrice={}",
+                orderId, stored.contract().conid(), newPrice);
         awaitAndRespond(ctx, future, orderId);
     }
 
     private void cancel(Context ctx) {
-        if (!bridge.isConnected()) {
-            ctx.status(503).json(Map.of("error", "Not connected to IB Gateway"));
-            return;
-        }
-
         int orderId = Integer.parseInt(ctx.pathParam("orderId"));
 
-        log.info("Cancelling order {}", orderId);
+        log.info("AUDIT cancelOrder orderId={}", orderId);
 
         bridge.getClient().cancelOrder(orderId, new OrderCancel(""));
 
@@ -210,15 +233,5 @@ public class OrderRoutes {
         } else {
             return Math.round(price * 20.0) / 20.0;
         }
-    }
-
-    private int maintenanceRetrySeconds() {
-        // Return seconds until 01:45 ET
-        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(java.time.ZoneId.of("America/New_York"));
-        java.time.ZonedDateTime endMaint = now.withHour(1).withMinute(45).withSecond(0);
-        if (now.isAfter(endMaint)) {
-            endMaint = endMaint.plusDays(1);
-        }
-        return (int) java.time.Duration.between(now, endMaint).getSeconds();
     }
 }

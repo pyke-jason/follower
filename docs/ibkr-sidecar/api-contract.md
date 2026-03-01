@@ -1,4 +1,4 @@
-# IBKR Sidecar API Contract
+# Sidecar API Contract
 
 > Source of truth for the Java sidecar REST + WebSocket API.
 > Base URL: `http://localhost:8090`
@@ -6,22 +6,11 @@
 
 ---
 
-## Environment Variables
-
-| Var | Default | Purpose |
-|---|---|---|
-| `IBKR_GATEWAY_HOST` | `127.0.0.1` | IB Gateway host |
-| `IBKR_GATEWAY_PORT` | `4001` | Gateway port (4001=live, 4002=paper) |
-| `IBKR_CLIENT_ID` | `1` | TWS client ID |
-| `SIDECAR_PORT` | `8090` | HTTP server port |
-
----
-
 ## REST Endpoints
 
 ### GET /api/status
 
-Health/connection check. No guards — always returns 200.
+Health/connection check. No guards -- always returns 200.
 
 **Response 200:**
 ```jsonc
@@ -30,7 +19,7 @@ Health/connection check. No guards — always returns 200.
   "accountId":     string,   // e.g. "U14368257", "" before first connect
   "serverVersion": number,   // e.g. 215, 0 before first connect
   "wsClients":     number,   // active WebSocket sessions
-  "maintenance":   boolean   // true if 00:15–01:45 ET
+  "maintenance":   boolean   // true if 00:15-01:45 ET
 }
 ```
 
@@ -47,9 +36,9 @@ Resolve a contract to get its conId. **Guards: connected.**
   "secType":  string,          // default "STK". Options: "OPT"
   "exchange": string,          // default "SMART"
   "currency": string,          // default "USD"
-  "expiry":   string,          // YYYYMMDD — options only
+  "expiry":   string,          // YYYYMMDD -- options only
   "strike":   number,          // options only
-  "right":    string           // "C" or "P" — options only
+  "right":    string           // "C" or "P" -- options only
 }
 ```
 
@@ -82,14 +71,14 @@ Resolve a contract to get its conId. **Guards: connected.**
 
 Get a market data snapshot. **Guards: connected.**
 
-**Request (mode 1 — by conId):**
+**Request (mode 1 -- by conId):**
 ```jsonc
 {
   "conId": number   // resolved contract ID
 }
 ```
 
-**Request (mode 2 — by symbol):**
+**Request (mode 2 -- by symbol):**
 ```jsonc
 {
   "symbol":   string,
@@ -102,7 +91,7 @@ Get a market data snapshot. **Guards: connected.**
 }
 ```
 
-**Response 200:** All fields optional — depends on what TWS returns.
+**Response 200:** All fields optional -- depends on what TWS returns.
 ```jsonc
 {
   "bid":    number,   // tickPrice field=1
@@ -123,7 +112,7 @@ Get a market data snapshot. **Guards: connected.**
 
 **Edge cases:**
 - Response can be `{}` if no ticks arrived (illiquid, outside hours).
-- `symbol` is NOT included in the response — the caller must track it.
+- `symbol` is NOT included in the response -- the caller must track it.
 - No maintenance window check.
 
 ---
@@ -135,16 +124,16 @@ Place a single-contract order. **Guards: connected + not maintenance.**
 **Request:**
 ```jsonc
 {
-  "conId":      number,   // REQUIRED — resolved contract ID
-  "action":     string,   // REQUIRED — "BUY" or "SELL"
-  "quantity":   number,   // REQUIRED — integer
+  "conId":      number,   // REQUIRED -- resolved contract ID
+  "action":     string,   // REQUIRED -- "BUY" or "SELL"
+  "quantity":   number,   // REQUIRED -- integer
   "orderType":  string,   // default "LMT"
   "tif":        string,   // default "GTC"
-  "limitPrice": number    // optional — rounded by tick rules (see below)
+  "limitPrice": number    // optional -- rounded by tick rules (see below)
 }
 ```
 
-**Tick rounding:** `limitPrice < $3.00` → $0.01 increments. `>= $3.00` → $0.05 increments.
+**Tick rounding:** `limitPrice < $3.00` -> $0.01 increments. `>= $3.00` -> $0.05 increments.
 Exchange hardcoded to `"SMART"`.
 
 **Response 200 (order accepted):**
@@ -158,7 +147,7 @@ Exchange hardcoded to `"SMART"`.
 }
 ```
 
-**Response 200 (timeout — order may still be accepted):**
+**Response 200 (timeout -- order may still be accepted):**
 ```jsonc
 {
   "orderId": number,
@@ -171,7 +160,7 @@ Exchange hardcoded to `"SMART"`.
 | Status | Shape | When |
 |---|---|---|
 | 503 | `{ "error": "Not connected to IB Gateway" }` | Disconnected |
-| 503 | `{ "error": "Maintenance window", "retryAfter": number }` | 00:15–01:45 ET. `retryAfter` = seconds until 01:45 |
+| 503 | `{ "error": "Maintenance window", "retryAfter": number }` | 00:15-01:45 ET. `retryAfter` = seconds until 01:45 |
 | 400 | `{ "error": string, "orderId": number }` | TWS rejected the order |
 
 ---
@@ -183,20 +172,20 @@ Place a BAG (spread/combo) order. **Guards: connected + not maintenance.**
 **Request:**
 ```jsonc
 {
-  "symbol":     string,   // REQUIRED — underlying, e.g. "SPY"
-  "action":     string,   // REQUIRED — "BUY" or "SELL"
-  "quantity":   number,   // REQUIRED — integer
-  "legs": [               // REQUIRED — array of legs
+  "symbol":     string,   // REQUIRED -- underlying, e.g. "SPY"
+  "action":     string,   // REQUIRED -- "BUY" or "SELL"
+  "quantity":   number,   // REQUIRED -- integer
+  "legs": [               // REQUIRED -- array of legs
     {
       "conId":    number,   // REQUIRED
-      "action":   string,   // REQUIRED — "BUY" or "SELL"
+      "action":   string,   // REQUIRED -- "BUY" or "SELL"
       "ratio":    number,   // default 1
       "exchange": string    // default "SMART"
     }
   ],
   "orderType":  string,   // default "LMT"
   "tif":        string,   // default "GTC"
-  "limitPrice": number    // optional — net debit/credit for the spread
+  "limitPrice": number    // optional -- net debit/credit for the spread
 }
 ```
 
@@ -218,7 +207,7 @@ Poll order status. **Guards: none** (reads from in-memory map).
   "filledQuantity": number,
   "remaining":      number,
   "avgFillPrice":   number,
-  "commission":     number      // OPTIONAL — only if openOrder reported it
+  "commission":     number      // OPTIONAL -- only if openOrder reported it
 }
 ```
 
@@ -237,32 +226,29 @@ Poll order status. **Guards: none** (reads from in-memory map).
 ### PUT /api/orders/{orderId}
 
 Modify an existing order. **Guards: connected + not maintenance.**
-TWS requires the FULL contract + order for modification — not just the changed fields.
+The sidecar looks up the original Contract + Order from its in-memory `orderStore`
+and merges the new `limitPrice` before re-submitting to TWS.
 
-**Request (single):**
+**Request:**
 ```jsonc
 {
-  "conId":      number,   // REQUIRED for TWS to identify the contract
-  "action":     string,   // REQUIRED
-  "orderType":  string,   // REQUIRED
-  "quantity":   number,   // REQUIRED
-  "tif":        string,   // REQUIRED
   "limitPrice": number    // the field being modified
 }
 ```
 
-**Request (combo — when `legs` is present):**
-Same as single, plus `symbol` and `legs` array (same shape as combo placement).
+**Response 404 (order not in store):**
+```jsonc
+{ "error": "Order not in store -- cannot modify", "orderId": number }
+```
+This happens if the sidecar restarted since the order was placed (store is in-memory only).
 
-**Responses:** Identical shapes to `POST /api/orders/single`.
-
-**WARNING:** Sending only `{ limitPrice }` will result in TWS rejection — conId=0 default.
+**Responses (success/timeout/error):** Identical shapes to `POST /api/orders/single`.
 
 ---
 
 ### DELETE /api/orders/{orderId}
 
-Cancel an order. **Guards: connected.** Fire-and-forget — returns immediately.
+Cancel an order. **Guards: connected.** Fire-and-forget -- returns immediately.
 
 **Response 200:**
 ```jsonc
@@ -286,25 +272,41 @@ Cancel an order. **Guards: connected.** Fire-and-forget — returns immediately.
 
 ### GET /api/account/summary
 
-Account balance snapshot. **Guards: connected.**
+Account balance snapshot. **Guards: connected.** Two code paths -- warm (subscription active) and cold (fallback).
 
-**Response 200:**
+**Response 200 (warm -- `reqAccountUpdates` subscription active):**
 ```jsonc
 {
-  "netLiquidation":    number,   // defaults to 0.0 if tag missing
+  "netLiquidation":     number,
+  "availableFunds":     number,
+  "maintenanceMargin":  number,
+  "unrealizedPnl":      number,
+  "cushion":            number,   // margin cushion percentage
+  "sma":                number,   // Special Memorandum Account
+  "dayTradesRemaining": number,   // PDT day-trades remaining
+  "excessLiquidity":    number    // excess liquidity
+}
+```
+Warm path: normal steady-state after `managedAccounts()` fires `reqAccountUpdates()`.
+
+**Response 200 (cold-start -- subscription not yet active):**
+```jsonc
+{
+  "netLiquidation":    number,
   "availableFunds":    number,
   "maintenanceMargin": number,
   "unrealizedPnl":     number
 }
 ```
+Cold path: one-shot `reqAccountSummary()` with only 4 tags. Only in the brief window between connect and the first `accountDownloadEnd` callback.
 
 **Error responses:**
 
 | Status | Shape | When |
 |---|---|---|
 | 503 | `{ "error": "Not connected to IB Gateway" }` | Disconnected |
-| 504 | `{ "error": "Account summary timed out" }` | 5s timeout |
-| 500 | `{ "error": string }` | Other |
+| 504 | `{ "error": "Account summary timed out" }` | 5s timeout (cold path only) |
+| 500 | `{ "error": string }` | Other (cold path only) |
 
 ---
 
@@ -322,15 +324,14 @@ Current positions. **Guards: connected.**
     "localSymbol":    string,   // OCC-format for options, "" if null
     "position":       number,   // signed: positive=long, negative=short
     "avgCost":        number,   // per-share/contract average cost
-    "marketValue":    number,   // OPTIONAL — enriched from reqAccountUpdates subscription
-    "unrealizedPnl":  number    // OPTIONAL — enriched from reqAccountUpdates subscription
+    "marketValue":    number,   // OPTIONAL -- enriched from reqAccountUpdates
+    "unrealizedPnl":  number    // OPTIONAL -- enriched from reqAccountUpdates
   }
 ]
 ```
 
 **NOTE:** `marketValue` and `unrealizedPnl` come from the `reqAccountUpdates()` portfolio
-subscription, NOT from `reqPositions()` itself. The sidecar enriches positions by joining
-on `conId`. These fields are absent during cold start (before `accountDownloadEnd` fires).
+subscription, NOT from `reqPositions()` itself. Absent during cold start.
 
 **Error responses:**
 
@@ -375,7 +376,33 @@ Fires on TWS error codes 1101 (data lost) or 1102 (data maintained).
   "avgFillPrice": number
 }
 ```
-Fires on EVERY order status change: submission, partial fill, full fill, cancellation.
+Fires on EVERY order status change.
+
+### execDetails
+```jsonc
+{
+  "type":        "execDetails",
+  "execId":      string,
+  "orderId":     number,
+  "symbol":      string,   // underlying symbol
+  "side":        string,   // "BOT" or "SLD"
+  "quantity":    number,
+  "price":       number,
+  "time":        string,   // execution timestamp (TWS format)
+  "liquidation": number    // 0 = normal, non-zero = IB forced liquidation
+}
+```
+
+### commission
+```jsonc
+{
+  "type":       "commission",
+  "execId":     string,   // correlates with execDetails.execId
+  "commission": number,
+  "orderId":    number    // -1 if execution not found in store
+}
+```
+Suppressed when `commissionAndFees == Double.MAX_VALUE` (not yet calculated).
 
 ### error
 ```jsonc
@@ -383,44 +410,11 @@ Fires on EVERY order status change: submission, partial fill, full fill, cancell
   "type":    "error",
   "code":    number,      // TWS error code
   "message": string,
-  "orderId": number       // OPTIONAL — only when orderId > 0
+  "orderId": number       // OPTIONAL -- only when orderId > 0
 }
 ```
-Fires ONLY for codes: **110** (tick size), **201** (rejected), **202** (cancelled), **460** (unknown order).
+Fires for order error codes: **110**, **200**, **201**, **202**, **203**, **392**, **399**, **404**, **412**, **426**, **460**, **10239** (12 codes total).
 All other TWS errors are logged server-side but NOT broadcast to WebSocket clients.
-
----
-
-## TWS Error Code Handling
-
-### Informational (debug log only, silent)
-| Code | Meaning |
-|---|---|
-| 2104 | Market data farm connection OK |
-| 2106 | HMDS data farm connection OK |
-| 2158 | Sec-def data farm connection OK |
-
-### Connection (warn log, triggers reconnect/WS event)
-| Code | Meaning | Action |
-|---|---|---|
-| 1100 | Connectivity lost | `connected=false`, WS `disconnected`, reconnect |
-| 504 | Not connected | `connected=false`, WS `disconnected`, reconnect |
-| 1101 | Restored (data lost) | `connected=true`, WS `reconnected` |
-| 1102 | Restored (data maintained) | `connected=true`, WS `reconnected` |
-
-### Order errors (error log, WS `error` event, fails pending request)
-| Code | Meaning |
-|---|---|
-| 110 | Price does not conform to minimum tick |
-| 201 | Order rejected |
-| 202 | Order cancelled |
-| 460 | Unknown order |
-
-### All other error codes
-- Logged at ERROR level
-- `failRequest()` called (completes the REST future exceptionally → 400/500)
-- **NOT** broadcast via WebSocket
-- `advancedOrderRejectJson` (5th error param) is **completely ignored**
 
 ---
 
@@ -428,32 +422,49 @@ All other TWS errors are logged server-side but NOT broadcast to WebSocket clien
 
 ### Request/Response Flow
 ```
-REST handler → getNextReqId() → createRequest(reqId) → client.reqXxx()
-                                                           ↓
+REST handler -> getNextReqId() -> createRequest(reqId) -> client.reqXxx()
+                                                           |
                                             TWS async callback fires
-                                                           ↓
+                                                           |
                                          completeRequest(reqId, result)
                                             or failRequest(reqId, error)
-                                                           ↓
+                                                           |
                                      awaitRequest() returns (5s timeout)
 ```
 
 ### Timeout: 5 seconds (`REQUEST_TIMEOUT_SECONDS`)
 - On timeout: `CompletableFuture` stays in `pendingRequests` map (potential memory leak)
 - Late callbacks are silently consumed (future already timed out)
+- **Fix needed:** Add `pendingRequests.remove(reqId)` in timeout handler
 
 ### Persistent data (survives across requests, lost on restart)
-- `orderStatuses` — `ConcurrentHashMap<orderId, statusMap>` — written by `orderStatus` + `openOrder` callbacks
-- `accountId`, `connected`, `serverVersion` — volatile fields
+- `orderStatuses` -- `ConcurrentHashMap<orderId, statusMap>` -- written by `orderStatus` + `openOrder` callbacks
+- `orderStore` -- `ConcurrentHashMap<orderId, StoredOrder>` -- stores original Contract+Order from placement. Used by `PUT /orders/{id}` for modification.
+- `executionStore` -- `ConcurrentHashMap<execId, Map>` -- stores execution details from `execDetails`. Used by `commissionAndFeesReport` to correlate commission with orderId.
+- `accountValues` -- `ConcurrentHashMap<String, String>` -- continuously updated by `reqAccountUpdates` subscription. Only stores USD-currency or empty-currency values.
+- `portfolioPositions` -- `ConcurrentHashMap<conId, Map>` -- continuously updated by `reqAccountUpdates`. Used to enrich positions with `marketValue` and `unrealizedPnl`.
+- `accountId`, `connected`, `serverVersion` -- volatile fields
 
 ### Maintenance window
-- 00:15–01:45 ET daily
+- 00:15-01:45 ET daily (sidecar-imposed guard, not an IB enforcement)
 - **Blocks:** POST orders/single, POST orders/combo, PUT orders/{id}
 - **Does NOT block:** DELETE orders/{id}, GET orders/{id}, contracts/resolve, market-data, account/summary, positions
 - Returns `{ "error": "Maintenance window", "retryAfter": seconds }` with 503
+
+### reqAccountUpdates subscription
+- Triggered automatically by `managedAccounts()` callback (fires on connect after `nextValidId`)
+- Calls `client.reqAccountUpdates(true, accountId)` -- a persistent subscription (no reqId)
+- Streams `updateAccountValue()` and `updatePortfolio()` callbacks continuously
+- `accountDownloadEnd()` fires once on initial snapshot completion -> sets `accountSubscriptionActive=true`
+- **Risk:** Error 2100 from TWS means another client took over the subscription. Not currently handled.
 
 ### Auto-reconnect
 - Thread `"reconnect-scheduler"` spawns on disconnect
 - 5s fixed delay between attempts (no backoff)
 - Defers during maintenance window (sleeps 60s, rechecks)
 - Stops when `connected=true` or `shuttingDown=true`
+
+### Healthcheck ping
+- Pings `HEALTHCHECK_PING_URL` every 60 seconds from daemon thread
+- Appends `/fail` when `bridge.isConnected() == false`
+- Disabled when `HEALTHCHECK_PING_URL` not set, `HEALTHCHECK_ENABLED=0`, or paper trading (port 4002)

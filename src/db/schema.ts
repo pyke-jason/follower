@@ -334,7 +334,7 @@ export type BacktestRunConfig = {
   fillModel?: 'orats' | 'midpoint' | 'natural';
   name?: string;           // human label for the run
   refreshQuoteCache?: boolean;
-  startingEquity?: number;
+  startingEquity: number;
   maxAgentCalls?: number;
   // Risk limit overrides (see BACKTEST_RISK_DEFAULTS in src/config/risk-defaults.ts for defaults)
   maxOnSymbol?: number;
@@ -342,7 +342,7 @@ export type BacktestRunConfig = {
   maxDrawdownPct?: number;
   maxNotionalMultiplier?: number;
   disableRiskLimits?: boolean;
-  commissionSchedule?: CommissionSchedule;
+  commissionSchedule: CommissionSchedule;
 };
 
 export type BacktestRunSummary = {

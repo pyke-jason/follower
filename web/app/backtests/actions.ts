@@ -6,8 +6,9 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots } from '@/lib/queries';
 import { generateReportFromTrades } from '@src/backtest/report';
-import type { CommissionSchedule } from '@src/db/schema';
+import type { CommissionSchedule, BacktestRunConfig } from '@src/db/schema';
 import { getConfig } from '@src/db/accessors';
+import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 
@@ -34,18 +35,14 @@ export async function startBacktest(formData: FormData) {
   const maxTotalPositions = formData.get('maxTotalPositions') ? Number(formData.get('maxTotalPositions')) : undefined;
   const maxDrawdownPct = formData.get('maxDrawdownPct') ? Number(formData.get('maxDrawdownPct')) : undefined;
   const maxAgentCalls = formData.get('maxAgentCalls') ? Number(formData.get('maxAgentCalls')) : undefined;
-  const startingEquity = formData.get('startingEquity') ? Number(formData.get('startingEquity')) : undefined;
+  const startingEquity = formData.get('startingEquity') ? Number(formData.get('startingEquity')) : DEFAULT_STARTING_EQUITY;
   const commOptionPerContract = formData.get('commissionOptionPerContract') ? Number(formData.get('commissionOptionPerContract')) : undefined;
   const commStockPerShare = formData.get('commissionStockPerShare') ? Number(formData.get('commissionStockPerShare')) : undefined;
 
-  // Build commission schedule if any values provided
-  const commissionSchedule: CommissionSchedule | undefined =
-    (commOptionPerContract != null || commStockPerShare != null)
-      ? {
-          ...(commOptionPerContract != null ? { option: { perContract: commOptionPerContract } } : {}),
-          ...(commStockPerShare != null ? { stock: { perShare: commStockPerShare } } : {}),
-        }
-      : undefined;
+  const commissionSchedule: CommissionSchedule = {
+    option: { perContract: commOptionPerContract ?? DEFAULT_COMMISSION_SCHEDULE.option.perContract },
+    stock: { perShare: commStockPerShare ?? DEFAULT_COMMISSION_SCHEDULE.stock.perShare },
+  };
 
   if (!startDate || !endDate || !tradersRaw) {
     throw new Error('Missing required fields');
@@ -69,8 +66,8 @@ export async function startBacktest(formData: FormData) {
     ...(maxTotalPositions != null ? { maxTotalPositions } : {}),
     ...(maxDrawdownPct != null ? { maxDrawdownPct } : {}),
     ...(maxAgentCalls != null ? { maxAgentCalls } : {}),
-    ...(startingEquity != null ? { startingEquity } : {}),
-    ...(commissionSchedule ? { commissionSchedule } : {}),
+    startingEquity,
+    commissionSchedule,
   };
 
   // Clear cached intents for matching messages if requested
@@ -178,7 +175,7 @@ export async function cancelBacktestRun(formData: FormData) {
       .select({ config: schema.backtestRuns.config })
       .from(schema.backtestRuns)
       .where(eq(schema.backtestRuns.id, runId));
-    const cancelledConfig = cancelledRun ? getConfig(cancelledRun) : undefined;
+    const cancelledConfig = getConfig(cancelledRun);
 
     const report = generateReportFromTrades({
       trades: trades.map((t) => ({
@@ -194,8 +191,8 @@ export async function cancelBacktestRun(formData: FormData) {
       })),
       decisions,
       mtmSnapshots,
-      startingEquity: cancelledConfig?.startingEquity ?? 100_000,
-      commissionSchedule: cancelledConfig?.commissionSchedule,
+      startingEquity: cancelledConfig.startingEquity,
+      commissionSchedule: cancelledConfig.commissionSchedule,
     });
     await db.update(schema.backtestRuns)
       .set({

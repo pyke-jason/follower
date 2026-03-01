@@ -147,7 +147,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const clock = new SimClock(startDate);
   const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, tickCacheDb, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
   const fillModel = config.fillModel ?? 'orats';
-  const startingEquity = config.startingEquity ?? DEFAULT_STARTING_EQUITY;
+  const startingEquity = config.startingEquity;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
 
   const sizingService = {

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle } from 'lucide-react';
+import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
@@ -76,6 +76,13 @@ const FLAG_DEFS = {
     color: 'text-rose-400',
     bgColor: 'bg-rose-400/15 border border-rose-400/25',
   },
+  hasUpdate: {
+    icon: MessageSquareMore,
+    label: 'Update',
+    tooltip: 'Trader posted about this symbol after opening',
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
 } as const satisfies Record<string, FlagDef>;
 
 function FlagChip({ flag, tooltip }: { flag: FlagDef; tooltip?: string }) {
@@ -107,6 +114,7 @@ export function TradeRow({
   const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId))!;
   const events = useTradesStore((s) => s.eventsByTradeId.get(tradeId)) ?? [];
   const cancelledClose = useTradesStore((s) => s.cancelledTradeIds.has(tradeId));
+  const hasUpdate = useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
   const runId = useTradesStore((s) => s.runId);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const startingEquity = useTradesStore((s) => s.startingEquity);
@@ -139,7 +147,7 @@ export function TradeRow({
     Math.abs(slippage) >= SLIPPAGE_THRESHOLD_ABS
   );
 
-  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose;
+  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose || hasUpdate;
 
   return (
     <TableRow
@@ -179,6 +187,7 @@ export function TradeRow({
               tooltip={`Slippage: ${slippage! > 0 ? '+' : ''}${formatCurrency(slippage)} (${(slippagePct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`}
             />
           )}
+          {hasUpdate && <FlagChip flag={FLAG_DEFS.hasUpdate} />}
         </span>
       </TableCell>
 

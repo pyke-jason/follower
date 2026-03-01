@@ -30,11 +30,6 @@ public class ContractRoutes {
     }
 
     private void resolve(Context ctx) {
-        if (!bridge.isConnected()) {
-            ctx.status(503).json(Map.of("error", "Not connected to IB Gateway"));
-            return;
-        }
-
         Map<String, Object> body = ctx.bodyAsClass(Map.class);
 
         Contract contract = new Contract();

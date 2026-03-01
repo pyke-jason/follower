@@ -253,7 +253,7 @@ export function generateReportFromTrades(params: {
   decisions: { phase: string | null; outcome: string | null; inputTokens: number | null }[];
   mtmSnapshots?: MtmSnapshot[];
   startingEquity: number;
-  commissionSchedule?: CommissionSchedule;
+  commissionSchedule: CommissionSchedule;
 }): Pick<BacktestReport, 'summary' | 'byTrader' | 'byStrategy' | 'equityCurve' | 'extendedMetrics'> {
   const { trades, decisions, mtmSnapshots, startingEquity, commissionSchedule } = params;
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(trades, mtmSnapshots, commissionSchedule);

@@ -60,7 +60,7 @@ export default async function OpenTradesPage({
                     {t.symbol}
                   </Link>
                   <div className="flex items-center gap-1.5">
-                    {t.hasSubsequentMessage && (
+                    {!!t.hasSubsequentMessage && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span className="inline-flex items-center gap-0.5 rounded-sm px-1 py-px text-[9px] font-medium leading-tight text-amber-300 bg-amber-400/15 border border-amber-400/25">

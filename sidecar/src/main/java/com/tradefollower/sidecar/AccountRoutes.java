@@ -36,11 +36,6 @@ public class AccountRoutes {
 
     @SuppressWarnings("unchecked")
     private void summary(Context ctx) {
-        if (!bridge.isConnected()) {
-            ctx.status(503).json(Map.of("error", "Not connected to IB Gateway"));
-            return;
-        }
-
         // Subscription-first: serve from persistent reqAccountUpdates data
         Map<String, String> subData = bridge.getAccountValues();
         if (bridge.isAccountSubscriptionActive() && !subData.isEmpty()) {
@@ -86,11 +81,6 @@ public class AccountRoutes {
 
     @SuppressWarnings("unchecked")
     private void positions(Context ctx) {
-        if (!bridge.isConnected()) {
-            ctx.status(503).json(Map.of("error", "Not connected to IB Gateway"));
-            return;
-        }
-
         int reqId = bridge.getNextReqId();
         bridge.initPositionAccumulator(reqId);
         CompletableFuture<List<Map<String, Object>>> future = bridge.createRequest(reqId);

@@ -5,7 +5,10 @@
 </project_overview>
 
 <ibkr_docs>
-  `docs/ibkr/` is the source of truth for the IBKR integration: sidecar API contract, order lifecycle state machine, TWS error codes, margin/risk monitoring, and connection operations. Read `docs/ibkr/gaps-and-todos.md` for known issues before making changes to `src/broker/ibkr/` or `sidecar/`.
+  Two doc directories:
+  - `docs/ibkr/` — Official IBKR TWS API reference (source of truth, verified against official docs). Order lifecycle, error codes, connection, risk/margin.
+  - `docs/ibkr-sidecar/` — Our Java sidecar + TS client implementation: API contract, status mapping, gaps/todos.
+  Read `docs/ibkr-sidecar/gaps-and-todos.md` for known issues before making changes to `src/broker/ibkr/` or `sidecar/`.
 </ibkr_docs>
 
 <signal_flow>
@@ -31,9 +34,9 @@
 </coding_standards>
 
 <workflows>
-  <debugging>
-    Use disposable scripts in `scratchpad/` to isolate suspects with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete script when verified. Do not read `.env` directly; rely on environment variables.
-  </debugging>
+  <iteration>
+    Use disposable scripts in `scratchpad/` to isolate suspects with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete script when verified. Do not read `.env` directly; rely on environment variables. You literally have ANY tools at your disposal. Web search, disposable scripts, whatever that allows you to CONCRETELY verify your additions/solutions/fixes.
+  </iteration>
 
   <self_documentation>
     MANDATORY: Create a lesson file in `docs/lessons/` after every implementation session (new features, bugs, schema changes).

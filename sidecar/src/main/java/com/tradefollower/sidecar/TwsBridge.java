@@ -54,6 +54,18 @@ public class TwsBridge extends DefaultEWrapper {
     /** Execution details keyed by execId — for commission correlation. */
     private final ConcurrentHashMap<String, Map<String, Object>> executionStore = new ConcurrentHashMap<>();
 
+    private static final long EVICTION_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+
+    // Companion timestamp maps
+    private final ConcurrentHashMap<String, Long>  executionTimestamps = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Long> orderTimestamps     = new ConcurrentHashMap<>();
+
+    private final ScheduledExecutorService reaper = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "map-reaper");
+        t.setDaemon(true);
+        return t;
+    });
+
     // Persistent reqAccountUpdates subscription data
     private final ConcurrentHashMap<String, String> accountValues = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, Map<String, Object>> portfolioPositions = new ConcurrentHashMap<>();
@@ -67,6 +79,19 @@ public class TwsBridge extends DefaultEWrapper {
     private volatile String accountId;
     private volatile int serverVersion;
     private volatile boolean shuttingDown = false;
+
+    private static final long HEARTBEAT_INTERVAL_MS = 30_000;
+    private static final long HEARTBEAT_DEAD_MS     = 40_000;
+
+    private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "heartbeat-watchdog");
+        t.setDaemon(true);
+        return t;
+    });
+    private volatile long lastHeartbeatResponse = System.currentTimeMillis();
+    private volatile ScheduledFuture<?> heartbeatTask;
+    private volatile ScheduledFuture<?> reconnectTask;
+    private volatile ScheduledFuture<?> reaperTask;
 
     public TwsBridge(WsHandler wsHandler) {
         this.wsHandler = wsHandler;
@@ -99,37 +124,121 @@ public class TwsBridge extends DefaultEWrapper {
         }, "ereader-dispatch").start();
     }
 
+    private void startHeartbeat() {
+        if (heartbeatTask != null) heartbeatTask.cancel(false);
+        heartbeatTask = watchdog.scheduleAtFixedRate(this::heartbeatCheck,
+                HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        log.info("Heartbeat watchdog started (interval={}s)", HEARTBEAT_INTERVAL_MS / 1000);
+    }
+
+    private void heartbeatCheck() {
+        if (shuttingDown || !connected) return;
+
+        if (isInMaintenanceWindow()) {
+            lastHeartbeatResponse = System.currentTimeMillis();
+            return;
+        }
+
+        long elapsed = System.currentTimeMillis() - lastHeartbeatResponse;
+        if (elapsed > HEARTBEAT_DEAD_MS) {
+            log.warn("Heartbeat timeout ({}ms since last response) — declaring connection dead", elapsed);
+            declareConnectionDead();
+            return;
+        }
+
+        try {
+            client.reqCurrentTime();
+        } catch (Exception e) {
+            log.warn("Failed to send heartbeat: {}", e.getMessage());
+            declareConnectionDead();
+        }
+    }
+
+    private void declareConnectionDead() {
+        if (!connected) return;
+        connected = false;
+        log.warn("Connection declared dead by heartbeat watchdog");
+        wsHandler.broadcastDisconnected();
+
+        for (var entry : pendingRequests.entrySet()) {
+            entry.getValue().completeExceptionally(new RuntimeException("Heartbeat timeout"));
+        }
+        pendingRequests.clear();
+
+        try { client.eDisconnect(); } catch (Exception e) { /* unblock EReader */ }
+
+        scheduleReconnect();
+    }
+
     public void disconnect() {
         shuttingDown = true;
-        if (client.isConnected()) {
-            client.eDisconnect();
-        }
+        if (heartbeatTask != null) heartbeatTask.cancel(false);
+        if (reconnectTask != null) reconnectTask.cancel(false);
+        watchdog.shutdownNow();
+        reaper.shutdownNow();
+        if (client.isConnected()) client.eDisconnect();
     }
 
     private void scheduleReconnect() {
         if (shuttingDown) return;
-        new Thread(() -> {
-            while (!shuttingDown && !connected) {
-                if (isInMaintenanceWindow()) {
-                    log.info("In maintenance window (00:15-01:45 ET), deferring reconnect");
-                    try { Thread.sleep(60_000); } catch (InterruptedException e) { return; }
-                    continue;
-                }
-                try {
-                    Thread.sleep(RECONNECT_DELAY_MS);
-                } catch (InterruptedException e) {
-                    return;
-                }
-                if (!connected && !shuttingDown) {
-                    log.info("Attempting reconnect to IB Gateway...");
-                    try {
-                        connect();
-                    } catch (Exception e) {
-                        log.warn("Reconnect attempt failed: {}", e.getMessage());
-                    }
-                }
+        if (reconnectTask != null && !reconnectTask.isDone()) return;
+
+        reconnectTask = watchdog.schedule(this::attemptReconnect, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void attemptReconnect() {
+        if (shuttingDown || connected) return;
+
+        if (isInMaintenanceWindow()) {
+            log.info("In maintenance window, deferring reconnect");
+            reconnectTask = watchdog.schedule(this::attemptReconnect, 60_000, TimeUnit.MILLISECONDS);
+            return;
+        }
+
+        log.info("Attempting reconnect to IB Gateway...");
+        try {
+            connect();
+        } catch (Exception e) {
+            log.warn("Reconnect failed: {}", e.getMessage());
+            if (!shuttingDown && !connected) {
+                reconnectTask = watchdog.schedule(this::attemptReconnect, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
             }
-        }, "reconnect-scheduler").start();
+        }
+    }
+
+    private void evictStaleEntries() {
+        long cutoff = System.currentTimeMillis() - EVICTION_AGE_MS;
+        int execCount = 0, orderCount = 0;
+
+        var execIter = executionTimestamps.entrySet().iterator();
+        while (execIter.hasNext()) {
+            var e = execIter.next();
+            if (e.getValue() < cutoff) {
+                executionStore.remove(e.getKey());
+                execIter.remove();
+                execCount++;
+            }
+        }
+
+        var orderIter = orderTimestamps.entrySet().iterator();
+        while (orderIter.hasNext()) {
+            var e = orderIter.next();
+            if (e.getValue() < cutoff) {
+                orderStatuses.remove(e.getKey());
+                orderStore.remove(e.getKey());
+                orderIter.remove();
+                orderCount++;
+            }
+        }
+
+        // Safety net: sweep orphaned accumulators
+        tickAccumulators.keySet().removeIf(k -> !pendingRequests.containsKey(k));
+        accountAccumulators.keySet().removeIf(k -> !pendingRequests.containsKey(k));
+        positionAccumulators.keySet().removeIf(k -> !pendingRequests.containsKey(k));
+
+        if (execCount > 0 || orderCount > 0) {
+            log.info("Evicted {} execution entries, {} order entries (>24h old)", execCount, orderCount);
+        }
     }
 
     // --- Public accessors ---
@@ -141,6 +250,7 @@ public class TwsBridge extends DefaultEWrapper {
     public Map<String, String> getAccountValues() { return accountValues; }
     public Map<Integer, Map<String, Object>> getPortfolioPositions() { return portfolioPositions; }
     public boolean isAccountSubscriptionActive() { return accountSubscriptionActive; }
+    public long getLastHeartbeatResponse() { return lastHeartbeatResponse; }
 
     public int getNextReqId() { return nextReqId.getAndIncrement(); }
 
@@ -177,7 +287,11 @@ public class TwsBridge extends DefaultEWrapper {
     }
 
     public <T> T awaitRequest(CompletableFuture<T> future) throws Exception {
-        return future.get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        try {
+            return future.get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } finally {
+            pendingRequests.values().remove(future);
+        }
     }
 
     /** Get last known order status (for GET polling). */
@@ -187,10 +301,28 @@ public class TwsBridge extends DefaultEWrapper {
 
     public void storeOrder(int orderId, Contract contract, Order order) {
         orderStore.put(orderId, new StoredOrder(contract, order));
+        orderTimestamps.put(orderId, System.currentTimeMillis());
     }
 
     public StoredOrder getStoredOrder(int orderId) {
         return orderStore.get(orderId);
+    }
+
+    /**
+     * Atomically mutate an order's limit price and re-submit to TWS.
+     * ConcurrentHashMap.compute() provides per-key exclusion.
+     * Returns the StoredOrder, or null if orderId not found.
+     */
+    public StoredOrder modifyOrderPrice(int orderId, double newLimitPrice) {
+        StoredOrder[] result = new StoredOrder[1];
+        orderStore.compute(orderId, (key, existing) -> {
+            if (existing == null) return null;
+            existing.order().lmtPrice(newLimitPrice);
+            client.placeOrder(orderId, existing.contract(), existing.order());
+            result[0] = existing;
+            return existing;
+        });
+        return result[0];
     }
 
     /** Initialize tick data accumulator for a market data snapshot request. */
@@ -215,8 +347,12 @@ public class TwsBridge extends DefaultEWrapper {
         nextReqId.set(orderId);
         connected = true;
         serverVersion = client.serverVersion();
+        lastHeartbeatResponse = System.currentTimeMillis();
         log.info("Connected to IB Gateway (serverVersion={}, nextValidId={})", serverVersion, orderId);
         wsHandler.broadcastConnected();
+        startHeartbeat();
+        if (reaperTask != null) reaperTask.cancel(false);
+        reaperTask = reaper.scheduleAtFixedRate(this::evictStaleEntries, 30, 30, TimeUnit.MINUTES);
     }
 
     @Override
@@ -279,6 +415,12 @@ public class TwsBridge extends DefaultEWrapper {
 
         // Fail pending request if there is one
         failRequest(id, new RuntimeException("TWS error " + errorCode + ": " + errorMsg));
+    }
+
+    @Override
+    public void currentTime(long time) {
+        lastHeartbeatResponse = System.currentTimeMillis();
+        log.debug("Heartbeat response: server time={}", time);
     }
 
     // --- Contract details ---
@@ -346,6 +488,7 @@ public class TwsBridge extends DefaultEWrapper {
         statusMap.put("remaining", remaining.longValue());
         statusMap.put("avgFillPrice", avgFillPrice);
         orderStatuses.put(orderId, statusMap);
+        orderTimestamps.put(orderId, System.currentTimeMillis());
 
         wsHandler.broadcastOrderStatus(orderId, status, filled.value().doubleValue(),
                 remaining.value().doubleValue(), avgFillPrice);
@@ -470,6 +613,7 @@ public class TwsBridge extends DefaultEWrapper {
             "liquidation", execution.liquidation()
         );
         executionStore.put(execution.execId(), exec);
+        executionTimestamps.put(execution.execId(), System.currentTimeMillis());
         wsHandler.broadcastExecDetails(exec);
     }
 

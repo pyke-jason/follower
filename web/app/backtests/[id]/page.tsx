@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds, getMarketDataFailTradeIds } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds, getMarketDataFailTradeIds, getTradesWithSubsequentMessages } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -69,10 +69,11 @@ export default async function BacktestDetailPage({
   ]);
 
   const tradeIds = allTrades.map((t) => t.id);
-  const [eventsByTradeId, cancelledTradeIds, marketDataFailIds] = await Promise.all([
+  const [eventsByTradeId, cancelledTradeIds, marketDataFailIds, subsequentMessageTradeIds] = await Promise.all([
     getTradeEventsForTrades(tradeIds),
     getCancelledCloseTradeIds(tradeIds),
     getMarketDataFailTradeIds(tradeIds),
+    getTradesWithSubsequentMessages(tradeIds),
   ]);
   // Compute per-trade flags for filter toggles
   const flagsByTradeId: Record<string, TradeFlag[]> = {};
@@ -85,6 +86,7 @@ export default async function BacktestDetailPage({
     if (actions.has('LEG_OFF')) flags.push('legOff');
     if (actions.has('TRIM')) flags.push('trimmed');
     if (actions.has('ADD')) flags.push('added');
+    if (subsequentMessageTradeIds.has(t.id)) flags.push('hasUpdate');
     if (flags.length > 0) flagsByTradeId[t.id] = flags;
   }
 
@@ -202,7 +204,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} cancelledTradeIds={cancelledTradeIds} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
+  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} cancelledTradeIds={cancelledTradeIds} subsequentMessageTradeIds={subsequentMessageTradeIds} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -287,8 +289,8 @@ export default async function BacktestDetailPage({
             <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
             <Separator orientation="vertical" className="!h-4" />
             <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
-            <span className="text-muted-foreground tabular-nums">${((config.startingEquity ?? 100_000) / 1000).toFixed(0)}k</span>
-            {config.commissionSchedule?.option?.perContract != null && (
+            <span className="text-muted-foreground tabular-nums">${(config.startingEquity / 1000).toFixed(0)}k</span>
+            {config.commissionSchedule.option?.perContract != null && (
               <span className="text-muted-foreground text-xs">comm ${config.commissionSchedule.option.perContract}/ct</span>
             )}
             {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
@@ -396,7 +398,7 @@ function computeFromTrades(
   allTrades: TradeRow[],
   decisions: { decision: { phase: string; outcome: string } }[],
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
-  commissionSchedule?: CommissionSchedule,
+  commissionSchedule?: CommissionSchedule,  // optional: computeCoreStats handles absence
 ) {
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, commissionSchedule);
 

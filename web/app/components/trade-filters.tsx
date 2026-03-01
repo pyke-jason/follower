@@ -11,7 +11,7 @@ import type { Trade } from '@src/db/schema';
 
 // ── Filter values ──────────────────────────────────────────────────
 
-export type TradeFlag = 'closeFailed' | 'autoClose' | 'legOff' | 'trimmed' | 'added' | 'marketDataFail';
+export type TradeFlag = 'closeFailed' | 'autoClose' | 'legOff' | 'trimmed' | 'added' | 'marketDataFail' | 'hasUpdate';
 
 const FLAG_LABELS: Record<TradeFlag, string> = {
   closeFailed: 'Close failed',
@@ -20,6 +20,7 @@ const FLAG_LABELS: Record<TradeFlag, string> = {
   trimmed: 'Trimmed',
   added: 'Added',
   marketDataFail: 'Market data fail',
+  hasUpdate: 'Has update',
 };
 
 type MultiFilterKey = 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags';
