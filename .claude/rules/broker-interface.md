@@ -22,4 +22,4 @@ paths: src/broker/**
 
 3. **Types** (`types.ts`): `OrderResult`, `WorkingOrder`, `FilledWorkingOrder`, `BrokerPosition`, `Quote`. When the pipeline needs broker data, it flows through these types. Don't create parallel type hierarchies.
 
-4. **Narrowed callbacks**: `onFill` receives `FilledWorkingOrder` (not `WorkingOrder`). `filledPrice`, `filledAt`, `fillTimestamp` are guaranteed present. Don't use `!` assertions — the type is already narrowed.
+4. **Narrowed callbacks**: `onFill` receives `FilledWorkingOrder` (not `WorkingOrder`). `filledPrice`, `filledAt`, `fillTimestamp` are guaranteed present.

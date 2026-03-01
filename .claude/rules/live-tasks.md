@@ -2,18 +2,13 @@
 paths: src/tasks/**, src/broker/tradestation.ts, src/broker/auth.ts
 ---
 
-# Live Execution — Real Money
-
-Code in these files handles **real broker orders with real money**. Exercise extra caution.
+# Live Execution
 
 ## runner.ts
 
-This is the live task processing loop. It polls the DB for pending tasks, executes through the shared pipeline, and records results.
+Live task processing loop. Polls DB for pending tasks, executes through the shared pipeline.
 
-Key responsibilities:
-- Builds `ResolvedPipelineDeps` with `liveService` (TradeStation broker)
-- Creates `OrderManager` with wall-clock timer (default `manualTick: false`)
-- Provides `getOpenPositions()` — queries DB filtered by `notBacktest` and trader
+Key differences from backtest:
 - Risk limits are **always enforced** (no `disableRiskLimits` option)
 - Wraps `recordTrade()` with `{ taskId, isBacktest: false }`
 

@@ -12,9 +12,9 @@ These files execute identically in both backtest and live. **Never** add path-sp
 - `process-task.ts` — Bridge: task queue -> `resolveOrchestrator()` -> `executeResolvedSignals()`.
 - `spread-midpoint.ts` — Computes net bid/ask for multi-leg orders. Broker-agnostic.
 
-## NEVER USE MARKET ORDERS ON OPTIONS
+## Limit Price Sources per Action
 
-`buildOrderParams()` falls back to `orderType: 'MARKET'` when `limitPrice` is falsy. This is catastrophic for options (bid-ask spreads of $1-3+). Every code path must ensure `limitPrice` is set:
+Every code path must ensure `limitPrice` is set for non-stock orders (see CLAUDE.md NEVER MARKET ON OPTIONS):
 
 - OPEN: `getSpreadMidpoint()` computes midpoint. If `signal.limitPrice` is set, use `Math.min(abs(signal.limitPrice), mid)`.
 - CLOSE/TRIM/LEG_OFF: Always compute `mid` from `getSpreadMidpoint()`.
@@ -36,12 +36,6 @@ Position-reducing orders:
 ```
 broker, orderManager?, calculatePositionSize, checkRiskLimits, recordTrade, onPending?
 ```
-
-Both paths provide identical function shapes. The implementations differ:
-- Broker: `SimBroker` (backtest) vs `liveService` (live)
-- Positions: scoped by `backtestRunId` vs `notBacktest` filter
-- Risk: optionally disabled in backtest, always enforced in live
-- recordTrade: wraps shared `recordTrade()` with `{backtestRunId, isBacktest}` or `{taskId, isBacktest: false}`
 
 When adding a new dep, add it to **both** `src/backtest/runner.ts` AND `src/tasks/runner.ts`.
 
