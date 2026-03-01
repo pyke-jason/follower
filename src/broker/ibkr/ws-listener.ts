@@ -14,12 +14,72 @@ const log = createLogger('IBKR-WS');
 
 const SIDECAR_WS = process.env.IBKR_SIDECAR_WS ?? 'ws://localhost:8090/events';
 const RECONNECT_DELAY_MS = 5_000;
+const ESCALATION_THRESHOLD_MS = 300_000; // 5 minutes
+const ESCALATION_CHECK_MS = 60_000; // 1 minute
 
 type ForceCheckFn = (orderId: number) => void;
 
 let ws: WebSocket | null = null;
 let shouldReconnect = true;
 let forceCheckCallback: ForceCheckFn | undefined;
+
+// Sustained disconnect tracking
+let disconnectedAt: number | null = null;
+let hasEscalated = false;
+let escalationTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Simple US market hours check: Mon-Fri 9:30-16:00 ET. */
+function isDuringMarketHours(): boolean {
+  const now = new Date();
+  const et = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric', minute: 'numeric', hour12: false, weekday: 'short',
+  }).formatToParts(now);
+
+  const weekday = et.find(p => p.type === 'weekday')?.value ?? '';
+  if (['Sat', 'Sun'].includes(weekday)) return false;
+
+  const hour = Number(et.find(p => p.type === 'hour')?.value ?? 0);
+  const minute = Number(et.find(p => p.type === 'minute')?.value ?? 0);
+  const mins = hour * 60 + minute;
+  return mins >= 570 && mins < 960; // 9:30 = 570, 16:00 = 960
+}
+
+type ErrorAction =
+  | { action: 'alert'; severity: 'critical' | 'warning'; title: string }
+  | { action: 'log'; label: string };
+
+/** Single source of truth for how each TWS error code is handled on the TS side. */
+const ERROR_ACTIONS: Record<number, ErrorAction> = {
+  460:   { action: 'alert', severity: 'critical', title: 'IBKR margin exceeded' },
+  10239: { action: 'alert', severity: 'critical', title: 'IBKR account risk exceeded' },
+  201:   { action: 'alert', severity: 'warning',  title: 'IBKR order rejected' },
+  200:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  203:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  392:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  399:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  404:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  412:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  426:   { action: 'alert', severity: 'warning',  title: 'IBKR order error' },
+  202:   { action: 'log', label: 'Order cancelled by IB' },
+  110:   { action: 'log', label: 'Tick size violation' },
+};
+
+function handleOrderError(code: number, message: string, orderId?: number): void {
+  const orderSuffix = orderId ? ` (order ${orderId})` : '';
+  const entry = ERROR_ACTIONS[code];
+  if (!entry) return;
+
+  if (entry.action === 'alert') {
+    sendSystemAlert({
+      severity: entry.severity,
+      title: entry.title,
+      message: `Error ${code}: ${message}${orderSuffix}`,
+    });
+  } else {
+    log.info(`${entry.label} (error ${code}): ${message}${orderSuffix}`);
+  }
+}
 
 function connect(): void {
   if (ws) return;
@@ -48,6 +108,8 @@ function connect(): void {
           break;
 
         case 'disconnected':
+          disconnectedAt = Date.now();
+          hasEscalated = false;
           sendSystemAlert({
             severity: 'warning',
             title: 'IBKR sidecar disconnected',
@@ -56,6 +118,8 @@ function connect(): void {
           break;
 
         case 'reconnected':
+          disconnectedAt = null;
+          hasEscalated = false;
           sendSystemAlert({
             severity: 'info',
             title: 'IBKR Gateway reconnected',
@@ -64,19 +128,31 @@ function connect(): void {
           break;
 
         case 'orderStatus':
-          if (event.status === 'Filled' && forceCheckCallback) {
-            forceCheckCallback(event.orderId);
+          // Trigger force-check on terminal statuses so OrderManager picks up changes quickly
+          if (forceCheckCallback) {
+            if (event.status === 'Filled' || event.status === 'Cancelled' || event.status === 'Inactive') {
+              forceCheckCallback(event.orderId);
+            }
           }
           break;
 
         case 'error':
-          if (event.code === 460) {
+          handleOrderError(event.code, event.message, event.orderId);
+          break;
+
+        case 'execDetails':
+          if (event.liquidation !== 0) {
             sendSystemAlert({
               severity: 'critical',
-              title: 'IBKR margin exceeded',
-              message: `Margin violation (error 460): ${event.message}${event.orderId ? ` (order ${event.orderId})` : ''}`,
+              title: 'Forced liquidation detected',
+              message: `Order ${event.orderId}: ${event.side} ${event.quantity} ${event.symbol} @ ${event.price}`,
             });
           }
+          if (forceCheckCallback) forceCheckCallback(event.orderId);
+          break;
+
+        case 'commission':
+          log.debug(`Commission: execId=${event.execId} $${event.commission} (order ${event.orderId})`);
           break;
       }
     } catch (err) {
@@ -109,12 +185,32 @@ export function startWsListener(onForceCheck?: ForceCheckFn): void {
   shouldReconnect = true;
   forceCheckCallback = onForceCheck;
   connect();
+
+  // Sustained disconnect escalation: check every 60s
+  escalationTimer = setInterval(() => {
+    if (disconnectedAt && !hasEscalated
+        && Date.now() - disconnectedAt > ESCALATION_THRESHOLD_MS
+        && isDuringMarketHours()) {
+      hasEscalated = true;
+      sendSystemAlert({
+        severity: 'critical',
+        title: 'IBKR sidecar offline >5 min',
+        message: `Sidecar has been disconnected for ${Math.round((Date.now() - disconnectedAt) / 60_000)} minutes during market hours.`,
+      });
+    }
+  }, ESCALATION_CHECK_MS);
 }
 
 /** Stop the WebSocket listener and prevent reconnection. */
 export function stopWsListener(): void {
   shouldReconnect = false;
   forceCheckCallback = undefined;
+  disconnectedAt = null;
+  hasEscalated = false;
+  if (escalationTimer) {
+    clearInterval(escalationTimer);
+    escalationTimer = null;
+  }
   if (ws) {
     ws.close();
     ws = null;

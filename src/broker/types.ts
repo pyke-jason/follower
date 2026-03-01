@@ -55,8 +55,10 @@ export type BrokerPosition = {
   symbol: string;
   quantity: number;
   averageCost: number;
-  marketValue: number;
-  unrealizedPnl: number;
+  /** Enriched from reqAccountUpdates() subscription when active; undefined during cold start. */
+  marketValue?: number;
+  /** Enriched from reqAccountUpdates() subscription when active; undefined during cold start. */
+  unrealizedPnl?: number;
   assetType: string;
   strikePrice?: number;
   expiry?: string;
@@ -75,6 +77,12 @@ export type AccountBalance = {
   timestamp: string;
   /** Total maintenance margin across all open positions (sim only). */
   maintenanceMargin?: number;
+  /** Margin cushion (percentage). From reqAccountUpdates subscription. */
+  cushion?: number;
+  /** Special Memorandum Account balance. From reqAccountUpdates subscription. */
+  sma?: number;
+  /** Remaining pattern day trades. From reqAccountUpdates subscription. */
+  dayTradesRemaining?: number;
 };
 
 export type AdjustmentRule = {

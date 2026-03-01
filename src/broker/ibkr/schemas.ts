@@ -14,18 +14,23 @@ export const StatusResponseSchema = z.object({
   connected: z.boolean(),
   accountId: z.string(),
   serverVersion: z.number(),
+  wsClients: z.number(),
+  maintenance: z.boolean(),
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
 
 // ── Quote / Market Data ─────────────────────────────────────────────
+// Sidecar returns only ticks that arrived within the 5s window.
+// All fields optional — illiquid contracts or outside-hours may return {}.
+// NOTE: sidecar does NOT include `symbol` — the caller tracks it.
 
 export const QuoteResponseSchema = z.object({
-  symbol: z.string(),
-  bid: z.number(),
-  ask: z.number(),
-  last: z.number(),
-  volume: z.number(),
+  bid: z.number().optional(),
+  ask: z.number().optional(),
+  last: z.number().optional(),
+  close: z.number().optional(),
+  volume: z.number().optional(),
 });
 
 export type QuoteResponse = z.infer<typeof QuoteResponseSchema>;
@@ -47,6 +52,7 @@ export const OrderResponseSchema = z.object({
   orderId: z.number(),
   status: z.string(),
   filledQuantity: z.number().optional(),
+  remaining: z.number().optional(),
   avgFillPrice: z.number().optional(),
   commission: z.number().optional(),
 });
@@ -54,6 +60,8 @@ export const OrderResponseSchema = z.object({
 export type OrderResponse = z.infer<typeof OrderResponseSchema>;
 
 // ── Positions ───────────────────────────────────────────────────────
+// Core fields from reqPositions(). marketValue/unrealizedPnl enriched
+// from reqAccountUpdates subscription when available.
 
 export const PositionResponseSchema = z.object({
   conId: z.number(),
@@ -62,8 +70,8 @@ export const PositionResponseSchema = z.object({
   localSymbol: z.string(),
   position: z.number(),
   avgCost: z.number(),
-  marketValue: z.number(),
-  unrealizedPnl: z.number(),
+  marketValue: z.number().optional(),
+  unrealizedPnl: z.number().optional(),
 });
 
 export type PositionResponse = z.infer<typeof PositionResponseSchema>;
@@ -75,6 +83,10 @@ export const AccountSummaryResponseSchema = z.object({
   availableFunds: z.number(),
   maintenanceMargin: z.number(),
   unrealizedPnl: z.number(),
+  cushion: z.number().optional(),
+  sma: z.number().optional(),
+  dayTradesRemaining: z.number().optional(),
+  excessLiquidity: z.number().optional(),
 });
 
 export type AccountSummaryResponse = z.infer<typeof AccountSummaryResponseSchema>;
@@ -101,12 +113,33 @@ const ErrorEventSchema = z.object({
   orderId: z.number().optional(),
 });
 
+const ExecDetailsEventSchema = z.object({
+  type: z.literal('execDetails'),
+  execId: z.string(),
+  orderId: z.number(),
+  symbol: z.string(),
+  side: z.string(),
+  quantity: z.number(),
+  price: z.number(),
+  time: z.string(),
+  liquidation: z.number(),
+});
+
+const CommissionEventSchema = z.object({
+  type: z.literal('commission'),
+  execId: z.string(),
+  commission: z.number(),
+  orderId: z.number(),
+});
+
 export const SidecarEventSchema = z.discriminatedUnion('type', [
   ConnectedEventSchema,
   DisconnectedEventSchema,
   ReconnectedEventSchema,
   OrderStatusEventSchema,
   ErrorEventSchema,
+  ExecDetailsEventSchema,
+  CommissionEventSchema,
 ]);
 
 export type SidecarEvent = z.infer<typeof SidecarEventSchema>;

@@ -41,6 +41,23 @@ public class AccountRoutes {
             return;
         }
 
+        // Subscription-first: serve from persistent reqAccountUpdates data
+        Map<String, String> subData = bridge.getAccountValues();
+        if (bridge.isAccountSubscriptionActive() && !subData.isEmpty()) {
+            ctx.json(Map.of(
+                "netLiquidation", parseDouble(subData, "NetLiquidation"),
+                "availableFunds", parseDouble(subData, "AvailableFunds"),
+                "maintenanceMargin", parseDouble(subData, "MaintMarginReq"),
+                "unrealizedPnl", parseDouble(subData, "UnrealizedPnL"),
+                "cushion", parseDouble(subData, "Cushion"),
+                "sma", parseDouble(subData, "SMA-S"),
+                "dayTradesRemaining", parseDouble(subData, "DayTradesRemaining"),
+                "excessLiquidity", parseDouble(subData, "ExcessLiquidity-S")
+            ));
+            return;
+        }
+
+        // Cold start fallback — one-shot reqAccountSummary
         int reqId = bridge.getNextReqId();
         bridge.initAccountAccumulator(reqId);
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(reqId);
@@ -52,7 +69,6 @@ public class AccountRoutes {
         try {
             Map<String, Object> data = bridge.awaitRequest(future);
 
-            // Map TWS tag names to our API field names
             ctx.json(Map.of(
                     "netLiquidation", data.getOrDefault("NetLiquidation", 0.0),
                     "availableFunds", data.getOrDefault("AvailableFunds", 0.0),
@@ -85,6 +101,18 @@ public class AccountRoutes {
 
         try {
             List<Map<String, Object>> positions = bridge.awaitRequest(future);
+
+            // Enrich with marketValue/unrealizedPnl from portfolio subscription
+            Map<Integer, Map<String, Object>> portfolio = bridge.getPortfolioPositions();
+            for (Map<String, Object> pos : positions) {
+                int conId = ((Number) pos.get("conId")).intValue();
+                Map<String, Object> enrichment = portfolio.get(conId);
+                if (enrichment != null) {
+                    pos.put("marketValue", enrichment.get("marketValue"));
+                    pos.put("unrealizedPnl", enrichment.get("unrealizedPnl"));
+                }
+            }
+
             ctx.json(positions);
         } catch (TimeoutException e) {
             bridge.getClient().cancelPositions();
@@ -93,5 +121,10 @@ public class AccountRoutes {
             String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
             ctx.status(500).json(Map.of("error", msg));
         }
+    }
+
+    private static double parseDouble(Map<String, String> map, String key) {
+        String v = map.get(key);
+        return v != null ? Double.parseDouble(v) : 0.0;
     }
 }

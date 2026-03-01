@@ -4,6 +4,10 @@
   Schema: `src/db/schema.ts`. Web imports from `src/` use `@src/*` alias (e.g., `@src/db/schema`, `@src/lib/numbers`). Never use relative `../` paths to reach `src/`.
 </project_overview>
 
+<ibkr_docs>
+  `docs/ibkr/` is the source of truth for the IBKR integration: sidecar API contract, order lifecycle state machine, TWS error codes, margin/risk monitoring, and connection operations. Read `docs/ibkr/gaps-and-todos.md` for known issues before making changes to `src/broker/ibkr/` or `sidecar/`.
+</ibkr_docs>
+
 <signal_flow>
   Chat message → parser (sync, zero I/O) → orchestrator routing → executor → broker → record trade.
   Routes: hard skip (regex) | deterministic open/close (market data + DB) | LLM path (ambiguous).

@@ -4,7 +4,14 @@ import io.javalin.Javalin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * IBKR sidecar — pure protocol translator between REST/WebSocket and TWS API.
@@ -14,6 +21,7 @@ public class App {
 
     private static final Logger log = LoggerFactory.getLogger(App.class);
     private static final int DEFAULT_PORT = 8090;
+    private static final long HEALTHCHECK_INTERVAL_SECS = 60;
 
     public static void main(String[] args) {
         int port = Integer.parseInt(System.getenv().getOrDefault("SIDECAR_PORT", String.valueOf(DEFAULT_PORT)));
@@ -44,9 +52,13 @@ public class App {
         new OrderRoutes(bridge).register(app);
         new AccountRoutes(bridge).register(app);
 
+        // Sidecar healthcheck — proves the Java process is alive
+        ScheduledExecutorService healthcheckExecutor = startHealthcheckPing(bridge);
+
         // Graceful shutdown
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutting down sidecar...");
+            healthcheckExecutor.shutdownNow();
             bridge.disconnect();
             app.stop();
         }));
@@ -61,5 +73,51 @@ public class App {
             log.error("Failed to connect to IB Gateway: {}", e.getMessage());
             log.info("Sidecar running — will retry connection when Gateway becomes available");
         }
+    }
+
+    /**
+     * Ping healthchecks.io every 60s from the Java process.
+     * Appends /fail when not connected to IB Gateway.
+     * Silent no-op if HEALTHCHECK_PING_URL is not set.
+     */
+    private static ScheduledExecutorService startHealthcheckPing(TwsBridge bridge) {
+        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "healthcheck-ping");
+            t.setDaemon(true);
+            return t;
+        });
+
+        if ("0".equals(System.getenv("HEALTHCHECK_ENABLED"))) {
+            return executor;
+        }
+
+        String url = System.getenv("HEALTHCHECK_PING_URL");
+        if (url == null || url.isBlank()) {
+            return executor;
+        }
+
+        // Paper trading (port 4002) — skip healthcheck pings
+        String gwPort = System.getenv().getOrDefault("IBKR_GATEWAY_PORT", "4001");
+        if ("4002".equals(gwPort)) {
+            log.info("Paper trading detected (port 4002) — healthcheck pings disabled");
+            return executor;
+        }
+
+        HttpClient httpClient = HttpClient.newHttpClient();
+        executor.scheduleAtFixedRate(() -> {
+            try {
+                String pingUrl = bridge.isConnected() ? url : url + "/fail";
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(pingUrl))
+                        .GET()
+                        .build();
+                httpClient.send(req, HttpResponse.BodyHandlers.discarding());
+            } catch (Exception e) {
+                log.debug("Healthcheck ping failed: {}", e.getMessage());
+            }
+        }, 0, HEALTHCHECK_INTERVAL_SECS, TimeUnit.SECONDS);
+
+        log.info("Healthcheck ping started (interval={}s)", HEALTHCHECK_INTERVAL_SECS);
+        return executor;
     }
 }

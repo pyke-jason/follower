@@ -1,7 +1,8 @@
 import { db, schema } from './db';
-import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray, like } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray, like, getTableColumns } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
+import type { Trade } from '../../src/db/schema';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
 import { getConfig } from '../../src/db/accessors';
@@ -48,13 +49,27 @@ export async function getStats(runId?: string) {
   };
 }
 
-export async function getOpenTrades(limit = 50, runId?: string) {
+const tradeColumns = getTableColumns(schema.trades);
+
+const hasSubsequentMessage = sql<boolean>`EXISTS (
+  SELECT 1 FROM messages m
+  WHERE m.author = ${schema.trades.trader}
+  AND m.timestamp > ${schema.trades.openedAt}
+  AND m.id != COALESCE(${schema.trades.sourceMessageId}, '')
+  AND EXISTS (SELECT 1 FROM json_each(m.symbols) WHERE json_each.value = ${schema.trades.symbol})
+)`.as('has_subsequent_message');
+
+export type OpenTradeRow = Trade & { hasSubsequentMessage: boolean };
+
+export async function getOpenTrades(limit = 50, runId?: string): Promise<OpenTradeRow[]> {
+  // SAFETY: tradeColumns spread provides all Trade columns at runtime;
+  // Drizzle 1.0-beta doesn't infer the spread through select()
   return db
-    .select()
+    .select({ ...tradeColumns, hasSubsequentMessage })
     .from(schema.trades)
     .where(and(isOpen, tradeScope(runId)))
     .orderBy(desc(schema.trades.openedAt))
-    .limit(limit);
+    .limit(limit) as unknown as Promise<OpenTradeRow[]>;
 }
 
 export async function getClosedTrades(opts: {

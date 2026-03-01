@@ -152,10 +152,10 @@ async function getQuote(symbol: string): Promise<Quote> {
 
     return {
       symbol,
-      bid: quote.bid,
-      ask: quote.ask,
-      last: quote.last,
-      volume: quote.volume,
+      bid: quote.bid ?? 0,
+      ask: quote.ask ?? 0,
+      last: quote.last ?? quote.close ?? 0,
+      volume: quote.volume ?? 0,
       timestamp: new Date().toISOString(),
     };
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
@@ -342,10 +342,12 @@ async function getPositions(): Promise<BrokerPosition[]> {
 
     return positions.map((p) => {
       const isOption = p.secType === 'OPT';
-      const parsed = isOption ? occToIBKR(p.localSymbol.replace(/\s+/g, ' ').trim()) : null;
+      // OCC localSymbol from IBKR has internal whitespace padding — normalize
+      const normalizedLocal = p.localSymbol.replace(/\s+/g, ' ').trim();
+      const parsed = isOption ? occToIBKR(normalizedLocal) : null;
 
       const pos: BrokerPosition = {
-        symbol: isOption ? p.localSymbol.replace(/\s+/g, ' ').trim() : p.symbol,
+        symbol: isOption ? normalizedLocal : p.symbol,
         quantity: p.position,
         averageCost: p.avgCost,
         marketValue: p.marketValue,
@@ -385,6 +387,9 @@ async function getAccountBalance(): Promise<AccountBalance> {
       unrealizedPnl: summary.unrealizedPnl,
       realizedPnl: 0, // IBKR account summary doesn't provide daily realized P&L
       maintenanceMargin: summary.maintenanceMargin,
+      cushion: summary.cushion,
+      sma: summary.sma,
+      dayTradesRemaining: summary.dayTradesRemaining,
       timestamp: new Date().toISOString(),
     };
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, 'getAccountBalance');

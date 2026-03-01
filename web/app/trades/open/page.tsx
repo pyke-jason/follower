@@ -5,7 +5,8 @@ import { formatCurrency, relativeTime } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import { forceExitTrade } from '../actions';
 import Link from 'next/link';
-import { Crosshair, Package } from 'lucide-react';
+import { Crosshair, Package, MessageSquareMore } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { AutoRefresh } from '../../components/auto-refresh';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,7 @@ export default async function OpenTradesPage({
           <p className="text-xs text-muted-foreground/50 mt-1">Trades will appear here when signals are executed</p>
         </div>
       ) : (
+        <TooltipProvider>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-in-up">
           {trades.map((t, i) => {
             const isLong = t.direction === 'LONG';
@@ -57,9 +59,22 @@ export default async function OpenTradesPage({
                   >
                     {t.symbol}
                   </Link>
-                  <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                    {relativeTime(t.openedAt)}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {t.hasSubsequentMessage && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex items-center gap-0.5 rounded-sm px-1 py-px text-[9px] font-medium leading-tight text-amber-300 bg-amber-400/15 border border-amber-400/25">
+                            <MessageSquareMore className="h-2.5 w-2.5" />
+                            Update
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Trader posted about this symbol after opening</TooltipContent>
+                      </Tooltip>
+                    )}
+                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                      {relativeTime(t.openedAt)}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Badges: Direction + Strategy */}
@@ -116,6 +131,7 @@ export default async function OpenTradesPage({
             );
           })}
         </div>
+        </TooltipProvider>
       )}
     </div>
   );

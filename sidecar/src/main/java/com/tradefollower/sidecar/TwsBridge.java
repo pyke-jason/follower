@@ -30,7 +30,8 @@ public class TwsBridge extends DefaultEWrapper {
     // Connection codes — trigger reconnect + WS event
     private static final Set<Integer> CONNECTION_CODES = Set.of(1100, 1101, 1102, 504);
     // Order error codes — push WS event
-    private static final Set<Integer> ORDER_ERROR_CODES = Set.of(110, 201, 202, 460);
+    private static final Set<Integer> ORDER_ERROR_CODES = Set.of(
+            110, 200, 201, 202, 203, 392, 399, 404, 412, 426, 460, 10239);
 
     private final EClientSocket client;
     private final EJavaSignal signal;
@@ -45,6 +46,18 @@ public class TwsBridge extends DefaultEWrapper {
 
     // Persistent order status tracking (for GET /api/orders/:orderId)
     private final ConcurrentHashMap<Integer, Map<String, Object>> orderStatuses = new ConcurrentHashMap<>();
+
+    /** Original Contract+Order from placement — used by modify() and execDetails context. */
+    public record StoredOrder(Contract contract, Order order) {}
+    private final ConcurrentHashMap<Integer, StoredOrder> orderStore = new ConcurrentHashMap<>();
+
+    /** Execution details keyed by execId — for commission correlation. */
+    private final ConcurrentHashMap<String, Map<String, Object>> executionStore = new ConcurrentHashMap<>();
+
+    // Persistent reqAccountUpdates subscription data
+    private final ConcurrentHashMap<String, String> accountValues = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Map<String, Object>> portfolioPositions = new ConcurrentHashMap<>();
+    private volatile boolean accountSubscriptionActive = false;
 
     private final String host;
     private final int port;
@@ -125,6 +138,9 @@ public class TwsBridge extends DefaultEWrapper {
     public String getAccountId() { return accountId; }
     public int getServerVersion() { return serverVersion; }
     public EClientSocket getClient() { return client; }
+    public Map<String, String> getAccountValues() { return accountValues; }
+    public Map<Integer, Map<String, Object>> getPortfolioPositions() { return portfolioPositions; }
+    public boolean isAccountSubscriptionActive() { return accountSubscriptionActive; }
 
     public int getNextReqId() { return nextReqId.getAndIncrement(); }
 
@@ -167,6 +183,14 @@ public class TwsBridge extends DefaultEWrapper {
     /** Get last known order status (for GET polling). */
     public Map<String, Object> getOrderStatus(int orderId) {
         return orderStatuses.get(orderId);
+    }
+
+    public void storeOrder(int orderId, Contract contract, Order order) {
+        orderStore.put(orderId, new StoredOrder(contract, order));
+    }
+
+    public StoredOrder getStoredOrder(int orderId) {
+        return orderStore.get(orderId);
     }
 
     /** Initialize tick data accumulator for a market data snapshot request. */
@@ -332,6 +356,7 @@ public class TwsBridge extends DefaultEWrapper {
 
     @Override
     public void openOrder(int orderId, Contract contract, Order order, OrderState orderState) {
+        orderStore.putIfAbsent(orderId, new StoredOrder(contract, order));
         Map<String, Object> statusMap = orderStatuses.computeIfAbsent(orderId, k -> new ConcurrentHashMap<>());
         statusMap.put("orderId", orderId);
         statusMap.put("status", orderState.status().toString());
@@ -386,25 +411,77 @@ public class TwsBridge extends DefaultEWrapper {
         client.cancelAccountSummary(reqId);
     }
 
+    // --- Account subscription (reqAccountUpdates) ---
+
+    @Override
+    public void updateAccountValue(String key, String value, String currency, String accountName) {
+        if (currency.isEmpty() || "USD".equals(currency)) {
+            accountValues.put(key, value);
+        }
+    }
+
+    @Override
+    public void updatePortfolio(Contract contract, Decimal position, double marketPrice,
+            double marketValue, double averageCost, double unrealizedPNL,
+            double realizedPNL, String accountName) {
+        portfolioPositions.put(contract.conid(), Map.of(
+            "conId", contract.conid(),
+            "symbol", contract.symbol(),
+            "secType", contract.getSecType(),
+            "localSymbol", contract.localSymbol() != null ? contract.localSymbol() : "",
+            "position", position.longValue(),
+            "avgCost", averageCost,
+            "marketValue", marketValue,
+            "unrealizedPnl", unrealizedPNL,
+            "marketPrice", marketPrice
+        ));
+    }
+
+    @Override
+    public void accountDownloadEnd(String accountName) {
+        accountSubscriptionActive = true;
+        log.debug("Account subscription snapshot complete for {}", accountName);
+    }
+
     @Override
     public void managedAccounts(String accounts) {
         if (accounts != null && !accounts.isEmpty()) {
             this.accountId = accounts.split(",")[0].trim();
             log.info("Managed account: {}", this.accountId);
+            if (connected && !accountSubscriptionActive) {
+                client.reqAccountUpdates(true, this.accountId);
+                log.info("Started reqAccountUpdates subscription for {}", this.accountId);
+            }
         }
     }
 
     // --- Execution details (for commission tracking) ---
 
     @Override
-    public void execDetails(int reqId, Contract contract, Execution execution) {}
+    public void execDetails(int reqId, Contract contract, Execution execution) {
+        Map<String, Object> exec = Map.of(
+            "execId", execution.execId(),
+            "orderId", execution.orderId(),
+            "symbol", contract.symbol(),
+            "side", execution.side(),
+            "quantity", execution.shares().longValue(),
+            "price", execution.price(),
+            "time", execution.time(),
+            "liquidation", execution.liquidation()
+        );
+        executionStore.put(execution.execId(), exec);
+        wsHandler.broadcastExecDetails(exec);
+    }
 
     @Override
     public void execDetailsEnd(int reqId) {}
 
     @Override
     public void commissionAndFeesReport(CommissionAndFeesReport report) {
-        log.debug("Commission report: execId={} commission={}", report.execId(), report.commissionAndFees());
+        if (report.commissionAndFees() == Double.MAX_VALUE) return;
+        Map<String, Object> exec = executionStore.get(report.execId());
+        int orderId = exec != null ? (int) exec.get("orderId") : -1;
+        wsHandler.broadcastCommission(report.execId(), report.commissionAndFees(), orderId);
     }
 
     // All remaining EWrapper methods have no-op defaults via DefaultEWrapper

@@ -96,6 +96,17 @@ public class WsHandler implements Consumer<WsConfig> {
         }
     }
 
+    public void broadcastExecDetails(Map<String, Object> exec) {
+        java.util.HashMap<String, Object> event = new java.util.HashMap<>(exec);
+        event.put("type", "execDetails");
+        broadcast(event);
+    }
+
+    public void broadcastCommission(String execId, double commission, int orderId) {
+        broadcast(Map.of("type", "commission", "execId", execId,
+                          "commission", commission, "orderId", orderId));
+    }
+
     public int getClientCount() {
         return sessions.size();
     }
