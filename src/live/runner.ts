@@ -8,7 +8,9 @@ import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/e
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { OrderManager } from '../orders/order-manager.js';
 import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
-import { liveService } from '../broker/tradestation/index.js';
+import type { BrokerService } from '../broker/interface.js';
+import { liveService as tsService } from '../broker/tradestation/index.js';
+import { ibkrService, startWsListener, stopWsListener } from '../broker/ibkr/index.js';
 import { getTrader } from '../config/traders.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { sendSystemAlert } from '../lib/alert.js';
@@ -21,6 +23,15 @@ import { recordTrade } from '../trades/record-trade.js';
 import { createEmitter } from '../decisions/emitter.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
 import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
+
+function selectBroker(): BrokerService {
+  const broker = process.env.BROKER ?? 'tradestation';
+  if (broker === 'ibkr') return ibkrService;
+  if (broker === 'tradestation') return tsService;
+  throw new Error(`Unknown BROKER env value: "${broker}" (expected "ibkr" or "tradestation")`);
+}
+
+const liveService = selectBroker();
 
 const riskConfig: RiskCheckConfig = { ...LIVE_RISK_DEFAULTS };
 
@@ -46,7 +57,13 @@ const orderManager = new OrderManager({
   }),
 });
 
+// Start IBKR WebSocket listener for faster fill notifications (supplementary to polling)
+if (process.env.BROKER === 'ibkr') {
+  startWsListener(() => { orderManager.tick(new Date()); });
+}
+
 export function destroyOrderManager(): void {
+  if (process.env.BROKER === 'ibkr') stopWsListener();
   orderManager.destroy();
   pendingIntents.clear();
 }

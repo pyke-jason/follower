@@ -11,7 +11,7 @@ import type { FillModel } from './types.js';
 import type { Trade, TradeLeg } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
-import { formatOccSymbol } from './occ-symbology.js';
+import { formatOccSymbol } from '../lib/occ-symbology.js';
 import { parseLegs, parseDirection } from '../db/parse.js';
 import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';

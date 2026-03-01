@@ -274,8 +274,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       // The backtest is event-driven (time only moves on tradable messages), so orders
       // placed during the last message of the day get zero tick evaluations without this.
       const prevDayClose = marketCloseUTC(parseDateKey(lastMsgDay));
-      await broker.advanceTo(prevDayClose);
-      await orderManager.tick(prevDayClose);
+      await advanceWithChaseInterleaving(broker, orderManager, clock.now(), prevDayClose);
 
       const cancelledCloseCallbacks = new Map<string, (price: number, at: Date) => Promise<void>>();
       const workingOrders = orderManager.getWorkingOrders();
@@ -343,9 +342,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     }
 
     lastMsgDay = msgDay;
+    const prevSimTime = clock.now();
     clock.advance(msg.timestamp);
-    await broker.advanceTo(msg.timestamp);
-    await orderManager.tick(msg.timestamp);
+    await advanceWithChaseInterleaving(broker, orderManager, prevSimTime, msg.timestamp);
 
     if (i > 0 && i % 100 === 0) {
       const openTradesCount = await broker.getOpenPositionCount();
@@ -622,5 +621,62 @@ async function emitAutoCloseDecisions(results: AutoCloseResult[], runId: string)
       tradeId: ac.tradeId,
       reasoning: `Option expiring ${ac.expiryDate}, auto-closed at $${ac.exitPrice.toFixed(2)}`,
     });
+  }
+}
+
+async function advanceWithChaseInterleaving(
+  broker: SimBroker,
+  orderManager: OrderManager,
+  from: Date,
+  to: Date,
+): Promise<void> {
+  // Fast path: no active chase orders — single advance
+  const workingOrders = orderManager.getWorkingOrders();
+  const hasChaseRules = workingOrders.some(wo =>
+    wo.status === 'OPEN' &&
+    wo.params.adjustmentRules?.some(r => r.type === 'PRICE_CHASE')
+  );
+
+  if (!hasChaseRules) {
+    await broker.advanceTo(to);
+    await orderManager.tick(to);
+    return;
+  }
+
+  // Find minimum chase interval across all active orders
+  let minIntervalMs = Infinity;
+  for (const wo of workingOrders) {
+    if (wo.status !== 'OPEN') continue;
+    for (const rule of (wo.params.adjustmentRules ?? [])) {
+      if (rule.type === 'PRICE_CHASE') {
+        minIntervalMs = Math.min(minIntervalMs, rule.intervalSec * 1000);
+      }
+    }
+  }
+
+  // Sub-step through time at chase intervals
+  let t = from.getTime();
+  const target = to.getTime();
+
+  while (t < target) {
+    const nextT = Math.min(t + minIntervalMs, target);
+    const nextDate = new Date(nextT);
+
+    await broker.advanceTo(nextDate);   // ticks in [lastAdvance, nextDate]
+    await orderManager.tick(nextDate);  // applies 1 chase step, updates limit
+
+    t = nextT;
+
+    // Early exit: all chase orders resolved (filled/cancelled)
+    const remaining = orderManager.getWorkingOrders()
+      .filter(wo => wo.status === 'OPEN' &&
+        wo.params.adjustmentRules?.some(r => r.type === 'PRICE_CHASE'));
+    if (remaining.length === 0) {
+      if (nextT < target) {
+        await broker.advanceTo(to);
+        await orderManager.tick(to);
+      }
+      break;
+    }
   }
 }

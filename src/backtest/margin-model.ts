@@ -14,7 +14,7 @@
  */
 
 import type { TradeLeg } from '../db/schema.js';
-import { contractMultiplier } from '../lib/trade.js';
+import { contractMultiplier, getSpreadWidth } from '../lib/trade.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -42,13 +42,6 @@ export type MarginRequirement = {
 };
 
 // ─── Helpers ────────────────────────────────────────
-
-/** Absolute difference between the two strikes of a vertical spread. */
-export function getSpreadWidth(legs: TradeLeg[]): number {
-  const strikes = legs.filter(l => l.type !== 'STOCK').map(l => l.strike);
-  if (strikes.length < 2) return 0;
-  return Math.abs(strikes[0] - strikes[1]);
-}
 
 /**
  * Naked call margin per contract (Reg T):

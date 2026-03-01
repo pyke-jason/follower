@@ -674,7 +674,7 @@ describe('OrderManager concurrent order properties', () => {
           await mgr.tick(timeAfter(i * intervalSec));
           const wo = mgr.getWorkingOrders()[0];
           if (wo) {
-            const expected = roundCents(prevPrice - stepAmount);
+            const expected = roundCents(Math.max(0.01, prevPrice - stepAmount));
             expect(wo.currentLimitPrice).toBe(expected);
             prevPrice = wo.currentLimitPrice;
           }

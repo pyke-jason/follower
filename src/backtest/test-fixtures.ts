@@ -7,7 +7,7 @@
 
 import fc from 'fast-check';
 import { sql } from 'drizzle-orm';
-import { parseOccSymbol } from './occ-symbology.js';
+import { parseOccSymbol } from '../lib/occ-symbology.js';
 import type { Quote, OrderParams } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';

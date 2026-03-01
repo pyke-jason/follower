@@ -3,7 +3,8 @@ import type { BrokerService } from '../interface.js';
 import { getAccessToken } from './auth.js';
 import { safeParseFloat } from '../../lib/numbers.js';
 import { formatTsOptionSymbol } from './symbology.js';
-import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS } from '../../lib/resilient.js';
+import type { ErrorCategory } from '../../lib/resilient.js';
+import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '../../lib/resilient.js';
 import {
   TsQuotesResponseSchema,
   TsOrdersResponseSchema,
@@ -13,8 +14,6 @@ import {
 } from './schemas.js';
 
 const BASE = process.env.TS_BASE_URL || 'https://api.tradestation.com/v3';
-
-type ErrorCategory = 'auth' | 'transient' | 'permanent';
 
 /** TradeStation-specific classifier: extracts status from "TradeStation NNN:" format. */
 function tsClassify(err: unknown): ErrorCategory {
@@ -26,23 +25,7 @@ function tsClassify(err: unknown): ErrorCategory {
     if (status === 429 || (status >= 500 && status <= 599)) return 'transient';
     if (status === 400 || status === 404 || status === 422) return 'permanent';
   }
-  // Fall back to generic classification via resilient.ts defaults
-  return classifyGeneric(err);
-}
-
-/** Generic error classifier (mirrors resilient.ts classifyError). */
-function classifyGeneric(err: unknown): ErrorCategory {
-  const msg = err instanceof Error ? err.message : String(err);
-  const statusMatch = msg.match(/\b([1-5]\d{2})\b/);
-  if (statusMatch) {
-    const status = parseInt(statusMatch[1], 10);
-    if (status === 401 || status === 403) return 'auth';
-    if (status === 429 || (status >= 500 && status <= 599)) return 'transient';
-    if (status === 400 || status === 404 || status === 422) return 'permanent';
-  }
-  if (/token refresh failed/i.test(msg)) return 'auth';
-  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|fetch failed|socket hang up|aborted/i.test(msg)) return 'transient';
-  return 'transient';
+  return classifyError(err);
 }
 
 async function ts(path: string, options?: RequestInit & { signal?: AbortSignal }) {

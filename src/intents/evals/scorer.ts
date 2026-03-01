@@ -1,6 +1,6 @@
 import type { EvalCase, EvalResult, FieldScore, ExpectedSignal, ExpectedLeg } from './types.js';
 import type { OrchestratorResult, ResolvedSignal, OptionLeg } from '../orchestrator/types.js';
-import { normalizeExpiry } from '../../backtest/occ-symbology.js';
+import { normalizeExpiry } from '../../lib/occ-symbology.js';
 
 export const PASS_THRESHOLD = 0.8;
 

@@ -6,6 +6,7 @@
  */
 
 import { createLogger } from '../../lib/logger.js';
+import { extractUnderlying } from '../../lib/occ-symbology.js';
 import type {
   ParseResult,
   OrchestratorContext,
@@ -18,19 +19,6 @@ import type {
 } from './types.js';
 
 const log = createLogger('Orchestrator:PositionPath');
-
-/**
- * Extract the underlying ticker from an OCC option symbol or return the symbol
- * as-is if it's already a plain ticker.
- *
- * OCC format: "AAPL  260307C00180000" — leading alpha chars before the date.
- * Spaces between the ticker and date are variable (0–5).
- */
-function extractUnderlying(occOrTicker: string): string {
-  // OCC symbols have a 6-digit date immediately after the ticker (with optional spaces)
-  const match = /^([A-Z]{1,6})\s*\d{6}[CP]/i.exec(occOrTicker);
-  return match ? match[1] : occOrTicker;
-}
 
 /** Reverse a side: BUY → SELL, SELL → BUY. */
 function reverseSide(side: 'BUY' | 'SELL'): 'BUY' | 'SELL' {

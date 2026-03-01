@@ -19,7 +19,7 @@ import type { Message } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
-import { formatOccSymbol } from '../backtest/occ-symbology.js';
+import { formatOccSymbol } from '../lib/occ-symbology.js';
 import { getSpreadMidpoint } from './spread-midpoint.js';
 import { QuoteResolutionError } from '../lib/errors.js';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';

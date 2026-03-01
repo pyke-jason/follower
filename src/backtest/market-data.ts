@@ -10,7 +10,7 @@ import {
   readCachedRanges, readCachedTicks, writeCachedTicks,
 } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
-import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from './occ-symbology.js';
+import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from '../lib/occ-symbology.js';
 import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
 import { QuoteResolutionError } from '../lib/errors.js';

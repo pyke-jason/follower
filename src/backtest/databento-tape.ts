@@ -5,7 +5,7 @@ import { zCoercePrice } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
 import { toDateKeyET, parseDateKey, isTradingDay, getPreviousTradingDayKey } from '../lib/et-date.js';
 import { formatLogTimeET } from '../lib/et-logging.js';
-import { parseOccSymbol } from './occ-symbology.js';
+import { parseOccSymbol } from '../lib/occ-symbology.js';
 import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
 

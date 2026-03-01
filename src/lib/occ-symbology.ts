@@ -1,3 +1,4 @@
+// TODO: consolidate normalizeExpiry with src/intents/orchestrator/expiry-resolver.ts
 /**
  * OCC option symbol construction, parsing, and detection.
  *
@@ -49,6 +50,18 @@ export function parseOccSymbol(symbol: string): OccOptionParts | null {
     type: optionType === 'C' ? 'CALL' : 'PUT',
     strike,
   };
+}
+
+/**
+ * Extract the underlying ticker from an OCC option symbol or return the symbol
+ * as-is if it's already a plain ticker.
+ *
+ * OCC format: "AAPL  260307C00180000" — leading alpha chars before the date.
+ * Spaces between the ticker and date are variable (0-5).
+ */
+export function extractUnderlying(occOrTicker: string): string {
+  const match = /^([A-Z]{1,6})\s*\d{6}[CP]/i.exec(occOrTicker);
+  return match ? match[1] : occOrTicker;
 }
 
 // Maps 3-char lowercase month abbreviation → month number (1-based).

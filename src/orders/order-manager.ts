@@ -154,7 +154,7 @@ export class OrderManager {
             ? order.currentLimitPrice + totalMovement
             : order.currentLimitPrice - totalMovement;
 
-          const roundedPrice = roundCents(newPrice);
+          const roundedPrice = roundCents(Math.max(0.01, newPrice));
           const oldPrice = order.currentLimitPrice;
           log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${oldPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
           await this.broker.modifyOrder(orderId, roundedPrice);

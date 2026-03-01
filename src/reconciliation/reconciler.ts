@@ -7,6 +7,7 @@ import { sendDiscordAlert } from './notify.js';
 import { isOpen, notBacktest } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
+import { extractUnderlying } from '../lib/occ-symbology.js';
 
 const log = createLogger('Recon');
 
@@ -177,15 +178,4 @@ export async function runReconciliation(broker: BrokerService): Promise<Reconcil
   return alerts;
 }
 
-/**
- * Extract the underlying symbol from an OCC option symbol or pass through.
- * OCC format: "SPY   250214C00500000" -> "SPY"
- */
-function extractUnderlying(symbol: string): string {
-  // If symbol has spaces (OCC format), extract the underlying
-  const trimmed = symbol.trim();
-  if (trimmed.length > 6 && /\d{6}[CP]\d{8}/.test(trimmed.replace(/\s/g, ''))) {
-    return trimmed.split(/\s/)[0].trim();
-  }
-  return trimmed;
-}
+

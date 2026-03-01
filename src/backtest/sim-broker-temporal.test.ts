@@ -48,7 +48,7 @@ import {
   CREATE_TRADE_EVENTS_SQL,
   type PriceFn,
 } from './test-fixtures.js';
-import { formatOccSymbol } from './occ-symbology.js';
+import { formatOccSymbol } from '../lib/occ-symbology.js';
 
 // ── DB setup ─────────────────────────────────────────────────────────
 
