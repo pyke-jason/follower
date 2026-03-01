@@ -180,7 +180,7 @@ export const runDecisions = sqliteTable('run_decisions', {
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
   path:           text('path'),                    // LEGACY
   decision:       text('decision'),                // LEGACY
-  skipCategory:   text('skip_category'),           // LEGACY
+  skipCategory:   text('skip_category'),
 }, (table) => [
   index('idx_run_decisions_run').on(table.backtestRunId),
   index('idx_run_decisions_message').on(table.messageId),

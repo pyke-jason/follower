@@ -1,51 +1,19 @@
 'use client';
 
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  useCallback,
-  type ReactNode,
-} from 'react';
+import { useEffect, useCallback, type ReactNode } from 'react';
 import { useSearchParams, usePathname, useRouter } from 'next/navigation';
+import { useRunStore, setSelectRunImpl } from '@/stores/run-store';
 import { isRunScopedPath } from '@/lib/run-scope';
 
-export interface RunBrief {
-  id: string;
-  name: string | null;
-  status: string;
-  traders: string[];
-  startDate: string;
-  endDate: string;
-  agentModel: string;
-  totalPnl: number;
-  winRate: number;
-  totalTrades: number;
-}
+export type { RunBrief, StatusData } from '@/stores/run-store';
 
-export interface StatusData {
-  openTrades: number;
-  todayPnl: number;
-  pendingTasks: number;
-  tradingBlocked?: boolean;
-  unresolvedAlertCount?: number;
-  runBrief?: RunBrief;
-}
-
-interface RunScopeContextValue {
-  runId: string | null;
-  status: StatusData | null;
-  runBrief: RunBrief | null;
-  selectRun: (id: string | null) => void;
-}
-
-const RunScopeContext = createContext<RunScopeContextValue | null>(null);
-
-export function useRunScope(): RunScopeContextValue {
-  const ctx = useContext(RunScopeContext);
-  if (!ctx) throw new Error('useRunScope must be used within <RunScopeProvider>');
-  return ctx;
+/** @deprecated Use useRunStore selectors directly */
+export function useRunScope() {
+  const runId = useRunStore((s) => s.runId);
+  const status = useRunStore((s) => s.status);
+  const runBrief = useRunStore((s) => s.runBrief);
+  const selectRun = useRunStore((s) => s.selectRun);
+  return { runId, status, runBrief, selectRun };
 }
 
 export function RunScopeProvider({ children }: { children: ReactNode }) {
@@ -54,28 +22,18 @@ export function RunScopeProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const runId = searchParams.get('run');
 
-  const [status, setStatus] = useState<StatusData | null>(null);
+  const setRunId = useRunStore((s) => s.setRunId);
+  const startPolling = useRunStore((s) => s.startPolling);
+  const stopPolling = useRunStore((s) => s.stopPolling);
+  const refreshStatus = useRunStore((s) => s.refreshStatus);
 
-  const fetchStatus = useCallback(() => {
-    const url = runId ? `/api/status?run=${runId}` : '/api/status';
-    fetch(url)
-      .then((r) => r.json())
-      .then(setStatus)
-      .catch(() => {});
-  }, [runId]);
-
+  // Sync URL → store
   useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 5_000);
-    const onFocus = () => fetchStatus();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [fetchStatus]);
+    setRunId(runId);
+  }, [runId, setRunId]);
 
-  const selectRun = useCallback(
+  // Inject selectRun implementation (needs router/pathname/searchParams)
+  const selectRunImpl = useCallback(
     (id: string | null) => {
       if (id === null) {
         const params = new URLSearchParams(searchParams.toString());
@@ -92,11 +50,20 @@ export function RunScopeProvider({ children }: { children: ReactNode }) {
     [pathname, searchParams, router],
   );
 
-  const runBrief = status?.runBrief ?? null;
+  useEffect(() => {
+    setSelectRunImpl(selectRunImpl);
+  }, [selectRunImpl]);
 
-  return (
-    <RunScopeContext.Provider value={{ runId, status, runBrief, selectRun }}>
-      {children}
-    </RunScopeContext.Provider>
-  );
+  // Polling lifecycle
+  useEffect(() => {
+    startPolling();
+    const onFocus = () => refreshStatus();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      stopPolling();
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [runId, startPolling, stopPolling, refreshStatus]);
+
+  return <>{children}</>;
 }

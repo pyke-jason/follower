@@ -29,6 +29,7 @@ import type {
   OrchestratorEnv,
   OrchestratorResult,
   ParseResult,
+  SerializedParseResult,
   ResolvedSignal,
   Leg,
 } from './types.js';
@@ -208,7 +209,7 @@ async function buildContext(
 async function emitOrchestratorEvents(
   env: OrchestratorEnv,
   result: OrchestratorResult,
-  serializedParse: Record<string, unknown>,
+  serializedParse: SerializedParseResult,
   route: 'deterministic' | 'llm' | 'hard-skip',
 ): Promise<void> {
   // Always emit PARSED — include route so timeline knows how we got here
@@ -244,21 +245,9 @@ async function emitOrchestratorEvents(
 
 // ── Serialize ParseResult for snapshot ────────────────────────────────────────
 
-function serializeParseResult(parse: ParseResult): Record<string, unknown> {
-  return {
-    action: parse.action,
-    symbol: parse.symbol,
-    direction: parse.direction,
-    strategy: parse.strategy,
-    strikes: parse.strikes,
-    expiryHint: parse.expiryHint,
-    premiumHint: parse.premiumHint,
-    exitPercent: parse.exitPercent,
-    isLotto: parse.isLotto,
-    isStrangle: parse.isStrangle,
-    isHardSkip: parse.isHardSkip,
-    complexityFlags: Array.from(parse.complexityFlags),
-  };
+function serializeParseResult(parse: ParseResult): SerializedParseResult {
+  const { complexityFlags, targetStrategy, skipReason, ...rest } = parse;
+  return { ...rest, complexityFlags: Array.from(complexityFlags) };
 }
 
 // ── Info-level summary log ────────────────────────────────────────────────────

@@ -3,25 +3,19 @@
 import { ChatFeed } from './chat-feed';
 import { Card } from '@/components/ui/card';
 import { X } from 'lucide-react';
-import type { Message, MessageLabel } from '@src/db/schema';
-
-type RelatedContext = {
-  messages: Message[];
-  labels: Record<string, MessageLabel>;
-  sourceSymbols: string[];
-};
+import { useChatStore } from '@/stores/chat-store';
 
 export function RelatedMessagesPanel({
-  sourceMessage,
-  context,
-  isLoading,
   onClose,
 }: {
-  sourceMessage: Message;
-  context: RelatedContext | null;
-  isLoading: boolean;
   onClose: () => void;
 }) {
+  const sourceMessage = useChatStore((s) => s.selectedMessage);
+  const context = useChatStore((s) => s.relatedContext);
+  const isLoading = useChatStore((s) => s.isLoadingRelated);
+
+  if (!sourceMessage) return null;
+
   const symbols = (sourceMessage.symbols as string[]) ?? [];
 
   return (

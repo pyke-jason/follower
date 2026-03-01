@@ -194,6 +194,7 @@ async function handleTask(task: Task): Promise<void> {
         const sizer = buildPositionSizer(tc?.positionSizingConfig);
         return sizer.calculateSize({
           symbol: input.symbol,
+          strategy: input.strategy,
           entryPrice: input.entryPrice,
           equity: balance.equity,
           maxQuantity: MAX_CONTRACTS[input.strategy],

@@ -15,6 +15,7 @@ export type EmitOpts = {
   outcome?: string | null;
   phase?: string | null;
   reasoning?: string | null;
+  skipCategory?: string | null;
   tradeId?: string | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
@@ -42,6 +43,7 @@ export function createEmitter(scope: {
         phase: opts?.phase ?? null,
         reasoning: opts?.reasoning ?? null,
         tradeId: opts?.tradeId ?? null,
+        skipCategory: opts?.skipCategory ?? null,
         snapshot: payload ?? {},
         durationMs: Date.now() - startMs,
         inputTokens: opts?.inputTokens ?? null,

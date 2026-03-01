@@ -17,6 +17,7 @@ import { BreakdownCharts } from './breakdown-charts';
 import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
 import { ChatRoom } from '../../messages/chat-room';
+import { ChatHydrator } from '../../messages/chat-hydrator';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { DecisionScatter } from './decision-scatter';
 import { TradeFilterProvider, TradeFilters } from '../../components/trade-filters';
@@ -201,22 +202,18 @@ export default async function BacktestDetailPage({
         </Card>
       )}
       <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
-        <ChatRoom
-          initialMessages={chatData.messages}
-          initialCursor={chatData.cursor}
-          initialIntents={chatData.intents}
-          initialLabels={chatData.labels}
-          initialEnrichment={chatData.enrichment}
-          authors={chatData.authors}
-          constraints={{
+        <ChatHydrator data={{
+          ...chatData,
+          constraints: {
             authors: config.traders,
             startDate: config.startDate,
             endDate: messagesEndDate,
             runId: id,
             lastProcessedTs: lastProcessedTs ?? undefined,
-          }}
-          stableDecisionCounts={stableDecisionCounts}
-        />
+          },
+          stableDecisionCounts,
+        }} />
+        <ChatRoom />
       </div>
     </div>
   );

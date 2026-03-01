@@ -58,9 +58,9 @@ export type ResolvedSignal = {
 export type { SignalEventEmitter } from '../../decisions/emitter.js';
 
 export type OrchestratorResult =
-  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
-  | { outcome: 'SKIP'; reason: string; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: Record<string, unknown>; usage?: { inputTokens: number; outputTokens: number } };
+  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'SKIP'; reason: string; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } };
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -184,6 +184,15 @@ export type ParseResult = {
   isHardSkip: boolean;             // true when message is definitively not a trade
   skipReason: string | null;
   complexityFlags: Set<ComplexityFlag>;
+};
+
+/**
+ * Serializable subset of ParseResult — complexityFlags as array, minus
+ * internal-only fields (targetStrategy, skipReason).
+ * New ParseResult fields auto-flow through the Omit without changes here.
+ */
+export type SerializedParseResult = Omit<ParseResult, 'complexityFlags' | 'targetStrategy' | 'skipReason'> & {
+  complexityFlags: ComplexityFlag[];
 };
 
 /**

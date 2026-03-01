@@ -7,9 +7,10 @@ import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '@src/lib/numbers';
 import type { RunDecision, TradeEvent } from '@src/db/schema';
 import type { TimelineMessage } from '../trades/actions';
+import { useTradesStore } from '@/stores/trades-store';
 import {
   ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,
-  OrderCancelledView, ErrorView, FallbackJson,
+  OrderCancelledView, SettledView, ErrorView, FallbackJson,
 } from './snapshot-detail';
 
 // ─── Utilities ───────────────────────────────────────
@@ -136,7 +137,7 @@ function filterRedundantSettled(decisions: RunDecision[]): RunDecision[] {
 
 // ─── Snapshot Dispatch ───────────────────────────────
 
-function SnapshotDispatch({ event, snapshot }: { event: string; snapshot: Record<string, unknown> }) {
+function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snapshot: Record<string, unknown>; reasoning?: string | null }) {
   switch (event) {
     case 'PARSED':
       return <ParseResultView data={snapshot} />;
@@ -168,6 +169,8 @@ function SnapshotDispatch({ event, snapshot }: { event: string; snapshot: Record
     case 'QUOTE_FAILED':
     case 'RETRY_LLM':
       return <ErrorView data={snapshot} />;
+    case 'SETTLED':
+      return <SettledView data={snapshot} reasoning={reasoning} />;
     default:
       return <FallbackJson data={snapshot} />;
   }
@@ -202,11 +205,11 @@ function DecisionPopover({ d }: { d: RunDecision }) {
       <div className="px-3 py-2 space-y-3">
         {/* Snapshot detail */}
         {snapshot && Object.keys(snapshot).length > 0 && (
-          <SnapshotDispatch event={event} snapshot={snapshot} />
+          <SnapshotDispatch event={event} snapshot={snapshot} reasoning={d.reasoning} />
         )}
 
-        {/* Reasoning */}
-        {d.reasoning && (
+        {/* Reasoning (skip for SETTLED since SettledView already shows it) */}
+        {d.reasoning && event !== 'SETTLED' && (
           <div>
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Reasoning</p>
             <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">{d.reasoning}</p>
@@ -236,17 +239,15 @@ type Entry =
   | { kind: 'decision'; sortKey: string; data: RunDecision }
   | { kind: 'trade'; sortKey: string; data: TradeEvent };
 
-export function UnifiedTimeline({
-  decisions, tradeEvents, closeMessageId, messages, tradePnl,
-}: {
-  decisions: RunDecision[];
-  tradeEvents: TradeEvent[];
-  closeMessageId?: string | null;
-  messages?: TimelineMessage[];
-  tradePnl?: string | null;
-}) {
+export function UnifiedTimeline() {
+  const story = useTradesStore((s) => s.story);
+  if (!story) return null;
+
+  const { decisions, events: tradeEvents, trade, timelineMessages: messages } = story;
+  const closeMessageId = trade.closeMessageId;
+  const tradePnl = trade.pnl;
+
   const msgMap = new Map((messages ?? []).map(m => [m.id, m]));
-  const tradeActionSet = new Set(tradeEvents.map(e => e.action));
   const filtered = filterRedundantSettled(decisions);
 
   const eventOrder: Record<string, number> = {
@@ -417,8 +418,8 @@ export function UnifiedTimeline({
                     </p>
                   )}
 
-                  {/* Message quote for PARSED events */}
-                  {event === 'PARSED' && d.messageId && msgMap.has(d.messageId) && (() => {
+                  {/* Message quote for PARSED and SETTLED FAIL events */}
+                  {(event === 'PARSED' || (event === 'SETTLED' && isFail)) && d.messageId && msgMap.has(d.messageId) && (() => {
                     const msg = msgMap.get(d.messageId)!;
                     return (
                       <p className="mt-1.5 text-[11px] text-foreground/50 italic line-clamp-2 border-l-2 border-foreground/20 pl-2 break-words">

@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input';
 import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
 import { Users, X, Check } from 'lucide-react';
 import { isoToDateKey } from '@/lib/format';
+import { useChatStore } from '@/stores/chat-store';
 import type { MessageFilters, LabelFilter } from './actions';
-import type { FilterConstraints } from './chat-room';
 
 type TimePeriod = 'today' | '7d' | '30d' | 'all';
 
@@ -34,19 +34,27 @@ type DecisionSummary = {
   skippedCount: number;
 };
 
-export function ChatFilters({
-  authors,
-  filters,
-  onFilterChange,
-  constraints,
-  decisionSummary,
-}: {
-  authors: string[];
-  filters: MessageFilters;
-  onFilterChange: (filters: MessageFilters) => void;
-  constraints?: FilterConstraints;
-  decisionSummary?: DecisionSummary | null;
-}) {
+export function ChatFilters() {
+  const authors = useChatStore((s) => s.authors);
+  const filters = useChatStore((s) => s.filters);
+  const onFilterChange = useChatStore((s) => s.setFilters);
+  const constraints = useChatStore((s) => s.constraints);
+  const stableDecisionCounts = useChatStore((s) => s.stableDecisionCounts);
+  const enrichment = useChatStore((s) => s.enrichment);
+
+  const decisionSummary = useMemo<DecisionSummary | null>(() => {
+    if (stableDecisionCounts) return stableDecisionCounts;
+    if (!constraints?.runId) return null;
+    const entries = Object.values(enrichment);
+    if (entries.length === 0) return null;
+    let executed = 0;
+    let skipped = 0;
+    for (const e of entries) {
+      if (e.decision === 'EXECUTE') executed++;
+      else if (e.decision === 'SKIP') skipped++;
+    }
+    return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
+  }, [stableDecisionCounts, constraints?.runId, enrichment]);
   const [search, setSearch] = useState('');
 
   const hasDateConstraint = !!(constraints?.startDate && constraints?.endDate);

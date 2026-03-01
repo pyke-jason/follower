@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect, useTransition } from 'react';
-import { fetchTradeStory } from '../trades/actions';
-import type { TradeStory, TradeStoryDecision } from '../trades/actions';
+import { useState } from 'react';
+import { useTradesStore } from '@/stores/trades-store';
+import type { TradeStoryDecision } from '../trades/actions';
 import { SignalDecisionSummary } from './signal-decision-summary';
 import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from './badge';
 import { formatDate } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { Trade, CommissionSchedule, Message } from '@src/db/schema';
+import type { Message } from '@src/db/schema';
 
 const INITIAL_VISIBLE = 3;
 
@@ -64,27 +64,16 @@ function narrowDecision(d: TradeStoryDecision | null) {
   return { ...d, outcome: d.outcome };
 }
 
-export function TradeDetailPanel({
-  trade,
-  runId,
-  commissionSchedule,
-  onClose,
-}: {
-  trade: Trade;
-  runId?: string;
-  commissionSchedule?: CommissionSchedule;
-  onClose: () => void;
-}) {
-  const [story, setStory] = useState<TradeStory | null>(null);
-  const [isLoading, startTransition] = useTransition();
+export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
+  const trade = useTradesStore((s) => {
+    const id = s.selectedTradeId;
+    return id ? s.trades.find((t) => t.id === id) ?? null : null;
+  });
+  const story = useTradesStore((s) => s.story);
+  const isLoading = useTradesStore((s) => s.isLoadingStory);
+  const runId = useTradesStore((s) => s.runId);
 
-  useEffect(() => {
-    setStory(null);
-    startTransition(async () => {
-      const result = await fetchTradeStory(trade.id, runId);
-      setStory(result);
-    });
-  }, [trade.id, runId]);
+  if (!trade) return null;
 
   return (
     <div className="flex flex-col h-full">
@@ -122,7 +111,7 @@ export function TradeDetailPanel({
                 } : null}
                 decision={narrowDecision(story.decision)}
                 taskId={story.task?.id}
-                runId={runId}
+                runId={runId ?? undefined}
               />
             </section>
 
@@ -143,13 +132,7 @@ export function TradeDetailPanel({
             {/* Execution Timeline */}
             {(story.events.length > 0 || story.decisions.length > 0) && (
               <section>
-                <UnifiedTimeline
-                  decisions={story.decisions}
-                  tradeEvents={story.events}
-                  closeMessageId={story.trade.closeMessageId}
-                  messages={story.timelineMessages}
-                  tradePnl={story.trade.pnl}
-                />
+                <UnifiedTimeline />
               </section>
             )}
 

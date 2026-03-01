@@ -1,5 +1,6 @@
 import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule, getTradeEventsForTrades, getCancelledCloseTradeIds } from '@/lib/queries';
 import { TradesTableClient } from '../components/trades-table-client';
+import { TradesHydrator } from './trades-hydrator';
 import { MetricStrip } from '../components/metric-strip';
 import type { Metric } from '../components/metric-strip';
 import { Input } from '@/components/ui/input';
@@ -128,7 +129,8 @@ export default async function TradeHistoryPage({
       </div>
 
       <div className="animate-in-up">
-        <TradesTableClient trades={trades} eventsByTradeId={eventsByTradeId} cancelledTradeIds={cancelledTradeIds} runId={runId} commissionSchedule={commissionSchedule} />
+        <TradesHydrator data={{ trades, eventsByTradeId, cancelledTradeIds, commissionSchedule, runId }} />
+        <TradesTableClient />
         {trades.length === 0 && hasFilters && (
           <p className="px-4 py-6 text-sm text-muted-foreground text-center">
             No closed trades matching filters

@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle } from 'lucide-react';
 import { Badge } from './badge';
@@ -6,11 +8,11 @@ import { TableRow, TableCell } from '@/components/ui/table';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
-import type { Trade, TradeEvent, CommissionSchedule } from '@src/db/schema';
 import { getLegs } from '@src/db/accessors';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
 import { notionalValue } from '@src/lib/trade';
+import { useTradesStore } from '@/stores/trades-store';
 import type { LucideIcon } from 'lucide-react';
 
 function notionalConcentrationColor(pct: number): string {
@@ -94,24 +96,20 @@ function FlagChip({ flag, tooltip }: { flag: FlagDef; tooltip?: string }) {
 }
 
 export function TradeRow({
-  trade,
-  events,
-  cancelledClose,
-  runId,
-  commissionSchedule,
-  startingEquity,
+  tradeId,
   onExpand,
   isExpanded,
 }: {
-  trade: Trade;
-  events?: TradeEvent[];
-  cancelledClose?: boolean;
-  runId?: string;
-  commissionSchedule?: CommissionSchedule;
-  startingEquity?: number;
+  tradeId: string;
   onExpand?: () => void;
   isExpanded?: boolean;
 }) {
+  const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId))!;
+  const events = useTradesStore((s) => s.eventsByTradeId.get(tradeId)) ?? [];
+  const cancelledClose = useTradesStore((s) => s.cancelledTradeIds.has(tradeId));
+  const runId = useTradesStore((s) => s.runId);
+  const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
+  const startingEquity = useTradesStore((s) => s.startingEquity);
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
   const pnl = grossPnl != null ? grossPnl - comm : null;

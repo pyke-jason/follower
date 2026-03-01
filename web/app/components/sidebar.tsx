@@ -26,7 +26,7 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar';
 import { isRunScopedPath } from '@/lib/run-scope';
-import { useRunScope } from './run-scope-provider';
+import { useRunStore } from '@/stores/run-store';
 
 const navLinks = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
@@ -41,7 +41,7 @@ const navLinks = [
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const { runId } = useRunScope();
+  const runId = useRunStore((s) => s.runId);
 
   function buildHref(path: string): string {
     if (!runId || !isRunScopedPath(path)) return path;

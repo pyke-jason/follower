@@ -301,6 +301,75 @@ export function OrderCancelledView({ data }: { data: Record<string, unknown> }) 
   );
 }
 
+export function SettledView({ data, reasoning }: { data: Record<string, unknown>; reasoning?: string | null }) {
+  const signal = data.signal as Record<string, unknown> | undefined;
+  const legs = signal && Array.isArray(signal.legs) ? (signal.legs as LegRow[]) : [];
+  const isFail = data.outcome === 'FAIL';
+
+  return (
+    <div className="space-y-2">
+      {/* Error reason — prominent for failures */}
+      {isFail && reasoning && (
+        <p className="text-xs text-muted-foreground bg-destructive/5 border border-destructive/20 rounded px-2 py-1.5">
+          {reasoning}
+        </p>
+      )}
+
+      {/* Signal summary */}
+      {signal && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+          {signal.action != null && (
+            <StatItem label="Action">
+              <Badge label={String(signal.action)} />
+            </StatItem>
+          )}
+          {signal.orderType != null && (
+            <StatItem label="Order Type">
+              <Badge label={String(signal.orderType)} />
+            </StatItem>
+          )}
+          {signal.tradeId != null && (
+            <StatItem label="Trade">
+              <span className="text-foreground tabular-nums font-mono text-xs">{String(signal.tradeId).slice(0, 8)}</span>
+            </StatItem>
+          )}
+        </div>
+      )}
+
+      {/* Legs table */}
+      {legs.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-muted-foreground text-left">
+                <th className="pr-3 py-1 font-medium">Symbol</th>
+                <th className="pr-3 py-1 font-medium">Strike</th>
+                <th className="pr-3 py-1 font-medium">Expiry</th>
+                <th className="pr-3 py-1 font-medium">Type</th>
+                <th className="pr-3 py-1 font-medium">Side</th>
+              </tr>
+            </thead>
+            <tbody>
+              {legs.map((leg, i) => (
+                <tr key={i} className="border-t border-border/30">
+                  <td className="pr-3 py-1 tabular-nums">{leg.symbol ?? '--'}</td>
+                  <td className="pr-3 py-1 tabular-nums">{leg.strike ?? '--'}</td>
+                  <td className="pr-3 py-1 tabular-nums">{leg.expiry ?? '--'}</td>
+                  <td className="pr-3 py-1">{leg.type ? <Badge label={String(leg.type)} /> : '--'}</td>
+                  <td className="pr-3 py-1">{leg.action ?? leg.side ?? '--'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Anything else not covered above */}
+      {!signal && <FallbackJson data={data} />}
+    </div>
+  );
+}
+
 export function ErrorView({ data }: { data: Record<string, unknown> }) {
   return (
     <p className="text-xs text-muted-foreground bg-destructive/5 border border-destructive/20 rounded px-2 py-1.5">

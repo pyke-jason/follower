@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, Fragment } from 'react';
+import { useCallback, useEffect, Fragment } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
@@ -8,40 +8,37 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { TradeRow } from './trade-row';
 import { EventSubRows } from './event-sub-rows';
 import { TradeDetailPanel } from './trade-detail-panel';
-import type { Trade, TradeEvent, CommissionSchedule } from '@src/db/schema';
+import { useTradesStore } from '@/stores/trades-store';
 
-export function TradesTableClient({
-  trades,
-  eventsByTradeId,
-  cancelledTradeIds,
-  runId,
-  commissionSchedule,
-  startingEquity,
-}: {
-  trades: Trade[];
-  eventsByTradeId?: Map<string, TradeEvent[]>;
-  cancelledTradeIds?: Set<string>;
-  runId?: string;
-  commissionSchedule?: CommissionSchedule;
-  startingEquity?: number;
-}) {
+export function TradesTableClient() {
+  const trades = useTradesStore((s) => s.trades);
+  const eventsByTradeId = useTradesStore((s) => s.eventsByTradeId);
+  const selectedTradeId = useTradesStore((s) => s.selectedTradeId);
+  const selectTrade = useTradesStore((s) => s.selectTrade);
+
   const router = useRouter();
   const searchParams = useSearchParams();
-  const selectedId = searchParams.get('trade');
-  const selectedTrade = selectedId ? trades.find((t) => t.id === selectedId) ?? null : null;
+  const urlTradeId = searchParams.get('trade');
+
+  // Sync URL → store
+  useEffect(() => {
+    if (urlTradeId !== selectedTradeId) selectTrade(urlTradeId);
+  }, [urlTradeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setSelectedId = useCallback(
     (id: string | null) => {
+      selectTrade(id);
       const params = new URLSearchParams(searchParams.toString());
-      if (id) {
-        params.set('trade', id);
-      } else {
-        params.delete('trade');
-      }
+      if (id) params.set('trade', id);
+      else params.delete('trade');
       router.replace(`?${params.toString()}`, { scroll: false });
     },
-    [router, searchParams],
+    [router, searchParams, selectTrade],
   );
+
+  const selectedTrade = selectedTradeId
+    ? trades.find((t) => t.id === selectedTradeId) ?? null
+    : null;
 
   if (trades.length === 0) {
     return (
@@ -55,7 +52,6 @@ export function TradesTableClient({
     <TooltipProvider>
     <Card className="py-0 gap-0 overflow-hidden flex flex-col flex-1 min-h-0">
       <div className="flex flex-1 min-h-0">
-        {/* Table */}
         <CardContent className={`p-0 overflow-auto flex-1 min-h-0 ${selectedTrade ? 'max-w-[calc(100%-480px)]' : ''}`}>
           <Table>
             <TableHeader>
@@ -78,18 +74,13 @@ export function TradesTableClient({
             </TableHeader>
             <TableBody>
               {trades.map((t) => {
-                const events = eventsByTradeId?.get(t.id) ?? [];
+                const events = eventsByTradeId.get(t.id) ?? [];
                 return (
                   <Fragment key={t.id}>
                     <TradeRow
-                      trade={t}
-                      events={events}
-                      cancelledClose={cancelledTradeIds?.has(t.id)}
-                      runId={runId}
-                      commissionSchedule={commissionSchedule}
-                      startingEquity={startingEquity}
-                      onExpand={() => setSelectedId(selectedId === t.id ? null : t.id)}
-                      isExpanded={selectedId === t.id}
+                      tradeId={t.id}
+                      onExpand={() => setSelectedId(selectedTradeId === t.id ? null : t.id)}
+                      isExpanded={selectedTradeId === t.id}
                     />
                     <EventSubRows events={events} closeMessageId={t.closeMessageId} />
                   </Fragment>
@@ -99,15 +90,9 @@ export function TradesTableClient({
           </Table>
         </CardContent>
 
-        {/* Detail panel */}
         {selectedTrade && (
           <div className="w-[480px] shrink-0 border-l border-border overflow-auto bg-background">
-            <TradeDetailPanel
-              trade={selectedTrade}
-              runId={runId}
-              commissionSchedule={commissionSchedule}
-              onClose={() => setSelectedId(null)}
-            />
+            <TradeDetailPanel onClose={() => setSelectedId(null)} />
           </div>
         )}
       </div>

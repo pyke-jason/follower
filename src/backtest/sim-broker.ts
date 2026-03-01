@@ -303,9 +303,10 @@ export class SimBroker implements BrokerService {
         quote = isOptions
           ? await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS)
           : await this.getQuote(params.symbol);
-      } catch {
-        log.debug(`  LIMIT rejected: no market data for ${params.symbol}`);
-        return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        log.debug(`  LIMIT rejected: no market data for ${params.symbol}: ${detail}`);
+        return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}: ${detail}` };
       }
 
       if (shouldFillLimit(isBuyOrder(params), params.limitPrice, quote.bid, quote.ask)) {
@@ -336,9 +337,10 @@ export class SimBroker implements BrokerService {
       quote = isOptions
         ? await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS)
         : await this.getQuote(params.symbol);
-    } catch {
-      log.debug(`  MARKET rejected: no market data for ${params.symbol}`);
-      return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      log.debug(`  MARKET rejected: no market data for ${params.symbol}: ${detail}`);
+      return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}: ${detail}` };
     }
     const fillPrice = computeModelFillPrice({
       fillModel: this.fillModel,

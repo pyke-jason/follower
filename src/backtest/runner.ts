@@ -155,6 +155,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       const balance = await broker.getAccountBalance();
       return sizer.calculateSize({
         symbol: input.symbol,
+        strategy: input.strategy,
         entryPrice: input.entryPrice,
         equity: balance.equity,
         spreadMaxRisk: input.spreadMaxRisk,
@@ -558,20 +559,23 @@ async function processMessage(
           log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
           stats.skipped++;
           stats.skipReasons.set('pipeline failure', (stats.skipReasons.get('pipeline failure') ?? 0) + 1);
-          await emitter.emit('SETTLED', { outcome: 'FAIL', skipCategory: 'pipeline failure' }, { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason });
+          await emitter.emit('SETTLED', { outcome: 'FAIL' }, { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason, skipCategory: 'pipeline failure' });
         } else {
           stats.skipped++;
           stats.skipReasons.set('no execution', (stats.skipReasons.get('no execution') ?? 0) + 1);
-          await emitter.emit('SETTLED', { outcome: 'SKIP', skipCategory: 'no execution' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed' });
+          await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' });
         }
       } else if (result.outcome === 'MANUAL_REVIEW') {
+        // Detect exits for positions we never opened (skipped OPEN → inevitable MANUAL_REVIEW CLOSE)
+        const isUnfollowedExit = result.reason.startsWith('no open position');
+        const category = isUnfollowedExit ? 'unfollowed_exit' : 'flagged';
         stats.skipped++;
-        stats.skipReasons.set('flagged', (stats.skipReasons.get('flagged') ?? 0) + 1);
-        await emitter.emit('SETTLED', { outcome: 'SKIP', skipCategory: 'flagged' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason });
+        stats.skipReasons.set(category, (stats.skipReasons.get(category) ?? 0) + 1);
+        await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason, skipCategory: category });
       } else {
         stats.skipped++;
         stats.skipReasons.set('skip', (stats.skipReasons.get('skip') ?? 0) + 1);
-        await emitter.emit('SETTLED', { outcome: 'SKIP', skipCategory: 'skip' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason });
+        await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason, skipCategory: 'skip' });
       }
       updateStats(stats);
     },
