@@ -286,7 +286,7 @@
     },
     {
       "id": "exits-009",
-      "description": "'Exit Long SPY took partial profits in overnight calls holding some' — TRIM but no fraction → defaults to CLOSE",
+      "description": "'Exit Long SPY took partial profits in overnight calls holding some' — TRIM 50% via 'partial' keyword",
       "input": {
         "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/SPY\" target=\"os\" data-symbol=\"SPY\"><b>SPY</b></a> took partial profits in overnight calls&nbsp; holding some&nbsp;</body></html>",
         "author": "Dave W",
@@ -308,13 +308,14 @@
           {
             "orderType": "SINGLE",
             "symbol": "SPY",
+            "exitPercent": 0.5,
             "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 605 }]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "mustMatch": ["signals[0].orderType", "signals[0].exitPercent", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["exits", "trim"],
-      "notes": "Exit+Long badges + 'partial profits' + 'holding some' = TRIM intent. Known limitation: parser has no fraction word so action defaults to CLOSE. Tagged as trim for tracking."
+      "notes": "Exit+Long badges + 'partial profits' + 'holding some' = TRIM 50%. 'partial' keyword triggers FRACTION_PARTIAL_RE → exitPercent=0.5."
     },
     {
       "id": "exits-010",

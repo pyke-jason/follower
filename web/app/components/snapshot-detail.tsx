@@ -2,9 +2,17 @@ import { Badge } from './badge';
 import { StatItem } from './stat-item';
 import { InfoChip } from './info-chip';
 
-type Snapshot = Record<string, unknown>;
+export type LegRow = {
+  symbol?: string;
+  strike?: number;
+  expiry?: string;
+  type?: string;
+  action?: string;
+  side?: string;
+  quantity?: number;
+};
 
-function ParseResultView({ data }: { data: Record<string, unknown> }) {
+export function ParseResultView({ data }: { data: Record<string, unknown> }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
       {data.action != null ? (
@@ -65,17 +73,7 @@ function ParseResultView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-type LegRow = {
-  symbol?: string;
-  strike?: number;
-  expiry?: string;
-  type?: string;
-  action?: string;
-  side?: string;
-  quantity?: number;
-};
-
-function SignalView({ data }: { data: Record<string, unknown> }) {
+export function SignalView({ data }: { data: Record<string, unknown> }) {
   const legs = Array.isArray(data.legs) ? (data.legs as LegRow[]) : [];
   return (
     <div className="space-y-2">
@@ -119,7 +117,154 @@ function SignalView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function ErrorView({ data }: { data: Record<string, unknown> }) {
+export function SizedView({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+      {data.symbol != null ? (
+        <StatItem label="Symbol">
+          <InfoChip label={String(data.symbol)} />
+        </StatItem>
+      ) : null}
+      {data.strategy != null ? (
+        <StatItem label="Strategy">
+          <Badge label={String(data.strategy)} />
+        </StatItem>
+      ) : null}
+      {data.direction != null ? (
+        <StatItem label="Direction">
+          <Badge label={String(data.direction)} />
+        </StatItem>
+      ) : null}
+      {data.entryPrice != null ? (
+        <StatItem label="Entry Price">
+          <span className="text-foreground tabular-nums">${String(data.entryPrice)}</span>
+        </StatItem>
+      ) : null}
+      {data.quantity != null ? (
+        <StatItem label="Quantity">
+          <span className="text-foreground tabular-nums font-medium">{String(data.quantity)}</span>
+        </StatItem>
+      ) : null}
+      {data.riskPerTrade != null ? (
+        <StatItem label="Risk/Trade">
+          <span className="text-foreground tabular-nums">${String(data.riskPerTrade)}</span>
+        </StatItem>
+      ) : null}
+      {data.reasoning != null ? (
+        <div className="col-span-full">
+          <StatItem label="Reasoning">
+            <span className="text-foreground/80 text-xs">{String(data.reasoning)}</span>
+          </StatItem>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function OrderPlacedView({ data }: { data: Record<string, unknown> }) {
+  const legs = Array.isArray(data.legs) ? (data.legs as LegRow[]) : [];
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+        {data.orderId != null ? (
+          <StatItem label="Order ID">
+            <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
+          </StatItem>
+        ) : null}
+        {data.orderType != null ? (
+          <StatItem label="Order Type">
+            <Badge label={String(data.orderType)} />
+          </StatItem>
+        ) : null}
+        {data.status != null ? (
+          <StatItem label="Status">
+            <Badge label={String(data.status)} />
+          </StatItem>
+        ) : null}
+        {data.limitPrice != null ? (
+          <StatItem label="Limit Price">
+            <span className="text-foreground tabular-nums">${String(data.limitPrice)}</span>
+          </StatItem>
+        ) : null}
+        {data.symbol != null ? (
+          <StatItem label="Symbol">
+            <InfoChip label={String(data.symbol)} />
+          </StatItem>
+        ) : null}
+        {data.direction != null ? (
+          <StatItem label="Direction">
+            <Badge label={String(data.direction)} />
+          </StatItem>
+        ) : null}
+      </div>
+      {legs.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-muted-foreground text-left">
+                <th className="pr-3 py-1 font-medium">Symbol</th>
+                <th className="pr-3 py-1 font-medium">Strike</th>
+                <th className="pr-3 py-1 font-medium">Expiry</th>
+                <th className="pr-3 py-1 font-medium">Type</th>
+                <th className="pr-3 py-1 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {legs.map((leg, i) => (
+                <tr key={i} className="border-t border-border/30">
+                  <td className="pr-3 py-1 tabular-nums">{leg.symbol ?? '--'}</td>
+                  <td className="pr-3 py-1 tabular-nums">{leg.strike ?? '--'}</td>
+                  <td className="pr-3 py-1 tabular-nums">{leg.expiry ?? '--'}</td>
+                  <td className="pr-3 py-1">{leg.type ? <Badge label={leg.type} /> : '--'}</td>
+                  <td className="pr-3 py-1">{leg.action ?? leg.side ?? '--'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+      {data.orderId != null ? (
+        <StatItem label="Order ID">
+          <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
+        </StatItem>
+      ) : null}
+      {data.filledPrice != null ? (
+        <StatItem label="Fill Price">
+          <span className="text-foreground tabular-nums font-medium">${String(data.filledPrice)}</span>
+        </StatItem>
+      ) : null}
+      {data.fillTimestamp != null ? (
+        <StatItem label="Filled At">
+          <span className="text-foreground tabular-nums text-xs">{String(data.fillTimestamp)}</span>
+        </StatItem>
+      ) : null}
+      {data.commission != null ? (
+        <StatItem label="Commission">
+          <span className="text-foreground tabular-nums">${String(data.commission)}</span>
+        </StatItem>
+      ) : null}
+      {data.adjustmentCount != null ? (
+        <StatItem label="Chases">
+          <span className="text-foreground tabular-nums">{String(data.adjustmentCount)}</span>
+        </StatItem>
+      ) : null}
+      {data.originalLimitPrice != null ? (
+        <StatItem label="Original Limit">
+          <span className="text-foreground tabular-nums">${String(data.originalLimitPrice)}</span>
+        </StatItem>
+      ) : null}
+    </div>
+  );
+}
+
+export function ErrorView({ data }: { data: Record<string, unknown> }) {
   return (
     <p className="text-xs text-muted-foreground bg-destructive/5 border border-destructive/20 rounded px-2 py-1.5">
       {String(data.message ?? data.error ?? JSON.stringify(data))}
@@ -127,64 +272,10 @@ function ErrorView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function FallbackJson({ data }: { data: unknown }) {
+export function FallbackJson({ data }: { data: unknown }) {
   return (
     <pre className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-words">
       {JSON.stringify(data, null, 2)}
     </pre>
-  );
-}
-
-export function SnapshotDetail({ snapshot }: { snapshot: Snapshot }) {
-  const keys = Object.keys(snapshot);
-  if (keys.length === 0) return null;
-
-  return (
-    <div className="space-y-3">
-      {keys.map((key) => {
-        const val = snapshot[key];
-        if (val == null) return null;
-
-        const section = typeof val === 'object' && !Array.isArray(val)
-          ? (val as Record<string, unknown>)
-          : null;
-
-        if (key === 'parseResult' && section) {
-          return (
-            <div key={key}>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Parse Result</p>
-              <ParseResultView data={section} />
-            </div>
-          );
-        }
-
-        if (key === 'signal' && section) {
-          return (
-            <div key={key}>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Signal</p>
-              <SignalView data={section} />
-            </div>
-          );
-        }
-
-        if ((key === 'error' || key === 'retryContext') && section) {
-          return (
-            <div key={key}>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
-                {key === 'error' ? 'Error' : 'Retry Context'}
-              </p>
-              <ErrorView data={section} />
-            </div>
-          );
-        }
-
-        return (
-          <div key={key}>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">{key}</p>
-            <FallbackJson data={val} />
-          </div>
-        );
-      })}
-    </div>
   );
 }

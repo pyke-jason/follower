@@ -1,0 +1,368 @@
+{
+  "cases": [
+    {
+      "id": "detexit-001",
+      "description": "Relational exit: 'Exit Long TSLA took profits ty Hari' — relational flag suppressed for CLOSE",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> took profits ty Hari&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-10T16:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-tsla-call-1",
+            "symbol": "TSLA",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "TSLA  251219C00350000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 350, "type": "option", "optionType": "CALL" }],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "TSLA",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 350 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close", "relational"],
+      "notes": "Exit+Long badges + 'ty Hari' triggers relational flag. Relational suppressed for CLOSE action → deterministic path."
+    },
+    {
+      "id": "detexit-002",
+      "description": "Temporal relational: 'Exit SPY calls from yesterday at breakeven' — 'from yesterday' suppressed",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/SPY\" target=\"os\" data-symbol=\"SPY\"><b>SPY</b></a> calls from yesterday at breakeven&nbsp;</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-11T14:30:00.000Z",
+        "positions": [
+          {
+            "id": "pos-spy-call-2",
+            "symbol": "SPY",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "SPY   251212C00600000", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 600, "type": "option", "optionType": "CALL" }],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "SPY",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 600 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close", "relational"],
+      "notes": "Exit badge + 'from yesterday' triggers relational. Suppressed for CLOSE → deterministic."
+    },
+    {
+      "id": "detexit-003",
+      "description": "Qualifier in exit verb: 'Exit Long NFLX took nice profits in pcs' — expanded EXIT_VERB_RE",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/NFLX\" target=\"os\" data-symbol=\"NFLX\"><b>NFLX</b></a> took nice profits in pcs&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-10T20:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-nflx-pcs-1",
+            "symbol": "NFLX",
+            "strategy": "PCS",
+            "direction": "SHORT",
+            "legs": [
+              { "symbol": "NFLX  251219P00900000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 900, "type": "option", "optionType": "PUT" },
+              { "symbol": "NFLX  251219P00895000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 895, "type": "option", "optionType": "PUT" }
+            ],
+            "quantity": 3
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "NFLX",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 900 },
+              { "optionType": "PUT", "side": "SELL", "strike": 895 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].strike", "signals[0].legs[1].side", "signals[0].legs[1].strike"],
+      "tags": ["exits", "close"],
+      "notes": "Exit+Long badges. 'took nice profits' matches expanded EXIT_VERB_RE pattern (took + qualifier + profits)."
+    },
+    {
+      "id": "detexit-004",
+      "description": "Swing context: 'Exit Short FRPT took nice profit in swing position' — context is not a modifier",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/FRPT\" target=\"os\" data-symbol=\"FRPT\"><b>FRPT</b></a> took nice profit in swing position&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-09T15:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-frpt-put-1",
+            "symbol": "FRPT",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "FRPT  251219P00025000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 25, "type": "option", "optionType": "PUT" }],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "FRPT",
+            "legs": [{ "optionType": "PUT", "side": "SELL", "strike": 25 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close"],
+      "notes": "Exit+Short badges. 'in swing position' is context, not a modifier. Short badge = bearish view → PUT LONG position."
+    },
+    {
+      "id": "detexit-005",
+      "description": "Partial TRIM: 'Exit Long SPY took partial profits holding some' — 'partial' triggers TRIM 0.5",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/SPY\" target=\"os\" data-symbol=\"SPY\"><b>SPY</b></a> took partial profits in overnight calls&nbsp; holding some&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-11T21:06:50.000Z",
+        "positions": [
+          {
+            "id": "pos-spy-call-3",
+            "symbol": "SPY",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "SPY   251212C00605000", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 605, "type": "option", "optionType": "CALL" }],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "SPY",
+            "exitPercent": 0.5,
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 605 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].exitPercent", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "trim", "partial"],
+      "notes": "'partial' keyword triggers FRACTION_PARTIAL_RE → exitPercent=0.5 → TRIM action."
+    },
+    {
+      "id": "detexit-006",
+      "description": "Relational + quantity: 'Exit AAPL with $1 profit per contract (20) ty Dave' — relational suppressed",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\"><b>AAPL</b></a> with $1 profit per contract (20) ty Dave&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-05T13:33:02.000Z",
+        "positions": [
+          {
+            "id": "pos-aapl-call-2",
+            "symbol": "AAPL",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "AAPL  250912C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-09-12", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "quantity": 20
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "AAPL",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 230 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close", "relational"],
+      "notes": "Exit badge + 'ty Dave' triggers relational. Suppressed for CLOSE → deterministic. '(20)' is quantity context."
+    },
+    {
+      "id": "detexit-007",
+      "description": "Guard: multi-exit+open stays LLM — 'Exit TXN loss. Short TSLA $328'",
+      "input": {
+        "rawHtml": "<html><head></head><body>Exit <a href=\"/option-stalker/chart/TXN\" target=\"os\" data-symbol=\"TXN\"><b>TXN</b></a> loss. Short <a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> $328&nbsp;</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-12-10T15:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-txn-call-1",
+            "symbol": "TXN",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "TXN   251219C00200000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 200, "type": "option", "optionType": "CALL" }],
+            "quantity": 3
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["exits", "multi-ticker", "guard"],
+      "notes": "No badges. Two symbols (TXN + TSLA) → multi_ticker flag. Exit verb + open verb → mixed message. multi_ticker prevents relational suppression, routes to LLM/MANUAL_REVIEW."
+    },
+    {
+      "id": "detexit-008",
+      "description": "Guard: relational + mixed_action stays LLM — 'Exit Long AAPL ty Pete, also buying GOOG calls'",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\"><b>AAPL</b></a> ty Pete, also buying <a href=\"/option-stalker/chart/GOOG\" target=\"os\" data-symbol=\"GOOG\"><b>GOOG</b></a> calls&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-10T16:30:00.000Z",
+        "positions": [
+          {
+            "id": "pos-aapl-call-3",
+            "symbol": "AAPL",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "AAPL  251219C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["exits", "multi-ticker", "relational", "guard"],
+      "notes": "Exit+Long badges + 'ty Pete' (relational) + GOOG (multi_ticker) + 'buying' (mixed_action). Guards prevent relational suppression. Routes to LLM."
+    },
+    {
+      "id": "detexit-009",
+      "description": "False positive guard: 'took profits on paper trade' — paper skip fires first",
+      "input": {
+        "rawHtml": "<html><head></head><body>took profits on paper trade <a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\"><b>AAPL</b></a>&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-10T17:00:00.000Z",
+        "positions": []
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["exits", "skip", "guard"],
+      "notes": "'paper trade' triggers the paper-trade hard-skip before EXIT_VERB_RE gets to set action=CLOSE."
+    },
+    {
+      "id": "detexit-010",
+      "description": "No-badge verb-only exit: 'took nice profits on AAPL' — expanded EXIT_VERB_RE + symbol",
+      "input": {
+        "rawHtml": "<html><head></head><body>took nice profits on <a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\"><b>AAPL</b></a>&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-10T18:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-aapl-call-4",
+            "symbol": "AAPL",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "AAPL  251219C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "AAPL",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 230 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close"],
+      "notes": "No badges. 'took nice profits' matches expanded EXIT_VERB_RE (took + qualifier + profits). Symbol present → action=CLOSE."
+    },
+    {
+      "id": "detexit-011",
+      "description": "Lotto exit context: 'Exit Long CENX took profits in lotto' — lotto keyword on exit is just context",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/CENX\" target=\"os\" data-symbol=\"CENX\"><b>CENX</b></a> took profits in lotto&nbsp;</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-12-09T16:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-cenx-call-1",
+            "symbol": "CENX",
+            "strategy": "CALL",
+            "direction": "LONG",
+            "legs": [{ "symbol": "CENX  251219C00030000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 30, "type": "option", "optionType": "CALL" }],
+            "quantity": 10
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "CENX",
+            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 30 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "close", "lotto"],
+      "notes": "Exit+Long badges + 'lotto' is context keyword on exit, not a strategy modifier for a new trade."
+    },
+    {
+      "id": "detexit-012",
+      "description": "No-badge LEG_OFF: 'Bought back short Calls on META for .70 profit' — BOUGHT_BACK_SHORT_CALLS_RE",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the short Calls on <a href=\"/option-stalker/chart/META\" target=\"os\" data-symbol=\"META\"><b>META</b></a> for .70 profit&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-09T17:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-meta-cds",
+            "symbol": "META",
+            "strategy": "CDS",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "META  251219C00600000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 600, "type": "option", "optionType": "CALL" },
+              { "symbol": "META  251219C00610000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 610, "type": "option", "optionType": "CALL" }
+            ],
+            "quantity": 5
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "META",
+            "legs": [{ "optionType": "CALL", "side": "BUY", "strike": 610 }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["exits", "leg-off"],
+      "notes": "No badges. 'Bought back the short Calls' → BOUGHT_BACK_SHORT_CALLS_RE → LEG_OFF CALL. Close the short CALL leg (buy-to-close the SELL side at strike 610)."
+    }
+  ]
+}

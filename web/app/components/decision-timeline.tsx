@@ -6,24 +6,174 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '../../../src/lib/numbers';
 import type { RunDecision, TradeEvent } from '../../../src/db/schema';
+import {
+  ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,
+  ErrorView, FallbackJson,
+} from './snapshot-detail';
 
 // ─── Utilities ───────────────────────────────────────
 
 function fmtMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`; }
 
-// ─── Decision Popover ────────────────────────────────
+// ─── Visual constants ────────────────────────────────
+
+const EVENT_LABEL: Record<string, string> = {
+  PARSED: 'PARSED', SIGNAL_RESOLVED: 'SIGNAL', SIZED: 'SIZED',
+  ORDER_PLACED: 'ORDER', ORDER_ADJUSTED: 'CHASE', ORDER_FILLED: 'FILLED',
+  QUOTE_FAILED: 'QUOTE FAIL', RETRY_LLM: 'RETRY', SETTLED: 'RESULT',
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  OPEN: 'Opened', CLOSE: 'Closed', TRIM: 'Trimmed', ADD: 'Added', LEG_OFF: 'Leg Off',
+};
 
 const PATH_LABEL: Record<string, string> = {
   orchestrator: 'Agent', deterministic: 'Deterministic',
   skipped: 'Hard Skip', pipeline_failure: 'Pipeline Fail',
 };
 
+const DOT: Record<string, string> = {
+  PARSED: 'bg-[oklch(0.62_0.05_248)]', SIGNAL_RESOLVED: 'bg-[oklch(0.58_0.07_328)]',
+  SIZED: 'bg-[oklch(0.58_0.06_178)]', ORDER_PLACED: 'bg-[oklch(0.55_0.08_148)]',
+  ORDER_ADJUSTED: 'bg-[oklch(0.60_0.08_75)]', ORDER_FILLED: 'bg-[oklch(0.52_0.10_148)]',
+  QUOTE_FAILED: 'bg-[oklch(0.52_0.12_30)]', RETRY_LLM: 'bg-[oklch(0.60_0.08_75)]',
+  SETTLED: 'bg-[oklch(0.50_0.02_65)]',
+  OPEN: 'bg-[oklch(0.48_0.14_148)]', CLOSE: 'bg-[oklch(0.48_0.12_248)]',
+  ADD: 'bg-[oklch(0.48_0.10_178)]', TRIM: 'bg-[oklch(0.55_0.12_75)]',
+  LEG_OFF: 'bg-[oklch(0.50_0.10_328)]',
+};
+
+// ─── Inline summary extraction ──────────────────────
+
+function getInlineSummary(d: RunDecision): string | null {
+  const snap = d.snapshot as Record<string, unknown> | null;
+  if (!snap) return null;
+  const event = d.event ?? 'SETTLED';
+
+  switch (event) {
+    case 'PARSED': {
+      const parts = [snap.action, snap.symbol, snap.strategy].filter(Boolean).map(String);
+      return parts.length > 0 ? parts.join(' ') : null;
+    }
+    case 'SIGNAL_RESOLVED': {
+      const legs = Array.isArray(snap.legs) ? snap.legs as { symbol?: string }[] : [];
+      const symbol = legs[0]?.symbol ?? snap.symbol;
+      const type = legs.length === 1 ? 'SINGLE' : legs.length === 2 ? 'SPREAD' : `${legs.length}-LEG`;
+      return symbol ? `${type} ${symbol}` : type;
+    }
+    case 'SIZED': {
+      if (snap.quantity != null && snap.entryPrice != null) return `${snap.quantity} @ $${snap.entryPrice}`;
+      if (snap.quantity != null) return `qty ${snap.quantity}`;
+      return null;
+    }
+    case 'ORDER_PLACED': {
+      const parts: string[] = [];
+      if (snap.orderId) parts.push(`#${snap.orderId}`);
+      if (snap.limitPrice != null) parts.push(`limit $${snap.limitPrice}`);
+      return parts.length > 0 ? parts.join(' ') : null;
+    }
+    case 'ORDER_ADJUSTED': {
+      if (snap.fromPrice != null && snap.toPrice != null) return `$${snap.fromPrice} \u2192 $${snap.toPrice}`;
+      return null;
+    }
+    case 'ORDER_FILLED': {
+      const parts: string[] = [];
+      if (snap.filledPrice != null) parts.push(`$${snap.filledPrice}`);
+      if (snap.adjustmentCount != null && Number(snap.adjustmentCount) > 0) parts.push(`(${snap.adjustmentCount} chases)`);
+      return parts.length > 0 ? parts.join(' ') : null;
+    }
+    case 'QUOTE_FAILED':
+      return snap.occSymbol ? String(snap.occSymbol) : null;
+    case 'RETRY_LLM':
+      return snap.reason ? String(snap.reason) : null;
+    default:
+      return null;
+  }
+}
+
+// ─── Redundant SETTLED filter ───────────────────────
+
+/** Keep every non-SETTLED row. For SETTLED: hide orchestrator rows that duplicate per-signal rows. */
+function filterRedundantSettled(decisions: RunDecision[]): RunDecision[] {
+  const settledByMsg = new Map<string, RunDecision[]>();
+
+  for (const d of decisions) {
+    if ((d.event ?? 'SETTLED') !== 'SETTLED') continue;
+    if (!d.messageId) continue;
+    const list = settledByMsg.get(d.messageId) ?? [];
+    list.push(d);
+    settledByMsg.set(d.messageId, list);
+  }
+
+  const hideIds = new Set<string>();
+
+  for (const rows of settledByMsg.values()) {
+    const perSignal = rows.filter(r => r.signalIndex != null);
+    const orchestrator = rows.filter(r => r.phase === 'orchestrator');
+    if (perSignal.length === 0 || orchestrator.length === 0) continue;
+
+    for (const orch of orchestrator) {
+      const matchingOutcome = perSignal.some(ps => ps.outcome === orch.outcome);
+      const hasUniqueReasoning = orch.reasoning && !perSignal.some(ps => ps.reasoning === orch.reasoning);
+      if (matchingOutcome && !hasUniqueReasoning) {
+        hideIds.add(orch.id);
+      }
+    }
+  }
+
+  return decisions.filter(d => !hideIds.has(d.id));
+}
+
+// ─── Snapshot Dispatch ───────────────────────────────
+
+function SnapshotDispatch({ event, snapshot }: { event: string; snapshot: Record<string, unknown> }) {
+  switch (event) {
+    case 'PARSED':
+      return <ParseResultView data={snapshot} />;
+    case 'SIGNAL_RESOLVED':
+      return <SignalView data={snapshot} />;
+    case 'SIZED':
+      return <SizedView data={snapshot} />;
+    case 'ORDER_PLACED':
+      return <OrderPlacedView data={snapshot} />;
+    case 'ORDER_FILLED':
+      return <OrderFilledView data={snapshot} />;
+    case 'ORDER_ADJUSTED':
+      return (
+        <div className="flex items-center gap-2 text-xs">
+          {snapshot.fromPrice != null && snapshot.toPrice != null ? (
+            <span className="text-foreground tabular-nums">
+              ${String(snapshot.fromPrice)} &rarr; ${String(snapshot.toPrice)}
+              {snapshot.step != null && (
+                <span className="text-muted-foreground ml-1">(step {String(snapshot.step)})</span>
+              )}
+            </span>
+          ) : (
+            <FallbackJson data={snapshot} />
+          )}
+        </div>
+      );
+    case 'QUOTE_FAILED':
+    case 'RETRY_LLM':
+      return <ErrorView data={snapshot} />;
+    default:
+      return <FallbackJson data={snapshot} />;
+  }
+}
+
+// ─── Decision Popover ────────────────────────────────
+
 function DecisionPopover({ d }: { d: RunDecision }) {
-  const hasContent = d.outcome || d.reasoning || d.skipCategory || d.phase;
+  const event = d.event ?? 'SETTLED';
+  const snapshot = d.snapshot as Record<string, unknown> | null;
+  const hasContent = d.outcome || d.reasoning || d.skipCategory || d.phase || snapshot;
+  const label = event === 'SETTLED' && d.phase === 'orchestrator' ? 'SUMMARY' : (EVENT_LABEL[event] ?? event);
+
   return (
     <PopoverContent align="start" side="right" className="w-96 max-h-[420px] overflow-auto p-0">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+        <Badge label={label} />
         {d.outcome && <Badge label={d.outcome} />}
         {d.phase && <Badge label={PATH_LABEL[d.phase] ?? d.phase} />}
         {d.skipCategory && (
@@ -38,6 +188,11 @@ function DecisionPopover({ d }: { d: RunDecision }) {
       </div>
 
       <div className="px-3 py-2 space-y-3">
+        {/* Snapshot detail */}
+        {snapshot && Object.keys(snapshot).length > 0 && (
+          <SnapshotDispatch event={event} snapshot={snapshot} />
+        )}
+
         {/* Reasoning */}
         {d.reasoning && (
           <div>
@@ -55,79 +210,12 @@ function DecisionPopover({ d }: { d: RunDecision }) {
         <div className="border-t border-border pt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground/60 tabular-nums">
           {d.messageId && <span>msg {d.messageId.slice(0, 8)}</span>}
           {d.tradeId && <span>trade {d.tradeId.slice(0, 8)}</span>}
+          {d.signalIndex != null && <span>sig #{d.signalIndex}</span>}
           <span>id {d.id.slice(0, 8)}</span>
         </div>
       </div>
     </PopoverContent>
   );
-}
-
-// ─── Visual constants ────────────────────────────────
-
-const EVENT_LABEL: Record<string, string> = {
-  PARSED: 'PARSED', SIGNAL_RESOLVED: 'SIGNAL', SIZED: 'SIZED',
-  ORDER_PLACED: 'ORDER', ORDER_ADJUSTED: 'CHASE', ORDER_FILLED: 'FILLED',
-  QUOTE_FAILED: 'QUOTE FAIL', RETRY_LLM: 'RETRY', SETTLED: 'RESULT',
-};
-
-const ACTION_LABEL: Record<string, string> = {
-  OPEN: 'Opened', CLOSE: 'Closed', TRIM: 'Trimmed', ADD: 'Added', LEG_OFF: 'Leg Off',
-};
-
-const DOT: Record<string, string> = {
-  PARSED: 'bg-[oklch(0.62_0.05_248)]', SIGNAL_RESOLVED: 'bg-[oklch(0.58_0.07_328)]',
-  SIZED: 'bg-[oklch(0.58_0.06_178)]', ORDER_PLACED: 'bg-[oklch(0.55_0.08_148)]',
-  ORDER_ADJUSTED: 'bg-[oklch(0.60_0.08_75)]', ORDER_FILLED: 'bg-[oklch(0.52_0.10_148)]',
-  QUOTE_FAILED: 'bg-[oklch(0.52_0.12_30)]', RETRY_LLM: 'bg-[oklch(0.60_0.08_75)]',
-  SETTLED: 'bg-[oklch(0.50_0.02_65)]',
-  OPEN: 'bg-[oklch(0.48_0.14_148)]', CLOSE: 'bg-[oklch(0.48_0.12_248)]',
-  ADD: 'bg-[oklch(0.48_0.10_178)]', TRIM: 'bg-[oklch(0.55_0.12_75)]',
-  LEG_OFF: 'bg-[oklch(0.50_0.10_328)]',
-};
-
-// ─── Legacy field access ─────────────────────────────
-// The DB still has `event` and `signalIndex` columns from the old emitter,
-// but they were removed from the Drizzle schema. Access via runtime cast.
-type DecisionWithLegacy = RunDecision & { event?: string; signalIndex?: number };
-function asLegacy(d: RunDecision): DecisionWithLegacy { return d as DecisionWithLegacy; }
-
-// ─── Deduplication ───────────────────────────────────
-
-/** Merge multiple run_decision rows per messageId into one best row. */
-function deduplicateDecisions(decisions: RunDecision[]): RunDecision[] {
-  const groups = new Map<string, RunDecision[]>();
-  const noMsg: RunDecision[] = [];
-
-  for (const d of decisions) {
-    if (!d.messageId) { noMsg.push(d); continue; }
-    const list = groups.get(d.messageId) ?? [];
-    list.push(d);
-    groups.set(d.messageId, list);
-  }
-
-  const result: RunDecision[] = [...noMsg];
-
-  for (const rows of groups.values()) {
-    if (rows.length === 1) { result.push(rows[0]); continue; }
-
-    // Primary = the row with phase + outcome (the final summary row)
-    const primary = rows.find(r => r.phase && r.outcome) ?? rows[0];
-    const merged = { ...primary };
-
-    // Fill in fields from sibling rows
-    for (const row of rows) {
-      if (!merged.reasoning && row.reasoning) merged.reasoning = row.reasoning;
-      if (merged.inputTokens == null && row.inputTokens != null) merged.inputTokens = row.inputTokens;
-      if (merged.outputTokens == null && row.outputTokens != null) merged.outputTokens = row.outputTokens;
-      if (!merged.tradeId && row.tradeId) merged.tradeId = row.tradeId;
-      if (!merged.skipCategory && row.skipCategory) merged.skipCategory = row.skipCategory;
-      if (!merged.pnl && row.pnl) merged.pnl = row.pnl;
-    }
-
-    result.push(merged);
-  }
-
-  return result;
 }
 
 // ─── Unified timeline ────────────────────────────────
@@ -137,10 +225,6 @@ export type TimelineMessage = { id: string; cleanText: string; author: string; t
 type Entry =
   | { kind: 'decision'; sortKey: string; data: RunDecision }
   | { kind: 'trade'; sortKey: string; data: TradeEvent };
-
-export function DecisionTimeline({ decisions }: { decisions: RunDecision[] }) {
-  return <UnifiedTimeline decisions={decisions} tradeEvents={[]} />;
-}
 
 export function UnifiedTimeline({
   decisions, tradeEvents, closeMessageId, messages,
@@ -152,7 +236,7 @@ export function UnifiedTimeline({
 }) {
   const msgMap = new Map((messages ?? []).map(m => [m.id, m]));
   const tradeActionSet = new Set(tradeEvents.map(e => e.action));
-  const deduped = deduplicateDecisions(decisions);
+  const filtered = filterRedundantSettled(decisions);
 
   const eventOrder: Record<string, number> = {
     PARSED: 0, SIGNAL_RESOLVED: 1, SIZED: 2, ORDER_PLACED: 3,
@@ -162,22 +246,20 @@ export function UnifiedTimeline({
 
   const entries: Entry[] = [];
 
-  for (const d of deduped) {
-    const dl = asLegacy(d);
-    const msg = d.messageId ? msgMap.get(d.messageId) : null;
-    const event = dl.event ?? 'SETTLED';
+  for (const d of filtered) {
+    const event = d.event ?? 'SETTLED';
 
     // Hide SETTLED FAIL when trade events prove the order actually filled
     if (event === 'SETTLED' && d.outcome === 'FAIL' && tradeActionSet.has('OPEN')) continue;
 
-    // Hide entries with no visible content (empty shell rows from transitional emitter).
+    // Hide entries with no visible content (empty shell rows from transitional emitter)
     const dec = d.outcome as string | null;
-    const hasVisibleData = dec || d.reasoning || d.skipCategory || d.pnl || d.inputTokens != null;
+    const hasVisibleData = dec || d.reasoning || d.skipCategory || d.pnl || d.inputTokens != null || d.snapshot;
     if (event === 'SETTLED' && !hasVisibleData) continue;
 
-    const baseTs = msg?.timestamp ?? d.createdAt ?? '';
+    const baseTs = d.createdAt ?? '';
     const order = eventOrder[event] ?? 5;
-    const sortKey = `${baseTs}|0|${String(order).padStart(2, '0')}|${dl.signalIndex ?? 0}`;
+    const sortKey = `${baseTs}|0|${String(order).padStart(2, '0')}|${d.signalIndex ?? 0}`;
     entries.push({ kind: 'decision', sortKey, data: d });
   }
 
@@ -188,13 +270,7 @@ export function UnifiedTimeline({
   entries.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   if (entries.length === 0) return null;
 
-  // Detect phase boundaries: entry decisions share one messageId, exit decisions share another.
-  // Track prevMessageId to insert visual separators between phases.
   let prevMsgId: string | null = null;
-
-  // Rail: all dots centered on x=12px. Content at pl-[30px].
-  // Trade dots: 13px → left edge at 12-6.5=5.5 → from content: -(30-5.5)=-24.5
-  // Decision dots: 8px → left edge at 12-4=8 → from content: -(30-8)=-22
 
   return (
     <div className="min-w-0 overflow-hidden">
@@ -210,7 +286,6 @@ export function UnifiedTimeline({
             const isLast = i === entries.length - 1;
             const prev = i > 0 ? entries[i - 1] : null;
 
-            // Detect phase break: decision after a trade event, or new message group
             const curMsgId = entry.kind === 'decision' ? entry.data.messageId : null;
             const isPhaseBreak = i > 0 && (
               (entry.kind === 'decision' && prev?.kind === 'trade') ||
@@ -253,9 +328,11 @@ export function UnifiedTimeline({
 
             // ─── Decision entry ──────────────────────
             const d = entry.data;
-            const event = asLegacy(d).event ?? 'SETTLED';
+            const event = d.event ?? 'SETTLED';
             const isFail = d.outcome === 'FAIL';
             const isSkip = d.outcome === 'SKIP';
+            const eventLabel = event === 'SETTLED' && d.phase === 'orchestrator' ? 'SUMMARY' : (EVENT_LABEL[event] ?? event);
+            const inlineSummary = getInlineSummary(d);
 
             return (
               <Popover key={d.id}>
@@ -271,16 +348,22 @@ export function UnifiedTimeline({
                     style={{ left: '-22px', top: '5px' }}
                   />
 
-                  {/* Header: event label (popover trigger) + outcome + metrics */}
+                  {/* Header: event label (popover trigger) + inline summary + outcome + metrics */}
                   <div className="flex items-center gap-1.5 min-w-0">
                     <PopoverTrigger asChild>
                       <button type="button" className={cn(
                         'text-[10px] font-bold uppercase tracking-wider shrink-0 hover:underline underline-offset-2 cursor-pointer',
                         isFail ? 'text-loss/80' : 'text-foreground/60',
                       )}>
-                        {EVENT_LABEL[event] ?? event}
+                        {eventLabel}
                       </button>
                     </PopoverTrigger>
+
+                    {inlineSummary && (
+                      <span className="text-[10px] text-muted-foreground/50 truncate max-w-[200px]">
+                        {inlineSummary}
+                      </span>
+                    )}
 
                     {d.outcome && <Badge label={d.outcome} />}
                     {d.skipCategory && (

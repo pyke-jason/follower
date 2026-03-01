@@ -67,11 +67,12 @@ const FRACTION_HALF_RE = /\bhalf\b|1\s*\/\s*2/i;
 const FRACTION_THIRD_RE = /\bthird\b|1\s*\/\s*3/i;
 const FRACTION_QUARTER_RE = /\bquarter\b|1\s*\/\s*4/i;
 const FRACTION_TWO_THIRDS_RE = /\btwo\s+thirds?\b|2\s*\/\s*3/i;
+const FRACTION_PARTIAL_RE = /\bpartial\b/i;
 const PERCENT_RE = /(\d{1,3})\s*%/;
 
 // ── Exit-verb patterns (soft detection without badge) ─────────────────────────
 
-const EXIT_VERB_RE = /\b(exit(?:ing|ed)?|clos(?:e[ds]?|ing)|exiting|took profits?|stopped out|sold out)\b/i;
+const EXIT_VERB_RE = /\b(exit(?:ing|ed)?|clos(?:e[ds]?|ing)|exiting|took\s+(?:\w+\s+)?profits?|stopped out|sold out)\b/i;
 
 // ── LEG_OFF target patterns ───────────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ function extractExitPercent(text: string): number | null {
   if (FRACTION_HALF_RE.test(text)) return 0.5;
   if (FRACTION_THIRD_RE.test(text)) return 1 / 3;
   if (FRACTION_QUARTER_RE.test(text)) return 0.25;
+  if (FRACTION_PARTIAL_RE.test(text)) return 0.5;
   const pm = PERCENT_RE.exec(text);
   if (pm) {
     const pct = parseInt(pm[1], 10);
@@ -806,6 +808,19 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
       action = 'OPEN';
     }
     // Otherwise leave null — needs LLM
+  }
+
+  // ── Suppress relational for position-reducing actions ───────────────────
+  // Relational phrases ("ty Hari", "from yesterday") are commentary, not
+  // signal modifiers, when the action is an exit. Guard: keep relational if
+  // multi_ticker or mixed_action are also set — those indicate genuine ambiguity.
+  if (
+    (action === 'CLOSE' || action === 'TRIM' || action === 'LEG_OFF') &&
+    complexityFlags.has('relational') &&
+    !complexityFlags.has('multi_ticker') &&
+    !complexityFlags.has('mixed_action')
+  ) {
+    complexityFlags.delete('relational');
   }
 
   // Monitoring-verb skip: position description without action intent

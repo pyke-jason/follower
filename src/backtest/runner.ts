@@ -561,9 +561,9 @@ async function processMessage(
     onResult: async (result) => {
       if (result.outcome === 'EXECUTE') {
         const executedResults = result.results.filter(r => r.executed);
-        const pendingResults = result.results.filter(r => !r.executed && r.orderId);
+        const pendingResults = result.results.filter(r => !r.executed && !r.reason);
         const firstTradeId = executedResults[0]?.tradeId;
-        const failedResults = result.results.filter(r => !r.executed && !r.orderId && r.reason);
+        const failedResults = result.results.filter(r => !r.executed && r.reason);
 
         for (const r of failedResults) {
           if (r.signal.tradeId) stats.failedExitSignals++;

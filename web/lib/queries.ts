@@ -926,27 +926,42 @@ export async function getTradeEventsForTrades(tradeIds: string[]) {
   return grouped;
 }
 
-/** All run_decisions linked to a trade (by tradeId or sourceMessageId). */
+/** All run_decisions linked to a trade (by tradeId or sourceMessageId).
+ *  Two-pass: first find all message IDs linked to the trade, then fetch
+ *  ALL decision events for those messages (so intermediate signals like
+ *  LEG_OFF get their full PARSED→SETTLED chain, not just the SIGNAL_RESOLVED row). */
 export async function getDecisionsForTrade(trade: { id: string; sourceMessageId: string | null; backtestRunId: string | null }) {
-  const conditions: SQL[] = [];
-
-  // Match by tradeId OR by sourceMessageId
+  // Step 1: find message IDs linked to this trade via tradeId or sourceMessageId
+  const seedConditions: SQL[] = [];
   const matchCondition = trade.sourceMessageId
     ? or(
         eq(schema.runDecisions.tradeId, trade.id),
         eq(schema.runDecisions.messageId, trade.sourceMessageId),
       )!
     : eq(schema.runDecisions.tradeId, trade.id);
-  conditions.push(matchCondition);
-
+  seedConditions.push(matchCondition);
   if (trade.backtestRunId) {
-    conditions.push(eq(schema.runDecisions.backtestRunId, trade.backtestRunId));
+    seedConditions.push(eq(schema.runDecisions.backtestRunId, trade.backtestRunId));
+  }
+
+  const seedRows = await db
+    .select({ messageId: schema.runDecisions.messageId })
+    .from(schema.runDecisions)
+    .where(and(...seedConditions));
+
+  const allMessageIds = [...new Set(seedRows.map(r => r.messageId))];
+  if (allMessageIds.length === 0) return [];
+
+  // Step 2: fetch ALL decisions for those message IDs
+  const fullConditions: SQL[] = [inArray(schema.runDecisions.messageId, allMessageIds)];
+  if (trade.backtestRunId) {
+    fullConditions.push(eq(schema.runDecisions.backtestRunId, trade.backtestRunId));
   }
 
   return db
     .select()
     .from(schema.runDecisions)
-    .where(and(...conditions))
+    .where(and(...fullConditions))
     .orderBy(asc(schema.runDecisions.createdAt));
 }
 

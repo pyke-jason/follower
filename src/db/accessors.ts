@@ -5,7 +5,7 @@
  * Parameter types are loose (accept `unknown`) to match Drizzle inferred row shapes
  * without requiring callers to pre-cast.
  */
-import type { TradeLeg, DetectedStrategy, BacktestRunConfig, BacktestRunSummary } from './schema.js';
+import type { TradeLeg, TradeMetadata, DetectedStrategy, BacktestRunConfig, BacktestRunSummary } from './schema.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
 
@@ -13,6 +13,10 @@ import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPo
 
 export function getLegs(row: { legs: unknown }): TradeLeg[] {
   return (row.legs ?? []) as TradeLeg[];
+}
+
+export function getTradeMetadata(row: { metadata: unknown }): TradeMetadata {
+  return (row.metadata ?? {}) as TradeMetadata;
 }
 
 export function getBrokerLegFills(row: { brokerLegFills: unknown }): LegFill[] | null {

@@ -20,7 +20,7 @@ function makeTrade(overrides: Partial<TestTrade> = {}): TestTrade {
 }
 
 function makeDecisions(count: number) {
-  return Array.from({ length: count }, () => ({ path: 'agent', decision: 'EXECUTE', inputTokens: 100 as number | null }));
+  return Array.from({ length: count }, () => ({ phase: 'agent', outcome: 'EXECUTE', inputTokens: 100 as number | null }));
 }
 
 // ── Extended metrics tests ───────────────────────────────────────────

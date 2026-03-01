@@ -211,8 +211,8 @@ export default async function BacktestDetailPage({
 
 
   return (
-    <div className="flex flex-col min-h-full">
-    <div className="space-y-4 animate-in-up pb-6 flex-1 flex flex-col">
+    <div className="flex flex-col h-full">
+    <div className="space-y-4 animate-in-up pb-6 flex-1 flex flex-col min-h-0">
       {isRunning && <AutoRefresh intervalMs={3000} />}
 
       {/* Header with action toolbar */}
@@ -278,65 +278,66 @@ export default async function BacktestDetailPage({
           </div>
         </div>
 
-        {/* Compact info bar: config left, metrics right */}
-        <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-2.5 text-sm flex-wrap">
-          {/* Config */}
-          <span className="text-foreground font-medium">{config.traders.join(', ')}</span>
-          <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground tabular-nums">{isoToDateKey(config.startDate)} &ndash; {isoToDateKey(config.endDate)}</span>
-          <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
-          <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
-          <span className="text-muted-foreground tabular-nums">${((config.startingEquity ?? 100_000) / 1000).toFixed(0)}k</span>
-          {config.commissionSchedule?.option?.perContract != null && (
-            <span className="text-muted-foreground text-xs">comm ${config.commissionSchedule.option.perContract}/ct</span>
-          )}
-          {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
-          {summary && (
-            <>
-              <Separator orientation="vertical" className="!h-4" />
-              <div className="flex items-center gap-3 ml-auto tabular-nums">
-                <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades{summary.openAtEnd > 0 && <span className="text-muted-foreground/60"> + {summary.openAtEnd} open</span>}</span>
-                <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
-                {(() => {
-                  const unrealized = liveMetrics?.unrealizedPnl ?? 0;
-                  const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
-                  const hasComm = (summary.totalCommissions ?? 0) > 0;
-                  const displayPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
-                  const totalPnl = hasOpen ? displayPnl + unrealized : displayPnl;
-                  return (
-                    <span className={totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>
-                      {formatCurrency(totalPnl)}
-                      {hasComm && <span className="text-muted-foreground font-normal text-xs ml-1">(gross {formatCurrency(summary.totalPnl)} &minus; {formatCurrency(summary.totalCommissions!)} comm)</span>}
-                      {!hasComm && hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
-                    </span>
-                  );
-                })()}
-                <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>
-                <span className="text-muted-foreground">PF <span className="text-foreground font-semibold">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</span></span>
-              </div>
-            </>
-          )}
+        {/* Unified info bar: config + metrics + progress */}
+        <div className="rounded-lg border bg-card text-sm overflow-hidden">
+          <div className="flex items-center gap-4 px-4 py-2.5 flex-wrap">
+            {/* Config */}
+            <span className="text-foreground font-medium">{config.traders.join(', ')}</span>
+            <Separator orientation="vertical" className="!h-4" />
+            <span className="text-muted-foreground tabular-nums">{isoToDateKey(config.startDate)} &ndash; {isoToDateKey(config.endDate)}</span>
+            <Separator orientation="vertical" className="!h-4" />
+            <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
+            <Separator orientation="vertical" className="!h-4" />
+            <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
+            <span className="text-muted-foreground tabular-nums">${((config.startingEquity ?? 100_000) / 1000).toFixed(0)}k</span>
+            {config.commissionSchedule?.option?.perContract != null && (
+              <span className="text-muted-foreground text-xs">comm ${config.commissionSchedule.option.perContract}/ct</span>
+            )}
+            {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
+            {summary && (
+              <>
+                <Separator orientation="vertical" className="!h-4" />
+                <div className="flex items-center gap-3 ml-auto tabular-nums">
+                  <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades{summary.openAtEnd > 0 && <span className="text-muted-foreground/60"> + {summary.openAtEnd} open</span>}</span>
+                  <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
+                  {(() => {
+                    const unrealized = liveMetrics?.unrealizedPnl ?? 0;
+                    const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
+                    const hasComm = (summary.totalCommissions ?? 0) > 0;
+                    const displayPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
+                    const totalPnl = hasOpen ? displayPnl + unrealized : displayPnl;
+                    return (
+                      <span className={totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>
+                        {formatCurrency(totalPnl)}
+                        {hasComm && <span className="text-muted-foreground font-normal text-xs ml-1">(gross {formatCurrency(summary.totalPnl)} &minus; {formatCurrency(summary.totalCommissions!)} comm)</span>}
+                        {!hasComm && hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
+                      </span>
+                    );
+                  })()}
+                  <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>
+                  <span className="text-muted-foreground">PF <span className="text-foreground font-semibold">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</span></span>
+                </div>
+              </>
+            )}
+          </div>
+          {/* Progress chips + bar embedded in the same card */}
+          <RunProgress
+            processedMessages={decisions.length}
+            totalMessages={run.summary?.tradedMessages ?? 0}
+            agentModel={config.agentModel ?? 'default'}
+            llmTokens={llmTokens}
+            liveMetrics={liveMetrics}
+            status={run.status}
+            startedAt={run.startedAt}
+            completedAt={run.completedAt}
+            lastMessageDate={
+              liveMetrics?.lastProcessedMessageTs
+              ?? (decisions.length > 0 ? decisions[0].message.timestamp : null)
+            }
+            rangeStart={config.startDate}
+            rangeEnd={config.endDate}
+          />
         </div>
-
-        {/* Progress / run stats — always visible for consistent layout */}
-        <RunProgress
-          processedMessages={decisions.length}
-          totalMessages={run.summary?.tradedMessages ?? 0}
-          agentModel={config.agentModel ?? 'default'}
-          llmTokens={llmTokens}
-          liveMetrics={liveMetrics}
-          status={run.status}
-          startedAt={run.startedAt}
-          completedAt={run.completedAt}
-          lastMessageDate={
-            liveMetrics?.lastProcessedMessageTs
-            ?? (decisions.length > 0 ? decisions[0].message.timestamp : null)
-          }
-          rangeStart={config.startDate}
-          rangeEnd={config.endDate}
-        />
 
         {/* Error — only when there is one (hide for cancelled runs) */}
         {run.error && run.status !== 'CANCELLED' && (

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, Fragment } from 'react';
+import { useCallback, Fragment } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -22,8 +23,23 @@ export function TradesTableClient({
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedId = searchParams.get('trade');
   const selectedTrade = selectedId ? trades.find((t) => t.id === selectedId) ?? null : null;
+
+  const setSelectedId = useCallback(
+    (id: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (id) {
+        params.set('trade', id);
+      } else {
+        params.delete('trade');
+      }
+      router.replace(`?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
 
   if (trades.length === 0) {
     return (
@@ -35,7 +51,7 @@ export function TradesTableClient({
 
   return (
     <TooltipProvider>
-    <Card className="py-0 gap-0 overflow-hidden flex flex-col">
+    <Card className="py-0 gap-0 overflow-hidden flex flex-col flex-1 min-h-0">
       <div className="flex flex-1 min-h-0">
         {/* Table */}
         <CardContent className={`p-0 overflow-auto flex-1 min-h-0 ${selectedTrade ? 'max-w-[calc(100%-480px)]' : ''}`}>
@@ -65,6 +81,7 @@ export function TradesTableClient({
                   <Fragment key={t.id}>
                     <TradeRow
                       trade={t}
+                      events={events}
                       runId={runId}
                       commissionSchedule={commissionSchedule}
                       startingEquity={startingEquity}

@@ -52,7 +52,7 @@ export function BacktestTabs({
         <TabsTrigger value="performance">Performance</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="trades" className="mt-2">
+      <TabsContent value="trades" className="mt-2 flex flex-col min-h-0">
         {trades}
       </TabsContent>
 
@@ -60,7 +60,7 @@ export function BacktestTabs({
         {messages}
       </TabsContent>
 
-      <TabsContent value="performance" className="space-y-4 mt-2">
+      <TabsContent value="performance" className="mt-2 overflow-auto min-h-0 space-y-4">
         {performance}
       </TabsContent>
     </Tabs>

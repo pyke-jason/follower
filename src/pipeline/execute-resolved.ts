@@ -289,12 +289,11 @@ async function executeResolvedSignal(
   const symbol = deriveSymbol(signal.legs);
   const strategy = deriveStrategy(signal.legs);
   const direction = deriveDirection(signal.legs);
-  const isPositionReducing = !!signal.tradeId;
+  const signalAction = signal.action ?? 'OPEN';
+  const isPositionReducing = signalAction === 'CLOSE' || signalAction === 'TRIM' || signalAction === 'LEG_OFF';
 
   // One info line per signal — the authoritative execution log
-  const logAction = isPositionReducing
-    ? (signal.exitPercent != null && signal.exitPercent < 1 ? 'TRIM' : 'CLOSE')
-    : 'OPEN';
+  const logAction = signalAction;
   const optLegs = signal.legs.filter((l): l is OptionLeg => l.type === 'option');
   const execParts = [`${logAction} ${direction} ${strategy} ${symbol}`];
   if (optLegs.length > 0) {
@@ -330,7 +329,7 @@ async function executeResolvedSignal(
     }, { signalIndex: signalIndex ?? null });
 
     // 2. Risk check
-    const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: 'OPEN' });
+    const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction });
     if (!risk.allowed) {
       return { signal, executed: false, reason: `Risk blocked: ${risk.reason}` };
     }
@@ -353,7 +352,7 @@ async function executeResolvedSignal(
       signalIndex,
       recordFill: async (fp, fa) => {
         const recorded = await deps.recordTrade({
-          action: 'OPEN',
+          action: signalAction,
           symbol,
           trader,
           direction,
@@ -363,6 +362,7 @@ async function executeResolvedSignal(
           legs: orderLegs,
           openedAt: fa?.toISOString(),
           sourceMessageId: messageId,
+          ...(signal.tradeId && { tradeId: signal.tradeId }),
         });
         if (recorded) tradeId = recorded.tradeId;
         return recorded;

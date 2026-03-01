@@ -167,7 +167,10 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     if (isOpen_ && !openedAt) {
       throw new Error(`recordTrade: backtest OPEN for ${symbol} missing openedAt timestamp`);
     }
-    if (!isOpen_ && !closedAt) {
+    if (!isOpen_ && action === 'ADD' && !openedAt) {
+      throw new Error(`recordTrade: backtest ADD for ${symbol} missing openedAt timestamp`);
+    }
+    if (!isOpen_ && action !== 'ADD' && !closedAt) {
       throw new Error(`recordTrade: backtest ${action ?? 'position-modify'} for ${symbol} missing closedAt timestamp`);
     }
   }

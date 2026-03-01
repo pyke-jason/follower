@@ -613,10 +613,11 @@ export async function resolveAddPath(
 
   const result = await resolveOpenPath(enrichedParse, ctx);
 
-  // If EXECUTE and we matched a position, stamp tradeId so executor ADDs to existing trade
+  // If EXECUTE and we matched a position, stamp tradeId + action so executor ADDs to existing trade
   if (result.outcome === 'EXECUTE' && matched) {
     for (const signal of result.signals) {
       signal.tradeId = matched.id;
+      signal.action = 'ADD';
     }
   }
 
