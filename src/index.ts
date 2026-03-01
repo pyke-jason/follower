@@ -8,7 +8,7 @@ import { classifyMessage } from './parsing/classify.js';
 import { db, schema } from './db/client.js';
 import { eq } from 'drizzle-orm';
 import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
-import { liveService } from './broker/tradestation.js';
+import { liveService } from './broker/tradestation/index.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';

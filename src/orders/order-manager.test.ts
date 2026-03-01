@@ -57,6 +57,7 @@ function makeLimitBuyParams(overrides: Partial<WorkingOrderParams> = {}): Workin
     legs: [{ symbol: 'SPY', strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
     orderType: 'LIMIT',
     limitPrice: 100,
+    isClosing: false,
     cancelAfterSec: 60,
     ...overrides,
   };
@@ -70,6 +71,7 @@ function makeLimitSellParams(overrides: Partial<WorkingOrderParams> = {}): Worki
     legs: [{ symbol: 'SPY', strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'SELL', quantity: 1 }],
     orderType: 'LIMIT',
     limitPrice: 100,
+    isClosing: false,
     cancelAfterSec: 60,
     ...overrides,
   };
@@ -106,6 +108,7 @@ describe('OrderManager fill properties', () => {
           direction: 'LONG',
           legs: [{ symbol: 'SPY', strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
           orderType: 'MARKET',
+          isClosing: false,
         });
 
         expect(mgr.getWorkingOrders()).toHaveLength(0);
@@ -128,6 +131,7 @@ describe('OrderManager fill properties', () => {
           legs: [{ symbol: 'SPY', strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
           orderType: 'LIMIT',
           limitPrice: price,
+          isClosing: false,
         });
 
         expect(mgr.getWorkingOrders()).toHaveLength(0);
@@ -709,6 +713,7 @@ describe('OrderManager guard rails — no silent fallbacks', () => {
         direction: 'LONG',
         legs: [{ symbol: 'SPY', strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
         orderType: 'LIMIT',
+        isClosing: false,
         cancelAfterSec: 60,
       }),
     ).rejects.toThrow('limitPrice');

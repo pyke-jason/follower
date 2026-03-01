@@ -8,7 +8,7 @@ import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/e
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { OrderManager } from '../orders/order-manager.js';
 import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
-import { liveService } from '../broker/tradestation.js';
+import { liveService } from '../broker/tradestation/index.js';
 import { getTrader } from '../config/traders.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { sendSystemAlert } from '../lib/alert.js';

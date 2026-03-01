@@ -17,7 +17,7 @@ export type TradeOutcome = {
 
 /** Agent decision for a message — from runDecisions (backtest and live). */
 export type MessageDecision = {
-  outcome: 'EXECUTE' | 'SKIP' | 'FAIL';
+  outcome: 'EXECUTE' | 'SKIP' | 'FAIL' | 'PENDING';
   reasoning: string | null;
   pnl: string | null;
   phase: string;

@@ -1,9 +1,9 @@
-import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill } from './types.js';
-import type { BrokerService } from './interface.js';
+import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill } from '../types.js';
+import type { BrokerService } from '../interface.js';
 import { getAccessToken } from './auth.js';
-import { safeParseFloat } from '../lib/numbers.js';
-import { formatOccSymbol } from '../backtest/occ-symbology.js';
-import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, tsClassify } from '../lib/resilient.js';
+import { safeParseFloat } from '../../lib/numbers.js';
+import { formatTsOptionSymbol } from './symbology.js';
+import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS } from '../../lib/resilient.js';
 import {
   TsQuotesResponseSchema,
   TsOrdersResponseSchema,
@@ -13,6 +13,37 @@ import {
 } from './schemas.js';
 
 const BASE = process.env.TS_BASE_URL || 'https://api.tradestation.com/v3';
+
+type ErrorCategory = 'auth' | 'transient' | 'permanent';
+
+/** TradeStation-specific classifier: extracts status from "TradeStation NNN:" format. */
+function tsClassify(err: unknown): ErrorCategory {
+  const msg = err instanceof Error ? err.message : String(err);
+  const tsMatch = msg.match(/TradeStation\s+(\d{3}):/);
+  if (tsMatch) {
+    const status = parseInt(tsMatch[1], 10);
+    if (status === 401 || status === 403) return 'auth';
+    if (status === 429 || (status >= 500 && status <= 599)) return 'transient';
+    if (status === 400 || status === 404 || status === 422) return 'permanent';
+  }
+  // Fall back to generic classification via resilient.ts defaults
+  return classifyGeneric(err);
+}
+
+/** Generic error classifier (mirrors resilient.ts classifyError). */
+function classifyGeneric(err: unknown): ErrorCategory {
+  const msg = err instanceof Error ? err.message : String(err);
+  const statusMatch = msg.match(/\b([1-5]\d{2})\b/);
+  if (statusMatch) {
+    const status = parseInt(statusMatch[1], 10);
+    if (status === 401 || status === 403) return 'auth';
+    if (status === 429 || (status >= 500 && status <= 599)) return 'transient';
+    if (status === 400 || status === 404 || status === 422) return 'permanent';
+  }
+  if (/token refresh failed/i.test(msg)) return 'auth';
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|fetch failed|socket hang up|aborted/i.test(msg)) return 'transient';
+  return 'transient';
+}
 
 async function ts(path: string, options?: RequestInit & { signal?: AbortSignal }) {
   const token = await getAccessToken();
@@ -55,9 +86,9 @@ export async function placeOrder(params: OrderParams): Promise<OrderResult> {
   const tsLegs = params.legs.map((leg) => ({
     Symbol: leg.type === 'STOCK'
       ? params.symbol
-      : formatOccSymbol({ underlying: params.symbol, expiration: leg.expiry, type: leg.type as 'CALL' | 'PUT', strike: leg.strike }),
+      : formatTsOptionSymbol({ underlying: params.symbol, expiration: leg.expiry!, type: leg.type as 'CALL' | 'PUT', strike: leg.strike! }),
     Quantity: String(leg.quantity),
-    TradeAction: resolveTradeAction(leg.action, leg.type),
+    TradeAction: resolveTradeAction(leg.action, leg.type, params.isClosing),
   }));
 
   const body: Record<string, unknown> = {
@@ -200,15 +231,16 @@ export async function getAccountBalance(): Promise<AccountBalance> {
     const validated = parseApiResponse(TsBalancesResponseSchema, data, `GET /brokerage/accounts/.../balances`);
     const bal = validated.Balances[0];
 
+    const detail = bal.BalanceDetail;
     return {
       accountId,
       cashBalance: safeParseFloat(bal.CashBalance),
       buyingPower: safeParseFloat(bal.BuyingPower),
       equity: safeParseFloat(bal.Equity),
       marketValue: safeParseFloat(bal.MarketValue),
-      dayTradingBuyingPower: bal.DayTradingBuyingPower ? safeParseFloat(bal.DayTradingBuyingPower) : undefined,
-      unrealizedPnl: safeParseFloat(bal.UnrealizedProfitLoss),
-      realizedPnl: safeParseFloat(bal.RealizedProfitLoss),
+      dayTradingBuyingPower: detail?.DayTradeExcess ? safeParseFloat(detail.DayTradeExcess) : undefined,
+      unrealizedPnl: detail?.UnrealizedProfitLoss ? safeParseFloat(detail.UnrealizedProfitLoss) : 0,
+      realizedPnl: detail?.RealizedProfitLoss ? safeParseFloat(detail.RealizedProfitLoss) : 0,
       timestamp: new Date().toISOString(),
     };
   }, { ...READ_DEFAULTS, classify: tsClassify }, 'getAccountBalance');
@@ -229,11 +261,12 @@ export const liveService: BrokerService = {
   getPositions, getAccountBalance,
 };
 
-function resolveTradeAction(action: 'BUY' | 'SELL', type: string): string {
+function resolveTradeAction(action: 'BUY' | 'SELL', type: string, isClosing: boolean): string {
   if (type === 'STOCK') {
     return action === 'BUY' ? 'BUY' : 'SELL';
   }
-  // Options: use BUY_TO_OPEN / SELL_TO_OPEN for now.
-  // The agent can specify SELL_TO_CLOSE via the action field when closing.
+  if (isClosing) {
+    return action === 'BUY' ? 'BUY_TO_CLOSE' : 'SELL_TO_CLOSE';
+  }
   return action === 'BUY' ? 'BUY_TO_OPEN' : 'SELL_TO_OPEN';
 }

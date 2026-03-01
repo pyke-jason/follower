@@ -49,6 +49,7 @@ export function makeStockBuyOrder(overrides: Partial<OrderParams> = {}): OrderPa
     direction: 'LONG',
     legs: [{ symbol: sym, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
     orderType: 'MARKET',
+    isClosing: false,
     ...overrides,
   };
 }
@@ -61,6 +62,7 @@ export function makeStockSellOrder(overrides: Partial<OrderParams> = {}): OrderP
     direction: 'SHORT',
     legs: [{ symbol: sym, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'SELL', quantity: 1 }],
     orderType: 'MARKET',
+    isClosing: false,
     ...overrides,
   };
 }

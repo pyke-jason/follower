@@ -77,7 +77,7 @@ When Claude creates tasks in step 1, it wires up deps so phases execute in order
 | Beads (bd) issue tracker | Yes — `.beads/` initialized, hooks installed |
 | Coding standards + type safety | Yes — `CLAUDE.md`, strict tsconfig, vitest |
 | Permission sandbox | Yes — `.claude/settings.local.json` |
-| Ralph loop (`scripts/ralph.sh`) | Not yet — see `docs/plans/agent-orchestration.md` |
+| Ralph loop (`scripts/ralph.sh`) | Yes |
 | Orchestrator agent (`.claude/agents/orchestrator.md`) | Not yet |
 
 Until ralph.sh exists, Claude works through tasks in a single interactive session. Ralph just automates the "fresh context per task" part.

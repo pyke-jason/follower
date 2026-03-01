@@ -2,13 +2,13 @@
  * Task processor — bridges the task queue to the orchestrator + resolved-signal executor.
  *
  * processTask(task, env) is the single entry point for both live and backtest paths.
- * It fetches the message, calls the orchestrator (which emits PARSED/SETTLED),
- * then calls the executor (which emits per-signal events).
+ * It fetches the message, calls the orchestrator (which emits PARSED),
+ * then either emits SETTLED (for non-EXECUTE) or calls the executor (which emits per-signal events).
  */
 
 import type { Task } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
-import type { OrchestratorResult, ResolvedSignal, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
+import type { OrchestratorResult, ResolvedSignal, OpenPosition, SignalEventEmitter, SerializedParseResult } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult } from './execute-resolved.js';
 
 import { db, schema } from '../db/client.js';
@@ -20,7 +20,7 @@ import { executeResolvedSignals } from './execute-resolved.js';
 
 export type ProcessTaskResult =
   | Extract<OrchestratorResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>
-  | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[] };
+  | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[]; parseResult?: SerializedParseResult };
 
 export type TaskEnv = {
   getPositions: (symbol?: string) => Promise<OpenPosition[]>;
@@ -28,6 +28,8 @@ export type TaskEnv = {
   pipeline: ResolvedPipelineDeps;
   emitter: SignalEventEmitter;
   onResult: (result: ProcessTaskResult) => Promise<void>;
+  /** Classify non-EXECUTE outcomes for the SETTLED event. Returns skipCategory. */
+  classifySkip?: (result: Extract<ProcessTaskResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>) => string;
 };
 
 // ─── Main ───────────────────────────────────────────
@@ -44,7 +46,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
 
   if (!message) throw new Error(`Message ${messageId} not found for task ${task.id}`);
 
-  // Orchestrator emits PARSED + SETTLED (for skips) or SIGNAL_RESOLVED (for executes)
+  // Orchestrator emits PARSED (always) + SIGNAL_RESOLVED (for executes)
   const resolved = await resolveOrchestrator(message, {
     getPositions: env.getPositions,
     llm: env.llm,
@@ -53,12 +55,27 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   });
 
   if (resolved.outcome !== 'EXECUTE') {
-    await env.onResult({
+    const result = {
       outcome: resolved.outcome,
       reason: resolved.reason,
       parseResult: resolved.parseResult,
       usage: resolved.usage,
+    } as Extract<ProcessTaskResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>;
+
+    const mappedOutcome = resolved.outcome === 'MANUAL_REVIEW' ? 'SKIP' : resolved.outcome;
+    const skipCategory = env.classifySkip?.(result)
+      ?? (resolved.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
+
+    await env.emitter.emit('SETTLED', { outcome: mappedOutcome }, {
+      outcome: mappedOutcome,
+      phase: 'orchestrator',
+      reasoning: resolved.reason,
+      skipCategory,
+      inputTokens: resolved.usage?.inputTokens ?? null,
+      outputTokens: resolved.usage?.outputTokens ?? null,
     });
+
+    await env.onResult(result);
     return;
   }
 
@@ -74,5 +91,6 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     reason: `${resolved.signals.length} signal(s)`,
     signals: resolved.signals,
     results,
+    parseResult: resolved.parseResult,
   });
 }

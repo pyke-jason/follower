@@ -39,6 +39,6 @@ broker, orderManager?, calculatePositionSize, checkRiskLimits, recordTrade, onPe
 
 When adding a new dep, add it to **both** `src/backtest/runner.ts` AND `src/live/runner.ts`.
 
-## Direction Reversal on Close
+## Direction on Close — No Reversal
 
-Position-reducing orders must reverse direction: `LONG -> SHORT`, `SHORT -> LONG`. This is already handled in `execute-resolved.ts`. If copying or refactoring this logic, always preserve the reversal.
+`deriveDirection(legs)` returns the ORDER direction from the signal legs' sides: SELL legs → SHORT (selling), BUY legs → LONG (buying back). For position-reducing orders, the signal legs already carry the correct closing side (e.g., SELL to close a LONG). Do NOT reverse the direction — `deriveDirection` already returns what `isBuyOrder` needs for fill logic.

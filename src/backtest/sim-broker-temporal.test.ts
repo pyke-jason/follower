@@ -836,6 +836,7 @@ describe('temporal: advanceTo option fills', () => {
             legs: [{ symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }), strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
             orderType: 'LIMIT',
             limitPrice: limit,
+            isClosing: false,
           });
 
           // If it filled immediately, skip (limit was within spread)
@@ -886,6 +887,7 @@ describe('temporal: advanceTo option fills', () => {
       legs: [{ symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }), strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
       orderType: 'LIMIT',
       limitPrice: limit,
+      isClosing: false,
     });
 
     if (order.status !== 'OPEN') return;
@@ -922,6 +924,7 @@ describe('temporal: advanceTo option fills', () => {
       legs: [{ symbol: formatOccSymbol({ underlying: 'SPY', expiration: EXPIRY, type: 'CALL', strike }), strike, expiry: EXPIRY, type: 'CALL' as const, action: 'BUY' as const, quantity: 1 }],
       orderType: 'LIMIT',
       limitPrice: limit,
+      isClosing: false,
     });
 
     if (order.status !== 'OPEN') return;
@@ -1211,6 +1214,7 @@ describe('temporal: advanceTo intraday option fills', () => {
       }],
       orderType: 'LIMIT',
       limitPrice: limit,
+      isClosing: false,
     });
     expect(order.status).toBe('OPEN');
 
@@ -1265,6 +1269,7 @@ describe('temporal: advanceTo intraday option fills', () => {
       }],
       orderType: 'LIMIT',
       limitPrice: limit,
+      isClosing: false,
     });
 
     if (order.status !== 'OPEN') return;

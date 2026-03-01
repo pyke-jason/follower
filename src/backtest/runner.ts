@@ -13,6 +13,7 @@ import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/e
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
+import { ShadowTracker } from './shadow-tracker.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
 import { getTrader } from '../config/traders.js';
 import { OrderManager } from '../orders/order-manager.js';
@@ -245,6 +246,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   let failedEntrySignals = 0;
   let failedExitSignals = 0;
   let expiredWithoutSignal = 0;
+  const shadows = new ShadowTracker();
 
   // Day-boundary tracking for MTM snapshots and option expiration sweeps
   let lastMsgDay = '';
@@ -353,7 +355,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     }
 
     await processMessage(
-      msg, btCtx,
+      msg, btCtx, shadows,
       { agentTrades, skipped, skipReasons, failedEntrySignals, failedExitSignals },
       (stats) => { agentTrades = stats.agentTrades; skipped = stats.skipped; failedEntrySignals = stats.failedEntrySignals; failedExitSignals = stats.failedExitSignals; },
     );
@@ -522,6 +524,7 @@ function taskFromMessage(msg: HistoricalMessage): Task {
 async function processMessage(
   msg: HistoricalMessage,
   btCtx: BacktestContext,
+  shadows: ShadowTracker,
   stats: Stats,
   updateStats: (stats: Stats) => void,
 ): Promise<void> {
@@ -541,6 +544,15 @@ async function processMessage(
     llm: btCtx.agentProvider,
     pipeline: btCtx.pipelineDeps,
     emitter,
+    classifySkip: (result) => {
+      const isUnfollowed = shadows.isUnfollowedExit(
+        msg.author,
+        result.parseResult?.action ?? null,
+        result.parseResult?.symbol ?? null,
+      );
+      if (isUnfollowed) return 'unfollowed_exit';
+      return result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
+    },
     onResult: async (result) => {
       if (result.outcome === 'EXECUTE') {
         const executedResults = result.results.filter(r => r.executed);
@@ -556,6 +568,10 @@ async function processMessage(
         if (executedResults.length > 0 || pendingResults.length > 0) {
           const reasoning = result.signals.map(s => `${s.orderType} ${s.legs.map(l => l.symbol).join('+')}`).join('; ');
           stats.agentTrades++;
+          // Record followed open
+          if (result.parseResult?.action === 'OPEN' && result.parseResult?.symbol) {
+            shadows.recordFollowedOpen(msg.author, result.parseResult.symbol);
+          }
           await emitter.emit('SETTLED', { outcome: 'EXECUTE' }, { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId });
         } else if (failedResults.length > 0) {
           const failReason = failedResults.map(r => r.reason).join('; ');
@@ -568,17 +584,21 @@ async function processMessage(
           stats.skipReasons.set('no execution', (stats.skipReasons.get('no execution') ?? 0) + 1);
           await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' });
         }
-      } else if (result.outcome === 'MANUAL_REVIEW') {
-        // Detect exits for positions we never opened (skipped OPEN → inevitable MANUAL_REVIEW CLOSE)
-        const isUnfollowedExit = result.reason.startsWith('no open position');
-        const category = isUnfollowedExit ? 'unfollowed_exit' : 'flagged';
+      } else {
+        // SKIP or MANUAL_REVIEW — classified by classifySkip, SETTLED emitted by processTask
+        const isUnfollowed = shadows.isUnfollowedExit(
+          msg.author,
+          result.parseResult?.action ?? null,
+          result.parseResult?.symbol ?? null,
+        );
+        const category = isUnfollowed ? 'unfollowed_exit' : (result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
         stats.skipped++;
         stats.skipReasons.set(category, (stats.skipReasons.get(category) ?? 0) + 1);
-        await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason, skipCategory: category });
-      } else {
-        stats.skipped++;
-        stats.skipReasons.set('skip', (stats.skipReasons.get('skip') ?? 0) + 1);
-        await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason, skipCategory: 'skip' });
+
+        // Track skipped opens for shadow registry
+        if (result.parseResult?.action === 'OPEN' && result.parseResult?.symbol) {
+          shadows.recordSkippedOpen(msg.author, result.parseResult.symbol);
+        }
       }
       updateStats(stats);
     },

@@ -215,17 +215,9 @@ async function emitOrchestratorEvents(
   // Always emit PARSED — include route so timeline knows how we got here
   await env.emitter.emit('PARSED', { ...serializedParse, route });
 
-  // For non-EXECUTE outcomes, also emit SETTLED immediately
-  if (result.outcome !== 'EXECUTE') {
-    const outcome = result.outcome === 'MANUAL_REVIEW' ? 'SKIP' : result.outcome;
-    await env.emitter.emit('SETTLED', { outcome }, {
-      outcome,
-      reasoning: result.reason,
-      inputTokens: result.usage?.inputTokens ?? null,
-      outputTokens: result.usage?.outputTokens ?? null,
-    });
-  } else {
-    // For EXECUTE, emit SIGNAL_RESOLVED per signal
+  // For EXECUTE, emit SIGNAL_RESOLVED per signal
+  // Non-EXECUTE outcomes: SETTLED is emitted by the caller (runner), not here
+  if (result.outcome === 'EXECUTE') {
     for (let i = 0; i < result.signals.length; i++) {
       const signal = result.signals[i];
       await env.emitter.emit('SIGNAL_RESOLVED', {

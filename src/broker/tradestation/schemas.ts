@@ -1,14 +1,19 @@
 import { z } from 'zod';
-import { sendSystemAlert } from '../lib/alert.js';
-import { zFiniteNum, zNonNegPrice } from '../lib/zod-financial.js';
+import { sendSystemAlert } from '../../lib/alert.js';
+import { zCoercePrice } from '../../lib/zod-financial.js';
 
 // --- TradeStation API response schemas (PascalCase, raw API shape) ---
+// NOTE: TradeStation returns ALL numeric fields as strings (e.g. "684.37").
+// Use z.coerce.number() throughout — never raw z.number().
+
+const zTsNum = z.coerce.number();
+const zTsNonNeg = zCoercePrice; // z.coerce.number().nonnegative()
 
 export const TsQuoteSchema = z.object({
-  Bid: zNonNegPrice,
-  Ask: zNonNegPrice,
-  Last: zNonNegPrice,
-  Volume: z.number(),
+  Bid: zTsNonNeg,
+  Ask: zTsNonNeg,
+  Last: zTsNonNeg,
+  Volume: zTsNum,
   TradeTime: z.string(),
 });
 
@@ -17,15 +22,15 @@ export const TsQuotesResponseSchema = z.object({
 });
 
 export const TsOptionSchema = z.object({
-  StrikePrice: zNonNegPrice,
-  Bid: zNonNegPrice,
-  Ask: zNonNegPrice,
-  Last: zNonNegPrice,
-  ImpliedVolatility: zFiniteNum,
-  Delta: zFiniteNum,
-  Gamma: zFiniteNum,
-  Theta: zFiniteNum,
-  OpenInterest: z.number(),
+  StrikePrice: zTsNonNeg,
+  Bid: zTsNonNeg,
+  Ask: zTsNonNeg,
+  Last: zTsNonNeg,
+  ImpliedVolatility: zTsNum,
+  Delta: zTsNum,
+  Gamma: zTsNum,
+  Theta: zTsNum,
+  OpenInterest: zTsNum,
 });
 
 export const TsOptionsResponseSchema = z.object({
@@ -71,14 +76,18 @@ export const TsPositionsResponseSchema = z.object({
   Positions: z.array(TsPositionSchema),
 });
 
+const TsBalanceDetailSchema = z.object({
+  RealizedProfitLoss: z.string().optional(),
+  UnrealizedProfitLoss: z.string().optional(),
+  DayTradeExcess: z.string().optional(),
+}).passthrough();
+
 export const TsBalanceSchema = z.object({
   CashBalance: z.string(),
   BuyingPower: z.string(),
   Equity: z.string(),
   MarketValue: z.string(),
-  UnrealizedProfitLoss: z.string(),
-  RealizedProfitLoss: z.string(),
-  DayTradingBuyingPower: z.string().optional(),
+  BalanceDetail: TsBalanceDetailSchema.optional(),
 });
 
 export const TsBalancesResponseSchema = z.object({

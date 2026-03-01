@@ -32,7 +32,7 @@ export const WorkingOrderParamsSchema = z.object({
   legs: z.array(OrderLegSchema),
   orderType: z.enum(['MARKET', 'LIMIT']),
   limitPrice: zPrice.optional(),
-  isClosing: z.boolean().optional(),
+  isClosing: z.boolean(),
   adjustmentRules: z.array(AdjustmentRuleSchema).optional(),
   cancelAfterSec: z.number().nonnegative().optional(),
 }).refine(

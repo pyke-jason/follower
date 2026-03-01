@@ -122,5 +122,5 @@ export type OrderParams = {
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
   /** Signals a position-reducing order — broker skips buying power gate. */
-  isClosing?: boolean;
+  isClosing: boolean;
 };

@@ -95,6 +95,11 @@ export function computeModelFillPrice(params: FillPriceParams): number {
  *  Valuation paths use the wider default (60 min) in MarketDataProvider.getQuote(). */
 const EXECUTION_LOOKBACK_MINS = 5;
 
+/** When a LIMIT order has no market data within EXECUTION_LOOKBACK_MINS:
+ *  - true:  queue as OPEN (order waits for next tick — good for illiquid options)
+ *  - false: REJECT outright (original behavior) */
+const QUEUE_LIMIT_ON_STALE_DATA = true;
+
 /**
  * Strategy for auto-closing expiring positions before the options cutoff.
  * Swappable: implement to change when/how positions are priced on expiry day.
@@ -315,8 +320,19 @@ export class SimBroker implements BrokerService {
           : await this.getQuote(params.symbol);
       } catch (e) {
         const detail = e instanceof Error ? e.message : String(e);
-        log.debug(`  LIMIT rejected: no market data for ${params.symbol}: ${detail}`);
-        return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}: ${detail}` };
+        if (!QUEUE_LIMIT_ON_STALE_DATA) {
+          log.debug(`  LIMIT rejected: no market data for ${params.symbol}: ${detail}`);
+          return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}: ${detail}` };
+        }
+        log.debug(`  LIMIT queued (stale data): ${params.symbol}: ${detail}`);
+        this.workingOrders.set(orderId, {
+          params,
+          currentLimitPrice: params.limitPrice!,
+          status: 'OPEN',
+          isOptionOrder: isOptions,
+        });
+        this.balanceCache = null;
+        return { orderId, status: 'OPEN' };
       }
 
       if (shouldFillLimit(isBuyOrder(params), params.limitPrice, quote.bid, quote.ask)) {
@@ -432,6 +448,7 @@ export class SimBroker implements BrokerService {
       direction: 'LONG', // direction doesn't affect spread quote computation
       legs,
       orderType: 'MARKET',
+      isClosing: false,
     };
     return this.getOptionSpreadQuote(params, effectiveAt);
   }

@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge } from './badge';
+import { StatItem } from './stat-item';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
@@ -233,6 +234,88 @@ function DecisionPopover({ d }: { d: RunDecision }) {
   );
 }
 
+// ─── Trade event popover ─────────────────────────────
+
+function TradeEventPopover({ ev, fillInfo, tradePnl }: {
+  ev: TradeEvent;
+  fillInfo?: { orderId?: string; orderType?: string; limitPrice?: number; filledPrice?: number; adjustmentCount?: number; commission?: number; originalLimitPrice?: number; immediatelyFilled?: boolean };
+  tradePnl?: string | null;
+}) {
+  const price = safeParseFloat(ev.price);
+  const meta = ev.metadata as Record<string, unknown> | null;
+  const limitPrice = fillInfo?.originalLimitPrice ?? fillInfo?.limitPrice;
+  const slippage = limitPrice != null && price != null ? price - limitPrice : null;
+
+  return (
+    <PopoverContent align="start" side="right" className="w-80 p-0">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+        <Badge label={ev.action} />
+        {fillInfo?.orderType && <Badge label={fillInfo.orderType} />}
+        {fillInfo?.orderId && (
+          <span className="text-[10px] text-muted-foreground font-mono">#{fillInfo.orderId}</span>
+        )}
+      </div>
+      <div className="px-3 py-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        {price != null && (
+          <StatItem label="Fill Price">
+            <span className="text-foreground tabular-nums font-medium">{formatCurrency(price)}</span>
+          </StatItem>
+        )}
+        {limitPrice != null && (
+          <StatItem label="Limit Price">
+            <span className="text-foreground tabular-nums">{formatCurrency(limitPrice)}</span>
+          </StatItem>
+        )}
+        {slippage != null && slippage !== 0 && (
+          <StatItem label="Slippage">
+            <span className={cn('tabular-nums', slippage > 0 ? 'text-loss' : 'text-profit')}>
+              {slippage > 0 ? '+' : ''}{formatCurrency(slippage)}
+            </span>
+          </StatItem>
+        )}
+        {fillInfo?.adjustmentCount != null && fillInfo.adjustmentCount > 0 && (
+          <StatItem label="Chases">
+            <span className="text-foreground tabular-nums">{fillInfo.adjustmentCount}</span>
+          </StatItem>
+        )}
+        {fillInfo?.immediatelyFilled && (
+          <StatItem label="Fill">
+            <span className="text-profit text-[10px]">Immediate</span>
+          </StatItem>
+        )}
+        {fillInfo?.commission != null && fillInfo.commission > 0 && (
+          <StatItem label="Commission">
+            <span className="text-foreground tabular-nums">{formatCurrency(fillInfo.commission)}</span>
+          </StatItem>
+        )}
+        {ev.quantity != null && (
+          <StatItem label="Quantity">
+            <span className="text-foreground tabular-nums">{ev.quantity}</span>
+          </StatItem>
+        )}
+        {ev.action === 'CLOSE' && tradePnl != null && parseFloat(tradePnl) !== 0 && (
+          <StatItem label="P&L">
+            <span className={cn('tabular-nums font-medium', pnlColor(tradePnl))}>{formatCurrency(tradePnl)}</span>
+          </StatItem>
+        )}
+        {ev.action === 'TRIM' && meta?.trimPnl != null && (
+          <StatItem label="Trim P&L">
+            <span className={cn('tabular-nums font-medium', pnlColor(meta.trimPnl as number))}>{formatCurrency(meta.trimPnl as number)}</span>
+          </StatItem>
+        )}
+        {ev.action === 'TRIM' && meta?.exitPercent != null && (
+          <StatItem label="Exit %">
+            <span className="text-foreground tabular-nums">{(Number(meta.exitPercent) * 100).toFixed(0)}%</span>
+          </StatItem>
+        )}
+      </div>
+      <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground/60 tabular-nums">
+        {formatDate(ev.timestamp)}
+      </div>
+    </PopoverContent>
+  );
+}
+
 // ─── Unified timeline ────────────────────────────────
 
 type Entry =
@@ -249,6 +332,34 @@ export function UnifiedTimeline() {
 
   const msgMap = new Map((messages ?? []).map(m => [m.id, m]));
   const filtered = filterRedundantSettled(decisions);
+
+  // Build per-message fill context for trade event popovers
+  const fillInfoByMsg = new Map<string, {
+    orderId?: string; orderType?: string; limitPrice?: number;
+    filledPrice?: number; adjustmentCount?: number; commission?: number;
+    originalLimitPrice?: number; immediatelyFilled?: boolean;
+    filledQuantity?: number;
+  }>();
+  for (const d of decisions) {
+    const snap = d.snapshot as Record<string, unknown> | null;
+    if (!snap || !d.messageId) continue;
+    const existing = fillInfoByMsg.get(d.messageId) ?? {};
+    if (d.event === 'ORDER_PLACED') {
+      existing.orderId = snap.orderId ? String(snap.orderId) : existing.orderId;
+      existing.orderType = snap.orderType ? String(snap.orderType) : existing.orderType;
+      existing.limitPrice = snap.limitPrice != null ? Number(snap.limitPrice) : existing.limitPrice;
+    }
+    if (d.event === 'ORDER_FILLED') {
+      existing.orderId = snap.orderId ? String(snap.orderId) : existing.orderId;
+      existing.filledPrice = snap.filledPrice != null ? Number(snap.filledPrice) : existing.filledPrice;
+      existing.adjustmentCount = snap.adjustmentCount != null ? Number(snap.adjustmentCount) : existing.adjustmentCount;
+      existing.commission = snap.commission != null ? Number(snap.commission) : existing.commission;
+      existing.originalLimitPrice = snap.originalLimitPrice != null ? Number(snap.originalLimitPrice) : existing.originalLimitPrice;
+      existing.immediatelyFilled = snap.immediatelyFilled === true;
+      existing.filledQuantity = snap.filledQuantity != null ? Number(snap.filledQuantity) : existing.filledQuantity;
+    }
+    fillInfoByMsg.set(d.messageId, existing);
+  }
 
   const eventOrder: Record<string, number> = {
     PARSED: 0, SIGNAL_RESOLVED: 1, SIZED: 2, ORDER_PLACED: 3,
@@ -324,36 +435,42 @@ export function UnifiedTimeline() {
               const price = safeParseFloat(ev.price);
               const meta = ev.metadata as Record<string, unknown> | null;
               const trimPnl = meta?.trimPnl as number | undefined;
+              const info = ev.messageId ? fillInfoByMsg.get(ev.messageId) : undefined;
 
               return (
-                <div key={ev.id} className={cn('relative', i > 0 && 'mt-1.5', !isLast && 'pb-1.5')}>
-                  {/* 13px dot — trade events are primary anchors */}
-                  <div
-                    className={cn('absolute w-[13px] h-[13px] rounded-full ring-2 ring-background', DOT[ev.action] ?? 'bg-muted-foreground/40')}
-                    style={{ left: '-24.5px', top: '2px' }}
-                  />
-                  <div className="flex items-center gap-2 flex-wrap min-w-0">
-                    <span className="text-[13px] font-bold text-foreground tracking-tight">
-                      {ACTION_LABEL[ev.action] ?? ev.action}
-                    </span>
-                    <span className="text-[13px] font-semibold text-foreground/90 tabular-nums">
-                      {ev.action === 'TRIM' && '\u2212'}{ev.action === 'ADD' && '+'}{ev.quantity} @ {formatCurrency(price)}
-                    </span>
-                    {ev.action === 'CLOSE' && tradePnl != null && parseFloat(tradePnl) !== 0 && (
-                      <span className={cn('text-xs font-semibold tabular-nums', pnlColor(tradePnl))}>
-                        {formatCurrency(tradePnl)}
-                      </span>
-                    )}
-                    {trimPnl != null && (
-                      <span className={cn('text-xs font-semibold tabular-nums', trimPnl > 0 ? 'text-profit' : 'text-loss')}>
-                        {formatCurrency(trimPnl)}
-                      </span>
-                    )}
-                    <span className="text-[11px] text-muted-foreground/60 tabular-nums ml-auto shrink-0">
-                      {formatDate(ev.timestamp)}
-                    </span>
+                <Popover key={ev.id}>
+                  <div className={cn('relative', i > 0 && 'mt-1.5', !isLast && 'pb-1.5')}>
+                    {/* 13px dot — trade events are primary anchors */}
+                    <div
+                      className={cn('absolute w-[13px] h-[13px] rounded-full ring-2 ring-background', DOT[ev.action] ?? 'bg-muted-foreground/40')}
+                      style={{ left: '-24.5px', top: '2px' }}
+                    />
+                    <PopoverTrigger asChild>
+                      <button type="button" className="flex items-center gap-2 flex-wrap min-w-0 w-full text-left cursor-pointer hover:opacity-80">
+                        <span className="text-[13px] font-bold text-foreground tracking-tight">
+                          {ACTION_LABEL[ev.action] ?? ev.action}
+                        </span>
+                        <span className="text-[13px] font-semibold text-foreground/90 tabular-nums">
+                          {ev.action === 'TRIM' && '\u2212'}{ev.action === 'ADD' && '+'}{ev.quantity} @ {formatCurrency(price)}
+                        </span>
+                        {ev.action === 'CLOSE' && tradePnl != null && parseFloat(tradePnl) !== 0 && (
+                          <span className={cn('text-xs font-semibold tabular-nums', pnlColor(tradePnl))}>
+                            {formatCurrency(tradePnl)}
+                          </span>
+                        )}
+                        {trimPnl != null && (
+                          <span className={cn('text-xs font-semibold tabular-nums', trimPnl > 0 ? 'text-profit' : 'text-loss')}>
+                            {formatCurrency(trimPnl)}
+                          </span>
+                        )}
+                        <span className="text-[11px] text-muted-foreground/60 tabular-nums ml-auto shrink-0">
+                          {formatDate(ev.timestamp)}
+                        </span>
+                      </button>
+                    </PopoverTrigger>
                   </div>
-                </div>
+                  <TradeEventPopover ev={ev} fillInfo={info} tradePnl={tradePnl} />
+                </Popover>
               );
             }
 

@@ -222,7 +222,7 @@ function buildOrderParams(
     cancelAfterSec: limitPrice && !isPositionReducing
       ? ORDER_DEFAULTS[strategy]!.cancelAfterSec
       : undefined,
-    isClosing: isPositionReducing || undefined,
+    isClosing: isPositionReducing,
   };
 }
 
@@ -253,7 +253,7 @@ async function placeOrder(
       symbol: params.symbol,
       strategy: params.strategy,
       direction: params.direction,
-      isClosing: params.isClosing ?? false,
+      isClosing: params.isClosing,
       legs: params.legs,
       adjustmentRules: params.adjustmentRules,
       cancelAfterSec: params.cancelAfterSec,
@@ -394,15 +394,17 @@ async function executeResolvedSignal(
   // leg for LEG_OFF).
   const orderLegs = legsToOrderLegs(signal.legs, 1); // quantity is already in the legs
   const mid = await getSpreadMidpoint(deps.broker, orderLegs);
-  // Close direction is reversed from the position direction
-  const closeDirection: Direction = direction === 'LONG' ? 'SHORT' : 'LONG';
-  const params = buildOrderParams(strategy, closeDirection, symbol, orderLegs, mid, true);
+  // deriveDirection returns the ORDER direction from the signal legs' sides:
+  // SELL legs → SHORT (selling), BUY legs → LONG (buying back).
+  // This is already the correct direction for the broker's fill check
+  // (isBuyOrder uses params.direction to decide BUY vs SELL fill logic).
+  const params = buildOrderParams(strategy, direction, symbol, orderLegs, mid, true);
 
   let tradeId: string | undefined;
   const quantity = orderLegs[0]?.quantity ?? 1;
   const result = await placeOrder(deps, params, {
     symbol,
-    direction: closeDirection,
+    direction,
     strategy,
     quantity,
     legs: orderLegs,
@@ -418,7 +420,7 @@ async function executeResolvedSignal(
         tradeId: signal.tradeId,
         symbol,
         trader,
-        direction: closeDirection,
+        direction,
         strategy,
         exitPrice: fp,
         quantity,
@@ -470,7 +472,7 @@ export async function executeResolvedSignals(ctx: {
       results.push(result);
 
       // Emit SETTLED for this signal
-      const outcome = result.executed ? 'EXECUTE' : 'FAIL';
+      const outcome = result.executed ? 'EXECUTE' : (result.reason ? 'FAIL' : 'PENDING');
       await emitter.emit('SETTLED', { outcome, signal }, {
         signalIndex: i,
         outcome,

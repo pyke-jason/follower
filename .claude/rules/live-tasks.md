@@ -1,5 +1,5 @@
 ---
-paths: src/live/**, src/broker/tradestation.ts, src/broker/auth.ts
+paths: src/live/**, src/broker/tradestation/**
 ---
 
 # Live Execution
@@ -26,4 +26,4 @@ If adding a new risk check, add it to both `BACKTEST_RISK_DEFAULTS` and `LIVE_RI
 
 ## TradeStation API
 
-`src/broker/tradestation.ts` implements `BrokerService`. OAuth tokens are managed in `auth.ts`. Never hardcode credentials — use environment variables via the secrets module.
+`src/broker/tradestation/` implements `BrokerService`. OAuth tokens are managed in `auth.ts`. Never hardcode credentials — use environment variables via the secrets module.

@@ -9,7 +9,7 @@ paths: src/broker/**
 `src/broker/interface.ts` (or `types.ts`) defines the `BrokerService` interface — the boundary between pipeline code and broker implementations. Two implementations exist:
 
 - `SimBroker` (`src/backtest/sim-broker.ts`) — simulated fills for backtesting
-- `liveService` (`src/broker/tradestation.ts`) — real TradeStation API
+- `liveService` (`src/broker/tradestation/`) — real TradeStation API
 
 ## Rules
 
