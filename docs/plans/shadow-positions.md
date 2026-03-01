@@ -19,177 +19,188 @@ This is misleading in two ways:
    lookup. The orchestrator does all the parsing work, calls `getPositions()`, gets
    nothing, and flags MANUAL_REVIEW.
 
-## Solution: Two-part fix
+**Scale**: 752 `"no open position found"` decisions across existing runs. Top symbols:
+C (56), SPY (48), TSLA (44), UNH (32), IREN (32). This is a large fraction of all
+flagged decisions.
 
-### Part 1: Shadow position registry (backtest-only, in-memory)
+## Seam analysis
 
-When the backtest orchestrator produces an OPEN signal that gets **skipped** (SKIP or
-MANUAL_REVIEW outcome), record a lightweight "shadow position" keyed by
-`(trader, symbol, strategy, direction)`.
+Investigated every integration point to find the cleanest boundaries.
 
-When a CLOSE/TRIM/LEG_OFF arrives and `getPositions()` returns `[]`, check the shadow
-registry. If a shadow exists → produce a new outcome: **`SKIP` with reason
-`"exit for unfollowed open"`** instead of MANUAL_REVIEW.
+### Seam 1: `parseResult` types (orchestrator → runner)
 
-**What a shadow stores** (minimal — no legs, no OCC symbols, no prices):
+The orchestrator attaches `parseResult` to **every** `OrchestratorResult` variant.
+`process-task.ts` forwards it for SKIP and MANUAL_REVIEW outcomes. So
+`result.parseResult` is reliably available in the runner's `onResult` callback.
+
+**Problem**: `OrchestratorResult.parseResult` is typed as `Record<string, unknown>`.
+This exists because `serializeParseResult()` in `orchestrator/index.ts` takes the
+strongly-typed `ParseResult` and manually copies each field into a plain object
+(to convert `complexityFlags: Set` → array). The return type is declared as
+`Record<string, unknown>`, throwing away all type information.
+
+**Fix**: Create a serializable version of `ParseResult` and use that as the type:
 
 ```ts
-type ShadowPosition = {
-  symbol: string;
-  trader: string;
-  strategy: Strategy;
-  direction: Direction;
-  /** messageId of the skipped OPEN, for traceability */
-  originMessageId: string;
+// In orchestrator/types.ts:
+export type SerializedParseResult = Omit<ParseResult, 'complexityFlags'> & {
+  complexityFlags: ComplexityFlag[];
 };
 ```
 
-**Where shadows are created:**
-- `backtest/runner.ts` `processMessage()` → in the `onResult` callback, when
-  outcome is SKIP or MANUAL_REVIEW and the parse had `action: OPEN`, add a shadow.
-- Requires the orchestrator to pass back the `parseResult` (it already does — see
-  `OrchestratorResult.parseResult`).
+Then `serializeParseResult()` returns `SerializedParseResult`, and
+`OrchestratorResult.parseResult` is typed as `SerializedParseResult` instead of
+`Record<string, unknown>`. All downstream consumers (process-task, backtest runner)
+get typed access to `.action`, `.symbol`, etc. with zero casts.
 
-**Where shadows are consumed:**
-- `position-path.ts` does NOT consume them directly. Instead, the shadow check happens
-  in the `getPositions` wrapper in `backtest/runner.ts`. When the DB query returns `[]`,
-  check the shadow map. If a shadow matches, return a sentinel `OpenPosition` with a
-  special `id` prefix (e.g., `shadow:<messageId>`).
+### Seam 2: skipCategory storage (emitter → DB → UI) — BROKEN
 
-  Actually — **simpler approach**: don't modify `getPositions` at all. Instead, add the
-  shadow check in `processMessage`'s `onResult` callback. When the orchestrator returns
-  MANUAL_REVIEW with reason matching `"no open position found for ..."`, look up the
-  shadow registry. If matched → reclassify from MANUAL_REVIEW to SKIP with the new
-  category.
+**Current state is split**:
 
-  This is better because:
-  - Zero changes to the orchestrator or position-path (pure, tested code stays untouched)
-  - Shadow logic is isolated to the backtest runner where it belongs
-  - No risk of a shadow position accidentally being "executed"
+| Path | Column | Snapshot JSON | UI reads from |
+|---|---|---|---|
+| Legacy runs (pre-emitter) | `skip_category` has data | empty | column ✅ |
+| Modern runs (emitter) | NULL | `snapshot.skipCategory` | column ❌ |
 
-**Where shadows are removed:**
-- When a matching CLOSE is reclassified (consumed the shadow), delete it.
-- Shadows are in-memory only (a `Map<string, ShadowPosition[]>` on `BacktestContext`),
-  scoped to a single backtest run. No DB storage, no cleanup needed.
+The emitter (`src/decisions/emitter.ts`) writes `skipCategory` into the `snapshot`
+JSON payload, NOT the `skip_category` text column. But the UI (`decision-timeline.tsx`)
+reads `d.skipCategory` from the **Drizzle-inferred column** (`RunDecision` type).
 
-### Part 2: New skip category `unfollowed_exit`
+**Result**: Skip categories are **invisible in the UI for all recent runs**. The
+timeline shows nothing because the column is always NULL.
 
-Add `"unfollowed_exit"` as a distinct skip category so it shows up separately in
-backtest decision breakdowns. Today the categories are:
+**Fix**: Add `skipCategory` to `EmitOpts` and write it to the column. Stop putting
+it in the snapshot payload — it was only there as a workaround. The column exists,
+the UI reads from it, just write to it.
 
-| Category | Meaning |
-|---|---|
-| `skip` | Orchestrator said SKIP (not a trade, deterministic skip) |
-| `flagged` | Orchestrator said MANUAL_REVIEW (ambiguous signal) |
-| `pipeline failure` | Signals produced but executor failed |
-| `no execution` | Signals produced but none actually executed |
+### Seam 3: Shadow map lifecycle (runner closure)
 
-New:
+`BacktestContext` is a read-only dependency injection struct — no mutable state.
+Mutable state lives as locals in the `runBacktestInner()` closure (e.g., `stats`,
+`skipReasons`, `pendingIntents`). Messages process **strictly sequentially** (for-await
+loop), so a plain `Map` is thread-safe.
 
-| Category | Meaning |
-|---|---|
-| `unfollowed_exit` | Exit signal for a trade we never opened (skipped the OPEN) |
+**Verdict**: Shadow map goes as a local `Map` in `runBacktestInner()`, passed to
+`processMessage()` alongside `stats`. Follows the exact `skipReasons` pattern.
 
-This is the **immediate bang-for-buck** — even before shadow positions, just detecting
-the `"no open position found"` reason string in the MANUAL_REVIEW path and reclassifying
-it gives you honest metrics.
+### Seam 4: Reason string as a detection heuristic
+
+`position-path.ts:94` produces exactly one format:
+```ts
+return { flagReason: `no open position found for ${symbol}` };
+```
+
+This is the **only** code path that produces this prefix. Using
+`result.reason.startsWith('no open position found')` is safe and unambiguous —
+no other MANUAL_REVIEW reason starts with this string.
+
+### Seam 5: Skip category aggregation in UI
+
+The backtest detail page (`page.tsx`) computes decision stats in `computeFromTrades()`,
+but only counts total skipped — no per-category breakdown. The decision breakdown
+is only visible per-decision in the timeline popover (which is broken per Seam 2).
+
+The console `printReport()` in `src/backtest/report.ts` does print skip reasons,
+but only from the ephemeral `stats.skipReasons` map — not persisted.
+
+**Verdict**: Fixing Seam 2 gets the new category into the DB and timeline
+automatically. A skip-category breakdown chart is a follow-up.
 
 ## Implementation plan
 
-### Step 1: Reclassify `no open position` as `unfollowed_exit` (standalone value)
+### Step 0: Fix `parseResult` typing
 
-**File: `src/backtest/runner.ts`** — in `onResult` callback (line 588):
+**File: `src/intents/orchestrator/types.ts`**
+
+Add serializable parse result type:
+
+```ts
+export type SerializedParseResult = Omit<ParseResult, 'complexityFlags'> & {
+  complexityFlags: ComplexityFlag[];
+};
+```
+
+Update `OrchestratorResult` to use `SerializedParseResult` instead of
+`Record<string, unknown>`.
+
+**File: `src/intents/orchestrator/index.ts`**
+
+Change `serializeParseResult()` return type from `Record<string, unknown>` to
+`SerializedParseResult`.
+
+**File: `src/pipeline/process-task.ts`**
+
+Update `ProcessTaskResult` type — `parseResult` becomes `SerializedParseResult`.
+
+Now the runner can access `result.parseResult?.action` and `.symbol` with full
+type safety, no casts.
+
+### Step 1: Fix skipCategory column write
+
+**File: `src/decisions/emitter.ts`**
+
+Add `skipCategory` to `EmitOpts`, write to the column:
+
+```ts
+export type EmitOpts = {
+  // ...existing...
+  skipCategory?: string | null;
+};
+
+// In insert:
+skipCategory: opts?.skipCategory ?? null,
+```
+
+**File: `src/backtest/runner.ts`**
+
+Move `skipCategory` from the payload object to the opts object at all 4 emit sites.
+Stop putting it in the snapshot payload.
+
+### Step 2: Reclassify `no open position` as `unfollowed_exit`
+
+**File: `src/backtest/runner.ts`** — in `onResult` callback:
 
 ```ts
 } else if (result.outcome === 'MANUAL_REVIEW') {
-  // Detect exits for unfollowed opens — distinct from genuine ambiguity
   const isUnfollowedExit = result.reason.startsWith('no open position found');
   const category = isUnfollowedExit ? 'unfollowed_exit' : 'flagged';
   stats.skipped++;
   stats.skipReasons.set(category, (stats.skipReasons.get(category) ?? 0) + 1);
   await emitter.emit('SETTLED',
-    { outcome: 'SKIP', skipCategory: category },
-    { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason },
+    { outcome: 'SKIP' },
+    { outcome: 'SKIP', phase: 'orchestrator', reasoning: result.reason, skipCategory: category },
   );
 }
 ```
 
-This is ~5 lines changed. Immediately splits `flagged` into honest subcategories
-in every backtest decision breakdown chart. No new types, no schema changes, no
-test changes needed (the category is a freeform string already).
+### Step 3: Shadow position registry (deferred)
 
-### Step 2: Shadow position registry (prevents wasted LLM calls)
-
-**File: `src/backtest/runner.ts`**
-
-a) Add a `Map<string, ShadowPosition[]>` to `BacktestContext` (or as a local in
-   `runBacktest`).
-
-b) In `onResult`, when outcome is SKIP or MANUAL_REVIEW and `result.parseResult?.action
-   === 'OPEN'`, insert a shadow keyed by `(trader, symbol)`.
-
-c) In the `getPositions` wrapper (line 553), after the DB query returns `[]`, check
-   the shadow map. If a match exists, return a special sentinel position with
-   `id: 'shadow:<originMessageId>'`.
-
-d) In `position-path.ts`, the sentinel flows through `matchPosition()` normally and
-   produces a CLOSE signal with `tradeId: 'shadow:...'`.
-
-e) In `onResult`, when the executor returns a result with a shadow tradeId, reclassify
-   as `unfollowed_exit` SKIP instead of trying to record a trade.
-
-**Actually — simpler alternative for Step 2**: skip the sentinel approach entirely.
-Instead, do the shadow check **before** calling `processTaskShared`:
-
-```ts
-// Before calling processTaskShared for CLOSE/TRIM/LEG_OFF messages:
-// If parse shows exit action and shadow map has a match → skip immediately
-// without entering the orchestrator at all.
-```
-
-But this requires pre-parsing the message to know it's an exit, which the orchestrator
-does internally. So the cleanest insertion point remains the `onResult` reclassification
-from Step 1, enhanced to also consume shadow entries.
-
-### Step 2 (revised): Shadow-aware reclassification
-
-In `onResult`, when we detect `isUnfollowedExit`:
-- Check shadow map for `(msg.author, extractedSymbol)`
-- If found: confirmed unfollowed exit → `unfollowed_exit` category, remove shadow
-- If not found: genuinely no position (maybe the OPEN was before our date range) →
-  still `unfollowed_exit` since the reason string is unambiguous
-
-This means Step 2 mostly just adds **shadow creation** on skipped OPENs. The consumption
-side is already handled by Step 1's reason-string detection, which covers the
-no-shadow-found case too (OPENs from before the date range).
-
-The shadow registry becomes useful later if we want to **early-exit** before calling
-the orchestrator (saving LLM tokens), but that's a follow-up optimization.
+Not needed for Steps 0-2. The reason-string detection catches 100% of cases.
+Shadows become useful only if we want to short-circuit before entering the
+orchestrator (saving LLM calls for doomed exits). Defer until LLM cost is a concern.
 
 ## What NOT to do
 
 - Don't modify `position-path.ts` or `matchPosition()` — keep orchestrator pure
 - Don't store shadows in the DB — they're ephemeral per-run state
-- Don't apply to live trading — live correctly goes to MANUAL_REVIEW since you
-  can't close what you don't hold at the broker
-- Don't try to "execute" shadow closes — the whole point is to skip them cleanly
+- Don't apply to live trading — live correctly goes to MANUAL_REVIEW
+- Don't try to "execute" shadow closes
 
 ## Risks
 
-**False matches from shadow registry**: Pete skips TSLA PUT open, then later has a
-*different* TSLA position (say TSLA CALL that we did follow). The CLOSE for the
-followed CALL should NOT hit the shadow. This is fine because `getPositions()` will
-return the real CALL position, `matchPosition()` will match it, and we never reach
-the `"no open position found"` path. Shadows only activate when real positions
-return empty.
+**False matches from shadow registry** (Step 3 only): Pete skips TSLA PUT open,
+then later has a *different* TSLA position (TSLA CALL that we did follow). The CLOSE
+for the followed CALL should NOT hit the shadow. This is fine because
+`getPositions()` will return the real CALL position, `matchPosition()` will match it,
+and we never reach the `"no open position found"` path. Shadows only activate when
+real positions return empty.
 
-**Multiple skipped OPENs for same symbol**: Pete skips TSLA PUT, then skips TSLA
-CALL. Shadow map has two entries. Later CLOSE says "closing TSLA puts" — the
-reason-string approach in Step 1 doesn't need to disambiguate (it's all going to
-SKIP anyway). If we later implement shadow-based early exit (Step 2 follow-up),
-we'd need strategy matching, but that's future work.
+## File change summary
 
-## Priority
-
-**Step 1 alone is the bang-for-buck.** ~5 lines, zero risk, immediate metric clarity.
-Step 2 (shadow registry) is a nice-to-have for saving LLM tokens on doomed exits.
+| File | Change | Step |
+|---|---|---|
+| `src/intents/orchestrator/types.ts` | Add `SerializedParseResult`, update `OrchestratorResult` | 0 |
+| `src/intents/orchestrator/index.ts` | Type `serializeParseResult()` return | 0 |
+| `src/pipeline/process-task.ts` | Update `ProcessTaskResult.parseResult` type | 0 |
+| `src/decisions/emitter.ts` | Add `skipCategory` to `EmitOpts`, write to column | 1 |
+| `src/backtest/runner.ts` | Move skipCategory to opts (4 sites), reclassify no-position | 1+2 |

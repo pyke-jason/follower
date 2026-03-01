@@ -113,9 +113,7 @@ function filterRedundantSettled(decisions: RunDecision[]): RunDecision[] {
     if (perSignal.length === 0 || orchestrator.length === 0) continue;
 
     for (const orch of orchestrator) {
-      const matchingOutcome = perSignal.some(ps => ps.outcome === orch.outcome);
-      const hasUniqueReasoning = orch.reasoning && !perSignal.some(ps => ps.reasoning === orch.reasoning);
-      if (matchingOutcome && !hasUniqueReasoning) {
+      if (perSignal.some(ps => ps.outcome === orch.outcome)) {
         hideIds.add(orch.id);
       }
     }
@@ -257,7 +255,8 @@ export function UnifiedTimeline({
     const hasVisibleData = dec || d.reasoning || d.skipCategory || d.pnl || d.inputTokens != null || d.snapshot;
     if (event === 'SETTLED' && !hasVisibleData) continue;
 
-    const baseTs = d.createdAt ?? '';
+    const msgTs = d.messageId ? msgMap.get(d.messageId)?.timestamp : undefined;
+    const baseTs = msgTs ?? d.createdAt ?? '';
     const order = eventOrder[event] ?? 5;
     const sortKey = `${baseTs}|0|${String(order).padStart(2, '0')}|${d.signalIndex ?? 0}`;
     entries.push({ kind: 'decision', sortKey, data: d });
@@ -333,6 +332,7 @@ export function UnifiedTimeline({
             const isSkip = d.outcome === 'SKIP';
             const eventLabel = event === 'SETTLED' && d.phase === 'orchestrator' ? 'SUMMARY' : (EVENT_LABEL[event] ?? event);
             const inlineSummary = getInlineSummary(d);
+            const msgTs = event === 'PARSED' && d.messageId ? msgMap.get(d.messageId)?.timestamp : undefined;
 
             return (
               <Popover key={d.id}>
@@ -379,6 +379,9 @@ export function UnifiedTimeline({
                       )}
                       {d.durationMs != null && d.durationMs > 10 && (
                         <span className="text-[10px] text-muted-foreground/50 tabular-nums">{fmtMs(d.durationMs)}</span>
+                      )}
+                      {msgTs && (
+                        <span className="text-[11px] text-muted-foreground/60 tabular-nums">{formatDate(msgTs)}</span>
                       )}
                     </div>
                   </div>
