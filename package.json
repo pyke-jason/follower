@@ -16,7 +16,8 @@
     "secrets:list": "tsx src/lib/secrets/manage.ts list",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "cd web && npm run build"
+    "build": "cd web && npm run build",
+    "gateway": "~/ibc/gatewaystartmacos.sh -inline"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",

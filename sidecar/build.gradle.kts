@@ -28,6 +28,9 @@ dependencies {
 
     // TwsApi.jar — local dependency (download from IBKR, place in lib/)
     implementation(files("lib/TwsApi.jar"))
+
+    // Protobuf — required by TWS API 10.40+
+    implementation("com.google.protobuf:protobuf-java:4.29.3")
 }
 
 application {
