@@ -199,6 +199,16 @@ function buildOrderParams(
     }]
     : [];
 
+  // Safety guard: options have massive bid-ask spreads ($1-3+). A MARKET order
+  // would fill at the worst side, costing hundreds in avoidable slippage.
+  // If we reach here without a limitPrice on a non-stock order, something upstream
+  // (e.g. getSpreadMidpoint) failed silently — fail loudly instead.
+  if (strategy !== 'STOCK' && !limitPrice) {
+    throw new Error(
+      `MARKET orders on options are forbidden (strategy=${strategy}, symbol=${symbol}). limitPrice is required for all non-stock orders.`
+    );
+  }
+
   return {
     symbol,
     strategy,

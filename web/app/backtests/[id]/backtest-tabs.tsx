@@ -12,11 +12,13 @@ export function BacktestTabs({
   messages,
   trades,
   hasMessages,
+  tabBarTrailing,
 }: {
   performance: ReactNode;
   messages: ReactNode;
   trades: ReactNode;
   hasMessages: boolean;
+  tabBarTrailing?: ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -41,16 +43,21 @@ export function BacktestTabs({
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col flex-1 min-h-0">
-      <TabsList variant="line">
-        <TabsTrigger value="trades">Trades</TabsTrigger>
-        <TabsTrigger value="messages">
-          Messages
-          {hasMessages && (
-            <span className="ml-1 text-xs text-muted-foreground">&middot;</span>
-          )}
-        </TabsTrigger>
-        <TabsTrigger value="performance">Performance</TabsTrigger>
-      </TabsList>
+      <div className="flex items-center gap-2">
+        <TabsList variant="line">
+          <TabsTrigger value="trades">Trades</TabsTrigger>
+          <TabsTrigger value="messages">
+            Messages
+            {hasMessages && (
+              <span className="ml-1 text-xs text-muted-foreground">&middot;</span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
+        </TabsList>
+        {activeTab === 'trades' && tabBarTrailing && (
+          <div className="ml-auto">{tabBarTrailing}</div>
+        )}
+      </div>
 
       <TabsContent value="trades" className="mt-2 flex flex-col min-h-0">
         {trades}

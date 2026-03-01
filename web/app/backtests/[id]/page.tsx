@@ -19,7 +19,8 @@ import { RollingWinRate } from './rolling-win-rate';
 import { ChatRoom } from '../../messages/chat-room';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { DecisionScatter } from './decision-scatter';
-import { TradesTableClient } from '../../components/trades-table-client';
+import { TradeFilterProvider, TradeFilters } from '../../components/trade-filters';
+import { BacktestTradesTable } from './backtest-trades-table';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import type { CommissionSchedule } from '../../../../src/db/schema';
@@ -204,7 +205,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTableClient trades={allTrades} eventsByTradeId={eventsByTradeId} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
+  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -354,12 +355,15 @@ export default async function BacktestDetailPage({
         )}
 
         {/* Tabs — always in this slot when data exists */}
-      <BacktestTabs
-        performance={performanceContent}
-        messages={messagesContent}
-        trades={tradesContent}
-        hasMessages={chatData.messages.length > 0}
-      />
+      <TradeFilterProvider trades={allTrades}>
+        <BacktestTabs
+          performance={performanceContent}
+          messages={messagesContent}
+          trades={tradesContent}
+          tabBarTrailing={<TradeFilters />}
+          hasMessages={chatData.messages.length > 0}
+        />
+      </TradeFilterProvider>
     </div>
 
     {/* Anchored log panel — outside content wrapper so sticky sits flush */}

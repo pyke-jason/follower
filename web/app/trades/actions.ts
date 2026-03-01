@@ -1,7 +1,7 @@
 'use server';
 
 import { db, schema } from '@/lib/db';
-import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, RunDecision } from '@db/schema';
+import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, RunDecision } from '@src/db/schema';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import {

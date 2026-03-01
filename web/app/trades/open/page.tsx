@@ -1,7 +1,7 @@
 import { getOpenTrades } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { Button } from '@/components/ui/button';
-import { formatCurrency } from '@/lib/format';
+import { formatCurrency, relativeTime } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
 import { forceExitTrade } from '../actions';
 import Link from 'next/link';
@@ -9,18 +9,6 @@ import { Crosshair, Package } from 'lucide-react';
 import { AutoRefresh } from '../../components/auto-refresh';
 
 export const dynamic = 'force-dynamic';
-
-function relativeTime(iso: string | null): string {
-  if (!iso) return '--';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-}
 
 export default async function OpenTradesPage({
   searchParams,
@@ -70,7 +58,7 @@ export default async function OpenTradesPage({
                     {t.symbol}
                   </Link>
                   <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                    {relativeTime(t.openedAt)} ago
+                    {relativeTime(t.openedAt)}
                   </span>
                 </div>
 

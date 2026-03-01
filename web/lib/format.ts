@@ -65,9 +65,32 @@ export function isoToDateKey(iso: string): string {
   return iso.split('T')[0];
 }
 
+/** "now", "3m", "2h", "5d" — compact relative time from an ISO timestamp */
+export function relativeTime(iso: string | null): string {
+  if (!iso) return '--';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
 export function pnlColor(value: number | string | null | undefined): string {
   if (value == null) return 'text-zinc-400';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num) || num === 0) return 'text-muted-foreground';
   return num > 0 ? 'text-profit' : 'text-loss';
+}
+
+export function signalBorderColor(actionHint: string | null, directionHint: string | null): string {
+  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-loss/70';
+  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-profit/70';
+  return 'border-l-border';
+}
+
+export function positionBorderColor(direction: string): string {
+  return direction === 'LONG' ? 'border-l-profit' : 'border-l-loss';
 }
