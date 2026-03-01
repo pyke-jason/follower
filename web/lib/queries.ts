@@ -1,5 +1,5 @@
 import { db, schema } from './db';
-import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray, like } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { safeParseFloat } from '../../src/lib/numbers';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
@@ -934,6 +934,22 @@ export async function getCancelledCloseTradeIds(tradeIds: string[]): Promise<Set
     .from(schema.runDecisions)
     .where(and(
       eq(schema.runDecisions.event, 'ORDER_CANCELLED'),
+      isNotNull(schema.runDecisions.tradeId),
+      inArray(schema.runDecisions.tradeId, tradeIds),
+    ));
+  return new Set(rows.map(r => r.tradeId!));
+}
+
+/** Trade IDs that have at least one SETTLED FAIL with "No market data" reasoning. */
+export async function getMarketDataFailTradeIds(tradeIds: string[]): Promise<Set<string>> {
+  if (tradeIds.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ tradeId: schema.runDecisions.tradeId })
+    .from(schema.runDecisions)
+    .where(and(
+      eq(schema.runDecisions.event, 'SETTLED'),
+      eq(schema.runDecisions.outcome, 'FAIL'),
+      like(schema.runDecisions.reasoning, 'No market data%'),
       isNotNull(schema.runDecisions.tradeId),
       inArray(schema.runDecisions.tradeId, tradeIds),
     ));

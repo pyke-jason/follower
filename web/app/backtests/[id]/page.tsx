@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds, getMarketDataFailTradeIds } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -69,9 +69,11 @@ export default async function BacktestDetailPage({
     getMtmSnapshots(id),
   ]);
 
-  const [eventsByTradeId, cancelledTradeIds] = await Promise.all([
-    getTradeEventsForTrades(allTrades.map((t) => t.id)),
-    getCancelledCloseTradeIds(allTrades.map((t) => t.id)),
+  const tradeIds = allTrades.map((t) => t.id);
+  const [eventsByTradeId, cancelledTradeIds, marketDataFailIds] = await Promise.all([
+    getTradeEventsForTrades(tradeIds),
+    getCancelledCloseTradeIds(tradeIds),
+    getMarketDataFailTradeIds(tradeIds),
   ]);
   // Compute per-trade flags for filter toggles
   const flagsByTradeId: Record<string, TradeFlag[]> = {};
@@ -79,6 +81,7 @@ export default async function BacktestDetailPage({
     const flags: TradeFlag[] = [];
     if (cancelledTradeIds.has(t.id)) flags.push('closeFailed');
     if (t.status === 'CLOSED' && !t.closeMessageId) flags.push('autoClose');
+    if (marketDataFailIds.has(t.id)) flags.push('marketDataFail');
     const actions = new Set(eventsByTradeId.get(t.id)?.map(e => e.action));
     if (actions.has('LEG_OFF')) flags.push('legOff');
     if (actions.has('TRIM')) flags.push('trimmed');

@@ -11,7 +11,7 @@ import type { Trade } from '@src/db/schema';
 
 // ── Filter values ──────────────────────────────────────────────────
 
-export type TradeFlag = 'closeFailed' | 'autoClose' | 'legOff' | 'trimmed' | 'added';
+export type TradeFlag = 'closeFailed' | 'autoClose' | 'legOff' | 'trimmed' | 'added' | 'marketDataFail';
 
 const FLAG_LABELS: Record<TradeFlag, string> = {
   closeFailed: 'Close failed',
@@ -19,6 +19,7 @@ const FLAG_LABELS: Record<TradeFlag, string> = {
   legOff: 'Leg off',
   trimmed: 'Trimmed',
   added: 'Added',
+  marketDataFail: 'Market data fail',
 };
 
 export interface TradeFilterValues {
@@ -140,20 +141,24 @@ function MultiSelect({
   onToggle,
   options,
   label,
+  labels,
 }: {
   selected: string[];
   onToggle: (value: string) => void;
   options: string[];
   label: string;
+  labels?: Record<string, string>;
 }) {
   const [open, setOpen] = useState(false);
 
   if (options.length <= 1) return null;
 
+  const displayLabel = (opt: string) => labels?.[opt] ?? opt;
+
   const hasSelection = selected.length > 0;
   const triggerLabel = hasSelection
     ? selected.length === 1
-      ? selected[0]
+      ? displayLabel(selected[0])
       : `${selected.length} ${label.toLowerCase()}`
     : label;
 
@@ -190,7 +195,7 @@ function MultiSelect({
                     )}>
                       {isSelected && <CheckIcon className="size-3" />}
                     </div>
-                    {opt}
+                    {displayLabel(opt)}
                   </CommandItem>
                 );
               })}
@@ -278,27 +283,13 @@ export function TradeFilters({ className }: { className?: string }) {
       <MultiSelect selected={filters.strategies} onToggle={(v) => toggleMulti('strategies', v)} options={options.strategies} label="Strategy" />
       <MultiSelect selected={filters.directions} onToggle={(v) => toggleMulti('directions', v)} options={options.directions} label="Direction" />
       {availableFlags.length > 0 && (
-        <>
-          <span className="w-px h-4 bg-border/50" />
-          {availableFlags.map((flag) => {
-            const active = filters.flags.includes(flag);
-            return (
-              <button
-                key={flag}
-                type="button"
-                onClick={() => toggleFlag(flag)}
-                className={cn(
-                  'h-7 text-[11px] px-2 rounded-md border transition-colors',
-                  active
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-transparent text-muted-foreground border-border/50 hover:bg-accent hover:text-foreground',
-                )}
-              >
-                {FLAG_LABELS[flag]}
-              </button>
-            );
-          })}
-        </>
+        <MultiSelect
+          selected={filters.flags}
+          onToggle={(v) => toggleFlag(v as TradeFlag)}
+          options={availableFlags}
+          label="Flags"
+          labels={FLAG_LABELS}
+        />
       )}
       {/* Always reserve space for count + clear to prevent layout shift */}
       <span className={cn('text-xs tabular-nums min-w-[4ch] text-right', hasFilters ? 'text-muted-foreground' : 'invisible')}>

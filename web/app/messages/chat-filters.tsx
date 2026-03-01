@@ -50,8 +50,8 @@ export function ChatFilters() {
     let executed = 0;
     let skipped = 0;
     for (const e of entries) {
-      if (e.decision === 'EXECUTE') executed++;
-      else if (e.decision === 'SKIP') skipped++;
+      if (e.decision?.outcome === 'EXECUTE') executed++;
+      else if (e.decision?.outcome === 'SKIP') skipped++;
     }
     return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
   }, [stableDecisionCounts, constraints?.runId, enrichment]);

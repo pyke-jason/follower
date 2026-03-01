@@ -73,6 +73,8 @@ const PERCENT_RE = /(\d{1,3})\s*%/;
 // ── Exit-verb patterns (soft detection without badge) ─────────────────────────
 
 const EXIT_VERB_RE = /\b(exit(?:ing|ed)?|clos(?:e[ds]?|ing)|exiting|took\s+(?:\w+\s+)?profits?|stopped out|sold out)\b/i;
+const EXIT_VERB_FALSE_POSITIVE_RE =
+  /\bclosing\s+down\b|\bclose\s+to\b|\b(?:into|near|before|after|towards?)\s+the\s+close\b/i;
 
 // ── LEG_OFF target patterns ───────────────────────────────────────────────────
 
@@ -771,7 +773,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     action = 'OPEN';
   } else {
     // No badge — soft detection from verbs
-    if (EXIT_VERB_RE.test(cleanText) && symbol !== null) {
+    if (EXIT_VERB_RE.test(cleanText) && !EXIT_VERB_FALSE_POSITIVE_RE.test(cleanText) && symbol !== null) {
       // Only set CLOSE when we have a ticker too (higher confidence)
       const exitPct = extractExitPercent(cleanText);
       if (exitPct !== null) {

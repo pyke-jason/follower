@@ -1,6 +1,7 @@
 import { Badge } from './badge';
 import { StatItem } from './stat-item';
 import { InfoChip } from './info-chip';
+import { formatDate } from '@/lib/format';
 
 export type LegRow = {
   symbol?: string;
@@ -242,7 +243,7 @@ export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
       ) : null}
       {data.fillTimestamp != null ? (
         <StatItem label="Filled At">
-          <span className="text-foreground tabular-nums text-xs">{String(data.fillTimestamp)}</span>
+          <span className="text-foreground tabular-nums text-xs">{formatDate(String(data.fillTimestamp))}</span>
         </StatItem>
       ) : null}
       {data.commission != null ? (

@@ -156,7 +156,7 @@ export function TradeRow({
       {/* Symbol */}
       <TableCell>
         <Link
-          href={buildHref(`/trades/${trade.id}`, runId)}
+          href={buildHref(`/trades/${trade.id}`, runId ?? undefined)}
           className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40"
           onClick={(e) => e.stopPropagation()}
         >

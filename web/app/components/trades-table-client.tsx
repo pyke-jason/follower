@@ -79,7 +79,7 @@ export function TradesTableClient() {
                   <Fragment key={t.id}>
                     <TradeRow
                       tradeId={t.id}
-                      onExpand={() => setSelectedId(selectedTradeId === t.id ? null : t.id)}
+                      onExpand={() => setSelectedId(t.id)}
                       isExpanded={selectedTradeId === t.id}
                     />
                     <EventSubRows events={events} closeMessageId={t.closeMessageId} />
