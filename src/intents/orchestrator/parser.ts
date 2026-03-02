@@ -850,10 +850,14 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   // ── Complexity: extra_text ────────────────────────────────────────────────
   // Skip extra_text flag when all core trade fields are resolved — commentary
   // after a fully-parsed trade shouldn't force the LLM path.
+  // Guard: badgeless STOCK trades rely purely on keyword matching ("shares",
+  // "buying") which is fragile in long educational/commentary messages.
+  // Only trust the STOCK bypass when a badge anchors the intent.
 
   if (action !== null && strategy !== null && wordCount(cleanText) > 25) {
+    const hasBadge = hasLongBadge || hasShortBadge || hasExitBadge;
     const fullyResolved = symbol !== null && (
-      strategy === 'STOCK' ||
+      (strategy === 'STOCK' && hasBadge) ||
       (isSpread && strikes !== null && strikes.length >= 2) ||
       (!isSpread && (strikes !== null || premiumHint !== null))
     );
