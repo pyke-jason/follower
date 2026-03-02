@@ -114,7 +114,7 @@ export function TradeRow({
   const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId))!;
   const events = useTradesStore((s) => s.eventsByTradeId.get(tradeId)) ?? [];
   const cancelledClose = useTradesStore((s) => s.cancelledTradeIds.has(tradeId));
-  const hasUpdate = useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
+  const hasUpdate = trade.status !== 'CLOSED' && useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
   const runId = useTradesStore((s) => s.runId);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const startingEquity = useTradesStore((s) => s.startingEquity);

@@ -8,13 +8,26 @@ paths: src/live/**, src/broker/tradestation/**
 
 Live task processing loop. Polls DB for pending tasks, executes through the shared pipeline.
 
-Key differences from backtest:
-- Risk limits are **always enforced** (no `disableRiskLimits` option)
-- Wraps `recordTrade()` with `{ taskId, isBacktest: false }`
+Uses `buildPipelineDeps()` from `src/pipeline/build-deps.ts` with:
+- `scope: { kind: 'live' }`
+- `sendAlert: sendSystemAlert`
+- Risk limits always enforced (no `disableRiskLimits`)
+
+The factory builds a stateless pipeline bundle. `taskId` is injected per-task by `processTask()`, which wraps `pipeline.recordTrade` and `pipeline.onPending` to thread the current `task.id` through. This avoids mutable module-level state.
+
+## Per-Task Pipeline Wrapping (processTask)
+
+For live scope, `processTask` wraps the pipeline to inject `task.id`:
+- `recordTrade(input)` → `recordTrade({ ...input, taskId: task.id })`
+- `onPending(orderId, ctx)` → `onPending(orderId, { ...ctx, taskId: task.id })`
+
+This ensures fill callbacks (which fire asynchronously) carry the taskId of the task that placed the order, not whatever task happens to be running at fill time.
+
+Backtest uses the pipeline as-is — `backtestRunId` is baked immutably at factory construction.
 
 ## Positions
 
-Live positions come from the `trades` table filtered by `isOpen` + `notBacktest`. This differs from backtest which uses `forRun(backtestRunId)`. Both return `Trade[]` — same shape, different scope.
+Both live and backtest positions come from the `trades` table — same query, different scope filter (`notBacktest` vs `forRun(runId)`). The `buildPipelineDeps()` factory derives the filter from `env.scope`.
 
 ## Risk Defaults
 

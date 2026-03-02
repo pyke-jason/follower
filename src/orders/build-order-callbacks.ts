@@ -21,7 +21,7 @@ const log = createLogger('OrderCallbacks');
 
 export type CallbackDeps = {
   pendingIntents: Map<string, ResolvedPendingContext>;
-  createScopedEmitter: (messageId: string) => SignalEventEmitter;
+  createScopedEmitter: (messageId: string, taskId?: string) => SignalEventEmitter;
   clock: () => Date;
   /** Scoping fields written to orphan_fills for attribution. */
   scope: { taskId?: string; backtestRunId?: string };
@@ -61,7 +61,7 @@ export function buildOrderCallbacks(
         return;
       }
       pendingIntents.delete(order.orderId);
-      const emitter = createScopedEmitter(pending.messageId ?? '');
+      const emitter = createScopedEmitter(pending.messageId ?? '', pending.taskId);
       await emitter.emit('ORDER_FILLED', {
         orderId: order.orderId,
         symbol: order.params.symbol,
@@ -90,7 +90,7 @@ export function buildOrderCallbacks(
         });
         return;
       }
-      const emitter = createScopedEmitter(pending.messageId ?? '');
+      const emitter = createScopedEmitter(pending.messageId ?? '', pending.taskId);
       await emitter.emit('ORDER_CANCELLED', {
         orderId: order.orderId,
         symbol: order.params.symbol,
@@ -111,7 +111,7 @@ export function buildOrderCallbacks(
         log.warn(`onAdjust: no pendingIntent for orderId=${order.orderId} — adjustment untracked`);
         return;
       }
-      const emitter = createScopedEmitter(pending.messageId ?? '');
+      const emitter = createScopedEmitter(pending.messageId ?? '', pending.taskId);
       await emitter.emit('ORDER_ADJUSTED', {
         orderId: order.orderId, fromPrice, toPrice, step,
       }, { signalIndex: pending.signalIndex ?? null });

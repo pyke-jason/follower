@@ -1,27 +1,20 @@
 import { SimClock } from './clock.js';
 import { DatabentoMarketDataProvider } from './market-data.js';
-import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker, cutoffMinus15Min } from './sim-broker.js';
 import type { AutoCloseResult } from './sim-broker.js';
-import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
-import { checkRiskLimits } from '../orders/risk-check.js';
-import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
+import type { Trade } from '../db/schema.js';
+import type { ResolvedPipelineDeps } from '../pipeline/execute-resolved.js';
+import type { OrderManager } from '../orders/order-manager.js';
+import { BACKTEST_RISK_DEFAULTS } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import { toDateKeyET, parseDateKey, isoToDateKey, marketCloseUTC } from '../lib/et-date.js';
-import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { ShadowTracker } from './shadow-tracker.js';
-import { tradeToOpenPosition } from '../trades/adapters.js';
-import { getTrader } from '../config/traders.js';
-import { OrderManager } from '../orders/order-manager.js';
-import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
-import { buildPositionSizer } from '../position-sizing/index.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
-import { recordTrade } from '../trades/record-trade.js';
 import { createEmitter } from '../decisions/emitter.js';
 import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
@@ -33,6 +26,7 @@ import { safeParseFloat } from '../lib/numbers.js';
 import { logExpiryNotices } from '../lib/expiry-warning.js';
 import type { Task } from '../db/schema.js';
 import { getLegs } from '../db/accessors.js';
+import { buildPipelineDeps } from '../pipeline/build-deps.js';
 
 const log = createLogger('Backtest');
 
@@ -42,11 +36,10 @@ const log = createLogger('Backtest');
  */
 type BacktestContext = {
   runId: string;
-  config: BacktestConfig;
-  priceProvider: BacktestPriceProvider;
   agentProvider: LLMProvider;
+  agentIdentity: { provider: string; model: string };
   pipelineDeps: ResolvedPipelineDeps;
-  getOpenPositions: (filters?: PositionFilters) => Promise<typeof schema.trades.$inferSelect[]>;
+  getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
 };
 
 /**
@@ -150,63 +143,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const startingEquity = config.startingEquity;
   const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
 
-  const sizingService = {
-    async calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }) {
-      const traderConfig = await getTrader(input.trader);
-      const sizer = buildPositionSizer(traderConfig?.positionSizingConfig);
-      const balance = await broker.getAccountBalance();
-      return sizer.calculateSize({
-        symbol: input.symbol,
-        strategy: input.strategy,
-        entryPrice: input.entryPrice,
-        equity: balance.equity,
-        spreadMaxRisk: input.spreadMaxRisk,
-        maxQuantity: MAX_CONTRACTS[input.strategy],
-      });
-    },
-  };
-
-  const getOpenPositions = async (filters: PositionFilters = {}) =>
-    broker.getOpenTrades(filters);
-
-  const riskConfig: RiskCheckConfig = {
+  const riskConfig = {
     maxOnSymbol: config.maxOnSymbol ?? BACKTEST_RISK_DEFAULTS.maxOnSymbol,
     maxTotalPositions: config.maxTotalPositions ?? BACKTEST_RISK_DEFAULTS.maxTotalPositions,
     maxDrawdownPct: config.maxDrawdownPct ?? BACKTEST_RISK_DEFAULTS.maxDrawdownPct,
     maxNotionalMultiplier: config.maxNotionalMultiplier ?? BACKTEST_RISK_DEFAULTS.maxNotionalMultiplier,
-  };
-
-  const pendingIntents = new Map<string, ResolvedPendingContext>();
-
-  const orderManager = new OrderManager({
-    broker,
-    clock: () => clock.now(),
-    manualTick: true,
-    ...buildOrderCallbacks({
-      pendingIntents,
-      createScopedEmitter: (messageId) =>
-        createEmitter({ messageId, backtestRunId: runId }),
-      clock: () => clock.now(),
-      scope: { backtestRunId: runId },
-    }),
-  });
-
-  const riskDeps: RiskCheckDeps = {
-    getOpenTrades: getOpenPositions,
-    getDailyClosedPnl: async () => {
-      const dateStr = toDateKeyET(clock.now());
-      const result = await db.select({
-        total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
-      }).from(schema.trades).where(and(
-        isClosed, forRun(runId),
-        sql`closed_at LIKE ${dateStr + '%'}`,
-      ));
-      return safeParseFloat(result[0]?.total);
-    },
-    getStartingEquity: async () => startingEquity,
-    getCurrentEquity: async () => (await broker.getAccountBalance()).equity,
-    getReconciliationAlertCount: async () => 0,
-    getWorkingOrderExposure: () => orderManager.getExposure(),
   };
 
   const agentIdentity = {
@@ -216,29 +157,26 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const agentProvider = await createProvider(agentIdentity);
   log.info(`Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
 
-  const pipelineDeps: ResolvedPipelineDeps = {
+  const bundle = buildPipelineDeps({
     broker,
-    orderManager,
-    calculatePositionSize: async (input) => sizingService.calculateSize(input),
-    checkRiskLimits: config.disableRiskLimits
-      ? async () => ({ allowed: true as boolean, dailyPnl: 0, openPositionsOnSymbol: 0, totalOpenPositions: 0, maxTotalPositions: 0, totalNotional: 0, maxNotional: 0, workingOrdersOnSymbol: 0, workingOrdersTotal: 0, workingOrderNotional: 0 })
-      : (input) => checkRiskLimits(input, riskDeps, riskConfig),
-    recordTrade: (input) => recordTrade({
-      ...input,
-      backtestRunId: runId,
-      isBacktest: true,
-      metadata: { ...input.metadata, agentModel: `${agentIdentity.provider}:${agentIdentity.model}` },
-    }),
-    onPending: (orderId, context) => {
-      pendingIntents.set(orderId, context);
+    env: {
+      clock: () => clock.now(),
+      scope: { kind: 'backtest', backtestRunId: runId },
     },
-  };
+    config: {
+      riskConfig,
+      agentIdentity,
+      disableRiskLimits: config.disableRiskLimits,
+      startingEquity,
+      manualTick: true,
+    },
+  });
+  const { orderManager, pipelineDeps, pendingIntents, getOpenPositions } = bundle;
 
   const btCtx: BacktestContext = {
     runId,
-    config,
-    priceProvider,
     agentProvider,
+    agentIdentity,
     pipelineDeps,
     getOpenPositions,
   };
@@ -315,7 +253,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           await emitAutoCloseDecisions(autoClosed, runId);
         }
 
-        const openPositions = await broker.getOpenTrades();
+        const openPositions = await getOpenPositions();
         logExpiryNotices(openPositions, sweepThrough);
 
         for (const pos of openPositions) {
@@ -401,7 +339,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         await emitAutoCloseDecisions(autoClosedFinal, runId);
       }
 
-      const finalOpenPositions = await broker.getOpenTrades();
+      const finalOpenPositions = await getOpenPositions();
       logExpiryNotices(finalOpenPositions, lastMsgDay);
 
       for (const pos of finalOpenPositions) {
@@ -426,7 +364,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     }
   }
 
-  orderManager.destroy();
+  bundle.destroy();
 
   const apiStats = getApiStats();
   if (apiStats.fetches > 0) {
@@ -533,20 +471,12 @@ async function processMessage(
 ): Promise<void> {
   const task = taskFromMessage(msg);
 
-  const emitter = createEmitter({
-    messageId: msg.id,
-    backtestRunId: btCtx.runId,
-  });
-
   await processTaskShared(task, {
-    getPositions: async (symbol) => {
-      const filters: PositionFilters = symbol ? { symbol } : {};
-      const rows = await btCtx.getOpenPositions({ ...filters, trader: msg.author });
-      return rows.map(tradeToOpenPosition);
-    },
+    getOpenPositions: btCtx.getOpenPositions,
     llm: btCtx.agentProvider,
     pipeline: btCtx.pipelineDeps,
-    emitter,
+    scope: { kind: 'backtest', backtestRunId: btCtx.runId },
+    agentIdentity: btCtx.agentIdentity,
     classifySkip: (result) => {
       const isUnfollowed = shadows.isUnfollowedExit(
         msg.author,
@@ -556,7 +486,7 @@ async function processMessage(
       if (isUnfollowed) return 'unfollowed_exit';
       return result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
     },
-    onResult: async (result) => {
+    onResult: async (result, emitter) => {
       if (result.outcome === 'EXECUTE') {
         const executedResults = result.results.filter(r => r.executed);
         const pendingResults = result.results.filter(r => !r.executed && !r.reason);

@@ -36,6 +36,7 @@ export type ResolvedPendingContext = {
   quantity: number;
   legs: OrderLeg[];
   messageId?: string;
+  taskId?: string;
   tradeId?: string;
   signalIndex?: number;
   recordFill: (filledPrice: number, filledAt?: Date) => Promise<RecordTradeResult | null>;

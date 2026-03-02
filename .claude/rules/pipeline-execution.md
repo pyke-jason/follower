@@ -39,13 +39,21 @@ broker, orderManager, calculatePositionSize, checkRiskLimits, recordTrade, onPen
 
 ALL fields are REQUIRED (no `?`). `orderManager` and `onPending` are never optional — orders always go through OrderManager with pending intent tracking.
 
-When adding a new dep, add it to **both** `src/backtest/runner.ts` AND `src/live/runner.ts`.
+## buildPipelineDeps() Factory (`build-deps.ts`)
 
-Parity invariants (enforced by code review):
-- `calculatePositionSize` MUST forward `input.spreadMaxRisk` to the sizer
-- `recordTrade` MUST include `agentModel` in metadata
-- `buildOrderCallbacks` MUST provide `onOrphanFill` and `onOrphanCancel`
-- `RiskCheckDeps` has NO optional fields — both paths provide all deps
+Single construction site for all pipeline dependencies. Runners provide 3 primitives:
+- `broker: BrokerService` — implementation (live or sim)
+- `env: Environment` — clock, scope (live/backtest), optional alerting
+- `config: PipelineConfig` — risk config, agent identity, sizing
+
+**When adding a new dep**, add it to `buildPipelineDeps()` in `build-deps.ts`. Do NOT add it to individual runners — the factory is the only place pipeline deps are constructed.
+
+Parity invariants (enforced by the factory):
+- `calculatePositionSize` ALWAYS forwards `input.spreadMaxRisk` to the sizer
+- `recordTrade` ALWAYS includes `agentModel` in metadata
+- `getOpenPositions` derived from `env.scope` (same DB query, different scope filter)
+- `riskDeps` derived from `env.scope` + `env.clock` + `broker`
+- `RiskCheckDeps` has NO optional fields — factory provides all deps
 
 ## Direction on Close — No Reversal
 
