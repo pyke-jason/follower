@@ -16,6 +16,7 @@ import {
   OrderResponseSchema,
   AccountSummaryResponseSchema,
   PositionResponseSchema,
+  StatusResponseSchema,
   parseSidecarResponse,
 } from './schemas.js';
 
@@ -395,6 +396,21 @@ async function getAccountBalance(): Promise<AccountBalance> {
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, 'getAccountBalance');
 }
 
+// ── Health Check ─────────────────────────────────────────────────────
+
+async function isHealthy(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const raw = await sidecar('/status', { signal: controller.signal });
+    clearTimeout(timeout);
+    const status = StatusResponseSchema.parse(raw);
+    return status.connected && !status.maintenance;
+  } catch {
+    return false;
+  }
+}
+
 // ── Export ───────────────────────────────────────────────────────────
 
 export const ibkrService: BrokerService = {
@@ -405,4 +421,5 @@ export const ibkrService: BrokerService = {
   getOrderStatus,
   getPositions,
   getAccountBalance,
+  isHealthy,
 };

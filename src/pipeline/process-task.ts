@@ -7,6 +7,7 @@
  */
 
 import type { Task } from '../db/schema.js';
+import { TaskContextSchema } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { OrchestratorResult, ResolvedSignal, OpenPosition, SignalEventEmitter, SerializedParseResult } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult } from './execute-resolved.js';
@@ -35,6 +36,9 @@ export type TaskEnv = {
 // ─── Main ───────────────────────────────────────────
 
 export async function processTask(task: Task, env: TaskEnv): Promise<void> {
+  // Validate context shape at the pipeline boundary (catches bad data before it spreads)
+  TaskContextSchema.parse(task.context ?? {});
+
   const messageId = task.messageId;
   if (!messageId) throw new Error(`Task ${task.id} has no messageId`);
 

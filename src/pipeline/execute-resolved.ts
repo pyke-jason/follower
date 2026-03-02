@@ -43,7 +43,7 @@ export type ResolvedPendingContext = {
 
 export type ResolvedPipelineDeps = {
   broker: BrokerService;
-  orderManager?: OrderManager;
+  orderManager: OrderManager;
   calculatePositionSize: (input: {
     trader: string;
     symbol: string;
@@ -58,7 +58,7 @@ export type ResolvedPipelineDeps = {
     action?: string;
   }) => Promise<RiskCheckResult>;
   recordTrade: (input: RecordTradeInput) => Promise<RecordTradeResult | null>;
-  onPending?: (orderId: string, context: ResolvedPendingContext) => void;
+  onPending: (orderId: string, context: ResolvedPendingContext) => void;
 };
 
 export type ResolvedPipelineResult = {
@@ -235,13 +235,7 @@ async function placeOrder(
   emitter: SignalEventEmitter,
   signalIndex?: number,
 ): Promise<OrderResult> {
-  let raw: OrderResult;
-  if (deps.orderManager) {
-    raw = await deps.orderManager.submitOrder(params);
-  } else {
-    const { adjustmentRules, cancelAfterSec, ...orderParams } = params;
-    raw = await deps.broker.placeOrder(orderParams);
-  }
+  const raw = await deps.orderManager.submitOrder(params);
   const result = OrderResultSchema.parse(raw);
 
   if (result.status !== 'REJECTED') {
@@ -274,7 +268,7 @@ async function placeOrder(
       result.filledPrice!,
       new Date(result.fillTimestamp!),
     );
-  } else if (result.status === 'OPEN' && result.orderId && deps.onPending) {
+  } else if (result.status === 'OPEN' && result.orderId) {
     deps.onPending(result.orderId, pending);
   }
 

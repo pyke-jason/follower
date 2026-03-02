@@ -249,6 +249,25 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
   index('idx_recon_alerts_symbol').on(table.symbol),
 ]);
 
+// ─── Orphan Fills ─────────────────────────────────────
+
+export const orphanFills = sqliteTable('orphan_fills', {
+  orderId: text('order_id').primaryKey(),
+  symbol: text('symbol').notNull(),
+  strategy: text('strategy').notNull(),
+  direction: text('direction').notNull(),
+  filledPrice: real('filled_price').notNull(),
+  filledAt: text('filled_at').notNull(),
+  filledQuantity: integer('filled_quantity'),
+  commission: real('commission'),
+  legs: text('legs'),
+  rawOrder: text('raw_order'),
+  detectedAt: text('detected_at').notNull(),
+  resolved: integer('resolved').default(0),
+  taskId: text('task_id'),
+  backtestRunId: text('backtest_run_id'),
+});
+
 // ─── Historical Fetch Runs ──────────────────────────
 
 export const historicalFetchRuns = sqliteTable('historical_fetch_runs', {
@@ -367,14 +386,16 @@ export type BacktestRunSummary = {
 
 // ─── Supporting Types ────────────────────────────────
 
-export type DetectedStrategy = {
-  strategy: string;
-  confidence: number;
-  strikes?: number[];
-  expiry?: string;
-  price?: number;
-  quantity?: number;
-};
+export const DetectedStrategySchema = z.object({
+  strategy: z.string(),
+  confidence: z.number(),
+  strikes: z.array(z.number()).optional(),
+  expiry: z.string().optional(),
+  price: z.number().optional(),
+  quantity: z.number().optional(),
+});
+
+export type DetectedStrategy = z.infer<typeof DetectedStrategySchema>;
 
 export const TradeLegSchema = z.object({
   symbol: z.string(),
@@ -388,20 +409,21 @@ export const TradeLegSchema = z.object({
 
 export type TradeLeg = z.infer<typeof TradeLegSchema>;
 
-export type TaskContext = {
-  messageId?: string;
-  messageTimestamp?: string;  // ISO 8601 — when the chat message was posted
-  author?: string;
-  cleanText?: string;
-  rawHtml?: string;           // original HTML — used to derive llmText with inline badge markers
-  badges?: string[];
-  symbols?: string[];
-  actionHint?: string | null;
-  directionHint?: string | null;
-  detectedStrategies?: DetectedStrategy[];
-  confidence?: number;
-  [key: string]: unknown;
-};
+export const TaskContextSchema = z.object({
+  messageId: z.string().optional(),
+  messageTimestamp: z.string().optional(),
+  author: z.string().optional(),
+  cleanText: z.string().optional(),
+  rawHtml: z.string().optional(),
+  badges: z.array(z.string()).optional(),
+  symbols: z.array(z.string()).optional(),
+  actionHint: z.string().nullable().optional(),
+  directionHint: z.string().nullable().optional(),
+  detectedStrategies: z.array(DetectedStrategySchema).optional(),
+  confidence: z.number().optional(),
+}).passthrough();
+
+export type TaskContext = z.infer<typeof TaskContextSchema>;
 
 export type TaskResult = {
   decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';

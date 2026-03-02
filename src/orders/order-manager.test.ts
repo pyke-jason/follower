@@ -42,6 +42,7 @@ function makeMockBroker(overrides: {
     getQuote: vi.fn(),
     getPositions: vi.fn(),
     getAccountBalance: vi.fn(),
+    isHealthy: vi.fn(async () => true),
   };
 
   return { broker, statusMap };
@@ -82,6 +83,12 @@ function timeAfter(sec: number): Date {
   return new Date(T0.getTime() + sec * 1000);
 }
 
+const noopCallbacks = {
+  onFill: () => {},
+  onCancel: () => {},
+  onAdjust: () => {},
+} as const;
+
 // ── Arbitraries ──────────────────────────────────────────────────────
 
 const arbLimitPrice = fc.double({ min: 1, max: 5000, noNaN: true, noDefaultInfinity: true });
@@ -100,7 +107,7 @@ describe('OrderManager fill properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, async (price) => {
         const { broker } = makeMockBroker({ placeResult: { status: 'FILLED', filledPrice: price } });
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder({
           symbol: 'SPY',
@@ -122,7 +129,7 @@ describe('OrderManager fill properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, async (price) => {
         const { broker } = makeMockBroker({ placeResult: { status: 'OPEN' } });
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder({
           symbol: 'SPY',
@@ -145,7 +152,7 @@ describe('OrderManager fill properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, async (price) => {
         const { broker } = makeMockBroker({ placeResult: { status: 'FILLED', filledPrice: price } });
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         const result = await mgr.submitOrder(makeLimitBuyParams({ limitPrice: price }));
 
@@ -168,6 +175,7 @@ describe('OrderManager fill properties', () => {
           const mgr = new OrderManager({
             broker,
             clock: () => T0,
+            ...noopCallbacks,
             onFill: (order) => { fills.push({ orderId: order.orderId, price: order.filledPrice }); },
             manualTick: true,
           });
@@ -202,6 +210,7 @@ describe('OrderManager fill properties', () => {
         const mgr = new OrderManager({
           broker,
           clock: () => T0,
+          ...noopCallbacks,
           onFill: (order) => { captured = order; },
           manualTick: true,
         });
@@ -230,6 +239,7 @@ describe('OrderManager fill properties', () => {
         const mgr = new OrderManager({
           broker,
           clock: () => T0,
+          ...noopCallbacks,
           onFill: () => { fillFired = true; },
           onCancel: () => { cancelFired = true; },
           manualTick: true,
@@ -255,7 +265,7 @@ describe('OrderManager fill properties', () => {
         fc.integer({ min: 1, max: 5 }),
         async (n) => {
           const { broker, statusMap } = makeMockBroker();
-          const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+          const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
           const orderIds: string[] = [];
           for (let i = 0; i < n; i++) {
@@ -290,6 +300,7 @@ describe('OrderManager auto-cancel properties', () => {
         const mgr = new OrderManager({
           broker,
           clock: () => T0,
+          ...noopCallbacks,
           onCancel: () => { cancelFired = true; },
           manualTick: true,
         });
@@ -316,6 +327,7 @@ describe('OrderManager auto-cancel properties', () => {
         const mgr = new OrderManager({
           broker,
           clock: () => T0,
+          ...noopCallbacks,
           onCancel: (order) => { captured = order; },
           manualTick: true,
         });
@@ -339,6 +351,7 @@ describe('OrderManager auto-cancel properties', () => {
     const mgr = new OrderManager({
       broker,
       clock: () => T0,
+      ...noopCallbacks,
       onCancel: () => { cancelFired = true; },
       manualTick: true,
     });
@@ -359,6 +372,7 @@ describe('OrderManager auto-cancel properties', () => {
         const mgr = new OrderManager({
           broker,
           clock: () => T0,
+          ...noopCallbacks,
           onCancel: () => { cancelFired = true; },
           manualTick: true,
         });
@@ -384,7 +398,7 @@ describe('OrderManager price chase properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, arbStepAmount, arbIntervalSec, async (limitPrice, stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitBuyParams({
           limitPrice,
@@ -413,7 +427,7 @@ describe('OrderManager price chase properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, arbStepAmount, arbIntervalSec, async (limitPrice, stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitSellParams({
           limitPrice,
@@ -442,7 +456,7 @@ describe('OrderManager price chase properties', () => {
     fc.assert(
       fc.asyncProperty(arbMaxSteps, arbStepAmount, arbIntervalSec, async (maxSteps, stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitBuyParams({
           cancelAfterSec: 9999,
@@ -466,7 +480,7 @@ describe('OrderManager price chase properties', () => {
 
   test('maxSteps: 0 means zero adjustments', async () => {
     const { broker } = makeMockBroker();
-    const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+    const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
     await mgr.submitOrder(makeLimitBuyParams({
       limitPrice: 100,
@@ -490,7 +504,7 @@ describe('OrderManager price chase properties', () => {
     fc.assert(
       fc.asyncProperty(arbStepAmount, arbIntervalSec, async (stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitBuyParams({
           limitPrice: 100,
@@ -520,7 +534,7 @@ describe('OrderManager price chase properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, arbStepAmount, arbIntervalSec, async (limitPrice, stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitBuyParams({
           limitPrice,
@@ -545,7 +559,7 @@ describe('OrderManager price chase properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, arbStepAmount, arbIntervalSec, async (limitPrice, stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitBuyParams({
           limitPrice,
@@ -584,6 +598,7 @@ describe('OrderManager concurrent order properties', () => {
           const mgr = new OrderManager({
             broker,
             clock: () => T0,
+            ...noopCallbacks,
             onFill: (order) => { fillIds.push(order.orderId); },
             onCancel: (order) => { cancelIds.push(order.orderId); },
             manualTick: true,
@@ -638,6 +653,7 @@ describe('OrderManager concurrent order properties', () => {
         const mgr = new OrderManager({
           broker,
           clock: () => T0,
+          ...noopCallbacks,
           onFill: () => { fillFired = true; },
           onCancel: (order) => { cancelFired = true; capturedStatus = order.status; },
           manualTick: true,
@@ -661,7 +677,7 @@ describe('OrderManager concurrent order properties', () => {
     fc.assert(
       fc.asyncProperty(arbLimitPrice, arbStepAmount, arbIntervalSec, async (limitPrice, stepAmount, intervalSec) => {
         const { broker } = makeMockBroker();
-        const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+        const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
         await mgr.submitOrder(makeLimitSellParams({
           limitPrice,
@@ -691,7 +707,7 @@ describe('OrderManager guard rails — no silent fallbacks', () => {
 
   test('throws if broker reports FILLED without a fillTimestamp', async () => {
     const { broker, statusMap } = makeMockBroker();
-    const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+    const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
     const result = await mgr.submitOrder(makeLimitBuyParams());
     // FILLED but no fillTimestamp
@@ -703,7 +719,7 @@ describe('OrderManager guard rails — no silent fallbacks', () => {
 
   test('throws if LIMIT order reaches tracking without a limitPrice', async () => {
     const { broker } = makeMockBroker();
-    const mgr = new OrderManager({ broker, clock: () => T0, manualTick: true });
+    const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
 
     // Construct a LIMIT order with cancelAfterSec (so it's tracked) but no limitPrice
     await expect(

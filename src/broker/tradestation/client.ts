@@ -239,9 +239,18 @@ function mapTsStatus(tsStatus: string | undefined): OrderStatus {
   return 'PENDING';
 }
 
+async function isHealthy(): Promise<boolean> {
+  try {
+    await getAccountBalance();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const liveService: BrokerService = {
   getQuote, placeOrder, modifyOrder, cancelOrder, getOrderStatus,
-  getPositions, getAccountBalance,
+  getPositions, getAccountBalance, isHealthy,
 };
 
 function resolveTradeAction(action: 'BUY' | 'SELL', type: string, isClosing: boolean): string {

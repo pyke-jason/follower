@@ -957,4 +957,7 @@ export class SimBroker implements BrokerService {
     return allFills;
   }
 
+  async isHealthy(): Promise<boolean> {
+    return true;
+  }
 }

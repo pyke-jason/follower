@@ -1,5 +1,6 @@
 import type { Trade } from '../db/schema.js';
 import type { PositionFilters } from '../trades/filters.js';
+import type { WorkingOrderExposure } from './order-manager.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { contractMultiplier, tradeQty, notionalValue } from '../lib/trade.js';
 
@@ -17,7 +18,8 @@ export type RiskCheckDeps = {
   getDailyClosedPnl: () => Promise<number>;
   getStartingEquity: () => Promise<number | null>;
   getCurrentEquity: () => Promise<number>;
-  getReconciliationAlertCount?: () => Promise<number>; // live only
+  getReconciliationAlertCount: () => Promise<number>;
+  getWorkingOrderExposure: () => WorkingOrderExposure;
 };
 
 export type RiskCheckResult = {
@@ -32,6 +34,9 @@ export type RiskCheckResult = {
   reconciliationAlerts?: number;
   totalNotional: number;
   maxNotional: number;
+  workingOrdersOnSymbol: number;
+  workingOrdersTotal: number;
+  workingOrderNotional: number;
 };
 
 // ─── Implementation ─────────────────────────────────
@@ -52,6 +57,9 @@ export async function checkRiskLimits(
       maxTotalPositions: config.maxTotalPositions,
       totalNotional: 0,
       maxNotional: 0,
+      workingOrdersOnSymbol: 0,
+      workingOrdersTotal: 0,
+      workingOrderNotional: 0,
     };
   }
 
@@ -74,24 +82,28 @@ export async function checkRiskLimits(
     }
   }
 
-  // 3. Notional exposure (leverage cap)
+  // 3. Working order exposure (pre-fill risk)
+  const workingExposure = deps.getWorkingOrderExposure();
+  const effectiveOnSymbol = openPositionsOnSymbol + (workingExposure.countBySymbol.get(input.symbol) ?? 0);
+  const effectiveTotal = totalOpenPositions + workingExposure.totalCount;
+
+  // 4. Notional exposure (leverage cap)
   const totalNotional = allOpen.reduce((sum, t) => {
     return sum + notionalValue(t.entryPrice, t.quantity, t.strategy);
   }, 0);
   const equity = await deps.getCurrentEquity();
   const maxNotional = equity * config.maxNotionalMultiplier;
-  const notionalBlocked = totalNotional > maxNotional;
+  const effectiveNotional = totalNotional + workingExposure.totalNotional;
+  const notionalBlocked = effectiveNotional > maxNotional;
 
-  // 4. Position limit checks
-  const symbolBlocked = openPositionsOnSymbol >= config.maxOnSymbol;
-  const totalBlocked = totalOpenPositions >= config.maxTotalPositions;
+  // 5. Position limit checks
+  const symbolBlocked = effectiveOnSymbol >= config.maxOnSymbol;
+  const totalBlocked = effectiveTotal >= config.maxTotalPositions;
 
-  // 5. Reconciliation alerts (live only)
-  const alertCount = deps.getReconciliationAlertCount
-    ? await deps.getReconciliationAlertCount()
-    : 0;
+  // 6. Reconciliation alerts
+  const alertCount = await deps.getReconciliationAlertCount();
 
-  // 6. Result
+  // 7. Result
   const allowed = !symbolBlocked && !totalBlocked && !drawdownBlocked
     && !notionalBlocked && alertCount === 0;
 
@@ -111,11 +123,11 @@ export async function checkRiskLimits(
     const posDetail = positions.map(p =>
       `${p.dir} ${p.strat} ${p.sym} qty=${p.qty} @$${p.entry} ($${p.notional.toFixed(0)})`,
     ).join('; ');
-    reason = `notional exposure $${totalNotional.toFixed(0)} > ${config.maxNotionalMultiplier}x equity $${maxNotional.toFixed(0)} [top: ${posDetail}]`;
+    reason = `notional exposure $${effectiveNotional.toFixed(0)} ($${totalNotional.toFixed(0)} open + $${workingExposure.totalNotional.toFixed(0)} working) > ${config.maxNotionalMultiplier}x equity $${maxNotional.toFixed(0)} [top: ${posDetail}]`;
   } else if (symbolBlocked) {
-    reason = `${openPositionsOnSymbol} positions on ${input.symbol} (max ${config.maxOnSymbol})`;
+    reason = `${effectiveOnSymbol} positions (${openPositionsOnSymbol} open + ${effectiveOnSymbol - openPositionsOnSymbol} working) on ${input.symbol} (max ${config.maxOnSymbol})`;
   } else if (totalBlocked) {
-    reason = `${totalOpenPositions} total positions (max ${config.maxTotalPositions})`;
+    reason = `${effectiveTotal} total positions (${totalOpenPositions} open + ${workingExposure.totalCount} working) (max ${config.maxTotalPositions})`;
   } else if (alertCount > 0) {
     reason = `${alertCount} unresolved DB_ONLY reconciliation alert(s)`;
   }
@@ -132,5 +144,8 @@ export async function checkRiskLimits(
     reconciliationAlerts: alertCount > 0 ? alertCount : undefined,
     totalNotional,
     maxNotional,
+    workingOrdersOnSymbol: workingExposure.countBySymbol.get(input.symbol) ?? 0,
+    workingOrdersTotal: workingExposure.totalCount,
+    workingOrderNotional: workingExposure.totalNotional,
   };
 }

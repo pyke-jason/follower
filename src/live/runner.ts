@@ -1,7 +1,8 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql, asc } from 'drizzle-orm';
-import { completeTask, failTask } from './recorder.js';
-import type { Task, TaskContext } from '../db/schema.js';
+import { completeTask, handleTaskError } from '../pipeline/task-lifecycle.js';
+import type { Task } from '../db/schema.js';
+import { TaskContextSchema } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
@@ -23,6 +24,7 @@ import { recordTrade } from '../trades/record-trade.js';
 import { createEmitter } from '../decisions/emitter.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
 import { LIVE_RISK_DEFAULTS, MAX_CONTRACTS } from '../config/risk-defaults.js';
+import { BrokerCircuitBreaker } from '../lib/circuit-breaker.js';
 
 function selectBroker(): BrokerService {
   const broker = process.env.BROKER ?? 'tradestation';
@@ -54,6 +56,9 @@ const orderManager = new OrderManager({
     pendingIntents,
     createScopedEmitter: (messageId) =>
       createEmitter({ messageId, taskId: undefined }),
+    clock: () => new Date(),
+    scope: {},
+    sendAlert: sendSystemAlert,
   }),
 });
 
@@ -80,6 +85,10 @@ const POLL_INTERVAL = 3000; // 3 seconds
 let running = false;
 let currentTaskPromise: Promise<void> | null = null;
 
+const circuitBreaker = new BrokerCircuitBreaker(
+  { isHealthy: () => liveService.isHealthy(), sendAlert: sendSystemAlert },
+);
+
 export async function startTaskRunner(): Promise<void> {
   if (running) return;
   running = true;
@@ -101,13 +110,9 @@ export async function startTaskRunner(): Promise<void> {
   while (running) {
     try {
       await processPendingTasks();
+      circuitBreaker.recordSuccess();
     } catch (err) {
-      console.error('[Runner] Error in poll loop:', err);
-      sendSystemAlert({
-        title: 'Task runner poll error',
-        message: `Poll loop threw: ${err instanceof Error ? err.message : String(err)}`,
-        severity: 'warning',
-      });
+      circuitBreaker.recordFailure(err);
     }
     await new Promise(r => setTimeout(r, POLL_INTERVAL));
   }
@@ -134,7 +139,10 @@ async function processPendingTasks(): Promise<void> {
     checkExpiryWarnings(() => getOpenPositions()).catch(() => {});
   }
 
-  // Phase 2: Atomic task claim — transaction SELECT+UPDATE avoids race
+  // ── Circuit breaker gate ──
+  if (!await circuitBreaker.checkHealth()) return;
+
+  // Atomic task claim — transaction SELECT+UPDATE avoids race
   const claimed = await db.transaction(async (tx) => {
     const [pending] = await tx.select()
       .from(schema.tasks)
@@ -163,7 +171,7 @@ async function handleTask(task: Task): Promise<void> {
   console.log(`[Runner] Processing task ${task.id} (${task.taskType})`);
 
   try {
-    const context = (task.context || {}) as TaskContext;
+    const context = TaskContextSchema.parse(task.context);
     const provider = await getProvider();
 
     // Write model info to task
@@ -200,6 +208,7 @@ async function handleTask(task: Task): Promise<void> {
           ));
         return alerts[0]?.count ?? 0;
       },
+      getWorkingOrderExposure: () => orderManager.getExposure(),
     };
 
     const pipelineDeps: ResolvedPipelineDeps = {
@@ -214,6 +223,7 @@ async function handleTask(task: Task): Promise<void> {
           strategy: input.strategy,
           entryPrice: input.entryPrice,
           equity: balance.equity,
+          spreadMaxRisk: input.spreadMaxRisk,
           maxQuantity: MAX_CONTRACTS[input.strategy],
         });
       },
@@ -222,14 +232,19 @@ async function handleTask(task: Task): Promise<void> {
         ...input,
         taskId: task.id,
         isBacktest: false,
+        metadata: {
+          ...input.metadata,
+          agentModel: `${DEFAULT_TRADE_MODEL.provider}:${DEFAULT_TRADE_MODEL.model}`,
+        },
       }),
       onPending: (orderId, ctx) => {
         pendingIntents.set(orderId, ctx);
       },
     };
 
+    if (!task.messageId) throw new Error(`Task ${task.id} has no messageId`);
     const emitter = createEmitter({
-      messageId: task.messageId!,
+      messageId: task.messageId,
       taskId: task.id,
     });
 
@@ -248,8 +263,6 @@ async function handleTask(task: Task): Promise<void> {
       },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await failTask(task.id, msg);
-    throw err;
+    await handleTaskError(task.id, err);
   }
 }

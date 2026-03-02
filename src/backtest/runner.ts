@@ -176,6 +176,21 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     maxNotionalMultiplier: config.maxNotionalMultiplier ?? BACKTEST_RISK_DEFAULTS.maxNotionalMultiplier,
   };
 
+  const pendingIntents = new Map<string, ResolvedPendingContext>();
+
+  const orderManager = new OrderManager({
+    broker,
+    clock: () => clock.now(),
+    manualTick: true,
+    ...buildOrderCallbacks({
+      pendingIntents,
+      createScopedEmitter: (messageId) =>
+        createEmitter({ messageId, backtestRunId: runId }),
+      clock: () => clock.now(),
+      scope: { backtestRunId: runId },
+    }),
+  });
+
   const riskDeps: RiskCheckDeps = {
     getOpenTrades: getOpenPositions,
     getDailyClosedPnl: async () => {
@@ -190,20 +205,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     },
     getStartingEquity: async () => startingEquity,
     getCurrentEquity: async () => (await broker.getAccountBalance()).equity,
+    getReconciliationAlertCount: async () => 0,
+    getWorkingOrderExposure: () => orderManager.getExposure(),
   };
-
-  const pendingIntents = new Map<string, ResolvedPendingContext>();
-
-  const orderManager = new OrderManager({
-    broker,
-    clock: () => clock.now(),
-    manualTick: true,
-    ...buildOrderCallbacks({
-      pendingIntents,
-      createScopedEmitter: (messageId) =>
-        createEmitter({ messageId, backtestRunId: runId }),
-    }),
-  });
 
   const agentIdentity = {
     provider: (config.agentProvider ?? DEFAULT_TRADE_MODEL.provider) as 'anthropic' | 'xai',
@@ -217,7 +221,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     orderManager,
     calculatePositionSize: async (input) => sizingService.calculateSize(input),
     checkRiskLimits: config.disableRiskLimits
-      ? async () => ({ allowed: true as boolean, dailyPnl: 0, openPositionsOnSymbol: 0, totalOpenPositions: 0, maxTotalPositions: 0, totalNotional: 0, maxNotional: 0 })
+      ? async () => ({ allowed: true as boolean, dailyPnl: 0, openPositionsOnSymbol: 0, totalOpenPositions: 0, maxTotalPositions: 0, totalNotional: 0, maxNotional: 0, workingOrdersOnSymbol: 0, workingOrdersTotal: 0, workingOrderNotional: 0 })
       : (input) => checkRiskLimits(input, riskDeps, riskConfig),
     recordTrade: (input) => recordTrade({
       ...input,

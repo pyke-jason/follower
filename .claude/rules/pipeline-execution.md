@@ -34,10 +34,18 @@ Position-reducing orders:
 ## ResolvedPipelineDeps Interface
 
 ```
-broker, orderManager?, calculatePositionSize, checkRiskLimits, recordTrade, onPending?
+broker, orderManager, calculatePositionSize, checkRiskLimits, recordTrade, onPending
 ```
 
+ALL fields are REQUIRED (no `?`). `orderManager` and `onPending` are never optional — orders always go through OrderManager with pending intent tracking.
+
 When adding a new dep, add it to **both** `src/backtest/runner.ts` AND `src/live/runner.ts`.
+
+Parity invariants (enforced by code review):
+- `calculatePositionSize` MUST forward `input.spreadMaxRisk` to the sizer
+- `recordTrade` MUST include `agentModel` in metadata
+- `buildOrderCallbacks` MUST provide `onOrphanFill` and `onOrphanCancel`
+- `RiskCheckDeps` has NO optional fields — both paths provide all deps
 
 ## Direction on Close — No Reversal
 
