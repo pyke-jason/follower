@@ -96,15 +96,23 @@ public class TwsBridge extends DefaultEWrapper {
     private volatile ScheduledFuture<?> reconnectTask;
     private volatile ScheduledFuture<?> reaperTask;
 
+    private final String mode; // "paper" or "live"
+
     public TwsBridge(WsHandler wsHandler) {
         this.wsHandler = wsHandler;
         this.signal = new EJavaSignal();
         this.client = new EClientSocket(this, signal);
 
+        this.mode = System.getenv().getOrDefault("IBKR_MODE", "live").toLowerCase();
+        String defaultPort = "paper".equals(mode) ? "4002" : "4001";
+
         this.host = System.getenv().getOrDefault("IBKR_GATEWAY_HOST", "127.0.0.1");
-        this.port = Integer.parseInt(System.getenv().getOrDefault("IBKR_GATEWAY_PORT", "4001"));
+        this.port = Integer.parseInt(System.getenv().getOrDefault("IBKR_GATEWAY_PORT", defaultPort));
         this.clientId = Integer.parseInt(System.getenv().getOrDefault("IBKR_CLIENT_ID", "1"));
     }
+
+    public String getMode() { return mode; }
+    public boolean isPaperTrading() { return "paper".equals(mode); }
 
     // --- Connection lifecycle ---
 

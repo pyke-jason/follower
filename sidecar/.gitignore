@@ -1,0 +1,16 @@
+# Gradle
+.gradle/
+build/
+!lib/
+
+# IDE
+.idea/
+*.iml
+
+# TwsApi.jar — must be downloaded manually (not on Maven Central)
+lib/TwsApi.jar
+
+# Gradle wrapper (not using wrapper for this project)
+gradle/
+gradlew
+gradlew.bat

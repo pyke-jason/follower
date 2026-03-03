@@ -16,6 +16,7 @@ export const StatusResponseSchema = z.object({
   serverVersion: z.number(),
   wsClients: z.number(),
   maintenance: z.boolean(),
+  mode: z.enum(['paper', 'live']).optional(),
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
