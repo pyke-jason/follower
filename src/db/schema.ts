@@ -66,11 +66,11 @@ export const tasks = sqliteTable('tasks', {
   error:         text('error'),
   modelProvider: text('model_provider'),  // 'anthropic' | 'xai'
   modelName:     text('model_name'),      // full model ID or null
-  backtestRunId: text('backtest_run_id').references(() => backtestRuns.id),
+  channelId:     text('channel_id'),
 }, (table) => [
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_message').on(table.messageId),
-  index('idx_tasks_backtest_run').on(table.backtestRunId),
+  index('idx_tasks_channel').on(table.channelId),
   uniqueIndex('idx_tasks_message_unique').on(table.messageId).where(sql`message_id IS NOT NULL`),
 ]);
 
@@ -93,8 +93,7 @@ export const trades = sqliteTable('trades', {
   openedAt:        text('opened_at'),
   closedAt:        text('closed_at'),
   closeMessageId:  text('close_message_id').references(() => messages.id),
-  isBacktest:      integer('is_backtest', { mode: 'boolean' }).default(false),
-  backtestRunId:   text('backtest_run_id').references(() => backtestRuns.id),
+  channelId:       text('channel_id').notNull(),
   metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().default({}),
   avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
@@ -107,7 +106,7 @@ export const trades = sqliteTable('trades', {
   index('idx_trades_trader').on(table.trader),
   index('idx_trades_symbol').on(table.symbol),
   index('idx_trades_status').on(table.status),
-  index('idx_trades_backtest_run').on(table.backtestRunId),
+  index('idx_trades_channel').on(table.channelId),
 ]);
 
 // ─── Trade Events (append-only action log) ──────────
@@ -163,7 +162,7 @@ export const backtestRuns = sqliteTable('backtest_runs', {
 
 export const runDecisions = sqliteTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id),
+  channelId:      text('channel_id'),
   taskId:         text('task_id').references(() => tasks.id),
   messageId:      text('message_id').references(() => messages.id).notNull(),
   event:          text('event').notNull().default('SETTLED'),
@@ -182,24 +181,24 @@ export const runDecisions = sqliteTable('run_decisions', {
   decision:       text('decision'),                // LEGACY
   skipCategory:   text('skip_category'),
 }, (table) => [
-  index('idx_run_decisions_run').on(table.backtestRunId),
+  index('idx_run_decisions_channel').on(table.channelId),
   index('idx_run_decisions_message').on(table.messageId),
-  index('idx_run_decisions_run_message').on(table.backtestRunId, table.messageId),
+  index('idx_run_decisions_channel_message').on(table.channelId, table.messageId),
   index('idx_run_decisions_task').on(table.taskId),
-  index('idx_run_decisions_settled').on(table.backtestRunId, table.event),
+  index('idx_run_decisions_settled').on(table.channelId, table.event),
 ]);
 
 // ─── Backtest MTM Snapshots ──────────────────────────
 
 export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id).notNull(),
+  channelId:      text('channel_id').notNull(),
   date:           text('date').notNull(),           // YYYY-MM-DD (trading day)
   unrealizedPnl:  real('unrealized_pnl').notNull(),
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
-  index('idx_mtm_snapshots_run').on(table.backtestRunId),
-  index('idx_mtm_snapshots_run_date').on(table.backtestRunId, table.date),
+  index('idx_mtm_snapshots_channel').on(table.channelId),
+  index('idx_mtm_snapshots_channel_date').on(table.channelId, table.date),
 ]);
 
 // ─── Tracked Traders ─────────────────────────────────
@@ -265,7 +264,7 @@ export const orphanFills = sqliteTable('orphan_fills', {
   detectedAt: text('detected_at').notNull(),
   resolved: integer('resolved').default(0),
   taskId: text('task_id'),
-  backtestRunId: text('backtest_run_id'),
+  channelId: text('channel_id'),
 });
 
 // ─── Historical Fetch Runs ──────────────────────────

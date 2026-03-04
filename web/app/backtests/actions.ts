@@ -8,6 +8,7 @@ import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots } from '@/lib/
 import { generateReportFromTrades } from '@src/backtest/report';
 import type { CommissionSchedule, BacktestRunConfig } from '@src/db/schema';
 import { getConfig } from '@src/db/accessors';
+import { btChannel } from '@src/lib/channel';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
@@ -225,9 +226,9 @@ export async function deleteBacktestRun(formData: FormData) {
   }
 
   // Delete associated trades and tasks first
-  await db.delete(schema.trades).where(eq(schema.trades.backtestRunId, runId));
-  await db.delete(schema.tasks).where(eq(schema.tasks.backtestRunId, runId));
-  await db.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
+  await db.delete(schema.trades).where(eq(schema.trades.channelId, btChannel(runId)));
+  await db.delete(schema.tasks).where(eq(schema.tasks.channelId, btChannel(runId)));
+  await db.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, btChannel(runId)));
   await db.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, runId));
 
   // Clean up log file via local API
@@ -274,9 +275,10 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
   }
 
   // Delete associated data
-  await db.delete(schema.trades).where(inArray(schema.trades.backtestRunId, runIds));
-  await db.delete(schema.tasks).where(inArray(schema.tasks.backtestRunId, runIds));
-  await db.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.backtestRunId, runIds));
+  const channelIds = runIds.map(btChannel);
+  await db.delete(schema.trades).where(inArray(schema.trades.channelId, channelIds));
+  await db.delete(schema.tasks).where(inArray(schema.tasks.channelId, channelIds));
+  await db.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.channelId, channelIds));
   await db.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, runIds));
 
   // Clean up log files

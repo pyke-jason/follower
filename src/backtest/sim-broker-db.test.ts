@@ -24,6 +24,7 @@ vi.mock('../db/client.js', async () => {
 });
 
 import { db, schema } from '../db/client.js';
+import { btChannel } from '../lib/channel.js';
 import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
@@ -58,7 +59,7 @@ const {
 } = makeDbHelpers(db, schema, RUN_ID);
 
 function makeBroker(prices: Record<string, number> | number, startingEquity = 100_000) {
-  return new SimBroker(stubMarketData(prices), new SimClock(), RUN_ID, 'midpoint', startingEquity);
+  return new SimBroker(stubMarketData(prices), new SimClock(), btChannel(RUN_ID), 'midpoint', startingEquity);
 }
 
 // ── 1. getAccountBalance ─────────────────────────────────────────────
@@ -365,7 +366,7 @@ describe('forceCloseAll invariants', () => {
         const broker = makeBroker(105);
         await broker.forceCloseAll(new Date());
 
-        const rows = await db.select().from(schema.trades).where(sql`backtest_run_id = ${RUN_ID}`);
+        const rows = await db.select().from(schema.trades).where(sql`channel_id = ${btChannel(RUN_ID)}`);
         for (const row of rows) {
           expect(row.status).toBe('CLOSED');
           expect(row.exitPrice).toBeDefined();

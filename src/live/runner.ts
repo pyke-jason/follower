@@ -5,23 +5,16 @@ import type { Task } from '../db/schema.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
-import { liveService as tsService } from '../broker/tradestation/index.js';
-import { ibkrService, startWsListener, stopWsListener } from '../broker/ibkr/index.js';
+import { startWsListener, stopWsListener } from '../broker/ibkr/index.js';
+import { selectBroker } from '../broker/select.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { checkExpiryWarnings } from '../lib/expiry-warning.js';
 import { LIVE_RISK_DEFAULTS } from '../config/risk-defaults.js';
 import { BrokerCircuitBreaker } from '../lib/circuit-breaker.js';
 import { buildPipelineDeps } from '../pipeline/build-deps.js';
-import type { BrokerService } from '../broker/interface.js';
 
-function selectBroker(): BrokerService {
-  const broker = process.env.BROKER ?? 'tradestation';
-  if (broker === 'ibkr') return ibkrService;
-  if (broker === 'tradestation') return tsService;
-  throw new Error(`Unknown BROKER env value: "${broker}" (expected "ibkr" or "tradestation")`);
-}
-
-const liveService = selectBroker();
+const { broker: liveService, channelId: liveChannelId } = selectBroker();
+export { liveService, liveChannelId };
 
 // ─── Lazy LLM provider (single instance reused across tasks) ───
 
@@ -37,7 +30,7 @@ const bundle = buildPipelineDeps({
   broker: liveService,
   env: {
     clock: () => new Date(),
-    scope: { kind: 'live' },
+    scope: liveChannelId,
     sendAlert: sendSystemAlert,
   },
   config: {
@@ -151,7 +144,7 @@ async function handleTask(task: Task): Promise<void> {
       getOpenPositions,
       llm: await getProvider(),
       pipeline: pipelineDeps,
-      scope: { kind: 'live' },
+      scope: liveChannelId,
       agentIdentity: DEFAULT_TRADE_MODEL,
       onResult: async (result, _emitter) => {
         await completeTask(task.id, { outcome: result.outcome });

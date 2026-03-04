@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { getTradeById, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask, getBacktestRunById } from '@/lib/queries';
+import { parseChannel } from '@src/lib/channel';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
@@ -50,8 +51,8 @@ export default async function TradeDetailPage({
     closeMessage
       ? getNearbyMessages(closeMessage.author, closeMessage.timestamp, 60, trade.symbol)
       : Promise.resolve([]),
-    sourceMessage && trade.backtestRunId
-      ? getRunDecisionForTask(sourceMessage.id, trade.backtestRunId)
+    sourceMessage && parseChannel(trade.channelId).mode === 'bt'
+      ? getRunDecisionForTask(sourceMessage.id, trade.channelId)
       : Promise.resolve(null),
   ]);
 

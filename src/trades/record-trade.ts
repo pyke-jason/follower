@@ -2,15 +2,16 @@
  * Shared trade recording for both live and backtest.
  * Handles OPEN, CLOSE, TRIM, ADD, LEG_OFF actions against the trades table.
  * Each action also emits an immutable event to trade_events for audit/history.
- * `backtestRunId` scopes all queries during backtest; omit for live.
+ * `channelId` scopes all queries (e.g. 'live:<accountId>', 'bt:<runId>', 'paper:<accountId>').
  */
 import { db, schema } from '../db/client.js';
-import { eq, and } from 'drizzle-orm';
-import { isOpen, forRun, forSymbol, forTrader, forStrategy } from './filters.js';
+import { and, eq } from 'drizzle-orm';
+import { isOpen, forChannel, forSymbol, forTrader, forStrategy } from './filters.js';
 import { safeParseFloat, roundCents } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
+import { parseChannel } from '../lib/channel.js';
 import type { TradeLeg, TradeMetadata } from '../db/schema.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 
@@ -39,8 +40,7 @@ export type RecordTradeInput = {
   sourceMessageId?: string;
   closeMessageId?: string;
   taskId?: string;
-  backtestRunId?: string;
-  isBacktest?: boolean;
+  channelId: string;
   metadata?: TradeMetadata;
 };
 
@@ -145,7 +145,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     entryPrice, exitPrice, quantity,
     closeQuantity, exitPercent,
     legs, openedAt, closedAt, sourceMessageId, closeMessageId,
-    taskId, backtestRunId, isBacktest, metadata,
+    taskId, channelId, metadata,
   } = input;
 
   const now = new Date().toISOString();
@@ -174,7 +174,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
   // Guard: backtest trades must have explicit timestamps — never fall back to
   // wall-clock time, which collapses the equity curve to a single day.
-  if (isBacktest || backtestRunId) {
+  if (parseChannel(channelId).mode === 'bt') {
     if (isOpen_ && !openedAt) {
       throw new Error(`recordTrade: backtest OPEN for ${symbol} missing openedAt timestamp`);
     }
@@ -193,7 +193,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     forSymbol(symbol),
     forTrader(trader),
     ...(strategy ? [forStrategy(strategy)] : []),
-    ...(backtestRunId ? [forRun(backtestRunId)] : [eq(schema.trades.isBacktest, false)]),
+    forChannel(channelId),
   ];
 
   // ── OPEN: insert a new trade row ──
@@ -217,8 +217,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       pnl: null,
       openedAt: ts,
       closedAt: null,
-      isBacktest: isBacktest ?? !!backtestRunId,
-      backtestRunId: backtestRunId ?? null,
+      channelId,
       metadata: metadata ?? {},
     };
     await db.insert(schema.trades).values(values);
@@ -246,7 +245,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     ? await db.select().from(schema.trades).where(eq(schema.trades.id, input.tradeId))
     : await db.select().from(schema.trades).where(and(...scopeFilters)).limit(1);
   if (!existing) {
-    log.debug(`${action ?? 'position-modify'}: no open position for ${symbol}/${trader}${backtestRunId ? ` run=${backtestRunId.slice(0, 8)}` : ''}`);
+    log.debug(`${action ?? 'position-modify'}: no open position for ${symbol}/${trader} [${channelId}]`);
     return null;
   }
 

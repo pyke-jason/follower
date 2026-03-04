@@ -25,6 +25,7 @@ vi.mock('../db/client.js', async () => {
 
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/client.js';
+import { btChannel } from '../lib/channel.js';
 import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
@@ -108,7 +109,7 @@ describe('temporal: equity identity', () => {
           const priceFn = linearPrice(startPrice, endPrice, timestamps[0], timestamps[timestamps.length - 1]);
           const md = makeTimeAwareStub({ underlyings: { SPY: priceFn } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -142,7 +143,7 @@ describe('temporal: equity identity', () => {
           const timestamps = spacedTimestamps(T0, new Date(T0.getTime() + 60 * MS_PER_DAY), 4);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -178,7 +179,7 @@ describe('temporal: equity identity', () => {
           const timestamps = spacedTimestamps(T0, new Date(T0.getTime() + 60 * MS_PER_DAY), 4);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -210,7 +211,7 @@ describe('temporal: mark-to-PnL consistency', () => {
           const priceFn = linearPrice(entry, endPrice, timestamps[0], timestamps[timestamps.length - 1]);
           const md = makeTimeAwareStub({ underlyings: { SPY: priceFn } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -246,7 +247,7 @@ describe('temporal: mark-to-PnL consistency', () => {
           const timestamps = spacedTimestamps(T0, new Date(T0.getTime() + 60 * MS_PER_DAY), 4);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -288,7 +289,7 @@ describe('temporal: theta decay', () => {
 
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const markValues: number[] = [];
           for (const t of timestamps) {
@@ -326,7 +327,7 @@ describe('temporal: theta decay', () => {
           const timestamps = spacedTimestamps(T0, tEnd, 5);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const markValues: number[] = [];
           for (const t of timestamps) {
@@ -366,7 +367,7 @@ describe('temporal: theta decay', () => {
           const timestamps = spacedTimestamps(T0, tEnd, 5);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const markValues: number[] = [];
           for (const t of timestamps) {
@@ -409,7 +410,7 @@ describe('temporal: expiry convergence', () => {
           // Use zero spread so abs() normalization doesn't distort near-zero intrinsic
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) }, optionHalfSpread: 0 });
           const clock = new SimClock(EXPIRY_DATE);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks = await broker.markToMarket();
           const mark = marks.get(tradeId)!;
@@ -439,7 +440,7 @@ describe('temporal: expiry convergence', () => {
           // Use zero spread so abs() normalization doesn't distort near-zero intrinsic
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) }, optionHalfSpread: 0 });
           const clock = new SimClock(EXPIRY_DATE);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks = await broker.markToMarket();
           const mark = marks.get(tradeId)!;
@@ -472,7 +473,7 @@ describe('temporal: expiry convergence', () => {
 
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(EXPIRY_DATE);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks = await broker.markToMarket();
           const mark = marks.get(tradeId)!;
@@ -524,7 +525,7 @@ describe('temporal: post-expiry value', () => {
             optionHalfSpread: 0,
           });
           const clock = new SimClock(postExpiry);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks = await broker.markToMarket();
           expect(marks.get(tradeId)!).toBeCloseTo(0, 2);
@@ -555,7 +556,7 @@ describe('temporal: post-expiry value', () => {
             optionHalfSpread: 0,
           });
           const clock = new SimClock(postExpiry);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks = await broker.markToMarket();
           expect(marks.get(tradeId)!).toBeCloseTo(0, 2);
@@ -586,7 +587,7 @@ describe('temporal: post-expiry value', () => {
             optionHalfSpread: 0,
           });
           const clock = new SimClock(postExpiry);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks = await broker.markToMarket();
           expect(marks.get(tradeId)!).toBeCloseTo(underlyingPrice - strike, 2);
@@ -616,7 +617,7 @@ describe('temporal: post-expiry value', () => {
       optionHalfSpread: 0,
     });
     const clock = new SimClock(new Date(EXPIRY + 'T20:00:00Z'));
-    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+    const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
     const closedCount = await broker.sweepExpired(EXPIRY);
     expect(closedCount).toBe(1);
@@ -653,7 +654,7 @@ describe('temporal: stock marks track underlying', () => {
           const priceFn = linearPrice(startPrice, endPrice, t1, t2);
           const md = makeTimeAwareStub({ underlyings: { SPY: priceFn } });
           const clock = new SimClock(t1);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const marks1 = await broker.markToMarket();
           clock.advance(t2);
@@ -679,7 +680,7 @@ describe('temporal: stock marks track underlying', () => {
           const priceFn = linearPrice(startPrice, endPrice, timestamps[0], timestamps[timestamps.length - 1]);
           const md = makeTimeAwareStub({ underlyings: { SPY: priceFn } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -716,7 +717,7 @@ describe('temporal: full lifecycle', () => {
           const priceFn = linearPrice(entry, endPrice, T0, t2);
           const md = makeTimeAwareStub({ underlyings: { SPY: priceFn } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           // T1: check unrealized
           clock.advance(t1);
@@ -766,7 +767,7 @@ describe('temporal: full lifecycle', () => {
           const t2 = new Date(T0.getTime() + 60 * MS_PER_DAY);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           // T0: initial mark
           const marks0 = await broker.markToMarket();
@@ -826,7 +827,7 @@ describe('temporal: advanceTo option fills', () => {
             baseTimeValue: baseTV,
           });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           // Place limit order (queued because limit < bid)
           const order = await broker.placeOrder({
@@ -878,7 +879,7 @@ describe('temporal: advanceTo option fills', () => {
       baseTimeValue: 2.0,
     });
     const clock = new SimClock(T0);
-    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+    const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
     const order = await broker.placeOrder({
       symbol: 'SPY',
@@ -915,7 +916,7 @@ describe('temporal: advanceTo option fills', () => {
       baseTimeValue: 2.0,
     });
     const clock = new SimClock(T0);
-    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+    const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
     const order = await broker.placeOrder({
       symbol: 'SPY',
@@ -962,7 +963,7 @@ describe('temporal: advanceTo equity fills', () => {
             ticksPerRange: 10,
           });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const order = await broker.placeOrder(makeStockBuyOrder({
             orderType: 'LIMIT',
@@ -1000,7 +1001,7 @@ describe('temporal: advanceTo equity fills', () => {
             ticksPerRange: 5,
           });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const order = await broker.placeOrder(makeStockBuyOrder({
             orderType: 'LIMIT',
@@ -1085,7 +1086,7 @@ describe('temporal: mixed portfolio equity identity', () => {
           const priceFn = linearPrice(100, endPrice, timestamps[0], timestamps[timestamps.length - 1]);
           const md = makeTimeAwareStub({ underlyings: { SPY: priceFn } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -1144,7 +1145,7 @@ describe('temporal: mixed portfolio equity identity', () => {
           const timestamps = spacedTimestamps(T0, new Date(T0.getTime() + 60 * MS_PER_DAY), 4);
           const md = makeTimeAwareStub({ underlyings: { SPY: constantPrice(underlyingPrice) } });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', startingEquity);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', startingEquity);
 
           for (const t of timestamps) {
             clock.advance(t);
@@ -1198,7 +1199,7 @@ describe('temporal: advanceTo intraday option fills', () => {
       ticksPerRange: 20, // 20 evenly-spaced ticks across the window
     });
     const clock = new SimClock(T0);
-    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+    const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
     // Initialize lastAdvanceTime so the next advanceTo gets a proper tick range
     await broker.advanceTo(T0);
@@ -1255,7 +1256,7 @@ describe('temporal: advanceTo intraday option fills', () => {
       ticksPerRange: 20,
     });
     const clock = new SimClock(T0);
-    const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+    const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
     await broker.advanceTo(T0);
 
@@ -1307,7 +1308,7 @@ describe('temporal: time value model', () => {
             optionHalfSpread: 0,
           });
           const clock = new SimClock(T0);
-          const broker = new SimBroker(md, clock, RUN_ID, 'midpoint', 100_000);
+          const broker = new SimBroker(md, clock, btChannel(RUN_ID), 'midpoint', 100_000);
 
           const intrinsic = Math.max(0, underlyingPrice - strike);
 

@@ -1,6 +1,7 @@
 import { db, schema } from './db';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray, like, getTableColumns } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
+import { liveChannel, btChannel, parseChannel } from '@src/lib/channel';
 import { safeParseFloat } from '../../src/lib/numbers';
 import type { Trade } from '../../src/db/schema';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
@@ -8,17 +9,23 @@ import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/l
 import { getConfig } from '../../src/db/accessors';
 import { isoToDateKey } from './format';
 
-/** Scoping helper: when runId is set, show that backtest's data. Otherwise, live only. */
+/** Derive the live channelId from env vars (same logic as backend selectBroker). */
+function getLiveChannelId(): string {
+  const broker = process.env.BROKER ?? 'tradestation';
+  const accountId = broker === 'ibkr'
+    ? process.env.IBKR_ACCOUNT_ID
+    : process.env.TS_ACCOUNT_ID;
+  if (!accountId) throw new Error(`Missing account ID env var for ${broker}`);
+  return liveChannel(accountId);
+}
+
+/** Scoping helper: when runId is set, show that backtest's data. Otherwise, the current live channel. */
 function tradeScope(runId?: string): SQL {
-  return runId
-    ? eq(schema.trades.backtestRunId, runId)
-    : isNull(schema.trades.backtestRunId);
+  return eq(schema.trades.channelId, runId ? btChannel(runId) : getLiveChannelId());
 }
 
 function taskScope(runId?: string): SQL {
-  return runId
-    ? eq(schema.tasks.backtestRunId, runId)
-    : isNull(schema.tasks.backtestRunId);
+  return eq(schema.tasks.channelId, runId ? btChannel(runId) : getLiveChannelId());
 }
 
 export async function getStats(runId?: string) {
@@ -34,7 +41,7 @@ export async function getStats(runId?: string) {
     .from(schema.trades)
     .where(runId
       ? and(isClosed, tradeScope(runId))
-      : and(isNull(schema.trades.backtestRunId), sql`closed_at >= date('now')`)
+      : and(tradeScope(), sql`closed_at >= date('now')`)
     );
 
   const [pendingTasksResult] = await db
@@ -111,24 +118,24 @@ export async function getTradeByTaskId(taskId: string) {
   return trade ?? null;
 }
 
-/** Look up the run_decision for a message. Accepts backtestRunId as a plain string for convenience. */
+/** Look up the run_decision for a message. Accepts channelId as a plain string for convenience. */
 export async function getRunDecisionForTask(
   messageId: string,
-  opts?: string | { backtestRunId?: string; taskId?: string },
+  opts?: string | { channelId?: string; taskId?: string },
 ) {
-  const { backtestRunId, taskId } = typeof opts === 'string'
-    ? { backtestRunId: opts, taskId: undefined }
+  const { channelId, taskId } = typeof opts === 'string'
+    ? { channelId: opts, taskId: undefined }
     : (opts ?? {});
 
-  // Prefer backtestRunId lookup; fall back to taskId via trades table
-  if (backtestRunId) {
+  // Prefer channelId lookup; fall back to taskId via trades table
+  if (channelId) {
     const [decision] = await db
       .select()
       .from(schema.runDecisions)
       .where(
         and(
           eq(schema.runDecisions.messageId, messageId),
-          eq(schema.runDecisions.backtestRunId, backtestRunId),
+          eq(schema.runDecisions.channelId, channelId),
         )
       );
     return decision ?? null;
@@ -484,7 +491,7 @@ export async function getRunDecisions(backtestRunId: string) {
     .from(schema.runDecisions)
     .innerJoin(schema.messages, eq(schema.runDecisions.messageId, schema.messages.id))
     .leftJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
-    .where(eq(schema.runDecisions.backtestRunId, backtestRunId))
+    .where(eq(schema.runDecisions.channelId, btChannel(backtestRunId)))
     .orderBy(desc(schema.runDecisions.createdAt));
 }
 
@@ -495,12 +502,12 @@ export async function getMtmSnapshots(backtestRunId: string) {
       unrealizedPnl: schema.backtestMtmSnapshots.unrealizedPnl,
     })
     .from(schema.backtestMtmSnapshots)
-    .where(eq(schema.backtestMtmSnapshots.backtestRunId, backtestRunId))
+    .where(eq(schema.backtestMtmSnapshots.channelId, btChannel(backtestRunId)))
     .orderBy(asc(schema.backtestMtmSnapshots.date));
 }
 
 export async function getTradesByBacktestRun(backtestRunId: string, opts?: { includeOpen?: boolean }) {
-  const conditions = [eq(schema.trades.backtestRunId, backtestRunId)];
+  const conditions = [eq(schema.trades.channelId, btChannel(backtestRunId))];
   if (!opts?.includeOpen) {
     conditions.push(isClosed);
   }
@@ -617,7 +624,7 @@ export async function getBacktestRunBrief(id: string) {
       closed: sql<number>`SUM(CASE WHEN ${schema.trades.status} = 'CLOSED' THEN 1 ELSE 0 END)`,
     })
     .from(schema.trades)
-    .where(eq(schema.trades.backtestRunId, id));
+    .where(eq(schema.trades.channelId, btChannel(id)));
 
   const config = getConfig(run);
   const closed = stats?.closed ?? 0;
@@ -653,13 +660,13 @@ export async function getRiskSnapshot() {
       count: count(),
     })
     .from(schema.trades)
-    .where(and(isOpen, isNull(schema.trades.backtestRunId)))
+    .where(and(isOpen, tradeScope()))
     .groupBy(schema.trades.symbol);
 
   const [totalOpen] = await db
     .select({ count: count() })
     .from(schema.trades)
-    .where(and(isOpen, isNull(schema.trades.backtestRunId)));
+    .where(and(isOpen, tradeScope()));
 
   const [unresolvedAlerts] = await db
     .select({ count: count() })
@@ -671,7 +678,7 @@ export async function getRiskSnapshot() {
       total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
     })
     .from(schema.trades)
-    .where(and(isNull(schema.trades.backtestRunId), sql`closed_at >= date('now')`));
+    .where(and(tradeScope(), sql`closed_at >= date('now')`));
 
   // Drawdown: compare current equity to peak equity from daily balances
   const balances = await db
@@ -778,7 +785,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       reasoning: a.reasoning,
     })
     .from(a)
-    .where(eq(a.backtestRunId, runIdA));
+    .where(eq(a.channelId, btChannel(runIdA)));
 
   const decisionsB = await db
     .select({
@@ -788,7 +795,7 @@ export async function getDecisionDiff(runIdA: string, runIdB: string) {
       reasoning: a.reasoning,
     })
     .from(a)
-    .where(eq(a.backtestRunId, runIdB));
+    .where(eq(a.channelId, btChannel(runIdB)));
 
   const mapA = new Map(decisionsA.map((d) => [d.messageId, d]));
   const mapB = new Map(decisionsB.map((d) => [d.messageId, d]));
@@ -989,7 +996,7 @@ export async function getMarketDataFailTradeIds(tradeIds: string[]): Promise<Set
  *  Two-pass: first find all message IDs linked to the trade, then fetch
  *  ALL decision events for those messages (so intermediate signals like
  *  LEG_OFF get their full PARSED→SETTLED chain, not just the SIGNAL_RESOLVED row). */
-export async function getDecisionsForTrade(trade: { id: string; sourceMessageId: string | null; backtestRunId: string | null }) {
+export async function getDecisionsForTrade(trade: { id: string; sourceMessageId: string | null; channelId: string }) {
   // Step 1: find message IDs linked to this trade via tradeId or sourceMessageId
   const seedConditions: SQL[] = [];
   const matchCondition = trade.sourceMessageId
@@ -999,8 +1006,9 @@ export async function getDecisionsForTrade(trade: { id: string; sourceMessageId:
       )!
     : eq(schema.runDecisions.tradeId, trade.id);
   seedConditions.push(matchCondition);
-  if (trade.backtestRunId) {
-    seedConditions.push(eq(schema.runDecisions.backtestRunId, trade.backtestRunId));
+  const isBt = parseChannel(trade.channelId).mode === 'bt';
+  if (isBt) {
+    seedConditions.push(eq(schema.runDecisions.channelId, trade.channelId));
   }
 
   const seedRows = await db
@@ -1013,8 +1021,8 @@ export async function getDecisionsForTrade(trade: { id: string; sourceMessageId:
 
   // Step 2: fetch ALL decisions for those message IDs
   const fullConditions: SQL[] = [inArray(schema.runDecisions.messageId, allMessageIds)];
-  if (trade.backtestRunId) {
-    fullConditions.push(eq(schema.runDecisions.backtestRunId, trade.backtestRunId));
+  if (isBt) {
+    fullConditions.push(eq(schema.runDecisions.channelId, trade.channelId));
   }
 
   return db
@@ -1053,7 +1061,7 @@ export async function getEnrichedMessages(opts: {
   const decisionJoin = opts.runId
     ? and(
         eq(schema.runDecisions.messageId, schema.messages.id),
-        eq(schema.runDecisions.backtestRunId, opts.runId),
+        eq(schema.runDecisions.channelId, btChannel(opts.runId)),
       )
     : sql`0 = 1`; // never match for live — live doesn't use runDecisions
 
@@ -1136,7 +1144,7 @@ export async function computeBacktestAccuracy(backtestRunId: string) {
       outcome: schema.runDecisions.outcome,
     })
     .from(schema.runDecisions)
-    .where(eq(schema.runDecisions.backtestRunId, backtestRunId));
+    .where(eq(schema.runDecisions.channelId, btChannel(backtestRunId)));
 
   if (decisionRows.length === 0) return null;
 

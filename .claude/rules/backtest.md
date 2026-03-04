@@ -18,7 +18,7 @@ Backtest creates `OrderManager` with `manualTick: true`. The backtest runner exp
 
 ## Scoping
 
-All backtest trades and positions are scoped by `backtestRunId`. The `forRun(runId)` filter ensures data isolation between runs. When querying positions or trades in backtest context, always include the run scope.
+All backtest trades and positions are scoped by `channelId = btChannel(runId)` (format: `'bt:<runId>'`). The `forChannel(channelId)` filter ensures data isolation between runs. When querying positions or trades in backtest context, always include the channel scope.
 
 ## Market Data
 

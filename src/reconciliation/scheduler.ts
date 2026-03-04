@@ -13,6 +13,7 @@ export class ReconciliationScheduler {
 
   constructor(
     private broker: BrokerService,
+    private channelId: string,
     private intervalMs: number = 5 * 60 * 1000, // 5 minutes
   ) {}
 
@@ -39,7 +40,7 @@ export class ReconciliationScheduler {
 
   private async _run(): Promise<void> {
     try {
-      this.lastResult = await runReconciliation(this.broker);
+      this.lastResult = await runReconciliation(this.broker, this.channelId);
     } catch (err) {
       log.error('Reconciliation failed:', err);
       sendSystemAlert({
@@ -59,7 +60,7 @@ export class ReconciliationScheduler {
    */
   async preTradeCheck(): Promise<{ safe: boolean; alerts: ReconciliationAlertInput[] }> {
     try {
-      const alerts = await runReconciliation(this.broker);
+      const alerts = await runReconciliation(this.broker, this.channelId);
       this.lastResult = alerts;
       const safe = !alerts.some((a) => a.type === 'DB_ONLY');
       return { safe, alerts };

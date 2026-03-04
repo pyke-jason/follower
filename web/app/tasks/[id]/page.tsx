@@ -3,6 +3,7 @@ import {
   getTaskById, getMessageById,
   getTradeByTaskId, getRunDecisionForTask, getNearbyMessages,
 } from '@/lib/queries';
+import { parseChannel } from '@src/lib/channel';
 import { Badge } from '../../components/badge';
 import { InfoChip } from '../../components/info-chip';
 import { StatItem } from '../../components/stat-item';
@@ -44,12 +45,13 @@ export default async function TaskDetailPage({
   const result = task.result;
 
   // Round 1: parallel queries
+  const isBt = task.channelId ? parseChannel(task.channelId).mode === 'bt' : false;
   const [sourceMessage, runDecision] = await Promise.all([
     task.messageId ? getMessageById(task.messageId) : Promise.resolve(null),
     task.messageId
       ? getRunDecisionForTask(task.messageId, {
-          backtestRunId: task.backtestRunId ?? undefined,
-          taskId: !task.backtestRunId ? task.id : undefined,
+          channelId: isBt ? task.channelId! : undefined,
+          taskId: !isBt ? task.id : undefined,
         })
       : Promise.resolve(null),
   ]);

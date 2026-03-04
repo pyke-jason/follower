@@ -18,6 +18,7 @@ export class FillSweep {
 
   constructor(
     private broker: BrokerService,
+    private channelId: string,
     private intervalMs: number = 60_000,
   ) {}
 
@@ -46,7 +47,7 @@ export class FillSweep {
     const trades = await db.select()
       .from(schema.trades)
       .where(and(
-        eq(schema.trades.isBacktest, false),
+        eq(schema.trades.channelId, this.channelId),
         sql`json_extract(metadata, '$.brokerOrderId') IS NOT NULL`,
         sql`json_extract(metadata, '$.fillEnriched') IS NOT true`,
       ));

@@ -25,6 +25,7 @@ vi.mock('../db/client.js', async () => {
 });
 
 import { db, schema } from '../db/client.js';
+import { btChannel } from '../lib/channel.js';
 import { SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { recordTrade } from '../trades/record-trade.js';
@@ -54,7 +55,7 @@ const CLOCK_TIME = new Date('2026-03-15T14:30:00Z');
 const { resetDb } = makeDbHelpers(db, schema, RUN_ID);
 
 function makeBroker(prices: Record<string, number> | number, startingEquity = 100_000) {
-  return new SimBroker(stubMarketData(prices), new SimClock(CLOCK_TIME), RUN_ID, 'midpoint', startingEquity);
+  return new SimBroker(stubMarketData(prices), new SimClock(CLOCK_TIME), btChannel(RUN_ID), 'midpoint', startingEquity);
 }
 
 /**
@@ -91,8 +92,7 @@ async function openPosition(
     quantity,
     legs: orderParams.legs,
     openedAt: CLOCK_TIME.toISOString(),
-    backtestRunId: RUN_ID,
-    isBacktest: true,
+    channelId: btChannel(RUN_ID),
   });
 
   expect(recorded).not.toBeNull();
@@ -265,7 +265,7 @@ describe('forceCloseAll', () => {
     const brokerClose = new SimBroker(
       stubMarketData({ SPY: 120 }),
       new SimClock(CLOCK_TIME),
-      RUN_ID,
+      btChannel(RUN_ID),
       'midpoint',
       100_000,
     );
@@ -351,7 +351,7 @@ describe('Multiple positions', () => {
     const closeBroker = new SimBroker(
       stubMarketData({ SPY: 110, QQQ: 190 }),
       new SimClock(CLOCK_TIME),
-      RUN_ID,
+      btChannel(RUN_ID),
       'midpoint',
       100_000,
     );
@@ -495,8 +495,7 @@ describe('TRIM → CLOSE lifecycle', () => {
       exitPrice: 115,
       closeQuantity: 3,
       closedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     expect(trimResult).not.toBeNull();
@@ -556,8 +555,7 @@ describe('TRIM → CLOSE lifecycle', () => {
       exitPrice: 90,
       closeQuantity: 2,
       closedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     const [afterTrim1] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
@@ -574,8 +572,7 @@ describe('TRIM → CLOSE lifecycle', () => {
       exitPrice: 110,
       closeQuantity: 3,
       closedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     const [afterTrim2] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
@@ -609,8 +606,7 @@ describe('TRIM → CLOSE lifecycle', () => {
       exitPrice: 120,
       closeQuantity: 5,
       closedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     expect(trimResult).not.toBeNull();
@@ -645,8 +641,7 @@ describe('ADD → CLOSE lifecycle', () => {
       entryPrice: 120,
       quantity: 5,
       openedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     expect(addResult).not.toBeNull();
@@ -690,8 +685,7 @@ describe('ADD → CLOSE lifecycle', () => {
       entryPrice: 180,
       quantity: 6,
       openedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     const [afterAdd] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
@@ -726,8 +720,7 @@ describe('ADD → CLOSE lifecycle', () => {
       entryPrice: 110,
       quantity: 6,
       openedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     const [afterAdd] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);
@@ -743,8 +736,7 @@ describe('ADD → CLOSE lifecycle', () => {
       exitPrice: 120,
       closeQuantity: 4,
       closedAt: CLOCK_TIME.toISOString(),
-      backtestRunId: RUN_ID,
-      isBacktest: true,
+      channelId: btChannel(RUN_ID),
     });
 
     const [afterTrim] = await db.select().from(schema.trades).where(sql`id = ${tradeId}`);

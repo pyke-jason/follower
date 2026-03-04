@@ -26,15 +26,15 @@ import { createEmitter } from '../decisions/emitter.js';
 import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { toDateKeyET } from '../lib/et-date.js';
-import { isOpen, isClosed, notBacktest, forRun, forSymbol, forTrader, forStrategy } from '../trades/filters.js';
+import { isOpen, isClosed, forChannel, forSymbol, forTrader, forStrategy } from '../trades/filters.js';
+import { parseChannel } from '../lib/channel.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
 
 // ─── Stable primitives ──────────────────────────────
 
-export type TradeScope =
-  | { kind: 'live' }
-  | { kind: 'backtest'; backtestRunId: string };
+/** channelId string — e.g. 'live:U14368257', 'bt:<runId>', 'paper:DU12345'. */
+export type TradeScope = string;
 
 /** Ambient environment — everything that varies between live and backtest
  *  that isn't the broker or config. */
@@ -51,6 +51,8 @@ export type PipelineConfig = {
   /** If provided, used as starting equity. Otherwise looked up from dailyBalances table. */
   startingEquity?: number;
   manualTick?: boolean;
+  skipReconciliationCheck?: boolean;
+  requireExplicitTimestamps?: boolean;
 };
 
 // ─── Factory input/output ────────────────────────────
@@ -78,9 +80,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
   const { scope, clock } = env;
 
   // ── Scope filter (DB query scoping) ──
-  const scopeFilter = scope.kind === 'backtest'
-    ? forRun(scope.backtestRunId)
-    : notBacktest;
+  const scopeFilter = forChannel(scope);
 
   // ── getOpenPositions (derived from scope) ──
   const getOpenPositions = async (filters: PositionFilters = {}): Promise<Trade[]> => {
@@ -96,15 +96,9 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
 
   // ── Emitter scope helper ──
   const createScopedEmitter = (messageId: string, taskId?: string) =>
-    scope.kind === 'backtest'
-      ? createEmitter({ messageId, backtestRunId: scope.backtestRunId })
-      : createEmitter({ messageId, taskId });
+    createEmitter({ messageId, channelId: scope, taskId });
 
   // ── OrderManager ──
-  const callbackScope = scope.kind === 'backtest'
-    ? { backtestRunId: scope.backtestRunId }
-    : {};
-
   const orderManager = new OrderManager({
     broker,
     clock,
@@ -113,7 +107,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       pendingIntents,
       createScopedEmitter,
       clock,
-      scope: callbackScope,
+      scope: { channelId: scope },
       sendAlert: env.sendAlert as ((params: { title: string; message: string; severity: 'critical' | 'warning' }) => Promise<void>) | undefined,
     }),
   });
@@ -123,13 +117,8 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     getOpenTrades: getOpenPositions,
 
     getDailyClosedPnl: async () => {
-      const dateStr = scope.kind === 'backtest'
-        ? toDateKeyET(clock())
-        : undefined; // live uses date('now')
-
-      const dateCondition = scope.kind === 'backtest'
-        ? sql`closed_at LIKE ${dateStr + '%'}`
-        : sql`closed_at >= date('now')`;
+      const dateStr = toDateKeyET(clock());
+      const dateCondition = sql`closed_at LIKE ${dateStr + '%'}`;
 
       const result = await db.select({
         total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
@@ -150,16 +139,17 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       return balance.equity;
     },
 
-    getReconciliationAlertCount: async () => {
-      if (scope.kind === 'backtest') return 0;
-      const alerts = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(schema.reconciliationAlerts)
-        .where(and(
-          eq(schema.reconciliationAlerts.resolved, false),
-          eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
-        ));
-      return alerts[0]?.count ?? 0;
-    },
+    getReconciliationAlertCount: (config.skipReconciliationCheck ?? parseChannel(scope).mode === 'bt')
+      ? async () => 0
+      : async () => {
+          const alerts = await db.select({ count: sql<number>`COUNT(*)` })
+            .from(schema.reconciliationAlerts)
+            .where(and(
+              eq(schema.reconciliationAlerts.resolved, false),
+              eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
+            ));
+          return alerts[0]?.count ?? 0;
+        },
 
     getWorkingOrderExposure: () => orderManager.getExposure(),
   };
@@ -201,13 +191,9 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       : (input) => checkRiskLimits(input, riskDeps, config.riskConfig),
 
     recordTrade: (input) => {
-      const scopeFields = scope.kind === 'backtest'
-        ? { backtestRunId: scope.backtestRunId, isBacktest: true }
-        : { isBacktest: false };
-
       return recordTrade({
         ...input,
-        ...scopeFields,
+        channelId: scope,
         metadata: { ...input.metadata, agentModel },
       });
     },

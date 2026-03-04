@@ -5,7 +5,7 @@ import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
-import { isOpen, isClosed, forRun, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
+import { isOpen, isClosed, forChannel, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
 import type { Trade, TradeLeg } from '../db/schema.js';
@@ -156,7 +156,7 @@ export class SimBroker implements BrokerService {
   constructor(
     private marketData: BacktestPriceProvider,
     private clock: SimClock,
-    private backtestRunId: string,
+    private channelId: string,
     private fillModel: FillModel,
     private startingEquity: number,
   ) {}
@@ -476,7 +476,7 @@ export class SimBroker implements BrokerService {
   async markToMarket(at?: Date): Promise<Map<string, number>> {
     const time = at ?? this.clock.now();
     const markPrices = new Map<string, number>();
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     for (const t of openTrades) {
       try {
@@ -501,8 +501,7 @@ export class SimBroker implements BrokerService {
       action: 'CLOSE',
       exitPrice,
       closedAt,
-      backtestRunId: this.backtestRunId,
-      isBacktest: true,
+      channelId: this.channelId,
     });
 
     if (!result) throw new Error(`recordTrade CLOSE failed for trade ${tradeId}`);
@@ -516,7 +515,7 @@ export class SimBroker implements BrokerService {
   /** Sum unrealized PnL across all open positions using current marks. */
   async getUnrealizedPnl(at?: Date): Promise<number> {
     const time = at ?? this.clock.now();
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     let total = 0;
     for (const row of openTrades) {
@@ -545,7 +544,7 @@ export class SimBroker implements BrokerService {
    */
   async sweepExpired(currentDate: string): Promise<number> {
     let closedCount = 0;
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     for (const t of openTrades) {
       if (t.strategy === 'STOCK') continue;
@@ -605,7 +604,7 @@ export class SimBroker implements BrokerService {
     closeCallbacks?: Map<string, (price: number, at: Date) => Promise<void>>,
   ): Promise<AutoCloseResult[]> {
     const results: AutoCloseResult[] = [];
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     for (const t of openTrades) {
       if (t.strategy === 'STOCK') continue;
@@ -653,7 +652,7 @@ export class SimBroker implements BrokerService {
 
   /** Force-close all open positions at current mark prices. Throws if any position has no mark. */
   async forceCloseAll(at: Date): Promise<number> {
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
     let totalPnl = 0;
 
     for (const t of openTrades) {
@@ -670,13 +669,13 @@ export class SimBroker implements BrokerService {
   async getOpenPositionCount(): Promise<number> {
     const [row] = await db.select({ count: sql<number>`COUNT(*)` })
       .from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
+      .where(and(isOpen, forChannel(this.channelId)));
     return row?.count ?? 0;
   }
 
   /** Get all open trade rows for this run, optionally filtered by trader/symbol/strategy. */
   async getOpenTrades(filters?: PositionFilters): Promise<Trade[]> {
-    const conditions = [isOpen, forRun(this.backtestRunId)];
+    const conditions = [isOpen, forChannel(this.channelId)];
     if (filters?.trader) conditions.push(forTrader(filters.trader));
     if (filters?.symbol) conditions.push(forSymbol(filters.symbol));
     if (filters?.strategy) conditions.push(forStrategy(filters.strategy));
@@ -689,7 +688,7 @@ export class SimBroker implements BrokerService {
     const openTrades = await db
       .select()
       .from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
+      .where(and(isOpen, forChannel(this.channelId)));
 
     const positions: BrokerPosition[] = [];
     for (const row of openTrades) {
@@ -728,13 +727,13 @@ export class SimBroker implements BrokerService {
     const [realizedRow] = await db
       .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
       .from(schema.trades)
-      .where(and(isClosed, forRun(this.backtestRunId)));
+      .where(and(isClosed, forChannel(this.channelId)));
     const realizedPnl = roundCents(realizedRow?.total ?? 0);
     const tDb1 = Date.now();
 
     // Single pass over open trades: cash effects, margin, unrealized PnL, market value.
     const openTrades = await db.select().from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
+      .where(and(isOpen, forChannel(this.channelId)));
     const tDb2 = Date.now();
 
     let cash = this.startingEquity + realizedPnl;

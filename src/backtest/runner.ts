@@ -16,7 +16,7 @@ import { ShadowTracker } from './shadow-tracker.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { createEmitter } from '../decisions/emitter.js';
-import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
+import { isClosed, forChannel, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
 import { resetApiStats, getApiStats } from './databento-tape.js';
@@ -27,6 +27,7 @@ import { logExpiryNotices } from '../lib/expiry-warning.js';
 import type { Task } from '../db/schema.js';
 import { getLegs } from '../db/accessors.js';
 import { buildPipelineDeps } from '../pipeline/build-deps.js';
+import { btChannel } from '../lib/channel.js';
 
 const log = createLogger('Backtest');
 
@@ -161,7 +162,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     broker,
     env: {
       clock: () => clock.now(),
-      scope: { kind: 'backtest', backtestRunId: runId },
+      scope: btChannel(runId),
     },
     config: {
       riskConfig,
@@ -270,7 +271,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         const eodTime = marketCloseUTC(parseDateKey(lastMsgDay));
         const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
         await db.insert(schema.backtestMtmSnapshots).values({
-          backtestRunId: runId,
+          channelId: btChannel(runId),
           date: lastMsgDay,
           unrealizedPnl,
         });
@@ -290,8 +291,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
     if (i > 0 && i % 100 === 0) {
       const openTradesCount = await broker.getOpenPositionCount();
-      const closedTradesCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
-      const totalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
+      const closedTradesCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
+      const totalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
       log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
     }
 
@@ -356,7 +357,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       const eodTime = marketCloseUTC(parseDateKey(lastMsgDay));
       const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
       await db.insert(schema.backtestMtmSnapshots).values({
-        backtestRunId: runId,
+        channelId: btChannel(runId),
         date: lastMsgDay,
         unrealizedPnl,
       });
@@ -374,8 +375,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   priceProvider.printDataSummary();
 
   const finalOpenCount = await broker.getOpenPositionCount();
-  const finalClosedCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
-  const finalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
+  const finalClosedCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
+  const finalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
   const totalPnl = safeParseFloat(finalPnlResult[0].total);
   log.info(`Done. trades=${agentTrades} skipped=${skipped} open=${finalOpenCount} closed=${finalClosedCount[0].count} PnL=$${totalPnl.toFixed(2)}`);
   if (failedEntrySignals > 0 || failedExitSignals > 0) {
@@ -390,9 +391,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   }
   log.info(`Generating report...`);
 
-  const allTrades = await db.select().from(schema.trades).where(forRun(runId));
-  const allDecisions = await db.select().from(schema.runDecisions).where(eq(schema.runDecisions.backtestRunId, runId));
-  const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
+  const allTrades = await db.select().from(schema.trades).where(forChannel(btChannel(runId)));
+  const allDecisions = await db.select().from(schema.runDecisions).where(eq(schema.runDecisions.channelId, btChannel(runId)));
+  const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, btChannel(runId)));
 
   const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots: mtmRows, startingEquity, commissionSchedule: config.commissionSchedule });
 
@@ -419,10 +420,10 @@ async function backfillDecisionPnl(runId: string): Promise<void> {
     SET pnl = (
       SELECT CAST(SUM(CAST(t.pnl AS REAL)) AS TEXT) FROM trades t
       WHERE t.source_message_id = run_decisions.message_id
-        AND t.backtest_run_id = ${runId}
+        AND t.channel_id = ${btChannel(runId)}
         AND t.pnl IS NOT NULL
     )
-    WHERE backtest_run_id = ${runId}
+    WHERE channel_id = ${btChannel(runId)}
       AND outcome = 'EXECUTE'
   `);
 }
@@ -475,7 +476,7 @@ async function processMessage(
     getOpenPositions: btCtx.getOpenPositions,
     llm: btCtx.agentProvider,
     pipeline: btCtx.pipelineDeps,
-    scope: { kind: 'backtest', backtestRunId: btCtx.runId },
+    scope: btChannel(btCtx.runId),
     agentIdentity: btCtx.agentIdentity,
     classifySkip: (result) => {
       const isUnfollowed = shadows.isUnfollowedExit(
@@ -542,7 +543,7 @@ async function processMessage(
 async function emitAutoCloseDecisions(results: AutoCloseResult[], runId: string): Promise<void> {
   for (const ac of results) {
     if (!ac.sourceMessageId) continue;
-    const emitter = createEmitter({ messageId: ac.sourceMessageId, backtestRunId: runId });
+    const emitter = createEmitter({ messageId: ac.sourceMessageId, channelId: btChannel(runId) });
     await emitter.emit('AUTO_CLOSE', {
       exitPrice: ac.exitPrice,
       closeAt: ac.closeAt.toISOString(),

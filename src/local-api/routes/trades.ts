@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { BrokerService } from '../../broker/interface.js';
 import { recordTrade } from '../../trades/record-trade.js';
 
-export function createTradesRouter(broker: BrokerService) {
+export function createTradesRouter(broker: BrokerService, channelId: string) {
   const app = new Hono();
 
   app.post('/force-exit', async (c) => {
@@ -38,6 +38,7 @@ export function createTradesRouter(broker: BrokerService) {
       trader: body.trader,
       exitPrice: orderResult.filledPrice ?? 0,
       closedAt: new Date().toISOString(),
+      channelId,
       metadata: {
         forceExit: true,
         forceExitOrderId: orderResult.orderId,

@@ -2,6 +2,7 @@
 
 import { db, schema } from '@/lib/db';
 import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, RunDecision } from '@src/db/schema';
+import { btChannel } from '@src/lib/channel';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import {
@@ -106,7 +107,7 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
       : Promise.resolve([]),
     trade.sourceMessageId
       ? getRunDecisionForTask(trade.sourceMessageId, {
-          backtestRunId: runId,
+          channelId: runId ? btChannel(runId) : undefined,
           taskId: !runId && trade.taskId ? trade.taskId : undefined,
         })
       : Promise.resolve(null),

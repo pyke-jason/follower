@@ -9,7 +9,7 @@ paths: src/live/**, src/broker/tradestation/**
 Live task processing loop. Polls DB for pending tasks, executes through the shared pipeline.
 
 Uses `buildPipelineDeps()` from `src/pipeline/build-deps.ts` with:
-- `scope: { kind: 'live' }`
+- `scope: liveChannel(accountId)` — e.g. `'live:U14368257'`
 - `sendAlert: sendSystemAlert`
 - Risk limits always enforced (no `disableRiskLimits`)
 
@@ -23,11 +23,11 @@ For live scope, `processTask` wraps the pipeline to inject `task.id`:
 
 This ensures fill callbacks (which fire asynchronously) carry the taskId of the task that placed the order, not whatever task happens to be running at fill time.
 
-Backtest uses the pipeline as-is — `backtestRunId` is baked immutably at factory construction.
+Backtest uses the pipeline as-is — `channelId` is baked immutably at factory construction via `btChannel(runId)`.
 
 ## Positions
 
-Both live and backtest positions come from the `trades` table — same query, different scope filter (`notBacktest` vs `forRun(runId)`). The `buildPipelineDeps()` factory derives the filter from `env.scope`.
+Both live and backtest positions come from the `trades` table — same query, different scope filter (`forChannel(channelId)`). The `buildPipelineDeps()` factory derives the filter from `env.scope`.
 
 ## Risk Defaults
 

@@ -52,24 +52,20 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     .set({ modelProvider: env.agentIdentity.provider, modelName: env.agentIdentity.model })
     .where(eq(schema.tasks.id, task.id));
 
-  // For live scope, wrap pipeline to inject taskId per-task.
-  // Backtest scope is immutable (backtestRunId baked at construction) — no wrapping needed.
-  const pipeline = env.scope.kind === 'live'
-    ? {
-        ...env.pipeline,
-        recordTrade: (input: Parameters<ResolvedPipelineDeps['recordTrade']>[0]) =>
-          env.pipeline.recordTrade({ ...input, taskId: task.id }),
-        onPending: (orderId: string, ctx: Parameters<ResolvedPipelineDeps['onPending']>[1]) =>
-          env.pipeline.onPending(orderId, { ...ctx, taskId: task.id }),
-      }
-    : env.pipeline;
+  // Always wrap pipeline to inject taskId per-task.
+  const pipeline = {
+    ...env.pipeline,
+    recordTrade: (input: Parameters<ResolvedPipelineDeps['recordTrade']>[0]) =>
+      env.pipeline.recordTrade({ ...input, taskId: task.id }),
+    onPending: (orderId: string, ctx: Parameters<ResolvedPipelineDeps['onPending']>[1]) =>
+      env.pipeline.onPending(orderId, { ...ctx, taskId: task.id }),
+  };
 
   // Derive emitter from scope
   const emitter = createEmitter({
     messageId,
-    ...(env.scope.kind === 'live'
-      ? { taskId: task.id }
-      : { backtestRunId: env.scope.backtestRunId }),
+    channelId: env.scope,
+    taskId: task.id,
   });
 
   // Derive position lookup from getOpenPositions + context.author

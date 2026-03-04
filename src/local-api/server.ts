@@ -5,9 +5,11 @@ import { eq, and, lt, inArray } from 'drizzle-orm';
 import backtests from './routes/backtests.js';
 import logs from './routes/logs.js';
 import { createTradesRouter } from './routes/trades.js';
-import { liveService } from '../broker/tradestation/index.js';
+import { selectBroker } from '../broker/select.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
+
+const { broker: liveService, channelId: liveChannelId } = selectBroker();
 
 const app = new Hono();
 
@@ -15,7 +17,7 @@ app.use('*', cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }
 
 app.route('/backtests', backtests);
 app.route('/logs', logs);
-app.route('/trades', createTradesRouter(liveService));
+app.route('/trades', createTradesRouter(liveService, liveChannelId));
 
 app.get('/health', (c) => c.json({ ok: true }));
 

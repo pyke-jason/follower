@@ -59,7 +59,7 @@ export type ResolvedPipelineDeps = {
     trader: string;
     action?: string;
   }) => Promise<RiskCheckResult>;
-  recordTrade: (input: RecordTradeInput) => Promise<RecordTradeResult | null>;
+  recordTrade: (input: Omit<RecordTradeInput, 'channelId'>) => Promise<RecordTradeResult | null>;
   onPending: (orderId: string, context: ResolvedPendingContext) => void;
 };
 

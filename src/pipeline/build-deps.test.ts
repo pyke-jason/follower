@@ -36,6 +36,7 @@ import { buildPipelineDeps } from './build-deps.js';
 import type { BrokerService } from '../broker/interface.js';
 import type { AccountBalance, OrderResult, Quote, BrokerPosition } from '../broker/types.js';
 import { CREATE_TRADES_SQL, CREATE_TRADE_EVENTS_SQL } from '../backtest/test-fixtures.js';
+import { btChannel, liveChannel } from '../lib/channel.js';
 
 // Additional table DDL for tables the factory queries
 const CREATE_RECON_ALERTS_SQL = sql`
@@ -67,7 +68,7 @@ const CREATE_ORPHAN_FILLS_SQL = sql`
     raw_order TEXT,
     detected_at TEXT NOT NULL,
     task_id TEXT,
-    backtest_run_id TEXT
+    channel_id TEXT
   )
 `;
 
@@ -75,7 +76,7 @@ const CREATE_RUN_DECISIONS_SQL = sql`
   CREATE TABLE IF NOT EXISTS run_decisions (
     id TEXT PRIMARY KEY,
     message_id TEXT NOT NULL,
-    backtest_run_id TEXT,
+    channel_id TEXT,
     task_id TEXT,
     event TEXT NOT NULL,
     signal_index INTEGER,
@@ -146,7 +147,7 @@ beforeEach(async () => {
 async function insertTrade(overrides: Record<string, unknown> = {}) {
   const id = crypto.randomUUID();
   await db.run(sql`
-    INSERT INTO trades (id, trader, symbol, direction, strategy, status, entry_price, quantity, legs, is_backtest, backtest_run_id, opened_at, pnl, closed_at, metadata)
+    INSERT INTO trades (id, trader, symbol, direction, strategy, status, entry_price, quantity, legs, channel_id, opened_at, pnl, closed_at, metadata)
     VALUES (
       ${overrides.id ?? id},
       ${overrides.trader ?? 'alice'},
@@ -157,8 +158,7 @@ async function insertTrade(overrides: Record<string, unknown> = {}) {
       ${overrides.entryPrice ?? '5.00'},
       ${overrides.quantity ?? 1},
       ${overrides.legs ?? '[]'},
-      ${overrides.isBacktest ?? 0},
-      ${overrides.backtestRunId ?? null},
+      ${overrides.channelId ?? 'live:test-account'},
       ${overrides.openedAt ?? new Date().toISOString()},
       ${overrides.pnl ?? null},
       ${overrides.closedAt ?? null},
@@ -175,18 +175,18 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'backtest', backtestRunId: 'run-1' } },
+      env: { clock: () => new Date(), scope: 'bt:run-1' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
     // Insert trades: one scoped to run-1, one scoped to run-2, one live
-    await insertTrade({ backtestRunId: 'run-1', isBacktest: 1 });
-    await insertTrade({ backtestRunId: 'run-2', isBacktest: 1 });
-    await insertTrade({ isBacktest: 0 });
+    await insertTrade({ channelId: 'bt:run-1' });
+    await insertTrade({ channelId: 'bt:run-2' });
+    await insertTrade({});
 
     const positions = await bundle.getOpenPositions();
     expect(positions).toHaveLength(1);
-    expect(positions[0].backtestRunId).toBe('run-1');
+    expect(positions[0].channelId).toBe('bt:run-1');
 
     bundle.destroy();
   });
@@ -195,25 +195,25 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'live' } },
+      env: { clock: () => new Date(), scope: 'live:test-account' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
-    await insertTrade({ isBacktest: 0 });
-    await insertTrade({ backtestRunId: 'run-1', isBacktest: 1 });
+    await insertTrade({});
+    await insertTrade({ channelId: 'bt:run-1' });
 
     const positions = await bundle.getOpenPositions();
     expect(positions).toHaveLength(1);
-    expect(positions[0].isBacktest).toBe(false);
+    expect(positions[0].channelId).toBe('live:test-account');
 
     bundle.destroy();
   });
 
-  test('recordTrade: backtest scope sets backtestRunId and isBacktest', async () => {
+  test('recordTrade: backtest scope sets channelId', async () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'backtest', backtestRunId: 'run-1' } },
+      env: { clock: () => new Date(), scope: 'bt:run-1' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'anthropic', model: 'claude-4' } },
     });
 
@@ -230,8 +230,7 @@ describe('buildPipelineDeps', () => {
 
     expect(result).not.toBeNull();
     const trade = result!.trade;
-    expect(trade.backtestRunId).toBe('run-1');
-    expect(trade.isBacktest).toBe(true);
+    expect(trade.channelId).toBe('bt:run-1');
     // agentModel in metadata
     const metadata = typeof trade.metadata === 'string' ? JSON.parse(trade.metadata) : trade.metadata;
     expect(metadata.agentModel).toBe('anthropic:claude-4');
@@ -239,11 +238,11 @@ describe('buildPipelineDeps', () => {
     bundle.destroy();
   });
 
-  test('recordTrade: live scope sets isBacktest=false (taskId injected by processTask, not factory)', async () => {
+  test('recordTrade: live scope sets channelId (taskId injected by processTask, not factory)', async () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'live' } },
+      env: { clock: () => new Date(), scope: 'live:test-account' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'xai', model: 'grok' } },
     });
 
@@ -262,7 +261,7 @@ describe('buildPipelineDeps', () => {
     const trade = result!.trade;
     // Factory-level live recordTrade does NOT inject taskId — that's processTask's job
     expect(trade.taskId).toBeNull();
-    expect(trade.isBacktest).toBe(false);
+    expect(trade.channelId).toBe('live:test-account');
     const metadata = typeof trade.metadata === 'string' ? JSON.parse(trade.metadata) : trade.metadata;
     expect(metadata.agentModel).toBe('xai:grok');
 
@@ -273,7 +272,7 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'backtest', backtestRunId: 'run-1' } },
+      env: { clock: () => new Date(), scope: 'bt:run-1' },
       config: {
         riskConfig: { maxOnSymbol: 1, maxTotalPositions: 1, maxDrawdownPct: 1, maxNotionalMultiplier: 0.01 },
         agentIdentity: { provider: 'test', model: 'test' },
@@ -293,7 +292,7 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'live' } },
+      env: { clock: () => new Date(), scope: 'live:test-account' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
@@ -312,7 +311,7 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'live' } },
+      env: { clock: () => new Date(), scope: 'live:test-account' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
@@ -329,7 +328,7 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'backtest', backtestRunId: 'run-1' } },
+      env: { clock: () => new Date(), scope: 'bt:run-1' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
@@ -349,7 +348,7 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker();
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'live' } },
+      env: { clock: () => new Date(), scope: 'live:test-account' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
@@ -372,7 +371,7 @@ describe('buildPipelineDeps', () => {
     const fixedTime = new Date('2026-03-01T15:00:00Z'); // 10am ET
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => fixedTime, scope: { kind: 'backtest', backtestRunId: 'run-1' } },
+      env: { clock: () => fixedTime, scope: 'bt:run-1' },
       config: {
         riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 },
         agentIdentity: { provider: 'test', model: 'test' },
@@ -381,7 +380,7 @@ describe('buildPipelineDeps', () => {
     });
 
     // Insert a losing trade closed "today" (2026-03-01 in ET)
-    await insertTrade({ backtestRunId: 'run-1', isBacktest: 1, status: 'CLOSED', pnl: '-3000', closedAt: '2026-03-01T14:30:00Z' });
+    await insertTrade({ channelId: 'bt:run-1', status: 'CLOSED', pnl: '-3000', closedAt: '2026-03-01T14:30:00Z' });
 
     const result = await bundle.pipelineDeps.checkRiskLimits({
       symbol: 'SPY', strategy: 'CALL', trader: 'alice',
@@ -398,7 +397,7 @@ describe('buildPipelineDeps', () => {
     const broker = createMockBroker(100_000);
     const bundle = buildPipelineDeps({
       broker,
-      env: { clock: () => new Date(), scope: { kind: 'live' } },
+      env: { clock: () => new Date(), scope: 'live:test-account' },
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 

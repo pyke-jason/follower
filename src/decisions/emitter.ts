@@ -27,7 +27,7 @@ export type SignalEventEmitter = {
 
 export function createEmitter(scope: {
   messageId: string;
-  backtestRunId?: string;
+  channelId?: string;
   taskId?: string;
 }): SignalEventEmitter {
   const startMs = Date.now();
@@ -35,7 +35,7 @@ export function createEmitter(scope: {
     emit: async (event, payload, opts) => {
       await db.insert(schema.runDecisions).values({
         messageId: scope.messageId,
-        backtestRunId: scope.backtestRunId ?? null,
+        channelId: scope.channelId ?? null,
         taskId: scope.taskId ?? null,
         event,
         signalIndex: opts?.signalIndex ?? null,

@@ -24,7 +24,7 @@ export type CallbackDeps = {
   createScopedEmitter: (messageId: string, taskId?: string) => SignalEventEmitter;
   clock: () => Date;
   /** Scoping fields written to orphan_fills for attribution. */
-  scope: { taskId?: string; backtestRunId?: string };
+  scope: { taskId?: string; channelId?: string };
   /** Optional operational alerting (live sends Pushover/Discord, backtest omits). */
   sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' }) => Promise<void>;
 };

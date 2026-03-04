@@ -2,13 +2,12 @@ import { loadSecrets } from './lib/secrets/index.js';
 await loadSecrets();
 
 import { startIngestion, closeBrowser } from './ingestion/ingest.js';
-import { startTaskRunner, stopTaskRunner, awaitCurrentTask, destroyOrderManager } from './live/runner.js';
+import { startTaskRunner, stopTaskRunner, awaitCurrentTask, destroyOrderManager, liveService, liveChannelId } from './live/runner.js';
 import { createTaskFromMessage } from './live/factory.js';
 import { classifyMessage } from './parsing/classify.js';
 import { db, schema } from './db/client.js';
 import { eq } from 'drizzle-orm';
 import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
-import { liveService } from './broker/tradestation/index.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
@@ -41,11 +40,11 @@ async function main() {
   }
 
   // Start reconciliation scheduler
-  reconScheduler = new ReconciliationScheduler(liveService);
+  reconScheduler = new ReconciliationScheduler(liveService, liveChannelId);
   reconScheduler.start();
 
   // Start fill sweep (enriches trades with broker fill data)
-  fillSweep = new FillSweep(liveService);
+  fillSweep = new FillSweep(liveService, liveChannelId);
   fillSweep.start();
 
   // Start the task runner (polls for pending tasks)
