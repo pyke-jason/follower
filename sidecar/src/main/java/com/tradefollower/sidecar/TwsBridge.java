@@ -26,7 +26,9 @@ public class TwsBridge extends DefaultEWrapper {
     static final long REQUEST_TIMEOUT_SECONDS = 5;
 
     // Informational codes — log at debug, don't push to WS
-    private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2158);
+    // 10089/10091: "market data requires subscription" — benign when delayed data (type=3) is active
+    // 10167: "Displaying delayed market data" — confirms delayed ticks will follow
+    private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2107, 2158, 10089, 10091, 10167);
     // Connection codes — trigger reconnect + WS event
     private static final Set<Integer> CONNECTION_CODES = Set.of(1100, 1101, 1102, 504);
     // Order error codes — push WS event
@@ -351,6 +353,12 @@ public class TwsBridge extends DefaultEWrapper {
         log.info("Connected to IB Gateway (serverVersion={}, nextValidId={})", serverVersion, orderId);
         wsHandler.broadcastConnected();
         startHeartbeat();
+
+        // Enable delayed market data for paper trading (no real-time subscription needed)
+        if (port == 4002) {
+            log.info("Paper mode (port 4002) — requesting delayed market data (type=3)");
+            client.reqMarketDataType(3);
+        }
         if (reaperTask != null) reaperTask.cancel(false);
         reaperTask = reaper.scheduleAtFixedRate(this::evictStaleEntries, 30, 30, TimeUnit.MINUTES);
     }
@@ -413,8 +421,8 @@ public class TwsBridge extends DefaultEWrapper {
             wsHandler.broadcastError(errorCode, errorMsg, id);
         }
 
-        // Fail pending request if there is one
-        failRequest(id, new RuntimeException("TWS error " + errorCode + ": " + errorMsg));
+        // Fail pending request with typed exception for proper HTTP status mapping
+        failRequest(id, new TwsException(errorCode, "TWS error " + errorCode + ": " + errorMsg));
     }
 
     @Override
@@ -441,7 +449,7 @@ public class TwsBridge extends DefaultEWrapper {
     public void contractDetailsEnd(int reqId) {
         CompletableFuture<Object> future = pendingRequests.get(reqId);
         if (future != null && !future.isDone()) {
-            failRequest(reqId, new RuntimeException("No contract found"));
+            failRequest(reqId, new TwsException(200, "No contract found"));
         }
     }
 
@@ -452,11 +460,12 @@ public class TwsBridge extends DefaultEWrapper {
         Map<String, Object> acc = tickAccumulators.get(tickerId);
         if (acc == null) return;
         // field: 1=bid, 2=ask, 4=last, 9=close
+        // Delayed equivalents: 66=bid, 67=ask, 68=last, 72=close
         switch (field) {
-            case 1 -> acc.put("bid", price);
-            case 2 -> acc.put("ask", price);
-            case 4 -> acc.put("last", price);
-            case 9 -> acc.put("close", price);
+            case 1, 66 -> acc.put("bid", price);
+            case 2, 67 -> acc.put("ask", price);
+            case 4, 68 -> acc.put("last", price);
+            case 9, 72 -> acc.put("close", price);
         }
     }
 
@@ -464,8 +473,8 @@ public class TwsBridge extends DefaultEWrapper {
     public void tickSize(int tickerId, int field, Decimal size) {
         Map<String, Object> acc = tickAccumulators.get(tickerId);
         if (acc == null) return;
-        // field: 8=volume
-        if (field == 8) acc.put("volume", size.longValue());
+        // field: 8=volume, 74=delayed volume
+        if (field == 8 || field == 74) acc.put("volume", size.longValue());
     }
 
     @Override

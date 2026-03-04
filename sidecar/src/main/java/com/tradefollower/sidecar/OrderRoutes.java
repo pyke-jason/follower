@@ -56,21 +56,28 @@ public class OrderRoutes {
         } catch (TimeoutException e) {
             ctx.json(Map.of("orderId", orderId, "status", "PendingSubmit"));
         } catch (Exception e) {
-            String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            ctx.status(400).json(Map.of("error", msg, "orderId", orderId));
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            String msg = cause.getMessage();
+            if (cause instanceof TwsException twsErr) {
+                int status = twsErr.isNoSecurityDef() ? 422
+                           : twsErr.isValidationError() ? 400
+                           : twsErr.isOrderRejected() ? 400
+                           : 500;
+                ctx.status(status).json(Map.of("error", msg, "orderId", orderId, "twsCode", twsErr.getErrorCode()));
+            } else {
+                ctx.status(500).json(Map.of("error", msg, "orderId", orderId));
+            }
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void placeSingle(Context ctx) {
-        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        var body = ctx.bodyAsClass(RequestBodies.PlaceSingleBody.class);
 
-        String clientOrderRef = (String) body.get("clientOrderRef");
-        if (clientOrderRef != null) {
+        if (body.clientOrderRef() != null) {
             evictStaleRefs();
-            IdempotencyEntry existing = recentOrders.get(clientOrderRef);
+            IdempotencyEntry existing = recentOrders.get(body.clientOrderRef());
             if (existing != null) {
-                log.info("AUDIT idempotent-hit clientOrderRef={} existingOrderId={}", clientOrderRef, existing.orderId());
+                log.info("AUDIT idempotent-hit clientOrderRef={} existingOrderId={}", body.clientOrderRef(), existing.orderId());
                 Map<String, Object> status = bridge.getOrderStatus(existing.orderId());
                 ctx.json(status != null ? status : Map.of("orderId", existing.orderId(), "status", "PendingSubmit"));
                 return;
@@ -78,46 +85,44 @@ public class OrderRoutes {
         }
 
         Contract contract = new Contract();
-        contract.conid(((Number) body.get("conId")).intValue());
+        contract.conid(body.conId());
         contract.exchange("SMART");
 
         Order order = new Order();
-        order.action((String) body.get("action"));
-        order.orderType((String) body.getOrDefault("orderType", "LMT"));
-        order.totalQuantity(Decimal.get(((Number) body.get("quantity")).longValue()));
-        order.tif((String) body.getOrDefault("tif", "GTC"));
+        order.action(body.action());
+        order.orderType(body.orderType());
+        order.totalQuantity(Decimal.get(body.quantity()));
+        order.tif(body.tif());
 
-        if (body.containsKey("limitPrice")) {
-            order.lmtPrice(roundToOptionTick(((Number) body.get("limitPrice")).doubleValue()));
+        if (body.limitPrice() != null) {
+            order.lmtPrice(roundToOptionTick(body.limitPrice()));
         }
 
         int orderId = bridge.getNextReqId();
 
-        if (clientOrderRef != null) {
-            recentOrders.put(clientOrderRef, new IdempotencyEntry(orderId, System.currentTimeMillis()));
-            order.orderRef(clientOrderRef);
+        if (body.clientOrderRef() != null) {
+            recentOrders.put(body.clientOrderRef(), new IdempotencyEntry(orderId, System.currentTimeMillis()));
+            order.orderRef(body.clientOrderRef());
         }
 
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
         log.info("AUDIT placeOrder orderId={} conId={} action={} qty={} orderType={} limitPrice={} tif={} clientOrderRef={}",
-                orderId, contract.conid(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), clientOrderRef);
+                orderId, contract.conid(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), body.clientOrderRef());
 
         bridge.getClient().placeOrder(orderId, contract, order);
         bridge.storeOrder(orderId, contract, order);
         awaitAndRespond(ctx, future, orderId);
     }
 
-    @SuppressWarnings("unchecked")
     private void placeCombo(Context ctx) {
-        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        var body = ctx.bodyAsClass(RequestBodies.PlaceComboBody.class);
 
-        String clientOrderRef = (String) body.get("clientOrderRef");
-        if (clientOrderRef != null) {
+        if (body.clientOrderRef() != null) {
             evictStaleRefs();
-            IdempotencyEntry existing = recentOrders.get(clientOrderRef);
+            IdempotencyEntry existing = recentOrders.get(body.clientOrderRef());
             if (existing != null) {
-                log.info("AUDIT idempotent-hit clientOrderRef={} existingOrderId={}", clientOrderRef, existing.orderId());
+                log.info("AUDIT idempotent-hit clientOrderRef={} existingOrderId={}", body.clientOrderRef(), existing.orderId());
                 Map<String, Object> status = bridge.getOrderStatus(existing.orderId());
                 ctx.json(status != null ? status : Map.of("orderId", existing.orderId(), "status", "PendingSubmit"));
                 return;
@@ -126,31 +131,30 @@ public class OrderRoutes {
 
         // Build BAG contract with ComboLegs
         Contract contract = new Contract();
-        contract.symbol((String) body.get("symbol"));
+        contract.symbol(body.symbol());
         contract.secType("BAG");
         contract.exchange("SMART");
         contract.currency("USD");
 
-        List<Map<String, Object>> legDefs = (List<Map<String, Object>>) body.get("legs");
         List<ComboLeg> comboLegs = new ArrayList<>();
-        for (Map<String, Object> legDef : legDefs) {
+        for (var legDef : body.legs()) {
             ComboLeg leg = new ComboLeg();
-            leg.conid(((Number) legDef.get("conId")).intValue());
-            leg.ratio(((Number) legDef.getOrDefault("ratio", 1)).intValue());
-            leg.action((String) legDef.get("action"));
-            leg.exchange((String) legDef.getOrDefault("exchange", "SMART"));
+            leg.conid(legDef.conId());
+            leg.ratio(legDef.ratio());
+            leg.action(legDef.action());
+            leg.exchange(legDef.exchange());
             comboLegs.add(leg);
         }
         contract.comboLegs(comboLegs);
 
         Order order = new Order();
-        order.action((String) body.get("action"));
-        order.orderType((String) body.getOrDefault("orderType", "LMT"));
-        order.totalQuantity(Decimal.get(((Number) body.get("quantity")).longValue()));
-        order.tif((String) body.getOrDefault("tif", "GTC"));
+        order.action(body.action());
+        order.orderType(body.orderType());
+        order.totalQuantity(Decimal.get(body.quantity()));
+        order.tif(body.tif());
 
-        if (body.containsKey("limitPrice")) {
-            order.lmtPrice(roundToOptionTick(((Number) body.get("limitPrice")).doubleValue()));
+        if (body.limitPrice() != null) {
+            order.lmtPrice(roundToOptionTick(body.limitPrice()));
         }
 
         // CRITICAL: NonGuaranteed=1 is REQUIRED for SMART-routed combo orders
@@ -160,15 +164,15 @@ public class OrderRoutes {
 
         int orderId = bridge.getNextReqId();
 
-        if (clientOrderRef != null) {
-            recentOrders.put(clientOrderRef, new IdempotencyEntry(orderId, System.currentTimeMillis()));
-            order.orderRef(clientOrderRef);
+        if (body.clientOrderRef() != null) {
+            recentOrders.put(body.clientOrderRef(), new IdempotencyEntry(orderId, System.currentTimeMillis()));
+            order.orderRef(body.clientOrderRef());
         }
 
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
         log.info("AUDIT placeOrder orderId={} symbol={} action={} qty={} orderType={} limitPrice={} tif={} legs={} clientOrderRef={}",
-                orderId, contract.symbol(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), comboLegs.size(), clientOrderRef);
+                orderId, contract.symbol(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), comboLegs.size(), body.clientOrderRef());
 
         bridge.getClient().placeOrder(orderId, contract, order);
         bridge.storeOrder(orderId, contract, order);
@@ -185,17 +189,11 @@ public class OrderRoutes {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void modify(Context ctx) {
         int orderId = Integer.parseInt(ctx.pathParam("orderId"));
-        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        var body = ctx.bodyAsClass(RequestBodies.ModifyBody.class);
 
-        if (!body.containsKey("limitPrice")) {
-            ctx.status(400).json(Map.of("error", "limitPrice is required", "orderId", orderId));
-            return;
-        }
-
-        double newPrice = roundToOptionTick(((Number) body.get("limitPrice")).doubleValue());
+        double newPrice = roundToOptionTick(body.limitPrice());
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
         TwsBridge.StoredOrder stored = bridge.modifyOrderPrice(orderId, newPrice);
@@ -212,6 +210,11 @@ public class OrderRoutes {
 
     private void cancel(Context ctx) {
         int orderId = Integer.parseInt(ctx.pathParam("orderId"));
+
+        if (bridge.getStoredOrder(orderId) == null && bridge.getOrderStatus(orderId) == null) {
+            ctx.status(404).json(Map.of("error", "Order not found", "orderId", orderId));
+            return;
+        }
 
         log.info("AUDIT cancelOrder orderId={}", orderId);
 

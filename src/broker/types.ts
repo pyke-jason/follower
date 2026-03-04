@@ -90,6 +90,8 @@ export type AdjustmentRule = {
   stepAmount: number;      // dollar amount to adjust each step (always positive)
   intervalSec: number;     // seconds between adjustments
   maxSteps?: number;       // stop chasing after N adjustments
+  /** Worst acceptable chase price. BUY: ceiling (max willing to pay). SELL: floor (min willing to accept). */
+  chaseLimit?: number;
 };
 
 export type WorkingOrderParams = OrderParams & {

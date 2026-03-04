@@ -69,6 +69,7 @@ function ibkrClassify(err: unknown): ErrorCategory {
     const status = parseInt(httpMatch[1], 10);
     if (status === 503) return 'transient';
     if (status === 504) return 'transient';
+    if (status === 400 || status === 422) return 'permanent';
   }
 
   // Sidecar unreachable (fetch failed, ECONNREFUSED, etc.)
@@ -79,7 +80,7 @@ function ibkrClassify(err: unknown): ErrorCategory {
   if (twsMatch) {
     const code = parseInt(twsMatch[1], 10);
     if (code === 504 || code === 1100) return 'transient';
-    if (code === 110 || code === 201 || code === 460 || code === 422) return 'permanent';
+    if (code === 110 || code === 200 || code === 201 || code === 322 || code === 460 || code === 422) return 'permanent';
   }
 
   return classifyError(err);
@@ -112,13 +113,13 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
   switch (ibkrStatus) {
     case 'PreSubmitted':
     case 'Submitted':
+    case 'Inactive': // GTC orders outside RTH — not rejected, just waiting for market open
       return 'PENDING';
     case 'Filled':
       return 'FILLED';
     case 'Cancelled':
     case 'PendingCancel':
       return 'CANCELLED';
-    case 'Inactive':
     case 'ApiCancelled':
       return 'REJECTED';
     default:
@@ -230,7 +231,6 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
         orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
         quantity: params.legs[0].quantity,
         tif: 'GTC',
-        nonGuaranteed: true,
       };
       if (limitPrice != null) {
         comboBody.limitPrice = limitPrice;

@@ -21,6 +21,7 @@ const AdjustmentRuleSchema = z.object({
   stepAmount: z.number().positive(),
   intervalSec: z.number().positive(),
   maxSteps: z.number().int().nonnegative().optional(),
+  chaseLimit: z.number().positive().optional(),
 });
 
 // ── WorkingOrderParams ───────────────────────────────────────────────

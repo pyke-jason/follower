@@ -702,6 +702,137 @@ describe('OrderManager concurrent order properties', () => {
   });
 });
 
+describe('OrderManager chaseLimit properties', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  test('BUY chase never exceeds chaseLimit ceiling', () => {
+    fc.assert(
+      fc.asyncProperty(
+        fc.double({ min: 50, max: 500, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0.01, max: 1.0, noNaN: true, noDefaultInfinity: true }),
+        fc.integer({ min: 1, max: 30 }),
+        async (limitPrice, stepAmount, intervalSec) => {
+          const chaseLimit = roundCents(limitPrice * 1.20); // 20% ceiling
+          const { broker } = makeMockBroker();
+          const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
+
+          await mgr.submitOrder(makeLimitBuyParams({
+            limitPrice,
+            cancelAfterSec: 9999,
+            adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount, intervalSec, chaseLimit }],
+          }));
+
+          // Chase far enough to exceed the limit if it weren't clamped
+          for (let i = 1; i <= 50; i++) {
+            await mgr.tick(timeAfter(i * intervalSec));
+          }
+
+          const wo = mgr.getWorkingOrders()[0];
+          if (wo) {
+            expect(wo.currentLimitPrice).toBeLessThanOrEqual(chaseLimit);
+          }
+          mgr.destroy();
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  test('SELL chase never goes below chaseLimit floor', () => {
+    fc.assert(
+      fc.asyncProperty(
+        fc.double({ min: 50, max: 500, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0.01, max: 1.0, noNaN: true, noDefaultInfinity: true }),
+        fc.integer({ min: 1, max: 30 }),
+        async (limitPrice, stepAmount, intervalSec) => {
+          const chaseLimit = roundCents(limitPrice * 0.80); // 20% floor
+          const { broker } = makeMockBroker();
+          const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
+
+          await mgr.submitOrder(makeLimitSellParams({
+            limitPrice,
+            cancelAfterSec: 9999,
+            adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount, intervalSec, chaseLimit }],
+          }));
+
+          // Chase far enough to go below the floor if it weren't clamped
+          for (let i = 1; i <= 50; i++) {
+            await mgr.tick(timeAfter(i * intervalSec));
+          }
+
+          const wo = mgr.getWorkingOrders()[0];
+          if (wo) {
+            expect(wo.currentLimitPrice).toBeGreaterThanOrEqual(chaseLimit);
+          }
+          mgr.destroy();
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  test('BUY chaseLimit exactly reached — price stops at ceiling', async () => {
+    const { broker } = makeMockBroker();
+    const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
+
+    await mgr.submitOrder(makeLimitBuyParams({
+      limitPrice: 100,
+      cancelAfterSec: 9999,
+      adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount: 0.50, intervalSec: 5, chaseLimit: 101.00 }],
+    }));
+
+    // After 2 steps: 100 + 1.00 = 101.00 (hits ceiling)
+    await mgr.tick(timeAfter(10));
+    const wo1 = mgr.getWorkingOrders()[0]!;
+    expect(wo1.currentLimitPrice).toBe(101.00);
+
+    // After many more steps: still clamped at 101.00
+    await mgr.tick(timeAfter(100));
+    const wo2 = mgr.getWorkingOrders()[0]!;
+    expect(wo2.currentLimitPrice).toBe(101.00);
+    mgr.destroy();
+  });
+
+  test('SELL chaseLimit exactly reached — price stops at floor', async () => {
+    const { broker } = makeMockBroker();
+    const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
+
+    await mgr.submitOrder(makeLimitSellParams({
+      limitPrice: 100,
+      cancelAfterSec: 9999,
+      adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount: 0.50, intervalSec: 5, chaseLimit: 99.00 }],
+    }));
+
+    // After 2 steps: 100 - 1.00 = 99.00 (hits floor)
+    await mgr.tick(timeAfter(10));
+    const wo1 = mgr.getWorkingOrders()[0]!;
+    expect(wo1.currentLimitPrice).toBe(99.00);
+
+    // After many more steps: still clamped at 99.00
+    await mgr.tick(timeAfter(100));
+    const wo2 = mgr.getWorkingOrders()[0]!;
+    expect(wo2.currentLimitPrice).toBe(99.00);
+    mgr.destroy();
+  });
+
+  test('no chaseLimit — chase proceeds without boundary', async () => {
+    const { broker } = makeMockBroker();
+    const mgr = new OrderManager({ broker, clock: () => T0, ...noopCallbacks, manualTick: true });
+
+    await mgr.submitOrder(makeLimitBuyParams({
+      limitPrice: 100,
+      cancelAfterSec: 9999,
+      adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount: 5.00, intervalSec: 5 }],
+    }));
+
+    // After 20 steps without chaseLimit: 100 + 100 = 200
+    await mgr.tick(timeAfter(100));
+    const wo = mgr.getWorkingOrders()[0]!;
+    expect(wo.currentLimitPrice).toBe(200);
+    mgr.destroy();
+  });
+});
+
 describe('OrderManager guard rails — no silent fallbacks', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
@@ -733,6 +864,138 @@ describe('OrderManager guard rails — no silent fallbacks', () => {
         cancelAfterSec: 60,
       }),
     ).rejects.toThrow('limitPrice');
+    mgr.destroy();
+  });
+});
+
+describe('OrderManager fill-on-modify (chase-fill interleave)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  test('onFill fires when modifyOrder returns FILLED during price chase', async () => {
+    let fillFired = false;
+    let fillPrice: number | undefined;
+    const fillTs = timeAfter(10).toISOString();
+
+    const { broker } = makeMockBroker();
+    // Override modifyOrder to return FILLED
+    (broker.modifyOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: 'order-1',
+      status: 'FILLED' as OrderStatus,
+      filledPrice: 100.50,
+      fillTimestamp: fillTs,
+    });
+
+    const mgr = new OrderManager({
+      broker,
+      clock: () => T0,
+      ...noopCallbacks,
+      onFill: (order) => { fillFired = true; fillPrice = order.filledPrice; },
+      manualTick: true,
+    });
+
+    await mgr.submitOrder(makeLimitBuyParams({
+      limitPrice: 99,
+      cancelAfterSec: 9999,
+      adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount: 0.10, intervalSec: 5 }],
+    }));
+
+    // Tick at interval — chase fires, modifyOrder returns FILLED
+    await mgr.tick(timeAfter(5));
+
+    expect(fillFired).toBe(true);
+    expect(fillPrice).toBe(100.50);
+    expect(mgr.getWorkingOrders()).toHaveLength(0);
+    mgr.destroy();
+  });
+
+  test('order is removed from working set after fill-on-modify', async () => {
+    const fillTs = timeAfter(10).toISOString();
+    const { broker } = makeMockBroker();
+    (broker.modifyOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: 'order-1',
+      status: 'FILLED' as OrderStatus,
+      filledPrice: 50,
+      fillTimestamp: fillTs,
+    });
+
+    const mgr = new OrderManager({
+      broker,
+      clock: () => T0,
+      ...noopCallbacks,
+      manualTick: true,
+    });
+
+    await mgr.submitOrder(makeLimitBuyParams({
+      limitPrice: 49,
+      cancelAfterSec: 9999,
+      adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount: 0.05, intervalSec: 3 }],
+    }));
+
+    expect(mgr.getWorkingOrders()).toHaveLength(1);
+    await mgr.tick(timeAfter(3));
+    expect(mgr.getWorkingOrders()).toHaveLength(0);
+    mgr.destroy();
+  });
+
+  test('modifyOrder returning OPEN continues chase normally', async () => {
+    const { broker } = makeMockBroker();
+    // Default modifyOrder returns OPEN — no special override needed
+
+    const mgr = new OrderManager({
+      broker,
+      clock: () => T0,
+      ...noopCallbacks,
+      manualTick: true,
+    });
+
+    await mgr.submitOrder(makeLimitBuyParams({
+      limitPrice: 100,
+      cancelAfterSec: 9999,
+      adjustmentRules: [{ type: 'PRICE_CHASE', stepAmount: 0.10, intervalSec: 5 }],
+    }));
+
+    await mgr.tick(timeAfter(5));
+    const orders = mgr.getWorkingOrders();
+    expect(orders).toHaveLength(1);
+    expect(orders[0].adjustmentCount).toBe(1);
+    expect(orders[0].currentLimitPrice).toBe(roundCents(100.10));
+    mgr.destroy();
+  });
+
+  test('fill-on-modify breaks out of adjustmentRules loop (no further chases)', async () => {
+    const fillTs = timeAfter(10).toISOString();
+    const adjustCalls: number[] = [];
+    const { broker } = makeMockBroker();
+    (broker.modifyOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: 'order-1',
+      status: 'FILLED' as OrderStatus,
+      filledPrice: 100.50,
+      fillTimestamp: fillTs,
+    });
+
+    const mgr = new OrderManager({
+      broker,
+      clock: () => T0,
+      ...noopCallbacks,
+      onAdjust: (_order, _from, _to, step) => { adjustCalls.push(step); },
+      manualTick: true,
+    });
+
+    // Two adjustment rules — second should NOT fire if first causes a fill
+    await mgr.submitOrder(makeLimitBuyParams({
+      limitPrice: 99,
+      cancelAfterSec: 9999,
+      adjustmentRules: [
+        { type: 'PRICE_CHASE', stepAmount: 0.10, intervalSec: 5 },
+        { type: 'PRICE_CHASE', stepAmount: 0.20, intervalSec: 5 },
+      ],
+    }));
+
+    await mgr.tick(timeAfter(5));
+
+    // Only one adjust callback should fire (from first rule before fill)
+    expect(adjustCalls).toHaveLength(1);
+    expect(mgr.getWorkingOrders()).toHaveLength(0);
     mgr.destroy();
   });
 });

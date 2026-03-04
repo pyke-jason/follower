@@ -616,3 +616,108 @@ describe('working order margin encumbrance', () => {
     );
   });
 });
+
+// ── 7. modifyOrder fill re-evaluation ─────────────────────────────────
+
+describe('SimBroker.modifyOrder fill re-evaluation', () => {
+  test('SELL limit that crosses bid on modify fills immediately', () => {
+    fc.assert(
+      fc.asyncProperty(
+        arbSpread.filter((s) => s.ask - s.bid > 0.20 && s.ask < 400),
+        async (spread) => {
+          const quote = makeQuote(spread.bid, spread.ask);
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats', TEST_EQUITY);
+
+          // Place SELL limit above ask — stays OPEN
+          const limitPrice = spread.ask + 1;
+          const order = await broker.placeOrder(makeStockSellOrder({ orderType: 'LIMIT', limitPrice }));
+          expect(order.status).toBe('OPEN');
+
+          // Modify down below bid — should fill
+          const newLimit = spread.bid - 0.01;
+          const mod = await broker.modifyOrder(order.orderId, newLimit);
+          expect(mod.status).toBe('FILLED');
+          expect(mod.filledPrice).toBeDefined();
+          expect(mod.fillTimestamp).toBeDefined();
+          // Price improvement: fill at max(limit, bid) = bid (since limit < bid)
+          expect(mod.filledPrice).toBe(roundCents(Math.max(newLimit, spread.bid)));
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  test('BUY limit that crosses ask on modify fills immediately', () => {
+    fc.assert(
+      fc.asyncProperty(
+        arbSpread.filter((s) => s.bid > 1 && s.ask - s.bid > 0.20),
+        async (spread) => {
+          const quote = makeQuote(spread.bid, spread.ask);
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats', TEST_EQUITY);
+
+          // Place BUY limit below bid — stays OPEN
+          const limitPrice = spread.bid - 1;
+          const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
+          expect(order.status).toBe('OPEN');
+
+          // Modify up above ask — should fill
+          const newLimit = spread.ask + 0.01;
+          const mod = await broker.modifyOrder(order.orderId, newLimit);
+          expect(mod.status).toBe('FILLED');
+          expect(mod.filledPrice).toBeDefined();
+          expect(mod.fillTimestamp).toBeDefined();
+          // Price improvement: fill at min(limit, ask) = ask (since limit > ask)
+          expect(mod.filledPrice).toBe(roundCents(Math.min(newLimit, spread.ask)));
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  test('modify that does NOT cross market stays OPEN', () => {
+    fc.assert(
+      fc.asyncProperty(
+        arbSpread.filter((s) => s.bid > 2 && s.ask - s.bid > 0.20),
+        async (spread) => {
+          const quote = makeQuote(spread.bid, spread.ask);
+          const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats', TEST_EQUITY);
+
+          // Place BUY limit well below bid — stays OPEN
+          const limitPrice = spread.bid - 2;
+          const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice }));
+          expect(order.status).toBe('OPEN');
+
+          // Modify slightly up but still below ask — stays OPEN
+          const newLimit = spread.bid - 1;
+          const mod = await broker.modifyOrder(order.orderId, newLimit);
+          expect(mod.status).toBe('OPEN');
+
+          // Order is still tracked
+          const status = await broker.getOrderStatus(order.orderId);
+          expect(status.status).toBe('OPEN');
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  test('filled order is removed from working orders after modify-fill', async () => {
+    const quote = makeQuote(100, 101);
+    const broker = new SimBroker(stubMarketDataFromQuote(quote), new SimClock(), 'test-run', 'orats', TEST_EQUITY);
+
+    // Place BUY limit below bid
+    const order = await broker.placeOrder(makeStockBuyOrder({ orderType: 'LIMIT', limitPrice: 98 }));
+    expect(order.status).toBe('OPEN');
+    expect(broker.getWorkingSymbols()).toContain('SPY');
+
+    // Modify above ask — fills and removes from working
+    const mod = await broker.modifyOrder(order.orderId, 102);
+    expect(mod.status).toBe('FILLED');
+    expect(broker.getWorkingSymbols()).not.toContain('SPY');
+
+    // getOrderStatus still returns FILLED
+    const status = await broker.getOrderStatus(order.orderId);
+    expect(status.status).toBe('FILLED');
+    expect(status.filledPrice).toBe(mod.filledPrice);
+  });
+});

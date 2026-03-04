@@ -395,6 +395,23 @@ export class SimBroker implements BrokerService {
       return { orderId, status: entry.status };
     }
     entry.currentLimitPrice = newLimitPrice;
+
+    // Re-evaluate fill — mirrors real broker behavior where a modify that
+    // crosses the market fills immediately instead of waiting for next tick.
+    const now = this.clock.now();
+    try {
+      const quote = entry.isOptionOrder
+        ? await this.getOptionSpreadQuote(entry.params, now, EXECUTION_LOOKBACK_MINS)
+        : await this.marketData.getQuote(entry.params.symbol, now);
+      if (shouldFillLimit(isBuyOrder(entry.params), newLimitPrice, quote.bid, quote.ask)) {
+        const fill = this.fillWorkingOrder(orderId, entry, entry.params.symbol, now, quote.bid, quote.ask);
+        this.balanceCache = null;
+        return { orderId, status: 'FILLED', filledPrice: fill.price, fillTimestamp: fill.timestamp.toISOString() };
+      }
+    } catch {
+      // No market data at current time — leave working
+    }
+
     return { orderId, status: 'OPEN' };
   }
 

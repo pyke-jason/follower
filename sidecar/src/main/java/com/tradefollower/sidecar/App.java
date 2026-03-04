@@ -49,6 +49,32 @@ public class App {
 
         app.before("/api/*", ctx -> Guards.requireReady(ctx, bridge));
 
+        // Global error handlers
+        app.exception(com.fasterxml.jackson.core.JsonParseException.class, (e, ctx) ->
+                ctx.status(400).json(Map.of("error", "Invalid JSON body")));
+        app.exception(com.fasterxml.jackson.databind.JsonMappingException.class, (e, ctx) -> {
+            String detail = e.getOriginalMessage();
+            ctx.status(400).json(Map.of("error", detail != null ? detail : "Invalid request body"));
+        });
+
+        // TwsException thrown directly (defensive)
+        app.exception(TwsException.class, (e, ctx) -> {
+            int status = e.isNoSecurityDef() ? 422 : e.isValidationError() ? 400 : 500;
+            ctx.status(status).json(Map.of("error", e.getMessage(), "twsCode", e.getErrorCode()));
+        });
+
+        // ExecutionException wrapping TwsException (from CompletableFuture.get())
+        app.exception(java.util.concurrent.ExecutionException.class, (e, ctx) -> {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            if (cause instanceof TwsException twsErr) {
+                int status = twsErr.isNoSecurityDef() ? 422 : twsErr.isValidationError() ? 400 : 500;
+                ctx.status(status).json(Map.of("error", twsErr.getMessage(), "twsCode", twsErr.getErrorCode()));
+            } else {
+                String msg = cause.getMessage();
+                ctx.status(500).json(Map.of("error", msg != null ? msg : "Internal error"));
+            }
+        });
+
         // Register route groups
         new ContractRoutes(bridge).register(app);
         new MarketDataRoutes(bridge).register(app);

@@ -29,24 +29,18 @@ public class ContractRoutes {
         app.post("/api/contracts/resolve", this::resolve);
     }
 
-    private void resolve(Context ctx) {
-        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+    private void resolve(Context ctx) throws Exception {
+        var body = ctx.bodyAsClass(RequestBodies.ResolveContractBody.class);
 
         Contract contract = new Contract();
-        contract.symbol((String) body.getOrDefault("symbol", ""));
-        contract.secType((String) body.getOrDefault("secType", "STK"));
-        contract.exchange((String) body.getOrDefault("exchange", "SMART"));
-        contract.currency((String) body.getOrDefault("currency", "USD"));
+        contract.symbol(body.symbolOrDefault());
+        contract.secType(body.secTypeOrDefault());
+        contract.exchange(body.exchangeOrDefault());
+        contract.currency(body.currencyOrDefault());
 
-        if (body.containsKey("expiry")) {
-            contract.lastTradeDateOrContractMonth((String) body.get("expiry"));
-        }
-        if (body.containsKey("strike")) {
-            contract.strike(((Number) body.get("strike")).doubleValue());
-        }
-        if (body.containsKey("right")) {
-            contract.right((String) body.get("right"));
-        }
+        if (body.expiry() != null) contract.lastTradeDateOrContractMonth(body.expiry());
+        if (body.strike() != null) contract.strike(body.strike());
+        if (body.right() != null) contract.right(body.right());
 
         int reqId = bridge.getNextReqId();
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(reqId);
@@ -57,17 +51,10 @@ public class ContractRoutes {
         bridge.getClient().reqContractDetails(reqId, contract);
 
         try {
-            Map<String, Object> result = bridge.awaitRequest(future);
-            ctx.json(result);
+            ctx.json(bridge.awaitRequest(future));
         } catch (TimeoutException e) {
             ctx.status(504).json(Map.of("error", "Contract resolution timed out"));
-        } catch (Exception e) {
-            String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            if (msg != null && msg.contains("No contract found")) {
-                ctx.status(422).json(Map.of("error", "No contract found", "detail", msg));
-            } else {
-                ctx.status(500).json(Map.of("error", msg));
-            }
         }
+        // TwsException (including "No contract found") propagates to global handler → 422/400/500
     }
 }

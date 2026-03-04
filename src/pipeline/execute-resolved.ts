@@ -23,6 +23,7 @@ import { formatOccSymbol } from '../lib/occ-symbology.js';
 import { getSpreadMidpoint } from './spread-midpoint.js';
 import { QuoteResolutionError } from '../lib/errors.js';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
+import { roundCents } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('ExecuteResolved');
@@ -77,23 +78,66 @@ export type ExecuteEnv = {
   emitter: SignalEventEmitter;
 };
 
-// ─── Per-strategy order defaults ────────────────────
+// ─── Chase profiles ─────────────────────────────────
 
-const ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; cancelAfterSec: number }> = {
-  STOCK: { stepAmount: 0.03, intervalSec: 5, cancelAfterSec: 60 },
-  CALL:  { stepAmount: 0.10, intervalSec: 5, cancelAfterSec: 60 },
-  PUT:   { stepAmount: 0.10, intervalSec: 5, cancelAfterSec: 60 },
-  CDS:   { stepAmount: 0.05, intervalSec: 5, cancelAfterSec: 60 },
-  PDS:   { stepAmount: 0.05, intervalSec: 5, cancelAfterSec: 60 },
+/** @internal Exported for testing. */
+export type ChaseProfile = {
+  pctPerStep: number;        // % of signal price per step
+  minStep: number;           // absolute minimum step ($)
+  maxStep: number;           // absolute maximum step ($)
+  maxSlippagePct: number;    // max deviation from signal price (0-1)
+  intervalSec: number;
+  cancelAfterSec?: number;
 };
 
-const CLOSE_ORDER_DEFAULTS: Record<string, { stepAmount: number; intervalSec: number; maxSteps: number }> = {
-  STOCK: { stepAmount: 0.05, intervalSec: 5, maxSteps: 24 },
-  CALL:  { stepAmount: 0.15, intervalSec: 5, maxSteps: 20 },
-  PUT:   { stepAmount: 0.15, intervalSec: 5, maxSteps: 20 },
-  CDS:   { stepAmount: 0.10, intervalSec: 5, maxSteps: 20 },
-  PDS:   { stepAmount: 0.10, intervalSec: 5, maxSteps: 20 },
+/** @internal Exported for testing. */
+export const CHASE_PROFILES = {
+  OPTION_OPEN_SELL:  { pctPerStep: 0.02, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.30, intervalSec: 5, cancelAfterSec: 45 },
+  OPTION_OPEN_BUY:   { pctPerStep: 0.04, minStep: 0.02, maxStep: 0.25, maxSlippagePct: 0.50, intervalSec: 5, cancelAfterSec: 60 },
+  OPTION_CLOSE:      { pctPerStep: 0.05, minStep: 0.02, maxStep: 0.30, maxSlippagePct: 0.80, intervalSec: 5 },
+  SPREAD_OPEN_SELL:  { pctPerStep: 0.02, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.30, intervalSec: 5, cancelAfterSec: 45 },
+  SPREAD_OPEN_BUY:   { pctPerStep: 0.03, minStep: 0.01, maxStep: 0.15, maxSlippagePct: 0.50, intervalSec: 5, cancelAfterSec: 60 },
+  SPREAD_CLOSE:      { pctPerStep: 0.04, minStep: 0.01, maxStep: 0.20, maxSlippagePct: 0.85, intervalSec: 5 },
+  STOCK_OPEN:        { pctPerStep: 0,    minStep: 0.03, maxStep: 0.03, maxSlippagePct: 0.05, intervalSec: 5, cancelAfterSec: 60 },
+  STOCK_CLOSE:       { pctPerStep: 0,    minStep: 0.05, maxStep: 0.05, maxSlippagePct: 0.10, intervalSec: 5 },
+} as const satisfies Record<string, ChaseProfile>;
+
+type ResolvedChaseParams = {
+  stepAmount: number;
+  chaseLimit: number;
+  intervalSec: number;
+  maxSteps: number;
+  cancelAfterSec?: number;
 };
+
+/** @internal Exported for testing. */
+export function resolveChaseParams(profile: ChaseProfile, signalPrice: number, isBuy: boolean): ResolvedChaseParams {
+  const rawStep = signalPrice * profile.pctPerStep;
+  const stepAmount = roundCents(Math.min(profile.maxStep, Math.max(profile.minStep, rawStep)));
+  const chaseLimit = roundCents(
+    isBuy
+      ? signalPrice * (1 + profile.maxSlippagePct)
+      : Math.max(0.01, signalPrice * (1 - profile.maxSlippagePct))
+  );
+  const chaseRange = Math.abs(chaseLimit - signalPrice);
+  const maxSteps = Math.max(1, Math.floor(chaseRange / stepAmount));
+  return { stepAmount, chaseLimit, intervalSec: profile.intervalSec, maxSteps, cancelAfterSec: profile.cancelAfterSec };
+}
+
+/** @internal Exported for testing. */
+export function selectChaseProfile(strategy: Strategy, isPositionReducing: boolean, isBuy: boolean): ChaseProfile {
+  if (strategy === 'STOCK') {
+    return isPositionReducing ? CHASE_PROFILES.STOCK_CLOSE : CHASE_PROFILES.STOCK_OPEN;
+  }
+  const isSpread = strategy === 'CDS' || strategy === 'PDS' || strategy === 'PCS';
+  if (isPositionReducing) {
+    return isSpread ? CHASE_PROFILES.SPREAD_CLOSE : CHASE_PROFILES.OPTION_CLOSE;
+  }
+  if (isSpread) {
+    return isBuy ? CHASE_PROFILES.SPREAD_OPEN_BUY : CHASE_PROFILES.SPREAD_OPEN_SELL;
+  }
+  return isBuy ? CHASE_PROFILES.OPTION_OPEN_BUY : CHASE_PROFILES.OPTION_OPEN_SELL;
+}
 
 // ─── Derive metadata from legs ──────────────────────
 
@@ -187,29 +231,29 @@ function buildOrderParams(
   limitPrice: number | undefined,
   isPositionReducing: boolean,
 ): WorkingOrderParams {
-  const defaultsMap = isPositionReducing ? CLOSE_ORDER_DEFAULTS : ORDER_DEFAULTS;
-  const defaults = defaultsMap[strategy];
-  if (!defaults) {
-    throw new Error(`No order defaults for strategy=${strategy} — add it to ${isPositionReducing ? 'CLOSE_' : ''}ORDER_DEFAULTS`);
-  }
-
-  const adjustmentRules: AdjustmentRule[] = limitPrice
-    ? [{
-      type: 'PRICE_CHASE',
-      stepAmount: defaults.stepAmount,
-      intervalSec: defaults.intervalSec,
-      ...('maxSteps' in defaults ? { maxSteps: defaults.maxSteps } : {}),
-    }]
-    : [];
-
   // Safety guard: options have massive bid-ask spreads ($1-3+). A MARKET order
   // would fill at the worst side, costing hundreds in avoidable slippage.
-  // If we reach here without a limitPrice on a non-stock order, something upstream
-  // (e.g. getSpreadMidpoint) failed silently — fail loudly instead.
   if (strategy !== 'STOCK' && !limitPrice) {
     throw new Error(
       `MARKET orders on options are forbidden (strategy=${strategy}, symbol=${symbol}). limitPrice is required for all non-stock orders.`
     );
+  }
+
+  let adjustmentRules: AdjustmentRule[] | undefined;
+  let cancelAfterSec: number | undefined;
+
+  if (limitPrice) {
+    const isBuy = legs[0]?.action === 'BUY';
+    const profile = selectChaseProfile(strategy, isPositionReducing, isBuy);
+    const chase = resolveChaseParams(profile, limitPrice, isBuy);
+    adjustmentRules = [{
+      type: 'PRICE_CHASE',
+      stepAmount: chase.stepAmount,
+      intervalSec: chase.intervalSec,
+      maxSteps: chase.maxSteps,
+      chaseLimit: chase.chaseLimit,
+    }];
+    cancelAfterSec = chase.cancelAfterSec;
   }
 
   return {
@@ -219,10 +263,8 @@ function buildOrderParams(
     legs,
     orderType: limitPrice ? 'LIMIT' : 'MARKET',
     limitPrice,
-    adjustmentRules: adjustmentRules.length > 0 ? adjustmentRules : undefined,
-    cancelAfterSec: limitPrice && !isPositionReducing
-      ? ORDER_DEFAULTS[strategy]!.cancelAfterSec
-      : undefined,
+    adjustmentRules,
+    cancelAfterSec,
     isClosing: isPositionReducing,
   };
 }

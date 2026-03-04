@@ -28,30 +28,25 @@ public class MarketDataRoutes {
         app.post("/api/market-data/snapshot", this::snapshot);
     }
 
-    @SuppressWarnings("unchecked")
-    private void snapshot(Context ctx) {
-        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+    private void snapshot(Context ctx) throws Exception {
+        var body = ctx.bodyAsClass(RequestBodies.SnapshotBody.class);
 
         Contract contract = new Contract();
 
-        if (body.containsKey("conId")) {
-            contract.conid(((Number) body.get("conId")).intValue());
+        if (body.conId() != null) {
+            contract.conid(body.conId());
+            contract.secType(body.secTypeOrDefault(""));
             contract.exchange("SMART");
+            contract.currency("USD");
         } else {
-            contract.symbol((String) body.getOrDefault("symbol", ""));
-            contract.secType((String) body.getOrDefault("secType", "STK"));
-            contract.exchange((String) body.getOrDefault("exchange", "SMART"));
-            contract.currency((String) body.getOrDefault("currency", "USD"));
+            contract.symbol(body.symbolOrDefault());
+            contract.secType(body.secTypeOrDefault("STK"));
+            contract.exchange(body.exchangeOrDefault());
+            contract.currency(body.currencyOrDefault());
 
-            if (body.containsKey("expiry")) {
-                contract.lastTradeDateOrContractMonth((String) body.get("expiry"));
-            }
-            if (body.containsKey("strike")) {
-                contract.strike(((Number) body.get("strike")).doubleValue());
-            }
-            if (body.containsKey("right")) {
-                contract.right((String) body.get("right"));
-            }
+            if (body.expiry() != null) contract.lastTradeDateOrContractMonth(body.expiry());
+            if (body.strike() != null) contract.strike(body.strike());
+            if (body.right() != null) contract.right(body.right());
         }
 
         int reqId = bridge.getNextReqId();
@@ -64,14 +59,11 @@ public class MarketDataRoutes {
         bridge.getClient().reqMktData(reqId, contract, "", true, false, null);
 
         try {
-            Map<String, Object> result = bridge.awaitRequest(future);
-            ctx.json(result);
+            ctx.json(bridge.awaitRequest(future));
         } catch (TimeoutException e) {
             bridge.getClient().cancelMktData(reqId);
             ctx.status(504).json(Map.of("error", "Market data snapshot timed out"));
-        } catch (Exception e) {
-            String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            ctx.status(500).json(Map.of("error", msg));
         }
+        // Other exceptions (TwsException, etc.) propagate to global handler
     }
 }

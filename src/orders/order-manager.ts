@@ -157,18 +157,41 @@ export class OrderManager {
           }
           const isBuy = firstLeg.action === 'BUY';
           const totalMovement = stepsToApply * rule.stepAmount;
-          const newPrice = isBuy
+          let newPrice = isBuy
             ? order.currentLimitPrice + totalMovement
             : order.currentLimitPrice - totalMovement;
+
+          // Clamp to chaseLimit boundary
+          if (rule.chaseLimit != null) {
+            newPrice = isBuy
+              ? Math.min(newPrice, rule.chaseLimit)   // BUY: don't exceed ceiling
+              : Math.max(newPrice, rule.chaseLimit);   // SELL: don't go below floor
+          }
 
           const roundedPrice = roundCents(Math.max(0.01, newPrice));
           const oldPrice = order.currentLimitPrice;
           log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${oldPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
-          await this.broker.modifyOrder(orderId, roundedPrice);
+          const modResult = await this.broker.modifyOrder(orderId, roundedPrice);
           order.currentLimitPrice = roundedPrice;
           order.lastAdjustedAt = now;
           order.adjustmentCount += stepsToApply;
           await this.onAdjust(order, oldPrice, roundedPrice, order.adjustmentCount);
+
+          // Broker may fill immediately if the new limit crosses the market
+          if (modResult.status === 'FILLED' && modResult.filledPrice != null && modResult.fillTimestamp != null) {
+            order.status = 'FILLED';
+            order.filledPrice = modResult.filledPrice;
+            order.filledAt = new Date(modResult.fillTimestamp);
+            order.filledQuantity = modResult.filledQuantity;
+            order.commission = modResult.commission;
+            order.fillTimestamp = modResult.fillTimestamp;
+            order.legFills = modResult.legFills;
+            this.workingOrders.delete(orderId);
+            log.info(`Fill on modify: ${orderId} ${order.params.symbol} @ $${modResult.filledPrice}`);
+            await this.onFill(order as FilledWorkingOrder);
+            this.stopTimerIfEmpty();
+            break; // exit adjustmentRules loop
+          }
         }
       }
     }
