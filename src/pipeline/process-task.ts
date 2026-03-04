@@ -47,7 +47,20 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   const messageId = task.messageId;
   if (!messageId) throw new Error(`Task ${task.id} has no messageId`);
 
-  // Stamp model identity on the task row (no-op for backtest's synthetic tasks)
+  // Ensure task row exists (idempotent — live pre-creates, backtest does not)
+  await db.insert(schema.tasks).values({
+    id: task.id,
+    messageId: task.messageId,
+    taskType: task.taskType,
+    status: task.status,
+    assignee: task.assignee,
+    context: task.context,
+    createdAt: task.createdAt,
+    startedAt: task.startedAt,
+    channelId: env.scope,
+  }).onConflictDoNothing();
+
+  // Stamp model identity on the task row
   await db.update(schema.tasks)
     .set({ modelProvider: env.agentIdentity.provider, modelName: env.agentIdentity.model })
     .where(eq(schema.tasks.id, task.id));

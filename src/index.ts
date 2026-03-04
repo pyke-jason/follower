@@ -1,7 +1,7 @@
 import { loadSecrets } from './lib/secrets/index.js';
 await loadSecrets();
 
-import { startIngestion, closeBrowser } from './ingestion/ingest.js';
+import { startIngestion, stopIngestion, closeBrowser } from './ingestion/ingest.js';
 import { startTaskRunner, stopTaskRunner, awaitCurrentTask, destroyOrderManager, liveService, liveChannelId } from './live/runner.js';
 import { createTaskFromMessage } from './live/factory.js';
 import { classifyMessage } from './parsing/classify.js';
@@ -50,11 +50,11 @@ async function main() {
   // Start the task runner (polls for pending tasks)
   startTaskRunner();
 
-  // Start message ingestion (Playwright + SignalR)
+  // Start message ingestion (Playwright + SignalR) — self-supervising, fire-and-forget
   if (process.env.LIVE_INGESTION_ENABLED === '0') {
     console.log('[Ingest] Live ingestion disabled via LIVE_INGESTION_ENABLED=0, skipping browser launch');
   } else {
-    await startIngestion(async (msg) => {
+    startIngestion(async (msg) => {
       // After message is stored, try to create a task
       const stored = await db.select()
         .from(schema.messages)
@@ -77,6 +77,7 @@ async function main() {
 
 async function shutdown() {
   console.log('\nShutting down...');
+  stopIngestion();                // stops supervision loop + watchdog + auth monitor
   stopTaskRunner();               // sets running = false, stops polling
   stopHealthcheck();
 
@@ -158,7 +159,7 @@ if (flags['fetch-historical']) {
     console.log('  HISTORICAL FETCH');
     console.log('═'.repeat(60));
 
-    const page = await launchBrowser();
+    const { page } = await launchBrowser();
     if (getAuthState() !== 'authenticated') {
       console.log('[Historical] Not authenticated, attempting login...');
       const success = await attemptLogin();

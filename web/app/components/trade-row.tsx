@@ -111,13 +111,17 @@ export function TradeRow({
   onExpand?: () => void;
   isExpanded?: boolean;
 }) {
-  const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId))!;
+  const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId));
   const events = useTradesStore((s) => s.eventsByTradeId.get(tradeId)) ?? [];
   const cancelledClose = useTradesStore((s) => s.cancelledTradeIds.has(tradeId));
-  const hasUpdate = trade.status !== 'CLOSED' && useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
+  const hasSubsequentMessage = useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
   const runId = useTradesStore((s) => s.runId);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const startingEquity = useTradesStore((s) => s.startingEquity);
+
+  if (!trade) return null;
+
+  const hasUpdate = trade.status !== 'CLOSED' && hasSubsequentMessage;
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
   const pnl = grossPnl != null ? grossPnl - comm : null;

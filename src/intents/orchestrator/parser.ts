@@ -15,6 +15,9 @@ import type {
   ComplexityFlag,
 } from './types.js';
 
+// ── Symbol blacklist (hard skip — add tickers here to suppress all signals) ───
+const BLACKLISTED_SYMBOLS = new Set(['PLTR']);
+
 // ── Hard-skip patterns ────────────────────────────────────────────────────────
 
 const PAPER_TRADE_RE = /\bpaper\b/i;
@@ -670,6 +673,11 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   // ── Symbol ────────────────────────────────────────────────────────────────
 
   const symbol = symbols.length > 0 ? symbols[0] : null;
+
+  // ── Symbol blacklist ─────────────────────────────────────────────────────
+  if (symbol && BLACKLISTED_SYMBOLS.has(symbol)) {
+    return hardSkip(`blacklisted symbol: ${symbol}`, complexityFlags);
+  }
 
   // ── Lotto/Yolo flag (affects strategy, direction, expiry) ─────────────────
 

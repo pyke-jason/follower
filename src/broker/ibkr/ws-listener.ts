@@ -14,6 +14,7 @@ const log = createLogger('IBKR-WS');
 
 const SIDECAR_WS = process.env.IBKR_SIDECAR_WS ?? 'ws://localhost:8090/events';
 const RECONNECT_DELAY_MS = 5_000;
+const PING_INTERVAL_MS = 15_000; // keepalive ping every 15s
 const ESCALATION_THRESHOLD_MS = 300_000; // 5 minutes
 const ESCALATION_CHECK_MS = 60_000; // 1 minute
 
@@ -22,6 +23,7 @@ type ForceCheckFn = (orderId: number) => void;
 let ws: WebSocket | null = null;
 let shouldReconnect = true;
 let forceCheckCallback: ForceCheckFn | undefined;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
 
 // Sustained disconnect tracking
 let disconnectedAt: number | null = null;
@@ -89,6 +91,11 @@ function connect(): void {
 
   ws.on('open', () => {
     log.info('Sidecar WebSocket connected');
+    // Keepalive ping to prevent idle timeout
+    if (pingTimer) clearInterval(pingTimer);
+    pingTimer = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) ws.ping();
+    }, PING_INTERVAL_MS);
   });
 
   ws.on('message', (raw) => {
@@ -163,6 +170,7 @@ function connect(): void {
   ws.on('close', () => {
     log.info('Sidecar WebSocket closed');
     ws = null;
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     if (shouldReconnect) {
       setTimeout(connect, RECONNECT_DELAY_MS);
     }

@@ -438,9 +438,11 @@ type Stats = {
 
 // ── Adapter: HistoricalMessage → Task for processTask ───
 
-function taskFromMessage(msg: HistoricalMessage): Task {
+function taskFromMessage(msg: HistoricalMessage, channelId: string): Task {
+  const id = `${channelId}:${msg.id}`;
+  const ts = msg.timestamp.toISOString();
   return {
-    id: msg.id,
+    id,
     messageId: msg.id,
     taskType: 'REVIEW_MESSAGE',
     status: 'IN_PROGRESS',
@@ -452,12 +454,13 @@ function taskFromMessage(msg: HistoricalMessage): Task {
       badges: msg.badges,
     },
     result: null,
-    createdAt: msg.timestamp.toISOString(),
-    startedAt: msg.timestamp.toISOString(),
+    createdAt: ts,
+    startedAt: ts,
     completedAt: null,
     error: null,
     modelProvider: null,
     modelName: null,
+    channelId,
   } as Task;
 }
 
@@ -470,7 +473,7 @@ async function processMessage(
   stats: Stats,
   updateStats: (stats: Stats) => void,
 ): Promise<void> {
-  const task = taskFromMessage(msg);
+  const task = taskFromMessage(msg, btChannel(btCtx.runId));
 
   await processTaskShared(task, {
     getOpenPositions: btCtx.getOpenPositions,

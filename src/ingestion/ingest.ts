@@ -1,4 +1,4 @@
-import { launchBrowser, attemptLogin, waitForAuth, getAuthState, getPage, closeBrowser, startAuthMonitor, stopAuthMonitor } from './browser.js';
+import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor } from './browser.js';
 import { injectSignalRListener, type SignalRMessage } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
@@ -46,52 +46,108 @@ export function stopMessageWatchdog(): void {
   }
 }
 
-// ─── Ingestion ───────────────────────────────────────
+// ─── Supervision Loop ────────────────────────────────
 
-export async function startIngestion(onMessage?: (msg: SignalRMessage) => void): Promise<void> {
-  const page = await launchBrowser();
+const RETRY_DELAYS = [10_000, 20_000, 40_000, 60_000]; // cap at 60s
+let shouldRun = true;
 
-  // Handle auth
-  if (getAuthState() !== 'authenticated') {
-    console.log('[Ingest] Not authenticated, attempting login...');
-    const success = await attemptLogin();
-    if (!success) {
-      sendSystemAlert({
-        title: 'Auto-login failed',
-        message: 'Automatic login failed — waiting for manual login',
-        severity: 'critical',
+export function startIngestion(onMessage?: (msg: SignalRMessage) => void): void {
+  shouldRun = true;
+  superviseIngestion(onMessage).catch(err => {
+    console.error('[Ingest] Supervisor crashed unexpectedly:', err);
+  });
+}
+
+export function stopIngestion(): void {
+  shouldRun = false;
+  stopMessageWatchdog();
+  stopAuthMonitor();
+}
+
+async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void): Promise<void> {
+  let consecutiveFailures = 0;
+
+  while (shouldRun) {
+    try {
+      // Clean slate — close previous browser process before relaunching
+      await closeBrowser();
+      stopMessageWatchdog();
+      lastMessageReceivedAt = null;
+      watchdogAlertFired = false;
+
+      const { page, crashed } = await launchBrowser();
+
+      // Handle auth
+      if (getAuthState() !== 'authenticated') {
+        console.log('[Ingest] Not authenticated, attempting login...');
+        const success = await attemptLogin();
+        if (!success) {
+          sendSystemAlert({
+            title: 'Auto-login failed',
+            message: 'Automatic login failed — waiting for manual login',
+            severity: 'critical',
+          });
+          await waitForAuth();
+        }
+      }
+
+      // Wire up SignalR + monitors
+      await injectSignalRListener(page, async (msg) => {
+        lastMessageReceivedAt = new Date();
+        try {
+          await processMessage(msg);
+          onMessage?.(msg);
+        } catch (err) {
+          console.error('[Ingest] Error processing message:', err);
+          sendSystemAlert({
+            title: 'Ingestion error',
+            message: `Failed to process message from ${msg.User?.Name ?? 'unknown'}: ${err instanceof Error ? err.message : String(err)}`,
+            severity: 'critical',
+          });
+        }
       });
-      await waitForAuth();
+
+      startAuthMonitor();
+      startMessageWatchdog();
+      consecutiveFailures = 0;
+
+      sendSystemAlert({
+        title: 'Chat room connected',
+        message: 'Authenticated and listening for messages',
+        severity: 'info',
+      });
+
+      console.log('[Ingest] Listening for messages...');
+
+      // Park here until browser dies
+      await crashed;
+
+      console.log('[Ingest] Browser closed — will restart');
+      sendSystemAlert({
+        title: 'Browser closed',
+        message: 'Ingestion browser was closed. Restarting automatically.',
+        severity: 'warning',
+      });
+    } catch (err) {
+      consecutiveFailures++;
+      const delay = RETRY_DELAYS[Math.min(consecutiveFailures - 1, RETRY_DELAYS.length - 1)];
+
+      console.error(`[Ingest] Failed (attempt ${consecutiveFailures}):`, err);
+
+      if (consecutiveFailures >= 5) {
+        sendSystemAlert({
+          title: 'Ingestion repeatedly failing',
+          message: `${consecutiveFailures} consecutive failures. Last: ${err instanceof Error ? err.message : String(err)}`,
+          severity: 'critical',
+        });
+      }
+
+      await new Promise(r => setTimeout(r, delay));
     }
   }
-
-  sendSystemAlert({
-    title: 'Chat room connected',
-    message: 'Authenticated and listening for messages',
-    severity: 'info',
-  });
-
-  startAuthMonitor();
-  startMessageWatchdog();
-
-  // Inject SignalR listener
-  await injectSignalRListener(page, async (msg) => {
-    lastMessageReceivedAt = new Date();
-    try {
-      await processMessage(msg);
-      onMessage?.(msg);
-    } catch (err) {
-      console.error('[Ingest] Error processing message:', err);
-      sendSystemAlert({
-        title: 'Ingestion error',
-        message: `Failed to process message from ${msg.User?.Name ?? 'unknown'}: ${err instanceof Error ? err.message : String(err)}`,
-        severity: 'critical',
-      });
-    }
-  });
-
-  console.log('[Ingest] Listening for messages...');
 }
+
+// ─── Message Processing ──────────────────────────────
 
 async function processMessage(msg: SignalRMessage): Promise<void> {
   const classification = classifyMessage(msg.MessageText);

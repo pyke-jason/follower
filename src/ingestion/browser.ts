@@ -13,8 +13,25 @@ let page: Page | null = null;
 let authState: AuthState = 'unknown';
 let authMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
-export async function launchBrowser(): Promise<Page> {
-  if (page) return page;
+export function isPageAlive(): boolean {
+  return page !== null && !page.isClosed();
+}
+
+export function resetBrowser(): void {
+  stopAuthMonitor();
+  page = null;
+  browser = null;
+  authState = 'unknown';
+}
+
+export async function launchBrowser(): Promise<{ page: Page; crashed: Promise<void> }> {
+  if (page) {
+    // Already running — return existing page with a fresh crash promise
+    const crashed = new Promise<void>(resolve => {
+      page!.on('close', () => resolve());
+    });
+    return { page, crashed };
+  }
 
   console.log('[Browser] Launching...');
   console.log(`[Browser] User data dir: ${USER_DATA_DIR}`);
@@ -27,14 +44,19 @@ export async function launchBrowser(): Promise<Page> {
   browser = context.browser();
   page = context.pages()[0] || await context.newPage();
 
+  const crashed = new Promise<void>(resolve => {
+    page!.on('close', () => resolve());
+    context.on('close', () => resolve());
+  });
+
   console.log(`[Browser] Navigating to ${CHAT_URL}...`);
-  await page.goto(CHAT_URL, { waitUntil: 'networkidle' });
+  await page.goto(CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
   const landingUrl = page.url();
   console.log(`[Browser] Landed on: ${landingUrl}`);
 
   authState = await checkAuth(page);
-  return page;
+  return { page, crashed };
 }
 
 async function checkAuth(p: Page): Promise<AuthState> {
@@ -116,7 +138,8 @@ export async function waitForAuth(): Promise<void> {
 
   while (true) {
     await new Promise(r => setTimeout(r, 5000));
-    authState = await checkAuth(page!);
+    if (!page) throw new Error('Browser closed during auth wait');
+    authState = await checkAuth(page);
     if (authState === 'authenticated') return;
   }
 }
@@ -135,11 +158,12 @@ export function startAuthMonitor(intervalMs = 30_000): void {
 
   console.log(`[Browser] Starting auth monitor (every ${intervalMs / 1000}s)`);
   authMonitorTimer = setInterval(async () => {
-    if (!page) return;
+    if (!isPageAlive()) return;
+    const currentPage = page!; // safe: isPageAlive() guarantees non-null
 
     try {
       const previous = authState;
-      authState = await checkAuth(page);
+      authState = await checkAuth(currentPage);
 
       if (previous === 'authenticated' && authState === 'unauthenticated') {
         sendSystemAlert({
@@ -187,7 +211,11 @@ export function stopAuthMonitor(): void {
 export async function closeBrowser(): Promise<void> {
   stopAuthMonitor();
   if (browser) {
-    await browser.close();
+    try {
+      await browser.close();
+    } catch {
+      // Browser already closed externally — that's fine
+    }
     browser = null;
     page = null;
     authState = 'unknown';

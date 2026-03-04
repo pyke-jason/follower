@@ -6,6 +6,7 @@ import io.javalin.websocket.WsContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,6 +26,7 @@ public class WsHandler implements Consumer<WsConfig> {
     @Override
     public void accept(WsConfig ws) {
         ws.onConnect(ctx -> {
+            ctx.session.setIdleTimeout(Duration.ofHours(1));
             sessions.add(ctx);
             log.info("WebSocket client connected (total: {})", sessions.size());
         });
