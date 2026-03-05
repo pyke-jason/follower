@@ -42,6 +42,7 @@ export const ContractResolveResponseSchema = z.object({
   localSymbol: z.string(),
   multiplier: z.string(),
   exchange: z.string(),
+  minTick: z.number(),
 });
 
 export type ContractResolveResponse = z.infer<typeof ContractResolveResponseSchema>;

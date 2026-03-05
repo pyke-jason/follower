@@ -6,6 +6,7 @@
  */
 
 import type { LegAction, OptionType, OrderCategory } from '../../lib/enums.js';
+import type { TradeLeg } from '../../db/schema.js';
 import { createLogger } from '../../lib/logger.js';
 import { extractUnderlying } from '../../lib/occ-symbology.js';
 import { addTradeFlags } from '../../trades/trade-flags.js';
@@ -13,7 +14,7 @@ import type {
   ParseResult,
   OrchestratorContext,
   OrchestratorResult,
-  OpenPosition,
+  TradePosition,
   OptionLeg,
   StockLeg,
   Leg,
@@ -32,15 +33,15 @@ function reverseSide(side: LegAction): LegAction {
  * for closing and the given quantity.
  */
 function buildReversalLeg(
-  positionLeg: OpenPosition['legs'][number],
+  positionLeg: TradeLeg,
   underlyingSymbol: string,
   quantity: number,
 ): Leg {
-  if (positionLeg.type === 'stock') {
+  if (positionLeg.type === 'STOCK') {
     const leg: StockLeg = {
       type: 'stock',
       symbol: underlyingSymbol,
-      side: reverseSide(positionLeg.side),
+      side: reverseSide(positionLeg.action),
       quantity,
     };
     return leg;
@@ -50,9 +51,9 @@ function buildReversalLeg(
     type: 'option',
     symbol: extractUnderlying(positionLeg.symbol) || underlyingSymbol,
     expiry: positionLeg.expiry,
-    optionType: positionLeg.optionType ?? (positionLeg.symbol.includes('C') ? 'CALL' : 'PUT'),
+    optionType: positionLeg.type,
     strike: positionLeg.strike,
-    side: reverseSide(positionLeg.side),
+    side: reverseSide(positionLeg.action),
     quantity,
   };
   return leg;
@@ -72,9 +73,9 @@ function orderTypeFromLegs(legs: Leg[]): OrderCategory {
  * with a reason string for MANUAL_REVIEW cases.
  */
 function matchPosition(
-  positions: OpenPosition[],
+  positions: TradePosition[],
   parse: ParseResult,
-): { position: OpenPosition; strategyMismatch?: boolean } | { flagReason: string } {
+): { position: TradePosition; strategyMismatch?: boolean } | { flagReason: string } {
   const symbol = parse.symbol!; // caller ensures non-null
 
   // Primary filter: symbol match
@@ -130,9 +131,10 @@ function matchPosition(
 /**
  * Build reversal legs for a full CLOSE of the matched position.
  */
-function buildCloseLegs(position: OpenPosition, underlyingSymbol: string): Leg[] {
+function buildCloseLegs(position: TradePosition, underlyingSymbol: string): Leg[] {
+  const qty = position.quantity ?? 1;
   return position.legs.map((leg) =>
-    buildReversalLeg(leg, underlyingSymbol, position.quantity),
+    buildReversalLeg(leg, underlyingSymbol, qty),
   );
 }
 
@@ -140,14 +142,15 @@ function buildCloseLegs(position: OpenPosition, underlyingSymbol: string): Leg[]
  * Build reversal legs for a TRIM of the matched position.
  */
 function buildTrimLegs(
-  position: OpenPosition,
+  position: TradePosition,
   underlyingSymbol: string,
   exitPercent: number,
 ): Leg[] | { flagReason: string } {
-  const trimQuantity = Math.round(position.quantity * exitPercent);
+  const qty = position.quantity ?? 1;
+  const trimQuantity = Math.round(qty * exitPercent);
   if (trimQuantity < 1) {
     return {
-      flagReason: `trim quantity rounds to 0 (position qty=${position.quantity}, exitPercent=${exitPercent})`,
+      flagReason: `trim quantity rounds to 0 (position qty=${qty}, exitPercent=${exitPercent})`,
     };
   }
   return position.legs.map((leg) => buildReversalLeg(leg, underlyingSymbol, trimQuantity));
@@ -168,11 +171,12 @@ function buildTrimLegs(
  * wants to "hold straight [target]" which means keeping the long/bought side.
  */
 function buildLegOffLegs(
-  position: OpenPosition,
+  position: TradePosition,
   underlyingSymbol: string,
   targetStrategy: NonNullable<ParseResult['targetStrategy']>,
 ): Leg[] | { flagReason: string } {
   const legs = position.legs;
+  const qty = position.quantity ?? 1;
 
   if (legs.length < 2) {
     return { flagReason: `LEG_OFF requires a spread position but found ${legs.length} leg(s)` };
@@ -190,26 +194,26 @@ function buildLegOffLegs(
     // Find the leg to CLOSE: the leg that is NOT the keepOptionType
     // (i.e., the other option type, which is the one being legged off)
     const legToClose = legs.find(
-      (l) => l.type === 'option' && l.optionType !== keepOptionType,
+      (l) => l.type !== 'STOCK' && l.type !== keepOptionType,
     );
 
     if (legToClose) {
-      return [buildReversalLeg(legToClose, underlyingSymbol, position.quantity)];
+      return [buildReversalLeg(legToClose, underlyingSymbol, qty)];
     }
 
     // Same option type on both legs (e.g. a vertical spread) — close the SELL leg
-    const sellLeg = legs.find((l) => l.side === 'SELL');
+    const sellLeg = legs.find((l) => l.action === 'SELL');
     if (sellLeg) {
       log.debug(
         `LEG_OFF: both legs are ${keepOptionType}, closing SELL leg for ${underlyingSymbol}`,
       );
-      return [buildReversalLeg(sellLeg, underlyingSymbol, position.quantity)];
+      return [buildReversalLeg(sellLeg, underlyingSymbol, qty)];
     }
   } else {
     // targetStrategy is not CALL/PUT (e.g. CDS/PDS/STOCK) — fall back to closing SELL leg
-    const sellLeg = legs.find((l) => l.side === 'SELL');
+    const sellLeg = legs.find((l) => l.action === 'SELL');
     if (sellLeg) {
-      return [buildReversalLeg(sellLeg, underlyingSymbol, position.quantity)];
+      return [buildReversalLeg(sellLeg, underlyingSymbol, qty)];
     }
   }
 
@@ -247,7 +251,7 @@ export async function resolvePositionPath(
   const action = parse.action;
 
   // Step 2: Look up open positions
-  let positions: OpenPosition[];
+  let positions: TradePosition[];
   try {
     positions = await ctx.positions.getPositions(symbol);
   } catch (err) {

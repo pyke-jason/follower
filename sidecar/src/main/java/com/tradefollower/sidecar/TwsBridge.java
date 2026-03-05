@@ -440,7 +440,8 @@ public class TwsBridge extends DefaultEWrapper {
                 "conId", c.conid(),
                 "localSymbol", c.localSymbol() != null ? c.localSymbol() : "",
                 "multiplier", c.multiplier() != null ? c.multiplier() : "100",
-                "exchange", c.exchange() != null && !c.exchange().isEmpty() ? c.exchange() : "SMART"
+                "exchange", c.exchange() != null && !c.exchange().isEmpty() ? c.exchange() : "SMART",
+                "minTick", contractDetails.minTick()
         );
         completeRequest(reqId, result);
     }

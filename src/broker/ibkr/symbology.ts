@@ -41,20 +41,22 @@ export function occToIBKR(occSymbol: string): IbkrContractParams | null {
   };
 }
 
-/** In-memory cache: OCC symbol → conId. ConIds are stable and never change. */
-const conIdCache = new Map<string, number>();
+export type ResolvedContract = { conId: number; minTick: number };
+
+/** In-memory cache: OCC symbol → resolved contract. ConIds and minTick are stable per contract. */
+const contractCache = new Map<string, ResolvedContract>();
 
 /**
- * Resolve an OCC option symbol to an IBKR conId via the sidecar.
+ * Resolve an OCC option symbol to an IBKR conId + minTick via the sidecar.
  * Results are cached indefinitely (conIds don't change).
  */
-export async function resolveConId(occSymbol: string, sidecarUrl: string): Promise<number> {
-  const cached = conIdCache.get(occSymbol);
+export async function resolveContract(occSymbol: string, sidecarUrl: string): Promise<ResolvedContract> {
+  const cached = contractCache.get(occSymbol);
   if (cached !== undefined) return cached;
 
   const params = occToIBKR(occSymbol);
   if (!params) {
-    throw new Error(`resolveConId: not an OCC option symbol: "${occSymbol}"`);
+    throw new Error(`resolveContract: not an OCC option symbol: "${occSymbol}"`);
   }
 
   const res = await fetch(`${sidecarUrl}/contracts/resolve`, {
@@ -83,8 +85,9 @@ export async function resolveConId(occSymbol: string, sidecarUrl: string): Promi
     `POST /api/contracts/resolve (${occSymbol})`,
   );
 
-  conIdCache.set(occSymbol, contract.conId);
-  return contract.conId;
+  const resolved = { conId: contract.conId, minTick: contract.minTick };
+  contractCache.set(occSymbol, resolved);
+  return resolved;
 }
 
 /** Check if a symbol is an OCC option (re-export for convenience). */

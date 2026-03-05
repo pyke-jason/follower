@@ -5,11 +5,13 @@
  * via the TWS API. Implements the same BrokerService interface as TradeStation.
  */
 
+import type { OptionType } from '../../lib/enums.js';
 import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance } from '../types.js';
 import type { BrokerService } from '../interface.js';
 import type { ErrorCategory } from '../../lib/resilient.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '../../lib/resilient.js';
-import { resolveConId, isOccOptionSymbol, occToIBKR } from './symbology.js';
+import { QuoteUnavailableError } from '../../lib/errors.js';
+import { resolveContract, isOccOptionSymbol, occToIBKR } from './symbology.js';
 import { formatOccSymbol } from '../../lib/occ-symbology.js';
 import {
   QuoteResponseSchema,
@@ -22,29 +24,9 @@ import {
 
 const SIDECAR_URL = process.env.IBKR_SIDECAR_URL ?? 'http://localhost:8090/api';
 
-// ── Penny Pilot symbols (always use $0.01 tick increments) ──────────
-
-const PENNY_PILOT = new Set([
-  'AAPL', 'AMZN', 'BAC', 'C', 'CSCO', 'DIA', 'EEM', 'EWZ', 'F',
-  'GE', 'GLD', 'GOOG', 'GOOGL', 'HYG', 'INTC', 'IWM', 'JPM',
-  'META', 'MSFT', 'MU', 'NFLX', 'NVDA', 'PFE', 'QQQ', 'SLV',
-  'SPY', 'T', 'TLT', 'TSLA', 'USO', 'VXX', 'XLE', 'XLF', 'XLK',
-]);
-
-/**
- * Round a limit price to a valid IBKR option tick size.
- * - Below $3.00: $0.01 increments
- * - At/above $3.00: $0.05 increments
- * - Penny Pilot symbols: always $0.01
- */
-export function roundToOptionTick(underlying: string, price: number): number {
-  if (PENNY_PILOT.has(underlying)) {
-    return Math.round(price * 100) / 100;
-  }
-  if (price < 3) {
-    return Math.round(price * 100) / 100;
-  }
-  return Math.round(price * 20) / 20; // $0.05 increments
+/** Round a price to the nearest valid tick using the contract's actual minTick from IBKR. */
+export function roundToTick(price: number, minTick: number): number {
+  return Math.round(price / minTick) * minTick;
 }
 
 // ── IBKR Error Classification ───────────────────────────────────────
@@ -134,7 +116,7 @@ async function getQuote(symbol: string): Promise<Quote> {
     let body: Record<string, unknown>;
 
     if (isOccOptionSymbol(symbol)) {
-      const conId = await resolveConId(symbol, SIDECAR_URL);
+      const { conId } = await resolveContract(symbol, SIDECAR_URL);
       body = { conId };
     } else {
       body = { symbol, secType: 'STK' };
@@ -152,39 +134,45 @@ async function getQuote(symbol: string): Promise<Quote> {
       `POST /api/market-data/snapshot (${symbol})`,
     );
 
+    if (quote.bid == null || quote.ask == null) {
+      throw new QuoteUnavailableError(symbol, 'IBKR sidecar returned null bid/ask');
+    }
+
     return {
       symbol,
-      bid: quote.bid ?? 0,
-      ask: quote.ask ?? 0,
-      last: quote.last ?? quote.close ?? 0,
-      volume: quote.volume ?? 0,
+      bid: quote.bid,
+      ask: quote.ask,
+      last: quote.last ?? quote.close,
+      volume: quote.volume,
       timestamp: new Date().toISOString(),
     };
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
 }
 
 async function placeOrder(params: OrderParams): Promise<OrderResult> {
-  // Resolve conIds for all option legs
+  // Resolve conIds + minTick for all option legs
   const resolvedLegs = await Promise.all(
     params.legs.map(async (leg) => {
       if (leg.type === 'STOCK') {
-        return { leg, conId: undefined as number | undefined };
+        return { leg, conId: undefined as number | undefined, minTick: 0.01 };
       }
-      // Build OCC symbol for the leg to resolve conId
       const occSymbol = formatOccSymbol({
         underlying: params.symbol,
         expiration: leg.expiry,
-        type: leg.type as 'CALL' | 'PUT',
+        type: leg.type,
         strike: leg.strike,
       });
-      const conId = await resolveConId(occSymbol, SIDECAR_URL);
-      return { leg, conId };
+      const { conId, minTick } = await resolveContract(occSymbol, SIDECAR_URL);
+      return { leg, conId, minTick };
     }),
   );
 
   const underlying = params.symbol;
+
+  // Use minTick from first resolved leg for limit price rounding
+  const minTick = resolvedLegs[0].minTick;
   const limitPrice = params.limitPrice != null
-    ? roundToOptionTick(underlying, params.limitPrice)
+    ? roundToTick(params.limitPrice, minTick)
     : undefined;
 
   // NO RETRY on placeOrder — network error = unknown broker state.

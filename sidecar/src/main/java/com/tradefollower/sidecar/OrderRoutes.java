@@ -95,7 +95,7 @@ public class OrderRoutes {
         order.tif(body.tif());
 
         if (body.limitPrice() != null) {
-            order.lmtPrice(roundToOptionTick(body.limitPrice()));
+            order.lmtPrice(body.limitPrice());
         }
 
         int orderId = bridge.getNextReqId();
@@ -154,7 +154,7 @@ public class OrderRoutes {
         order.tif(body.tif());
 
         if (body.limitPrice() != null) {
-            order.lmtPrice(roundToOptionTick(body.limitPrice()));
+            order.lmtPrice(body.limitPrice());
         }
 
         // CRITICAL: NonGuaranteed=1 is REQUIRED for SMART-routed combo orders
@@ -193,7 +193,7 @@ public class OrderRoutes {
         int orderId = Integer.parseInt(ctx.pathParam("orderId"));
         var body = ctx.bodyAsClass(RequestBodies.ModifyBody.class);
 
-        double newPrice = roundToOptionTick(body.limitPrice());
+        double newPrice = body.limitPrice();
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
         TwsBridge.StoredOrder stored = bridge.modifyOrderPrice(orderId, newPrice);
@@ -224,17 +224,4 @@ public class OrderRoutes {
         ctx.json(Map.of("orderId", orderId, "status", "PendingCancel"));
     }
 
-    /**
-     * Round price to valid option tick size.
-     * Below $3.00: $0.01 increments. At/above $3.00: $0.05 increments.
-     * Note: Penny Pilot exceptions (SPY, QQQ, etc.) use $0.01 for all prices,
-     * but IB Gateway handles that — we round conservatively here.
-     */
-    static double roundToOptionTick(double price) {
-        if (price < 3.0) {
-            return Math.round(price * 100.0) / 100.0;
-        } else {
-            return Math.round(price * 20.0) / 20.0;
-        }
-    }
 }

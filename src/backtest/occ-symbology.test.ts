@@ -7,6 +7,7 @@
 
 import { describe, test, expect } from 'vitest';
 import fc from 'fast-check';
+import type { OptionType } from '../lib/enums.js';
 import {
   formatOccSymbol,
   parseOccSymbol,
@@ -24,7 +25,7 @@ const arbUnderlying = fc.stringMatching(/^[A-Z]{1,5}$/)
 /** Strike price: typical option range, multiple of 0.5 to avoid floating-point drift */
 const arbStrike = fc.integer({ min: 1, max: 4000 }).map(n => n * 0.5);
 
-const arbOptionType: fc.Arbitrary<'CALL' | 'PUT'> = fc.constantFrom('CALL', 'PUT');
+const arbOptionType: fc.Arbitrary<OptionType> = fc.constantFrom('CALL', 'PUT');
 
 /** Year: 2-digit year in range fast-check can comfortably generate */
 const arbYear = fc.integer({ min: 2024, max: 2035 });

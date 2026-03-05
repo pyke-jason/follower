@@ -77,7 +77,7 @@ export const tasks = sqliteTable('tasks', {
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_message').on(table.messageId),
   index('idx_tasks_channel').on(table.channelId),
-  uniqueIndex('idx_tasks_message_unique').on(table.messageId).where(sql`message_id IS NOT NULL`),
+  uniqueIndex('idx_tasks_message_channel_unique').on(table.messageId, table.channelId).where(sql`message_id IS NOT NULL`),
 ]);
 
 // ─── Trades ──────────────────────────────────────────

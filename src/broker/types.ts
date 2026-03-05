@@ -1,5 +1,5 @@
 import type { TradeLeg } from '../db/schema.js';
-import type { Direction, OrderType } from '../lib/enums.js';
+import type { Direction, OptionType, OrderType } from '../lib/enums.js';
 
 /** A leg before fill — same shape as TradeLeg without fillPrice. */
 export type OrderLeg = Omit<TradeLeg, 'fillPrice'>;
@@ -28,7 +28,7 @@ export type OptionsStrike = {
 export type OptionsChain = {
   symbol: string;
   expiry: string;
-  optionType: 'CALL' | 'PUT';
+  optionType: OptionType;
   strikes: OptionsStrike[];
 };
 
@@ -63,7 +63,7 @@ export type BrokerPosition = {
   assetType: string;
   strikePrice?: number;
   expiry?: string;
-  optionType?: 'CALL' | 'PUT';
+  optionType?: OptionType;
 };
 
 export type AccountBalance = {

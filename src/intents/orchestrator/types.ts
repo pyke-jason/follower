@@ -13,6 +13,7 @@ import type { Quote, OptionsChain } from '../../broker/types.js';
 import type { LLMProvider } from '../../agent/providers.js';
 import type { BrokerService } from '../../broker/interface.js';
 import type { SignalEventEmitter } from '../../decisions/emitter.js';
+import type { TradeLeg } from '../../db/schema.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -93,29 +94,19 @@ export interface OrchestratorMarketDataProvider {
   getExpiryDates(symbol: string): Promise<string[]>;
 }
 
-/** A single open position from the position store. */
-export type OpenPosition = {
+/** Subset of a trade row needed for position matching. Uses TradeLeg directly — no field renaming. */
+export type TradePosition = {
   id: string;
   symbol: string;
   strategy: Strategy;
   direction: Direction;
-  legs: Array<{
-    symbol: string;    // OCC symbol for options, ticker for stock
-    side: LegAction;
-    quantity: number;
-    expiry: string;    // YYYY-MM-DD for options
-    strike: number;    // 0 for stock
-    type: 'option' | 'stock';
-    optionType?: OptionType;
-  }>;
-  quantity: number;    // lot count
-  /** Average fill price at which this position was opened (per-contract or per-share). */
-  entryPrice?: number;
+  legs: TradeLeg[];
+  quantity: number | null;
 };
 
 export interface PositionProvider {
   /** Get open positions, optionally filtered by underlying symbol. */
-  getPositions(symbol?: string): Promise<OpenPosition[]>;
+  getPositions(symbol?: string): Promise<TradePosition[]>;
 }
 
 export interface ChatHistoryProvider {
@@ -129,7 +120,7 @@ export interface ChatHistoryProvider {
 
 /** Dependencies the orchestrator needs from the caller's environment. */
 export type OrchestratorEnv = {
-  getPositions: (symbol?: string) => Promise<OpenPosition[]>;
+  getPositions: (symbol?: string) => Promise<TradePosition[]>;
   llm: LLMProvider;
   broker: BrokerService;
   emitter: SignalEventEmitter;

@@ -1,13 +1,13 @@
 // All shared types for the eval system.
 
 import type { DecisionOutcome } from '../../lib/enums.js';
-import type { OptionLeg, ResolvedSignal, OpenPosition } from '../orchestrator/types.js';
+import type { OptionLeg, ResolvedSignal, TradePosition } from '../orchestrator/types.js';
 
 export type EvalInput = {
   rawHtml: string;
   author?: string;       // default 'testTrader'
   timestamp?: string;    // ISO 8601, default '2025-09-05T14:00:00.000Z'
-  positions?: OpenPosition[];
+  positions?: TradePosition[];
   chatContext?: string;   // recent messages for LLM context in relational cases
 };
 

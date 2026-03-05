@@ -14,7 +14,7 @@ import type { OrderManager } from '../orders/order-manager.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
-import type { ResolvedSignal, OrchestratorResult, Leg, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
+import type { ResolvedSignal, OrchestratorResult, Leg, TradePosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
 import type { Message, TradeMetadata } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
@@ -75,7 +75,7 @@ export type ResolvedPipelineResult = {
 
 /** What executeResolvedSignals needs from the caller's env. */
 export type ExecuteEnv = {
-  getPositions: (symbol?: string) => Promise<OpenPosition[]>;
+  getPositions: (symbol?: string) => Promise<TradePosition[]>;
   llm: LLMProvider;
   pipeline: ResolvedPipelineDeps;
   emitter: SignalEventEmitter;

@@ -1,4 +1,4 @@
-import type { LegAction } from '../../lib/enums.js';
+import type { LegAction, OptionType } from '../../lib/enums.js';
 import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill } from '../types.js';
 import type { BrokerService } from '../interface.js';
 import { getAccessToken } from './auth.js';
@@ -6,6 +6,7 @@ import { safeParseFloat } from '../../lib/numbers.js';
 import { formatTsOptionSymbol } from './symbology.js';
 import type { ErrorCategory } from '../../lib/resilient.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '../../lib/resilient.js';
+import { QuoteUnavailableError } from '../../lib/errors.js';
 import {
   TsQuotesResponseSchema,
   TsOrdersResponseSchema,
@@ -52,6 +53,10 @@ export async function getQuote(symbol: string): Promise<Quote> {
     const data = await ts(`/marketdata/quotes/${encodeURIComponent(symbol)}`, { signal });
     const validated = parseApiResponse(TsQuotesResponseSchema, data, `GET /marketdata/quotes/${symbol}`);
     const q = validated.Quotes[0];
+    if (q.Bid === 0 && q.Ask === 0) {
+      throw new QuoteUnavailableError(symbol, 'TradeStation returned bid=0 ask=0');
+    }
+
     return {
       symbol,
       bid: q.Bid,
@@ -70,7 +75,7 @@ export async function placeOrder(params: OrderParams): Promise<OrderResult> {
   const tsLegs = params.legs.map((leg) => ({
     Symbol: leg.type === 'STOCK'
       ? params.symbol
-      : formatTsOptionSymbol({ underlying: params.symbol, expiration: leg.expiry!, type: leg.type as 'CALL' | 'PUT', strike: leg.strike! }),
+      : formatTsOptionSymbol({ underlying: params.symbol, expiration: leg.expiry!, type: leg.type as OptionType, strike: leg.strike! }),
     Quantity: String(leg.quantity),
     TradeAction: resolveTradeAction(leg.action, leg.type, params.isClosing),
   }));

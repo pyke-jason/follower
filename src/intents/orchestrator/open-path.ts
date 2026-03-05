@@ -21,17 +21,57 @@ import type {
   OptionLeg,
   StockLeg,
   Leg,
-  OpenPosition,
+  TradePosition,
 } from './types.js';
 import type { OptionType, Strategy } from '../../lib/enums.js';
 import { isSpread, getOptionLegs, type SpreadStrategy } from '../../lib/trade.js';
-import { spreadLegs } from '../../lib/spread-legs.js';
 import { strikesFromParse } from './parser.js';
 import { resolveExpiryHint, generateWeeklyExpiries } from './expiry-resolver.js';
 import { createLogger } from '../../lib/logger.js';
 import { toDateKeyET } from '../../lib/et-date.js';
 
 const log = createLogger('Orchestrator:OpenPath');
+
+/**
+ * Build OptionLeg[] for a vertical spread in canonical order.
+ *
+ * Canonical ordering: dominant (first) leg determines price-chase direction
+ * in OrderManager. Credit spreads open with SELL first so the close order
+ * reverses to BUY first → chases UP. Debit spreads open with BUY first so
+ * the close reverses to SELL first → chases DOWN.
+ *
+ * PCS  →  [SELL max PUT,  BUY  min PUT ]   put credit spread (SHORT)
+ * PDS  →  [BUY  max PUT,  SELL min PUT ]   put debit spread  (LONG)
+ * CDS  →  [BUY  min CALL, SELL max CALL]   call debit spread (LONG)
+ * CCS  →  [SELL min CALL, BUY  max CALL]   call credit spread (SHORT)
+ */
+function buildSpreadOptionLegs(
+  strategy: SpreadStrategy,
+  s1: number,
+  s2: number,
+  symbol: string,
+  expiry: string,
+): OptionLeg[] {
+  const hi = Math.max(s1, s2);
+  const lo = Math.min(s1, s2);
+
+  const table = {
+    PCS: [{ strike: hi, side: 'SELL' as const, optionType: 'PUT' as const }, { strike: lo, side: 'BUY' as const, optionType: 'PUT' as const }],
+    PDS: [{ strike: hi, side: 'BUY' as const, optionType: 'PUT' as const }, { strike: lo, side: 'SELL' as const, optionType: 'PUT' as const }],
+    CDS: [{ strike: lo, side: 'BUY' as const, optionType: 'CALL' as const }, { strike: hi, side: 'SELL' as const, optionType: 'CALL' as const }],
+    CCS: [{ strike: lo, side: 'SELL' as const, optionType: 'CALL' as const }, { strike: hi, side: 'BUY' as const, optionType: 'CALL' as const }],
+  };
+
+  return table[strategy].map(l => ({
+    type: 'option' as const,
+    symbol,
+    expiry,
+    optionType: l.optionType,
+    strike: l.strike,
+    side: l.side,
+    quantity: 1,
+  }));
+}
 
 /** Credit strategies receive premium (negative limit price). */
 function isCreditStrategy(s: Strategy): boolean { return s === 'PCS' || s === 'CCS'; }
@@ -237,16 +277,7 @@ export async function resolveOpenPath(
         if (strikes.length < 2) {
           return { error: `Spread strategy ${strategy} requires 2 strikes, got ${strikes.length}` };
         }
-        const spreadLegsResult = spreadLegs(strategy as SpreadStrategy, strikes[0], strikes[1]);
-        const legs: OptionLeg[] = spreadLegsResult.map(sl => ({
-          type: 'option' as const,
-          symbol,
-          expiry,
-          optionType: sl.optionType,
-          strike: sl.strike,
-          side: sl.action,
-          quantity: 1,
-        }));
+        const legs = buildSpreadOptionLegs(strategy as SpreadStrategy, strikes[0], strikes[1], symbol, expiry);
         return { legs };
       } else {
         // Naked CALL or PUT
@@ -281,16 +312,7 @@ export async function resolveOpenPath(
 
       if (spreadStrategy) {
         const otmStrike = optType === 'PUT' ? atmStrike - interval : atmStrike + interval;
-        const spreadLegsResult = spreadLegs(strategy as SpreadStrategy, atmStrike, otmStrike);
-        const legs: OptionLeg[] = spreadLegsResult.map(sl => ({
-          type: 'option' as const,
-          symbol,
-          expiry,
-          optionType: sl.optionType,
-          strike: sl.strike,
-          side: sl.action,
-          quantity: 1,
-        }));
+        const legs = buildSpreadOptionLegs(strategy as SpreadStrategy, atmStrike, otmStrike, symbol, expiry);
         return { legs };
       } else {
         const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
@@ -382,16 +404,7 @@ export async function resolveOpenPath(
           return { error: `premium_mismatch: best spread diff ${bestDiff.toFixed(2)} > tolerance ${tolerance.toFixed(2)}` };
         }
 
-        const spreadLegsResult = spreadLegs(strategy as SpreadStrategy, bestStrikes[0], bestStrikes[1]);
-        const legs: OptionLeg[] = spreadLegsResult.map(sl => ({
-          type: 'option' as const,
-          symbol,
-          expiry,
-          optionType: sl.optionType,
-          strike: sl.strike,
-          side: sl.action,
-          quantity: 1,
-        }));
+        const legs = buildSpreadOptionLegs(strategy as SpreadStrategy, bestStrikes[0], bestStrikes[1], symbol, expiry);
         return { legs, limitPrice: statedPremium };
       } else {
         // Naked option: find strike by premium
@@ -581,7 +594,7 @@ export async function resolveAddPath(
   }
 
   // Look up existing position
-  let positions: OpenPosition[];
+  let positions: TradePosition[];
   try {
     positions = await ctx.positions.getPositions(parse.symbol);
   } catch (err) {
@@ -593,7 +606,7 @@ export async function resolveAddPath(
   }
 
   // Find matching position — strategy-filtered if parse has a strategy hint
-  let matched: OpenPosition | null = null;
+  let matched: TradePosition | null = null;
   if (positions.length === 1) {
     matched = positions[0];
   } else if (positions.length > 1 && parse.strategy) {

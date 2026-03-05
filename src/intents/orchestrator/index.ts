@@ -37,7 +37,7 @@ import type {
 
 export type { OrchestratorEnv, OrchestratorResult, ResolvedSignal };
 export type { Leg, OptionLeg, StockLeg } from './types.js';
-export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, OpenPosition, SignalEventEmitter } from './types.js';
+export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, TradePosition, SignalEventEmitter } from './types.js';
 
 const log = createLogger('Orchestrator');
 
@@ -355,13 +355,13 @@ async function resolveStrangleExit(
   const signals: ResolvedSignal[] = [];
   for (const pos of positions) {
     const legs: Leg[] = pos.legs.map(leg => {
-      const closeSide = leg.side === 'BUY' ? 'SELL' as const : 'BUY' as const;
-      if (leg.type === 'option') {
+      const closeSide = leg.action === 'BUY' ? 'SELL' as const : 'BUY' as const;
+      if (leg.type !== 'STOCK') {
         return {
           type: 'option' as const,
           symbol: pos.symbol,
           expiry: leg.expiry,
-          optionType: leg.optionType!,
+          optionType: leg.type,
           strike: leg.strike,
           side: closeSide,
           quantity: leg.quantity,

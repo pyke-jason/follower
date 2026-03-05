@@ -21,7 +21,6 @@ import { eq } from 'drizzle-orm';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { executeResolvedSignals } from './execute-resolved.js';
 import { createEmitter } from '../decisions/emitter.js';
-import { tradeToOpenPosition } from '../trades/adapters.js';
 import { stampHasUpdate } from '../trades/trade-flags.js';
 
 // ─── Types ──────────────────────────────────────────
@@ -86,8 +85,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   // Derive position lookup from getOpenPositions + context.author
   const getPositions = async (symbol?: string) => {
     const filters: PositionFilters = symbol ? { symbol } : {};
-    const rows = await env.getOpenPositions({ ...filters, trader: context.author ?? undefined });
-    return rows.map(tradeToOpenPosition);
+    return env.getOpenPositions({ ...filters, trader: context.author ?? undefined });
   };
 
   const [message] = await db

@@ -1,4 +1,4 @@
-import type { LegAction } from '../lib/enums.js';
+import type { LegAction, OptionType } from '../lib/enums.js';
 import type { BrokerService } from '../broker/interface.js';
 import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
@@ -183,7 +183,7 @@ export class SimBroker implements BrokerService {
       const occSymbol = formatOccSymbol({
         underlying: params.symbol,
         expiration: leg.expiry,
-        type: leg.type as 'CALL' | 'PUT',
+        type: leg.type as OptionType,
         strike: leg.strike,
       });
 

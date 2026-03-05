@@ -25,6 +25,21 @@ export class BrokerTransientError extends Error {
   }
 }
 
+/**
+ * Thrown when a quote request succeeds but bid/ask data is missing.
+ * The symbol is valid and the broker is reachable, but no market data
+ * is available (pre-market, illiquid deep OTM, delayed data subscription).
+ */
+export class QuoteUnavailableError extends Error {
+  constructor(
+    public readonly symbol: string,
+    public readonly detail?: string,
+  ) {
+    super(`No bid/ask available for ${symbol}${detail ? `: ${detail}` : ''}`);
+    this.name = 'QuoteUnavailableError';
+  }
+}
+
 export class QuoteResolutionError extends Error {
   constructor(
     public readonly originalMessage: string,
