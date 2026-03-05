@@ -83,9 +83,11 @@ function resolveMustMatchPath(
     const actualLegs = actualSignal ? actualSignal.legs : [];
     const actualLeg = actualLegs[legIdx];
 
+    const actualOptionLeg = actualLeg?.type === 'option' ? actualLeg : undefined;
+
     if (field === 'expiry') {
       const expExpiry = expectedLeg?.expiry;
-      const actExpiry = actualLeg?.expiry;
+      const actExpiry = actualOptionLeg?.expiry;
       if (expExpiry == null) return { matched: true, expected: expExpiry, actual: actExpiry };
       const matched = compareExpiry(expExpiry, actExpiry, refDate);
       return { matched, expected: expExpiry, actual: actExpiry };
@@ -93,7 +95,7 @@ function resolveMustMatchPath(
 
     if (field === 'strike') {
       const expStrike = expectedLeg?.strike;
-      const actStrike = actualLeg?.strike;
+      const actStrike = actualOptionLeg?.strike;
       if (expStrike == null) return { matched: true, expected: expStrike, actual: actStrike };
       const matched = actStrike != null && Math.abs(actStrike - expStrike) < 0.5;
       return { matched, expected: expStrike, actual: actStrike };
@@ -267,7 +269,8 @@ function scoreSignal(
       const actualLeg = matchedActualIndex >= 0 ? actualLegs[matchedActualIndex] : undefined;
       if (matchedActualIndex >= 0) usedActualIndices.add(matchedActualIndex);
 
-      scores.push(...scoreLeg(legPrefix, expectedLeg, actualLeg, refDate));
+      const actualOptionLeg = actualLeg?.type === 'option' ? actualLeg : undefined;
+      scores.push(...scoreLeg(legPrefix, expectedLeg, actualOptionLeg, refDate));
     }
   }
 
