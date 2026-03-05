@@ -16,7 +16,7 @@ export function RelatedMessagesPanel({
 
   if (!sourceMessage) return null;
 
-  const symbols = (sourceMessage.symbols as string[]) ?? [];
+  const symbols = sourceMessage.symbols;
 
   return (
     <Card className="py-0 gap-0 overflow-hidden w-[460px] shrink-0 flex flex-col border-l rounded-none border-t-0 border-b-0 border-r-0">

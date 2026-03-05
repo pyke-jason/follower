@@ -3,7 +3,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { BacktestForm } from './backtest-form';
 import Link from 'next/link';
 import type { BacktestRunConfig } from '@src/db/schema';
-import { getConfig } from '@src/db/accessors';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +19,7 @@ export default async function NewBacktestPage({
   if (clone) {
     const sourceRun = await getBacktestRunById(clone);
     if (sourceRun) {
-      defaultConfig = getConfig(sourceRun);
+      defaultConfig = sourceRun.config;
     }
   }
 

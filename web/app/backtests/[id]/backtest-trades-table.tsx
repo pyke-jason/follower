@@ -4,19 +4,17 @@ import { useRef, useEffect } from 'react';
 import { useTradeFilters } from '../../components/trade-filters';
 import { TradesTableClient } from '../../components/trades-table-client';
 import { useTradesStore } from '@/stores/trades-store';
-import type { TradeEvent, CommissionSchedule } from '@src/db/schema';
+import type { TradeEvent, TradeFlag, CommissionSchedule } from '@src/db/schema';
 
 export function BacktestTradesTable({
   eventsByTradeId,
-  cancelledTradeIds,
-  subsequentMessageTradeIds,
+  flagsByTradeId,
   runId,
   commissionSchedule,
   startingEquity,
 }: {
   eventsByTradeId: Map<string, TradeEvent[]>;
-  cancelledTradeIds?: Set<string>;
-  subsequentMessageTradeIds?: Set<string>;
+  flagsByTradeId: Record<string, TradeFlag[]>;
   runId: string;
   commissionSchedule: CommissionSchedule;
   startingEquity: number;
@@ -28,8 +26,7 @@ export function BacktestTradesTable({
   const hydrationData = {
     trades: filteredTrades,
     eventsByTradeId,
-    cancelledTradeIds: cancelledTradeIds ?? new Set<string>(),
-    subsequentMessageTradeIds,
+    flagsByTradeId,
     commissionSchedule,
     startingEquity,
     runId,
@@ -42,7 +39,7 @@ export function BacktestTradesTable({
 
   useEffect(() => {
     hydrate(hydrationData);
-  }, [filteredTrades, eventsByTradeId, cancelledTradeIds, subsequentMessageTradeIds, runId, commissionSchedule, startingEquity, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filteredTrades, eventsByTradeId, flagsByTradeId, runId, commissionSchedule, startingEquity, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (filteredTrades.length === 0 && hasFilters) {
     return (

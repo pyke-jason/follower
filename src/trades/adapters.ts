@@ -3,10 +3,9 @@
  */
 import type { OpenPosition } from '../intents/orchestrator/types.js';
 import { trades } from '../db/schema.js';
-import { getLegs } from '../db/accessors.js';
 
 export function tradeToOpenPosition(row: typeof trades.$inferSelect): OpenPosition {
-  const legs = getLegs(row).map(leg => ({
+  const legs = row.legs.map(leg => ({
     symbol: leg.symbol,
     side: leg.action as 'BUY' | 'SELL',
     quantity: leg.quantity ?? 1,

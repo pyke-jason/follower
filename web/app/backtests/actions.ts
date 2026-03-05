@@ -7,7 +7,6 @@ import { revalidatePath } from 'next/cache';
 import { getTradesByBacktestRun, getRunDecisions, getMtmSnapshots } from '@/lib/queries';
 import { generateReportFromTrades } from '@src/backtest/report';
 import type { CommissionSchedule, BacktestRunConfig } from '@src/db/schema';
-import { getConfig } from '@src/db/accessors';
 import { btChannel } from '@src/lib/channel';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
 
@@ -176,7 +175,7 @@ export async function cancelBacktestRun(formData: FormData) {
       .select({ config: schema.backtestRuns.config })
       .from(schema.backtestRuns)
       .where(eq(schema.backtestRuns.id, runId));
-    const cancelledConfig = getConfig(cancelledRun);
+    const cancelledConfig = cancelledRun.config;
 
     const report = generateReportFromTrades({
       trades: trades.map((t) => ({
@@ -225,11 +224,13 @@ export async function deleteBacktestRun(formData: FormData) {
     });
   }
 
-  // Delete associated trades and tasks first
-  await db.delete(schema.trades).where(eq(schema.trades.channelId, btChannel(runId)));
-  await db.delete(schema.tasks).where(eq(schema.tasks.channelId, btChannel(runId)));
-  await db.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, btChannel(runId)));
-  await db.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, runId));
+  // Delete associated trades and tasks in a single transaction (one lock acquisition)
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.trades).where(eq(schema.trades.channelId, btChannel(runId)));
+    await tx.delete(schema.tasks).where(eq(schema.tasks.channelId, btChannel(runId)));
+    await tx.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, btChannel(runId)));
+    await tx.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, runId));
+  });
 
   // Clean up log file via local API
   await fetch(`${LOCAL_API_URL}/logs/${runId}`, { method: 'DELETE' }).catch(() => {});
@@ -274,12 +275,14 @@ export async function bulkDeleteBacktestRuns(runIds: string[]) {
     }
   }
 
-  // Delete associated data
+  // Delete associated data in a single transaction (one lock acquisition)
   const channelIds = runIds.map(btChannel);
-  await db.delete(schema.trades).where(inArray(schema.trades.channelId, channelIds));
-  await db.delete(schema.tasks).where(inArray(schema.tasks.channelId, channelIds));
-  await db.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.channelId, channelIds));
-  await db.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, runIds));
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.trades).where(inArray(schema.trades.channelId, channelIds));
+    await tx.delete(schema.tasks).where(inArray(schema.tasks.channelId, channelIds));
+    await tx.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.channelId, channelIds));
+    await tx.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, runIds));
+  });
 
   // Clean up log files
   for (const id of runIds) {
@@ -300,7 +303,7 @@ export async function invalidateIntentCache(formData: FormData) {
 
   if (!run) return;
 
-  const config = getConfig(run);
+  const config = run.config;
 
   // Find message IDs that fall within this backtest's scope
   const messages = await db

@@ -14,8 +14,10 @@ import type { OrderManagerConfig } from './order-manager.js';
 import type { ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import type { SignalEventEmitter } from '../decisions/emitter.js';
 import type { FilledWorkingOrder, WorkingOrder } from '../broker/types.js';
+import type { TradeFlag, TradeMetadata } from '../db/schema.js';
 import { db, schema } from '../db/client.js';
 import { createLogger } from '../lib/logger.js';
+import { addTradeFlags } from '../trades/trade-flags.js';
 
 const log = createLogger('OrderCallbacks');
 
@@ -76,7 +78,12 @@ export function buildOrderCallbacks(
         originalLimitPrice: order.params.limitPrice,
         immediatelyFilled: false,
       }, { signalIndex: pending.signalIndex ?? null });
-      const fillMetadata = order.adjustmentCount > 0 ? { chaseSteps: order.adjustmentCount } : undefined;
+      const chaseFlags: TradeFlag[] = [];
+      if (order.adjustmentCount >= 10) chaseFlags.push('chaseDanger');
+      else if (order.adjustmentCount >= 5) chaseFlags.push('chaseWarn');
+      const fillMetadata: TradeMetadata | undefined = order.adjustmentCount > 0
+        ? { chaseSteps: order.adjustmentCount, flags: chaseFlags.length > 0 ? chaseFlags : undefined }
+        : undefined;
       await pending.recordFill(order.filledPrice, order.filledAt, fillMetadata);
     },
 
@@ -103,6 +110,9 @@ export function buildOrderCallbacks(
         reason: order.status,
         placedAt: order.placedAt.toISOString(),
       }, { signalIndex: pending.signalIndex ?? null, tradeId: pending.tradeId ?? null });
+      if (pending.tradeId) {
+        await addTradeFlags(pending.tradeId, 'closeFailed');
+      }
       pendingIntents.delete(order.orderId);
     },
 

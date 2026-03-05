@@ -8,54 +8,86 @@ import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from './badge';
 import { formatDate } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { Message, TradeLeg } from '@src/db/schema';
+import type { Message } from '@src/db/schema';
 import { formatLegsSummary } from '@src/lib/trade';
-
-const INITIAL_VISIBLE = 3;
 
 function NearbyMessages({
   messages,
-  sourceMessageId,
+  associatedMessageIds,
 }: {
   messages: Message[];
-  sourceMessageId?: string | null;
+  /** IDs of messages directly associated with the trade (source, close, intermediates). */
+  associatedMessageIds: Set<string>;
 }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showOlder, setShowOlder] = useState(false);
+  const [showNewer, setShowNewer] = useState(false);
 
   if (messages.length === 0) return null;
 
-  const sourceIdx = messages.findIndex((m) => m.id === sourceMessageId);
-  const cutoff = sourceIdx >= 0 ? sourceIdx + INITIAL_VISIBLE : INITIAL_VISIBLE;
-  const visible = showAll ? messages : messages.slice(0, cutoff);
-  const hiddenCount = messages.length - visible.length;
+  // Find the index range of associated messages within the sorted list
+  let firstIdx = -1;
+  let lastIdx = -1;
+  for (let i = 0; i < messages.length; i++) {
+    if (associatedMessageIds.has(messages[i].id)) {
+      if (firstIdx === -1) firstIdx = i;
+      lastIdx = i;
+    }
+  }
+
+  // Fallback: if no associated messages found in the list, show all
+  if (firstIdx === -1) {
+    firstIdx = 0;
+    lastIdx = messages.length - 1;
+  }
+
+  const before = messages.slice(0, firstIdx);
+  const inRange = messages.slice(firstIdx, lastIdx + 1);
+  const after = messages.slice(lastIdx + 1);
 
   return (
     <div className="space-y-0.5">
-      {visible.map((m) => {
-        const isSource = m.id === sourceMessageId;
-        return (
-          <div
-            key={m.id}
-            className={`flex items-baseline gap-2 text-xs px-2 py-1 rounded ${isSource ? 'bg-accent/40 border-l-2 border-l-foreground/30' : ''}`}
-          >
-            <span className="text-[10px] text-muted-foreground/50 shrink-0 tabular-nums">
-              {formatDate(m.timestamp)}
-            </span>
-            <span className={`truncate ${isSource ? 'text-foreground' : 'text-muted-foreground/70'}`}>
-              {m.cleanText}
-            </span>
-          </div>
-        );
-      })}
-      {hiddenCount > 0 && (
+      {before.length > 0 && !showOlder && (
         <button
           type="button"
-          onClick={() => setShowAll(true)}
+          onClick={() => setShowOlder(true)}
           className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground px-2 py-0.5 transition-colors"
         >
-          +{hiddenCount} more
+          Show {before.length} older
         </button>
       )}
+      {showOlder && before.map((m) => (
+        <MessageRow key={m.id} message={m} isAssociated={false} />
+      ))}
+      {inRange.map((m) => (
+        <MessageRow key={m.id} message={m} isAssociated={associatedMessageIds.has(m.id)} />
+      ))}
+      {after.length > 0 && !showNewer && (
+        <button
+          type="button"
+          onClick={() => setShowNewer(true)}
+          className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground px-2 py-0.5 transition-colors"
+        >
+          Show {after.length} newer
+        </button>
+      )}
+      {showNewer && after.map((m) => (
+        <MessageRow key={m.id} message={m} isAssociated={false} />
+      ))}
+    </div>
+  );
+}
+
+function MessageRow({ message: m, isAssociated }: { message: Message; isAssociated: boolean }) {
+  return (
+    <div
+      className={`flex items-baseline gap-2 text-xs px-2 py-1 rounded ${isAssociated ? 'bg-accent/40 border-l-2 border-l-foreground/30' : ''}`}
+    >
+      <span className="text-[10px] text-muted-foreground/50 shrink-0 tabular-nums">
+        {formatDate(m.timestamp)}
+      </span>
+      <span className={`truncate ${isAssociated ? 'text-foreground' : 'text-muted-foreground/70'}`}>
+        {m.cleanText}
+      </span>
     </div>
   );
 }
@@ -78,7 +110,7 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
 
   // Use OPEN event legs/strategy to show original trade (pre-leg-off)
   const openEvent = story?.events.find(e => e.action === 'OPEN');
-  const openLegs = openEvent ? (openEvent.legs as TradeLeg[] ?? []) : (trade.legs as TradeLeg[] ?? []);
+  const openLegs = openEvent ? openEvent.legs : trade.legs;
   const openStrategy = openEvent?.strategy ?? trade.strategy;
   const contractSummary = formatLegsSummary(openLegs, openStrategy);
 
@@ -148,7 +180,10 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
             {story.nearbyMessages.length > 0 && (
               <section>
                 <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Trader Messages</h4>
-                <NearbyMessages messages={story.nearbyMessages} sourceMessageId={trade.sourceMessageId} />
+                <NearbyMessages
+                  messages={story.nearbyMessages}
+                  associatedMessageIds={new Set(story.timelineMessages.map(m => m.id))}
+                />
               </section>
             )}
           </>

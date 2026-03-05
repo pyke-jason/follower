@@ -9,7 +9,7 @@
  */
 
 import type { Message, Trade, TaskContext } from '../db/schema.js';
-import { getLegs } from '../db/accessors.js';
+
 import type { PrefetchedData, PrefetchedQuote } from '../agent/prefetch.js';
 import { sendSystemAlert } from './alert.js';
 import { toDateKeyET } from './et-date.js';
@@ -78,9 +78,8 @@ function hasNearExpiryLegs(positions: Trade[], now: Date): boolean {
   if (dayAfter) nearDates.add(dayAfter);
 
   for (const pos of positions) {
-    const legs = getLegs(pos);
-    if (!legs.length) continue;
-    for (const leg of legs) {
+    if (!pos.legs.length) continue;
+    for (const leg of pos.legs) {
       if (leg.expiry && nearDates.has(leg.expiry)) return true;
     }
   }
@@ -123,13 +122,12 @@ export async function buildSkipPositionContext(
   const matchingSymbolSet = new Set(matchingSymbols);
   const matchingTrades = positions.filter(p => matchingSymbolSet.has(p.symbol));
   const matchingPositions = matchingTrades.map(p => {
-    const legs = getLegs(p);
     return {
       symbol: p.symbol,
       strategy: p.strategy,
       direction: p.direction,
       quantity: p.quantity ?? 1,
-      legs: legs.map(l => ({ strike: l.strike, expiry: l.expiry, type: l.type })),
+      legs: p.legs.map(l => ({ strike: l.strike, expiry: l.expiry, type: l.type })),
       entryPrice: p.entryPrice,
       openedAt: p.openedAt,
     };

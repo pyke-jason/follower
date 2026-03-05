@@ -60,7 +60,7 @@ The message has already been pre-parsed for structured fields (strategy keywords
 For OPEN signals:
 - action: "OPEN"
 - symbol: ticker (required)
-- strategy: "CALL" | "PUT" | "CDS" | "PDS" | "PCS" | "STOCK"
+- strategy: "CALL" | "PUT" | "CDS" | "PDS" | "PCS" | "CCS" | "STOCK"
 - direction: "LONG" | "SHORT" (if not deterministic from strategy)
 - statedPremium: dollar amount if mentioned (e.g. 2.10)
 - Do NOT include legs, expiry dates, or exact strikes — those are resolved by market data

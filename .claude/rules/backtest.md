@@ -6,7 +6,7 @@ paths: src/backtest/**
 
 ## Timestamps Are Mandatory
 
-`recordTrade()` throws if backtest trades are missing explicit timestamps. Always pass ISO timestamps from the simulation clock — never omit `openedAt`/`closedAt`/`trimmedAt`.
+`recordTrade()` throws if backtest trades are missing explicit timestamps. Always pass ISO timestamps from the simulation clock — never omit `openedAt` (OPEN/ADD actions) or `closedAt` (CLOSE/TRIM/LEG_OFF actions).
 
 ## Fill Models
 

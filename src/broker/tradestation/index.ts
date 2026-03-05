@@ -1,1 +1,1 @@
-export { liveService } from './client.js';
+export { tsService } from './client.js';

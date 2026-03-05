@@ -1,0 +1,419 @@
+{
+  "cases": [
+    {
+      "id": "strat-misclass-001",
+      "description": "Dave W 'Long GLW swing' — bare badge, no strategy keyword. Was actually a PCS (confirmed by exit). Should NOT default to STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/GLW\" target=\"os\" data-symbol=\"GLW\" data-criteria=\"Bull\"><b>GLW</b></a> swing</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-03T16:17:11.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Long badge + ticker + 'swing' (duration, not instrument). No price, no strikes, no strategy keyword. Trader meant a PCS — follow-up 21 min later: 'Long GLW pcs 68/67 for .63 credit'. Must NOT deterministically default to STOCK."
+    },
+    {
+      "id": "strat-misclass-002",
+      "description": "Dave W 'Long SHOP' — bare badge only. Exit revealed calls: 'took profits in calls'. Should NOT default to STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/SHOP\" target=\"os\" data-symbol=\"SHOP\" data-criteria=\"Bull\"><b>SHOP</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-04T14:30:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Long badge + ticker. Exit was 'Exit Long SHOP took profits in calls'. Dave W almost never means stock when he posts bare badge."
+    },
+    {
+      "id": "strat-misclass-003",
+      "description": "Dave W 'Short MSFT' — bare badge only. Exit revealed puts: 'took nice profits in puts'. Should NOT default to STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/MSFT\" target=\"os\" data-symbol=\"MSFT\" data-criteria=\"Bear\"><b>MSFT</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-05T14:15:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Short badge + ticker. Exit was 'Exit Short MSFT took nice profits in puts'. Without evidence of stock (price, shares keyword), should not assume STOCK."
+    },
+    {
+      "id": "strat-misclass-004",
+      "description": "Dave W 'Long SPY for overnight' — bare badge + duration hint. Exit revealed calls. Should NOT default to STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/SPY\" target=\"os\" data-symbol=\"SPY\" data-criteria=\"Bull\"><b>SPY</b></a> for overnight</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-08T19:30:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Long badge + 'for overnight' (holding duration). Exit was 'Exit Long SPY took profits on overnight calls'. No stock evidence."
+    },
+    {
+      "id": "strat-misclass-005",
+      "description": "Dave W 'Long AXP for day trade' — bare badge + day trade hint. Exit revealed calls. Should NOT default to STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/AXP\" target=\"os\" data-symbol=\"AXP\" data-criteria=\"Bull\"><b>AXP</b></a> for day trade</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-10T14:45:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare badge + 'for day trade'. Exit was 'Exit Long AXP took 1.00 per call contract profit'. Day trade is duration, not instrument."
+    },
+    {
+      "id": "strat-misclass-006",
+      "description": "Dave W 'Long PGY spec trade on massive gap fill' — bare badge + speculative language. Exit revealed calls.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/PGY\" target=\"os\" data-symbol=\"PGY\" data-criteria=\"Bull\"><b>PGY</b></a> spec trade on massive gap fill</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-12T15:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare badge + 'spec trade' context. Exit was 'Exit Long PGY took more profits on calls'. Speculative language is not a strategy indicator."
+    },
+    {
+      "id": "strat-misclass-007",
+      "description": "Dave W 'Short BABA' — bare badge only. Exit revealed puts: 'took profits in puts right after the open'.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/BABA\" target=\"os\" data-symbol=\"BABA\" data-criteria=\"Bear\"><b>BABA</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-15T14:35:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Short badge. Exit was 'Exit Short BABA took profits in puts right after the open'."
+    },
+    {
+      "id": "strat-misclass-008",
+      "description": "Dave W 'Long CRWV' — bare badge only. Exit revealed calls AND still holding PCS.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/CRWV\" target=\"os\" data-symbol=\"CRWV\" data-criteria=\"Bull\"><b>CRWV</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-18T15:10:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Long badge. Exit was 'Exit Long CRWV took profits on calls... still holding pcs'. Trader had both calls AND PCS — definitely not stock."
+    },
+    {
+      "id": "strat-misclass-009",
+      "description": "Hariseldon 'Long MSTR $185.01 - 1,000 Shares' — explicit stock with price + shares keyword. SHOULD be STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> $185.01 - 1,000 Shares&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-12-09T15:37:39.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "BUY" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["strategy-misclassification", "stock-confirmed", "has-price", "has-shares"],
+      "notes": "Counter-case: Long badge + price ($185.01) + 'Shares' keyword + comma qty. All indicators point to stock. Must remain STOCK on the deterministic path."
+    },
+    {
+      "id": "strat-misclass-010",
+      "description": "Hariseldon 'Long NVDA $175.34 - 1,000' — explicit stock with price + comma qty. SHOULD be STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> $175.34 - 1,000&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-04T14:30:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "NVDA",
+            "legs": [
+              { "side": "BUY" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["strategy-misclassification", "stock-confirmed", "has-price"],
+      "notes": "Counter-case: Long badge + dollar price ($175.34) + comma qty (1,000). Strong stock evidence. Must stay on deterministic STOCK path."
+    },
+    {
+      "id": "strat-misclass-011",
+      "description": "Pete 'Short ETSY $51.30' — explicit stock with price. SHOULD be STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/ETSY\" target=\"os\" data-symbol=\"ETSY\" data-criteria=\"Bear\"><b>ETSY</b></a> $51.30</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-05T15:20:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "ETSY",
+            "legs": [
+              { "side": "SELL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["strategy-misclassification", "stock-confirmed", "has-price"],
+      "notes": "Counter-case: Short badge + dollar price ($51.30). Price >= $10 is strong stock signal. Must stay STOCK deterministic."
+    },
+    {
+      "id": "strat-misclass-012",
+      "description": "Dave W 'Long GLW pcs 68/67 for .63 credit' — explicit PCS with strikes and credit. Must parse as PCS SPREAD.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/GLW\" target=\"os\" data-symbol=\"GLW\" data-criteria=\"Bull\"><b>GLW</b></a> pcs 68/67 for .63 credit</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-03T16:38:02.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "GLW",
+            "legs": [
+              { "side": "SELL", "strike": 68, "optionType": "PUT" },
+              { "side": "BUY", "strike": 67, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol", "signals[0].legs[0].side", "signals[0].legs[0].strike"],
+      "tags": ["strategy-misclassification", "pcs", "spreads"],
+      "notes": "The actual GLW PCS trade. Parser must detect 'pcs' keyword, extract strikes 68/67, build SELL 68P / BUY 67P spread. This is the trade that should have filled instead of the fake STOCK."
+    },
+    {
+      "id": "strat-misclass-013",
+      "description": "Dave W 'Long SLV day trade only' — bare badge + day trade duration. Exit revealed calls expiring same day.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/SLV\" target=\"os\" data-symbol=\"SLV\" data-criteria=\"Bull\"><b>SLV</b></a> day trade only</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-22T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare badge + 'day trade only'. Exit was 'Exit Long SLV took 35% on calls expiring today'. Day trade is duration, not instrument type."
+    },
+    {
+      "id": "strat-misclass-014",
+      "description": "Dave W 'Short MSTR' — bare badge, exit revealed puts from overnight hold.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bear\"><b>MSTR</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-25T14:20:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Short badge. Exit was 'Exit Short MSTR took profits on puts from overnight'. No stock evidence."
+    },
+    {
+      "id": "strat-misclass-015",
+      "description": "Dave W 'Long OPEN shares' — bare badge WITH explicit 'shares' keyword. SHOULD be STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/OPEN\" target=\"os\" data-symbol=\"OPEN\" data-criteria=\"Bull\"><b>OPEN</b></a> shares</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-10T15:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "OPEN",
+            "legs": [
+              { "side": "BUY" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["strategy-misclassification", "stock-confirmed", "has-shares"],
+      "notes": "Counter-case: Dave W explicitly says 'shares'. This is one of only 4 times he specifies the instrument. STOCK_RE should catch this before the badge fallback."
+    },
+    {
+      "id": "strat-misclass-016",
+      "description": "Dave W 'Long TSLA' then exit 'took profits in calls' — minimal bare badge.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\" data-criteria=\"Bull\"><b>TSLA</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-05T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "The most minimal case: just a Long badge + ticker, nothing else. Exit was 'Exit Long TSLA took profits in calls'. Without any instrument evidence, should defer to LLM."
+    },
+    {
+      "id": "strat-misclass-017",
+      "description": "Dave W 'Long ORCL' — bare badge. Exit: 'took sweet profits in calls'.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/ORCL\" target=\"os\" data-symbol=\"ORCL\" data-criteria=\"Bull\"><b>ORCL</b></a></body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-08T14:15:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy"],
+      "notes": "Bare Long badge + ticker. Exit was 'Exit Long ORCL took sweet profits in calls'."
+    },
+    {
+      "id": "strat-misclass-018",
+      "description": "Dave W 'Long NFLX pcs 1210/1205 for 1.05 credit' — explicit PCS with strikes. Must parse as PCS SPREAD.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/NFLX\" target=\"os\" data-symbol=\"NFLX\" data-criteria=\"Bull\"><b>NFLX</b></a> pcs 1210/1205 for 1.05 credit</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-10T15:30:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "NFLX",
+            "legs": [
+              { "side": "SELL", "strike": 1210, "optionType": "PUT" },
+              { "side": "BUY", "strike": 1205, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol", "signals[0].legs[0].side", "signals[0].legs[0].strike"],
+      "tags": ["strategy-misclassification", "pcs", "spreads"],
+      "notes": "Explicit PCS with strikes and credit. The second PCS that failed to fill due to credit/debit pricing bug. Parser should correctly extract SPREAD with SELL 1210P / BUY 1205P."
+    },
+    {
+      "id": "strat-misclass-019",
+      "description": "Dave W 'Short ALGN pds 290/285' — explicit PDS keyword with strikes. Must parse as PDS SPREAD.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/ALGN\" target=\"os\" data-symbol=\"ALGN\" data-criteria=\"Bear\"><b>ALGN</b></a> pds 290/285</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-15T16:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "ALGN",
+            "legs": [
+              { "side": "BUY", "strike": 290, "optionType": "PUT" },
+              { "side": "SELL", "strike": 285, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
+      "tags": ["strategy-misclassification", "pds", "spreads"],
+      "notes": "Short badge + 'pds' keyword + explicit strikes. PDS = BUY higher PUT (290), SELL lower PUT (285). direction=LONG (buying the debit spread)."
+    },
+    {
+      "id": "strat-misclass-020",
+      "description": "Dave W 'Long GE cds 180/185' — explicit CDS keyword with strikes. Must parse as CDS SPREAD.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/GE\" target=\"os\" data-symbol=\"GE\" data-criteria=\"Bull\"><b>GE</b></a> cds 180/185</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-09-20T14:30:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "GE",
+            "legs": [
+              { "side": "BUY", "strike": 180, "optionType": "CALL" },
+              { "side": "SELL", "strike": 185, "optionType": "CALL" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
+      "tags": ["strategy-misclassification", "cds", "spreads"],
+      "notes": "Long badge + 'cds' keyword + explicit strikes. CDS = BUY lower CALL (180), SELL higher CALL (185). direction=LONG."
+    },
+    {
+      "id": "strat-misclass-021",
+      "description": "Dave W 'Long GLW swing earnings 10/22 using 10/31 exp' — mentions expiry dates, clearly options. Should NOT be STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/GLW\" target=\"os\" data-symbol=\"GLW\" data-criteria=\"Bull\"><b>GLW</b></a> swing earnings 10/22 using 10/31 exp will exit before earnings exp date after earnings costs more but hold value better because of earnings vol built in</body></html>",
+        "author": "Dave W",
+        "timestamp": "2025-10-13T18:43:00.000Z"
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["strategy-misclassification", "bare-badge", "ambiguous-strategy", "options-context"],
+      "notes": "Long badge but text mentions 'exp' (expiry), 'earnings vol built in' — all options language. Parser detected price=10 from '10/22' and classified as STOCK at 0.8 confidence. Clearly an options swing trade."
+    },
+    {
+      "id": "strat-misclass-022",
+      "description": "Pete 'Long IONQ $75.02' — badge with stock-magnitude dollar price. SHOULD be STOCK.",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/IONQ\" target=\"os\" data-symbol=\"IONQ\"><b>IONQ</b></a> $75.02</body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-10T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "symbol": "IONQ",
+            "legs": [
+              { "side": "BUY" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["strategy-misclassification", "stock-confirmed", "has-price"],
+      "notes": "Counter-case: Long badge + dollar price $75.02 (stock-magnitude, >= $10). Should deterministically resolve to STOCK."
+    }
+  ]
+}

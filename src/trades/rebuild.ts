@@ -88,7 +88,7 @@ export async function rebuildFromEvents(tradeId: string): Promise<RebuildResult>
         state.strategy = event.strategy;
         state.entryPrice = price;
         state.quantity = qty;
-        state.legs = (event.legs as TradeLeg[]) ?? [];
+        state.legs = event.legs;
         state.openedAt = event.timestamp;
         break;
 

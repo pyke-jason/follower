@@ -161,7 +161,9 @@ export type ComplexityFlag =
   | 'multi_ticker'   // more than one ticker detected
   | 'relational'     // references another trader's message ("following Dave")
   | 'mixed_action'   // entry + exit in same message
-  | 'ambiguous_strikes';  // slash pair could be date or strikes (cheap-stock spread)
+  | 'ambiguous_strikes'  // slash pair could be date or strikes (cheap-stock spread)
+  | 'no_badge_exit'      // exit verb detected without Exit badge — needs LLM confirmation
+  | 'ambiguous_strategy';  // badge implies STOCK but no price/qty confirmation — needs LLM
 
 /**
  * Output of the synchronous parse step. Contains everything derivable from

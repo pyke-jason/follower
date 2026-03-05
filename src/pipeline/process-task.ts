@@ -16,11 +16,13 @@ import type { TradeScope } from './build-deps.js';
 import type { PositionFilters } from '../trades/filters.js';
 
 import { db, schema } from '../db/client.js';
+
 import { eq } from 'drizzle-orm';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { executeResolvedSignals } from './execute-resolved.js';
 import { createEmitter } from '../decisions/emitter.js';
 import { tradeToOpenPosition } from '../trades/adapters.js';
+import { stampHasUpdate } from '../trades/trade-flags.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -111,6 +113,8 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     emitter,
   });
 
+  const symbols = message.symbols;
+
   if (resolved.outcome !== 'EXECUTE') {
     const result = {
       outcome: resolved.outcome,
@@ -132,6 +136,11 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
       outputTokens: resolved.usage?.outputTokens ?? null,
     });
 
+    // Stamp hasUpdate on open trades — no execution happened so open trades are unchanged
+    if (symbols.length > 0 && context.author) {
+      await stampHasUpdate({ symbols, trader: context.author, channelId: env.scope, messageId });
+    }
+
     await env.onResult(result, emitter);
     return;
   }
@@ -142,6 +151,11 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     message,
     env: executeEnv,
   });
+
+  // Stamp hasUpdate AFTER execution so trades just closed/trimmed are excluded by isOpen filter
+  if (symbols.length > 0 && context.author) {
+    await stampHasUpdate({ symbols, trader: context.author, channelId: env.scope, messageId });
+  }
 
   await env.onResult({
     outcome: 'EXECUTE',

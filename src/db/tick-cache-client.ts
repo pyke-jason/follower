@@ -10,13 +10,13 @@ mkdirSync(dirname(PATHS.tickCacheDb), { recursive: true });
 
 const client = createClient({ url: `file:${PATHS.tickCacheDb}` });
 
-client.executeMultiple(
-  'PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;',
+await client.executeMultiple(
+  'PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000;',
 );
 
 // Hand-written DDL — WITHOUT ROWID for composite-PK tables (faster lookups, smaller on disk).
 // tick_cache_ranges uses regular CREATE TABLE (has AUTOINCREMENT rowid).
-client.executeMultiple(`
+await client.executeMultiple(`
   CREATE TABLE IF NOT EXISTS quote_ticks (
     symbol TEXT NOT NULL,
     dbn_schema TEXT NOT NULL,

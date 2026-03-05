@@ -1,6 +1,7 @@
 import type { EvalCase, EvalResult, FieldScore, ExpectedSignal, ExpectedLeg } from './types.js';
-import type { OrchestratorResult, ResolvedSignal, OptionLeg } from '../orchestrator/types.js';
+import type { OrchestratorResult, ResolvedSignal, OptionLeg, Leg } from '../orchestrator/types.js';
 import { normalizeExpiry } from '../../lib/occ-symbology.js';
+import { getOptionLegs } from '../../lib/trade.js';
 
 export const PASS_THRESHOLD = 0.8;
 
@@ -38,103 +39,27 @@ function compareExpiry(
   }
 }
 
-/** Extract option legs from a ResolvedSignal (filters out stock legs). */
-function getOptionLegs(signal: ResolvedSignal): OptionLeg[] {
-  return signal.legs.filter((l): l is OptionLeg => l.type === 'option');
+/** Narrow a Leg to OptionLeg, or undefined if stock. */
+function asOptionLeg(leg: Leg | undefined): OptionLeg | undefined {
+  return leg?.type === 'option' ? leg : undefined;
 }
 
-/** Resolve a mustMatch path to a { matched, expected, actual } tuple. */
-function resolveMustMatchPath(
-  path: string,
-  evalCase: EvalCase,
-  result: OrchestratorResult,
-  refDate: Date,
-): { matched: boolean; expected: unknown; actual: unknown } {
-  if (path === 'outcome') {
-    const exp = evalCase.expected.outcome;
-    const act = result.outcome;
-    return { matched: exp === act, expected: exp, actual: act };
-  }
-
-  const signalMatch = path.match(/^signals\[(\d+)\]\.(.+)$/);
-  if (!signalMatch) {
-    return { matched: false, expected: undefined, actual: undefined };
-  }
-
-  const signalIdx = parseInt(signalMatch[1], 10);
-  const rest = signalMatch[2];
-  const expectedSignal = evalCase.expected.signals?.[signalIdx];
-  const actualSignal = result.outcome === 'EXECUTE' ? result.signals[signalIdx] : undefined;
-
-  // symbol: verify correct underlying ticker
-  if (rest === 'symbol') {
-    const expVal = expectedSignal?.symbol;
-    const actVal = actualSignal?.legs[0]?.symbol;
-    if (expVal == null) return { matched: true, expected: expVal, actual: actVal };
-    const matched = expVal.toUpperCase() === actVal?.toUpperCase();
-    return { matched, expected: expVal, actual: actVal };
-  }
-
-  const legMatch = rest.match(/^legs\[(\d+)\]\.(.+)$/);
-  if (legMatch) {
-    const legIdx = parseInt(legMatch[1], 10);
-    const field = legMatch[2];
-    const expectedLeg = expectedSignal?.legs?.[legIdx];
-    const actualLegs = actualSignal ? actualSignal.legs : [];
-    const actualLeg = actualLegs[legIdx];
-
-    const actualOptionLeg = actualLeg?.type === 'option' ? actualLeg : undefined;
-
-    if (field === 'expiry') {
-      const expExpiry = expectedLeg?.expiry;
-      const actExpiry = actualOptionLeg?.expiry;
-      if (expExpiry == null) return { matched: true, expected: expExpiry, actual: actExpiry };
-      const matched = compareExpiry(expExpiry, actExpiry, refDate);
-      return { matched, expected: expExpiry, actual: actExpiry };
-    }
-
-    if (field === 'strike') {
-      const expStrike = expectedLeg?.strike;
-      const actStrike = actualOptionLeg?.strike;
-      if (expStrike == null) return { matched: true, expected: expStrike, actual: actStrike };
-      const matched = actStrike != null && Math.abs(actStrike - expStrike) < 0.5;
-      return { matched, expected: expStrike, actual: actStrike };
-    }
-
-    const expVal = expectedLeg ? (expectedLeg as Record<string, unknown>)[field] : undefined;
-    const actVal = actualLeg ? (actualLeg as Record<string, unknown>)[field] : undefined;
-    return { matched: expVal === actVal, expected: expVal, actual: actVal };
-  }
-
-  // signals[N].field (top-level signal field)
-  if (rest === 'exitPercent') {
-    const expVal = expectedSignal?.exitPercent;
-    const actVal = actualSignal?.exitPercent;
-    if (expVal == null) return { matched: true, expected: expVal, actual: actVal };
-    const matched = actVal != null && Math.abs(actVal - expVal) < 0.01;
-    return { matched, expected: expVal, actual: actVal };
-  }
-
-  const expVal = expectedSignal ? (expectedSignal as Record<string, unknown>)[rest] : undefined;
-  const actVal = actualSignal ? (actualSignal as Record<string, unknown>)[rest] : undefined;
-  return { matched: expVal === actVal, expected: expVal, actual: actVal };
-}
-
-/** Score a single leg comparison. */
+/** Score a single leg comparison. Accepts any Leg type (stock or option). */
 function scoreLeg(
   prefix: string,
   expectedLeg: ExpectedLeg,
-  actualLeg: OptionLeg | undefined,
+  actualLeg: Leg | undefined,
   refDate: Date,
 ): FieldScore[] {
   const scores: FieldScore[] = [];
+  const actualOption = asOptionLeg(actualLeg);
 
   if (expectedLeg.optionType != null) {
     scores.push({
       field: `${prefix}.optionType`,
-      matched: expectedLeg.optionType === actualLeg?.optionType,
+      matched: expectedLeg.optionType === actualOption?.optionType,
       expected: expectedLeg.optionType,
-      actual: actualLeg?.optionType,
+      actual: actualOption?.optionType,
     });
   }
 
@@ -148,7 +73,7 @@ function scoreLeg(
   }
 
   if (expectedLeg.strike != null) {
-    const actualStrike = actualLeg?.strike;
+    const actualStrike = actualOption?.strike;
     const matched = actualStrike != null && Math.abs(actualStrike - expectedLeg.strike) < 0.5;
     scores.push({
       field: `${prefix}.strike`,
@@ -159,12 +84,12 @@ function scoreLeg(
   }
 
   if (expectedLeg.expiry != null) {
-    const matched = compareExpiry(expectedLeg.expiry, actualLeg?.expiry, refDate);
+    const matched = compareExpiry(expectedLeg.expiry, actualOption?.expiry, refDate);
     scores.push({
       field: `${prefix}.expiry`,
       matched,
       expected: expectedLeg.expiry,
-      actual: actualLeg?.expiry,
+      actual: actualOption?.expiry,
     });
   }
 
@@ -248,8 +173,8 @@ function scoreSignal(
       let matchedActualIndex = -1;
       if (expectedLeg.optionType != null) {
         for (let k = 0; k < actualLegs.length; k++) {
-          if (!usedActualIndices.has(k) && actualLegs[k].type === 'option' &&
-              (actualLegs[k] as OptionLeg).optionType === expectedLeg.optionType) {
+          const aLeg = asOptionLeg(actualLegs[k]);
+          if (!usedActualIndices.has(k) && aLeg?.optionType === expectedLeg.optionType) {
             matchedActualIndex = k;
             break;
           }
@@ -269,8 +194,7 @@ function scoreSignal(
       const actualLeg = matchedActualIndex >= 0 ? actualLegs[matchedActualIndex] : undefined;
       if (matchedActualIndex >= 0) usedActualIndices.add(matchedActualIndex);
 
-      const actualOptionLeg = actualLeg?.type === 'option' ? actualLeg : undefined;
-      scores.push(...scoreLeg(legPrefix, expectedLeg, actualOptionLeg, refDate));
+      scores.push(...scoreLeg(legPrefix, expectedLeg, actualLeg, refDate));
     }
   }
 
@@ -284,20 +208,22 @@ export function scoreCase(
 ): EvalResult {
   const { expected } = evalCase;
   const fieldScores: FieldScore[] = [];
+  const actualSignals = orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [];
 
   // Gate: outcome mismatch -> score 0
+  // mustMatch paths including 'outcome' are implicitly covered — score 0 means passed=false regardless.
   if (orchestratorResult.outcome !== expected.outcome) {
     return {
       caseId: evalCase.id,
       description: evalCase.description,
       passed: false,
-      hardFail: false,
+      hardFail: (evalCase.mustMatch ?? []).includes('outcome'),
       score: 0,
       fieldScores: [],
-      hardFailFields: [],
+      hardFailFields: (evalCase.mustMatch ?? []).includes('outcome') ? ['outcome'] : [],
       actualDecision: orchestratorResult.outcome,
       expectedDecision: expected.outcome,
-      actualSignals: orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [],
+      actualSignals,
       durationMs: 0,
       tags: evalCase.tags ?? [],
     };
@@ -315,13 +241,11 @@ export function scoreCase(
       hardFailFields: [],
       actualDecision: orchestratorResult.outcome,
       expectedDecision: expected.outcome,
-      actualSignals: orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [],
+      actualSignals,
       durationMs: 0,
       tags: evalCase.tags ?? [],
     };
   }
-
-  const actualSignals = orchestratorResult.outcome === 'EXECUTE' ? orchestratorResult.signals : [];
 
   // Score each expected signal
   for (let i = 0; i < expected.signals.length; i++) {
@@ -339,7 +263,7 @@ export function scoreCase(
 
       if (expectedOptionTypes.length > 0) {
         actualSig = actualSignals.find(s => {
-          const actualOptionTypes = getOptionLegs(s)
+          const actualOptionTypes = getOptionLegs(s.legs)
             .map(l => l.optionType)
             .sort();
           if (actualOptionTypes.length !== expectedOptionTypes.length) return false;
@@ -373,11 +297,13 @@ export function scoreCase(
   const matchedFields = fieldScores.filter(f => f.matched).length;
   const score = totalFields === 0 ? 1.0 : matchedFields / totalFields;
 
-  // Check mustMatch paths
+  // Check mustMatch paths by looking up the already-computed fieldScores.
+  // 'outcome' is always satisfied here (gate above handles mismatch).
   const hardFailFields: string[] = [];
   for (const path of (evalCase.mustMatch ?? [])) {
-    const { matched } = resolveMustMatchPath(path, evalCase, orchestratorResult, refDate);
-    if (!matched) hardFailFields.push(path);
+    if (path === 'outcome') continue; // already matched at the gate
+    const entry = fieldScores.find(f => f.field === path);
+    if (!entry || !entry.matched) hardFailFields.push(path);
   }
 
   const hardFail = hardFailFields.length > 0;

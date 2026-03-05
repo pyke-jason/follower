@@ -71,7 +71,7 @@ export default async function TraderDetailPage({
         {trader && (
           <div className="flex items-center gap-1.5">
             <Badge label={trader.enabled ? 'ENABLED' : 'DISABLED'} />
-            {(trader.strategies as string[])?.map((s) => (
+            {trader.strategies.map((s) => (
               <InfoChip key={s} label={s} />
             ))}
           </div>

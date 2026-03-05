@@ -1,4 +1,5 @@
 import { getOpenTrades } from '@/lib/queries';
+import { getTradeFlags } from '@src/db/accessors';
 import { Badge } from '../../components/badge';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, relativeTime } from '@/lib/format';
@@ -60,7 +61,7 @@ export default async function OpenTradesPage({
                     {t.symbol}
                   </Link>
                   <div className="flex items-center gap-1.5">
-                    {!!t.hasSubsequentMessage && (
+                    {getTradeFlags(t).includes('hasUpdate') && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span className="inline-flex items-center gap-0.5 rounded-sm px-1 py-px text-[9px] font-medium leading-tight text-amber-300 bg-amber-400/15 border border-amber-400/25">

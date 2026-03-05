@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds, getMarketDataFailTradeIds, getTradesWithSubsequentMessages } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, buildFlagsByTradeId } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { formatCurrency, isoToDateKey } from '@/lib/format';
 import { deleteBacktestRun, cancelBacktestRun, invalidateIntentCache } from '../actions';
+import { CollapsibleError } from './collapsible-error';
 import { LogViewer } from './log-viewer';
 import { BacktestTabs } from './backtest-tabs';
 import { EquityCurveChart } from './equity-curve-chart';
@@ -20,12 +21,10 @@ import { ChatRoom } from '../../messages/chat-room';
 import { ChatHydrator } from '../../messages/chat-hydrator';
 import { loadInitialChatData } from '../../messages/load-chat-data';
 import { TradeFilterProvider, TradeFilters } from '../../components/trade-filters';
-import type { TradeFlag } from '../../components/trade-filters';
 import { BacktestTradesTable } from './backtest-trades-table';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import type { CommissionSchedule } from '@src/db/schema';
-import { getConfig, getLiveMetrics } from '@src/db/accessors';
 
 import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '@src/lib/numbers';
 import { computeCoreStats } from '@src/backtest/report';
@@ -43,9 +42,9 @@ export default async function BacktestDetailPage({
   const run = await getBacktestRunById(id);
   if (!run) notFound();
 
-  const config = getConfig(run);
+  const config = run.config;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
-  const liveMetrics = getLiveMetrics(run);
+  const liveMetrics = run.liveMetrics;
   const lastProcessedTs = run.status !== 'COMPLETED'
     ? liveMetrics?.lastProcessedMessageTs ?? null
     : null;
@@ -69,26 +68,8 @@ export default async function BacktestDetailPage({
   ]);
 
   const tradeIds = allTrades.map((t) => t.id);
-  const [eventsByTradeId, cancelledTradeIds, marketDataFailIds, subsequentMessageTradeIds] = await Promise.all([
-    getTradeEventsForTrades(tradeIds),
-    getCancelledCloseTradeIds(tradeIds),
-    getMarketDataFailTradeIds(tradeIds),
-    getTradesWithSubsequentMessages(tradeIds),
-  ]);
-  // Compute per-trade flags for filter toggles
-  const flagsByTradeId: Record<string, TradeFlag[]> = {};
-  for (const t of allTrades) {
-    const flags: TradeFlag[] = [];
-    if (cancelledTradeIds.has(t.id)) flags.push('closeFailed');
-    if (t.status === 'CLOSED' && !t.closeMessageId) flags.push('autoClose');
-    if (marketDataFailIds.has(t.id)) flags.push('marketDataFail');
-    const actions = new Set(eventsByTradeId.get(t.id)?.map(e => e.action));
-    if (actions.has('LEG_OFF')) flags.push('legOff');
-    if (actions.has('TRIM')) flags.push('trimmed');
-    if (actions.has('ADD')) flags.push('added');
-    if (subsequentMessageTradeIds.has(t.id)) flags.push('hasUpdate');
-    if (flags.length > 0) flagsByTradeId[t.id] = flags;
-  }
+  const eventsByTradeId = await getTradeEventsForTrades(tradeIds);
+  const flagsByTradeId = buildFlagsByTradeId(allTrades);
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
 
@@ -204,7 +185,7 @@ export default async function BacktestDetailPage({
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} cancelledTradeIds={cancelledTradeIds} subsequentMessageTradeIds={subsequentMessageTradeIds} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity} />;
+  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} flagsByTradeId={flagsByTradeId} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
@@ -341,16 +322,7 @@ export default async function BacktestDetailPage({
 
         {/* Error — only when there is one (hide for cancelled runs) */}
         {run.error && run.status !== 'CANCELLED' && (
-          <Card className="py-4 gap-2 border-loss/30 bg-loss/5">
-            <CardHeader className="py-0">
-              <CardTitle className="text-sm text-loss">Error</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <pre className="text-xs text-loss/80 whitespace-pre-wrap font-mono">
-                {run.error}
-              </pre>
-            </CardContent>
-          </Card>
+          <CollapsibleError error={run.error} />
         )}
 
         {/* Tabs — always in this slot when data exists */}

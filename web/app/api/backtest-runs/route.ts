@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { getBacktestRuns } from '@/lib/queries';
-import { getConfig, getSummary } from '@src/db/accessors';
 import { isoToDateKey } from '@/lib/format';
 
 export async function GET() {
@@ -9,8 +8,8 @@ export async function GET() {
   const items = runs
     .filter((r) => r.status === 'COMPLETED' || r.status === 'RUNNING' || r.status === 'CANCELLED')
     .map((r) => {
-      const config = getConfig(r);
-      const summary = getSummary(r);
+      const config = r.config;
+      const summary = r.summary;
       return {
         id: r.id,
         name: r.name,

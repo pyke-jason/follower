@@ -14,17 +14,19 @@ import type { OrderManager } from '../orders/order-manager.js';
 import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
-import type { ResolvedSignal, OrchestratorResult, OptionLeg, Leg, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
+import type { ResolvedSignal, OrchestratorResult, Leg, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
 import type { Message, TradeMetadata } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
+import { isSpread, getOptionLegs } from '../lib/trade.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
 import { formatOccSymbol } from '../lib/occ-symbology.js';
-import { getSpreadMidpoint } from './spread-midpoint.js';
+import { getMidpoint, isCreditOrder, isCreditOrderStructural } from './leg-pricing.js';
 import { QuoteResolutionError } from '../lib/errors.js';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { roundCents } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
+import { addTradeFlags } from '../trades/trade-flags.js';
 
 const log = createLogger('ExecuteResolved');
 
@@ -115,11 +117,12 @@ type ResolvedChaseParams = {
 export function resolveChaseParams(profile: ChaseProfile, signalPrice: number, isBuy: boolean): ResolvedChaseParams {
   const rawStep = signalPrice * profile.pctPerStep;
   const stepAmount = roundCents(Math.min(profile.maxStep, Math.max(profile.minStep, rawStep)));
-  const chaseLimit = roundCents(
-    isBuy
-      ? signalPrice * (1 + profile.maxSlippagePct)
-      : Math.max(0.01, signalPrice * (1 - profile.maxSlippagePct))
-  );
+
+  // Buy orders chase UP (willing to pay more); sell orders chase DOWN (willing to accept less).
+  const chaseLimit = isBuy
+    ? roundCents(signalPrice * (1 + profile.maxSlippagePct))
+    : roundCents(Math.max(0.01, signalPrice * (1 - profile.maxSlippagePct)));
+
   const chaseRange = Math.abs(chaseLimit - signalPrice);
   const maxSteps = Math.max(1, Math.floor(chaseRange / stepAmount));
   return { stepAmount, chaseLimit, intervalSec: profile.intervalSec, maxSteps, cancelAfterSec: profile.cancelAfterSec };
@@ -130,11 +133,11 @@ export function selectChaseProfile(strategy: Strategy, isPositionReducing: boole
   if (strategy === 'STOCK') {
     return isPositionReducing ? CHASE_PROFILES.STOCK_CLOSE : CHASE_PROFILES.STOCK_OPEN;
   }
-  const isSpread = strategy === 'CDS' || strategy === 'PDS' || strategy === 'PCS';
+  const spread = isSpread(strategy);
   if (isPositionReducing) {
-    return isSpread ? CHASE_PROFILES.SPREAD_CLOSE : CHASE_PROFILES.OPTION_CLOSE;
+    return spread ? CHASE_PROFILES.SPREAD_CLOSE : CHASE_PROFILES.OPTION_CLOSE;
   }
-  if (isSpread) {
+  if (spread) {
     return isBuy ? CHASE_PROFILES.SPREAD_OPEN_BUY : CHASE_PROFILES.SPREAD_OPEN_SELL;
   }
   return isBuy ? CHASE_PROFILES.OPTION_OPEN_BUY : CHASE_PROFILES.OPTION_OPEN_SELL;
@@ -149,13 +152,23 @@ function deriveSymbol(legs: Leg[]): string {
 
 /**
  * Derive strategy from leg shapes.
- * 2 CALL legs → CDS, 2 PUT legs → PDS, 1 CALL → CALL, 1 PUT → PUT, stock → STOCK.
+ * 2-leg spreads: check optionType + strike relationship to distinguish debit vs credit.
+ * PUT: SELL higher strike + BUY lower strike = PCS (credit), else PDS (debit).
+ * CALL: SELL lower strike + BUY higher strike = CCS (credit), else CDS (debit).
+ * 1 CALL → CALL, 1 PUT → PUT, stock → STOCK.
  */
 function deriveStrategy(legs: Leg[]): Strategy {
   if (legs[0].type === 'stock') return 'STOCK';
-  const optionLegs = legs.filter((l): l is OptionLeg => l.type === 'option');
+  const optionLegs = getOptionLegs(legs);
   if (optionLegs.length === 2) {
-    return optionLegs[0].optionType === 'CALL' ? 'CDS' : 'PDS';
+    const buyLeg = optionLegs.find(l => l.side === 'BUY')!;
+    const sellLeg = optionLegs.find(l => l.side === 'SELL')!;
+    if (optionLegs[0].optionType === 'PUT') {
+      // PCS: sell higher put, buy lower put (credit). PDS: buy higher put (debit).
+      return sellLeg.strike > buyLeg.strike ? 'PCS' : 'PDS';
+    }
+    // CCS: sell lower call, buy higher call (credit). CDS: buy lower call (debit).
+    return sellLeg.strike < buyLeg.strike ? 'CCS' : 'CDS';
   }
   return optionLegs[0].optionType;
 }
@@ -175,7 +188,7 @@ function deriveDirection(legs: Leg[]): Direction {
   if (sells > buys) return 'SHORT';
   // Equal: debit spread (BUY at higher premium) = LONG convention
   // For 2-leg spreads, check which leg has the higher strike
-  const optionLegs = legs.filter((l): l is OptionLeg => l.type === 'option');
+  const optionLegs = getOptionLegs(legs);
   if (optionLegs.length === 2) {
     const buyLeg = optionLegs.find(l => l.side === 'BUY')!;
     const sellLeg = optionLegs.find(l => l.side === 'SELL')!;
@@ -231,6 +244,7 @@ function buildOrderParams(
   legs: OrderLeg[],
   limitPrice: number | undefined,
   isPositionReducing: boolean,
+  isCredit: boolean,
 ): WorkingOrderParams {
   // Safety guard: options have massive bid-ask spreads ($1-3+). A MARKET order
   // would fill at the worst side, costing hundreds in avoidable slippage.
@@ -244,7 +258,7 @@ function buildOrderParams(
   let cancelAfterSec: number | undefined;
 
   if (limitPrice) {
-    const isBuy = legs[0]?.action === 'BUY';
+    const isBuy = !isCredit;
     const profile = selectChaseProfile(strategy, isPositionReducing, isBuy);
     const chase = resolveChaseParams(profile, limitPrice, isBuy);
     adjustmentRules = [{
@@ -319,17 +333,6 @@ async function placeOrder(
   return result;
 }
 
-// ─── Entry price estimate ───────────────────────────
-
-async function getEntryPriceEstimate(legs: Leg[], broker: BrokerService): Promise<number> {
-  if (legs[0].type === 'stock') {
-    const quote = await broker.getQuote(legs[0].symbol);
-    return (quote.bid + quote.ask) / 2;
-  }
-  // Options/spreads: quote the actual contract(s), not the underlying.
-  return getSpreadMidpoint(broker, legsToOrderLegs(legs, 1));
-}
-
 // ─── Single signal executor ─────────────────────────
 
 async function executeResolvedSignal(
@@ -348,7 +351,7 @@ async function executeResolvedSignal(
 
   // One info line per signal — the authoritative execution log
   const logAction = signalAction;
-  const optLegs = signal.legs.filter((l): l is OptionLeg => l.type === 'option');
+  const optLegs = getOptionLegs(signal.legs);
   const execParts = [`${logAction} ${direction} ${strategy} ${symbol}`];
   if (optLegs.length > 0) {
     execParts.push(`${signal.legs.length} leg(s) expiry=${optLegs[0].expiry} strikes=${optLegs.map(l => l.strike).join('/')}`);
@@ -361,7 +364,7 @@ async function executeResolvedSignal(
 
   if (!isPositionReducing) {
     // 1. Size
-    const entryPrice = await getEntryPriceEstimate(signal.legs, deps.broker);
+    const entryPrice = await getMidpoint(deps.broker, legsToOrderLegs(signal.legs, 1));
     const size = await deps.calculatePositionSize({
       trader,
       symbol,
@@ -390,9 +393,14 @@ async function executeResolvedSignal(
 
     // 3. Build order
     const orderLegs = legsToOrderLegs(signal.legs, size.quantity);
-    const mid = await getSpreadMidpoint(deps.broker, orderLegs);
-    const limitPrice = signal.limitPrice != null ? Math.min(Math.abs(signal.limitPrice), mid) : mid;
-    const params = buildOrderParams(strategy, direction, symbol, orderLegs, limitPrice, false);
+    const mid = await getMidpoint(deps.broker, orderLegs);
+    const { isCredit } = await isCreditOrder(deps.broker, orderLegs);
+    const sigPrice = signal.limitPrice != null ? Math.abs(signal.limitPrice) : mid;
+    // Credit: maximize what you receive. Debit/stock: minimize what you pay.
+    const limitPrice = isCredit
+      ? Math.max(sigPrice, mid)
+      : Math.min(sigPrice, mid);
+    const params = buildOrderParams(strategy, direction, symbol, orderLegs, limitPrice, false, isCredit);
 
     // 4. Place and record
     let tradeId: string | undefined;
@@ -436,12 +444,13 @@ async function executeResolvedSignal(
   // the correct quantities (full position for CLOSE, partial for TRIM, single
   // leg for LEG_OFF).
   const orderLegs = legsToOrderLegs(signal.legs, 1); // quantity is already in the legs
-  const mid = await getSpreadMidpoint(deps.broker, orderLegs);
+  const closeMid = await getMidpoint(deps.broker, orderLegs);
   // deriveDirection returns the ORDER direction from the signal legs' sides:
   // SELL legs → SHORT (selling), BUY legs → LONG (buying back).
   // This is already the correct direction for the broker's fill check
   // (isBuyOrder uses params.direction to decide BUY vs SELL fill logic).
-  const params = buildOrderParams(strategy, direction, symbol, orderLegs, mid, true);
+  const closeIsCredit = isCreditOrderStructural(orderLegs) ?? false;
+  const params = buildOrderParams(strategy, direction, symbol, orderLegs, closeMid, true, closeIsCredit);
 
   let tradeId: string | undefined;
   const quantity = orderLegs[0]?.quantity ?? 1;
@@ -540,6 +549,9 @@ export async function executeResolvedSignals(ctx: {
           error: err.originalMessage,
           signal,
         }, { signalIndex: i });
+        if (signal.tradeId) {
+          await addTradeFlags(signal.tradeId, 'marketDataFail');
+        }
 
         // Attempt retry via LLM re-parse
         log.info(`Quote resolution failed — retrying via LLM: ${err.originalMessage.slice(0, 120)}`);
@@ -566,8 +578,7 @@ export async function executeResolvedSignals(ctx: {
 
           // Check if the retry produced the same bad symbol
           if (err.occSymbol) {
-            const stillBad = retrySignal.legs
-              .filter((l): l is OptionLeg => l.type === 'option')
+            const stillBad = getOptionLegs(retrySignal.legs)
               .some(l => formatOccSymbol({ underlying: l.symbol, expiration: l.expiry, type: l.optionType, strike: l.strike }) === err.occSymbol);
             if (stillBad) {
               const sameSymbolResult: ResolvedPipelineResult = {

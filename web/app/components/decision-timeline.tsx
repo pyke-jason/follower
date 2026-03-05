@@ -7,7 +7,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '@src/lib/numbers';
 import { formatLegsSummary } from '@src/lib/trade';
-import type { RunDecision, TradeEvent, TradeLeg } from '@src/db/schema';
+import type { RunDecision, TradeEvent } from '@src/db/schema';
 import type { TimelineMessage } from '../trades/actions';
 import { useTradesStore } from '@/stores/trades-store';
 import {
@@ -437,7 +437,7 @@ export function UnifiedTimeline() {
               const meta = ev.metadata as Record<string, unknown> | null;
               const trimPnl = meta?.trimPnl as number | undefined;
               const info = ev.messageId ? fillInfoByMsg.get(ev.messageId) : undefined;
-              const evLegs = (ev.legs as TradeLeg[] | null) ?? [];
+              const evLegs = ev.legs;
               const evStrategy = ev.strategy ?? '';
               const contractDesc = formatLegsSummary(evLegs, evStrategy);
 

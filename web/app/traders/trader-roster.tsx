@@ -116,7 +116,7 @@ export function TraderRoster({
             ...action.names.map((name) => ({
               name,
               enabled: true as boolean | null,
-              strategies: [...ALL_STRATEGIES] as string[],
+              strategies: [...ALL_STRATEGIES],
               notes: null as string | null,
               positionSizingConfig:
                 null as TrackedTrader['positionSizingConfig'],
@@ -139,7 +139,7 @@ export function TraderRoster({
         case 'bulkStrategy':
           return state.map((t) => {
             if (!action.names.includes(t.name)) return t;
-            const current = (t.strategies as string[]) || [];
+            const current = t.strategies;
             const strategies = action.enable
               ? current.includes(action.strategy)
                 ? current
@@ -299,7 +299,7 @@ export function TraderRoster({
     if (active.size === 0) return 'none';
     const selectedTraders = optimistic.filter((t) => active.has(t.name));
     const count = selectedTraders.filter((t) =>
-      ((t.strategies as string[]) || []).includes(strategy),
+      t.strategies.includes(strategy),
     ).length;
     if (count === selectedTraders.length) return 'all';
     if (count === 0) return 'none';
@@ -519,7 +519,7 @@ const TraderRow = memo(function TraderRow({
   onStrategiesChange: (name: string, strategies: string[]) => void;
   onRiskPercentChange: (name: string, riskPercent: number | null) => void;
 }) {
-  const strategies = (trader.strategies as string[]) || [];
+  const strategies = trader.strategies;
 
   return (
     <TableRow

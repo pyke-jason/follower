@@ -10,20 +10,20 @@ Before writing any helper function in a component or page file, check if it alre
 
 | Need | Location | Examples |
 |------|----------|---------|
-| Formatting | `web/lib/format.ts` | `formatCurrency`, `formatDate`, `formatTime`, `formatDuration`, `pnlColor`, `isoToDateKey` |
+| Formatting | `web/lib/format.ts` | e.g. `formatCurrency`, `pnlColor`, `relativeTime`, `signalBorderColor` |
 | Class merging | `web/lib/utils.ts` | `cn()` (clsx + tailwind-merge) |
 | Run scoping | `web/lib/run-scope.ts` | `buildHref()`, `isRunScopedPath()` |
-| Author colors | `web/lib/author-colors.ts` | `getAuthorColor()` |
-| DB queries | `web/lib/queries.ts` | 50+ query functions |
-| DB types | `@db/schema` | `Trade`, `Message`, `TradeEvent`, etc. |
-| DB accessors | `@db/accessors` | `getLegs()`, `getConfig()`, `getSummary()` |
-| Backend utils | `../../../src/lib/numbers` | `roundCents`, `safeParseFloat` |
-| Commission | `../../../src/lib/commission` | `computeTradeCommission()` |
-| Stats | `../../../src/lib/core-stats` | `computeCoreStats()` |
+| Author colors | `web/lib/author-colors.ts` | `getAuthorBgColor()`, `getAuthorTextColor()`, `getAuthorInitials()` |
+| DB queries | `web/lib/queries.ts` | All server-side data fetching (check before writing new queries) |
+| DB types | `@src/db/schema` | `Trade`, `Message`, `TradeEvent`, etc. |
+| DB accessors | `@src/db/accessors` | `getLegs()`, `getConfig()`, `getSummary()` |
+| Backend utils | `@src/lib/numbers` | `roundCents`, `safeParseFloat` |
+| Commission | `@src/lib/commission` | `computeTradeCommission()` |
+| Stats | `@src/backtest/report` | `computeCoreStats()` |
 
-**Known duplications to avoid repeating:**
-- `relativeTime()` — exists in 3+ files. Use or extract to `web/lib/format.ts`.
-- `TimelineMessage` type — defined in both `trades/actions.ts` and `decision-timeline.tsx`. Import from one place.
+**Previously fixed duplications** (do not re-introduce):
+- `relativeTime()` — canonical location is `web/lib/format.ts`. Always import from there.
+- `TimelineMessage` type — canonical location is `web/app/trades/actions.ts`. Always import from there.
 
 ## Component Patterns
 
@@ -37,13 +37,12 @@ Before writing any helper function in a component or page file, check if it alre
 - **Read**: Server components call `web/lib/queries.ts` functions directly
 - **Write**: Server actions (`'use server'`) in `actions.ts` files per route
 - **Mutations**: Form actions preferred (progressive enhancement). Use `revalidatePath()` after writes.
-- **Client data**: Pass from server component to client component via props. Avoid client-side fetches except for polling (`/api/status`).
+- **Client data**: Pass from server component to client component via props. Avoid client-side fetches except for polling/streaming (routes under `web/app/api/`).
 
 ## Backend Imports
 
-Use path aliases from `tsconfig.json`:
-- `@db/*` -> `../src/db/*` (schema, accessors)
-- `@broker/*` -> `../src/broker/*` (types only)
-- `@secrets` -> `../src/lib/secrets`
+Use path aliases from `web/tsconfig.json`:
+- `@src/*` -> `../src/*` (all backend imports: schema, accessors, broker types, lib utilities)
+- `@/*` -> `./*` (web-local files only)
 
-For other `src/` imports, use relative paths (`../../../src/lib/...`).
+Examples: `@src/db/schema`, `@src/db/accessors`, `@src/lib/numbers`, `@src/lib/secrets`, `@src/broker/ibkr`. Never use relative `../../../src/` paths.

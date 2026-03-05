@@ -8,11 +8,10 @@ import { TableRow, TableCell } from '@/components/ui/table';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
-import { getLegs } from '@src/db/accessors';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
 import { notionalValue, formatLegsSummary } from '@src/lib/trade';
-import type { TradeLeg } from '@src/db/schema';
+import type { TradeFlag } from '@src/db/schema';
 import { useTradesStore } from '@/stores/trades-store';
 import type { LucideIcon } from 'lucide-react';
 
@@ -21,10 +20,6 @@ function notionalConcentrationColor(pct: number): string {
   if (pct >= 0.15) return 'text-amber-500';
   return 'text-muted-foreground';
 }
-
-/** Slippage is significant if > 10% of entry price or > $0.20 absolute. */
-const SLIPPAGE_THRESHOLD_PCT = 0.10;
-const SLIPPAGE_THRESHOLD_ABS = 0.20;
 
 type FlagDef = {
   icon: LucideIcon;
@@ -70,7 +65,7 @@ const FLAG_DEFS = {
     color: 'text-amber-300',
     bgColor: 'bg-amber-400/15 border border-amber-400/25',
   },
-  closeCancelled: {
+  closeFailed: {
     icon: XCircle,
     label: 'Close failed',
     tooltip: 'A close order was cancelled without filling — trade stayed open longer than intended',
@@ -135,15 +130,13 @@ export function TradeRow({
 }) {
   const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId));
   const events = useTradesStore((s) => s.eventsByTradeId.get(tradeId)) ?? [];
-  const cancelledClose = useTradesStore((s) => s.cancelledTradeIds.has(tradeId));
-  const hasSubsequentMessage = useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
+  const flags: TradeFlag[] = useTradesStore((s) => s.flagsByTradeId[tradeId]) ?? [];
   const runId = useTradesStore((s) => s.runId);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const startingEquity = useTradesStore((s) => s.startingEquity);
 
   if (!trade) return null;
 
-  const hasUpdate = trade.status !== 'CLOSED' && hasSubsequentMessage;
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
   const pnl = grossPnl != null ? grossPnl - comm : null;
@@ -157,28 +150,17 @@ export function TradeRow({
     ? notional / startingEquity
     : null;
 
-  // Compute flags
-  const actions = new Set(events?.map((e) => e.action));
-  const isAutoClose = trade.status === 'CLOSED' && !trade.closeMessageId;
-  const hasLegOff = actions.has('LEG_OFF');
-  const hasTrim = actions.has('TRIM');
-  const hasAdd = actions.has('ADD');
-
+  // Slippage tooltip still needs numeric values
   const entry = trade.entryPrice != null ? safeParseFloat(trade.entryPrice) : null;
   const brokerFill = trade.brokerFillPrice != null ? safeParseFloat(trade.brokerFillPrice) : null;
   const slippage = entry && brokerFill ? brokerFill - entry : null;
   const slippagePct = entry && slippage ? Math.abs(slippage / entry) : null;
-  const hasSignificantSlippage = slippage != null && (
-    (slippagePct != null && slippagePct >= SLIPPAGE_THRESHOLD_PCT) ||
-    Math.abs(slippage) >= SLIPPAGE_THRESHOLD_ABS
-  );
 
+  // Chase label still reads chaseSteps from metadata
   const chaseSteps = events.reduce((sum, e) => {
     const steps = (e.metadata as Record<string, unknown>)?.chaseSteps;
     return sum + (typeof steps === 'number' ? steps : 0);
   }, 0);
-
-  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose || hasUpdate || chaseSteps > 0;
 
   return (
     <TableRow
@@ -208,27 +190,30 @@ export function TradeRow({
       <TableCell>
         <span className="inline-flex items-center gap-1 flex-wrap">
           <Badge label={trade.status} />
-          {cancelledClose && <FlagChip flag={FLAG_DEFS.closeCancelled} />}
-          {isAutoClose && <FlagChip flag={FLAG_DEFS.autoClose} />}
-          {hasLegOff && <FlagChip flag={FLAG_DEFS.legOff} />}
-          {hasTrim && <FlagChip flag={FLAG_DEFS.trim} />}
-          {hasAdd && <FlagChip flag={FLAG_DEFS.add} />}
-          {hasSignificantSlippage && (
+          {flags.includes('closeFailed') && <FlagChip flag={FLAG_DEFS.closeFailed} />}
+          {flags.includes('autoClose') && <FlagChip flag={FLAG_DEFS.autoClose} />}
+          {flags.includes('legOff') && <FlagChip flag={FLAG_DEFS.legOff} />}
+          {flags.includes('trim') && <FlagChip flag={FLAG_DEFS.trim} />}
+          {flags.includes('add') && <FlagChip flag={FLAG_DEFS.add} />}
+          {flags.includes('slippage') && (
             <FlagChip
               flag={FLAG_DEFS.slippage}
-              tooltip={`Slippage: ${slippage! > 0 ? '+' : ''}${formatCurrency(slippage)} (${(slippagePct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`}
+              tooltip={slippage != null
+                ? `Slippage: ${slippage > 0 ? '+' : ''}${formatCurrency(slippage)} (${(slippagePct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`
+                : 'Significant slippage detected'}
             />
           )}
+          {flags.includes('marketDataFail') && <FlagChip flag={{ icon: XCircle, label: 'Mkt data', tooltip: 'Market data fetch failed for this trade', color: 'text-rose-400', bgColor: 'bg-rose-400/15 border border-rose-400/25' }} />}
           {chaseSteps > 0 && (
             <FlagChip
               flag={{
-                ...(chaseSteps >= 10 ? FLAG_DEFS.chaseDanger : chaseSteps >= 5 ? FLAG_DEFS.chaseWarn : FLAG_DEFS.chaseLow),
+                ...(flags.includes('chaseDanger') ? FLAG_DEFS.chaseDanger : flags.includes('chaseWarn') ? FLAG_DEFS.chaseWarn : FLAG_DEFS.chaseLow),
                 label: `${chaseSteps} chase${chaseSteps > 1 ? 's' : ''}`,
               }}
               tooltip={`${chaseSteps} price chase step${chaseSteps > 1 ? 's' : ''} across all fills`}
             />
           )}
-          {hasUpdate && <FlagChip flag={FLAG_DEFS.hasUpdate} />}
+          {flags.includes('hasUpdate') && <FlagChip flag={FLAG_DEFS.hasUpdate} />}
         </span>
       </TableCell>
 
@@ -236,7 +221,7 @@ export function TradeRow({
       <TableCell className="hidden md:table-cell text-muted-foreground">
         {(() => {
           const openEvent = events.find(e => e.action === 'OPEN');
-          const openLegs = openEvent ? (openEvent.legs as TradeLeg[] ?? []) : getLegs(trade);
+          const openLegs = openEvent ? openEvent.legs : trade.legs;
           const openStrategy = openEvent?.strategy ?? trade.strategy;
           return <LegsIndicator legs={openLegs} strategy={openStrategy} />;
         })()}

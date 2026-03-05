@@ -8,6 +8,7 @@
  */
 
 import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
+import { isSpread as isSpreadStrategy } from '../../lib/trade.js';
 import type {
   OrchestratorContext,
   ParseResult,
@@ -723,8 +724,17 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   // Badge-implied STOCK fallback: Long/Short badge + no option strategy detected.
   // Guard: "contracts" keyword suggests an unlabeled options trade → leave for LLM.
   if (strategy === null && (hasLongBadge || hasShortBadge) && !hasExitBadge && !CONTRACT_RE.test(cleanText)) {
-    strategy = 'STOCK';
-    directionFromStrategy = null;
+    // Hybrid: dollar price >= $10 or comma-separated qty (e.g. "1,000") = high-confidence STOCK.
+    // Otherwise, route to LLM — bare "Long TICKER swing" is often options, not stock.
+    const hasDollarPrice = /\$(\d+(?:\.\d+)?)/.exec(cleanText);
+    const hasHighPrice = hasDollarPrice != null && parseFloat(hasDollarPrice[1]) >= 10;
+    const hasCommaQty = STOCK_QTY_RE.test(cleanText);
+    if (hasHighPrice || hasCommaQty) {
+      strategy = 'STOCK';
+      directionFromStrategy = null;
+    } else {
+      complexityFlags.add('ambiguous_strategy');
+    }
   }
 
   // ── Direction derivation ──────────────────────────────────────────────────
@@ -789,9 +799,12 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     // Non-exit badge present → opening
     action = 'OPEN';
   } else {
-    // No badge — soft detection from verbs
+    // No badge — soft detection from verbs.
+    // Exit verbs without the Exit badge are NEVER deterministic. The badge is
+    // the structural ground truth for exits; keyword matches produce false
+    // positives (commentary, intent, price references). Set action as a hint
+    // for the LLM but always flag no_badge_exit to force LLM confirmation.
     if (EXIT_VERB_RE.test(cleanText) && !EXIT_VERB_FALSE_POSITIVE_RE.test(cleanText) && !EXIT_VERB_CONDITIONAL_RE.test(cleanText) && symbol !== null) {
-      // Only set CLOSE when we have a ticker too (higher confidence)
       const exitPct = extractExitPercent(cleanText);
       if (exitPct !== null) {
         exitPercent = exitPct;
@@ -799,6 +812,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
       } else {
         action = 'CLOSE';
       }
+      complexityFlags.add('no_badge_exit');
     } else if (BOUGHT_BACK_RE.test(cleanText) && symbol !== null) {
       if (BOUGHT_BACK_SHORT_CALLS_RE.test(cleanText)) {
         action = 'LEG_OFF';
@@ -809,6 +823,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
       } else {
         action = 'CLOSE';
       }
+      complexityFlags.add('no_badge_exit');
     } else if (/\b(adding|added)\b/i.test(cleanText)) {
       action = 'ADD';
     } else if (BOUGHT_BUYING_RE.test(cleanText) || /\bopened\b/i.test(cleanText)) {
@@ -819,7 +834,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
       action = 'OPEN';
     } else if (
       strategy !== null &&
-      (strategy === 'CDS' || strategy === 'PDS' || strategy === 'PCS' || isStrangle) &&
+      (isSpreadStrategy(strategy) || isStrangle) &&
       symbol !== null &&
       !EXIT_VERB_RE.test(cleanText) &&
       !MONITORING_RE.test(cleanText)
@@ -870,7 +885,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   // ── Coordinated field extraction (strikes, premium, expiry) ──────────────
 
-  const isSpread = strategy === 'CDS' || strategy === 'PDS' || strategy === 'PCS';
+  const isSpread = strategy !== null && isSpreadStrategy(strategy);
   const { strikes: extractedStrikes, premiumHint: extractedPremium, expiryHint: extractedExpiry, ambiguousSlashPair } = extractTradeFields(
     cleanText,
     { strategy, isLotto, isSpread },

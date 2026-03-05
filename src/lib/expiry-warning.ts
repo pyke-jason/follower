@@ -7,7 +7,7 @@
  */
 
 import type { Trade } from '../db/schema.js';
-import { getLegs } from '../db/accessors.js';
+
 import { sendSystemAlert } from './alert.js';
 import { toDateKeyET, getNextTradingDayKey, getETMinuteOfDay } from './et-date.js';
 import { createLogger } from '../lib/logger.js';
@@ -29,10 +29,9 @@ function isThrottled(tradeId: string, bucket: ExpiryBucket): boolean {
 
 /** Get the earliest option expiry from a trade's legs. Returns null for STOCK. */
 function getEarliestExpiry(trade: Trade): string | null {
-  const legs = getLegs(trade);
-  if (!legs.length) return null;
+  if (!trade.legs.length) return null;
   let earliest: string | null = null;
-  for (const leg of legs) {
+  for (const leg of trade.legs) {
     if (!leg.expiry) continue;
     if (!earliest || leg.expiry < earliest) earliest = leg.expiry;
   }

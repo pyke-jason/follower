@@ -119,7 +119,7 @@ export async function bulkToggleStrategy(
     .from(schema.trackedTraders)
     .where(inArray(schema.trackedTraders.name, names));
   for (const trader of traders) {
-    const current = (trader.strategies as string[]) || [];
+    const current = trader.strategies;
     const next = enable
       ? current.includes(strategy)
         ? current

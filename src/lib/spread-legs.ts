@@ -26,10 +26,11 @@ export type SpreadLeg = {
  * PCS  →  [SELL max PUT,  BUY  min PUT ]   put credit spread (SHORT)
  * PDS  →  [BUY  max PUT,  SELL min PUT ]   put debit spread  (LONG)
  * CDS  →  [BUY  min CALL, SELL max CALL]   call debit spread (LONG)
+ * CCS  →  [SELL min CALL, BUY  max CALL]   call credit spread (SHORT)
  * ```
  */
 export function spreadLegs(
-  strategy: 'PCS' | 'PDS' | 'CDS',
+  strategy: 'PCS' | 'PDS' | 'CDS' | 'CCS',
   s1: number,
   s2: number,
 ): SpreadLeg[] {
@@ -45,6 +46,11 @@ export function spreadLegs(
     return [
       { strike: hi, action: 'BUY', optionType: 'PUT' },
       { strike: lo, action: 'SELL', optionType: 'PUT' },
+    ];
+  } else if (strategy === 'CCS') {
+    return [
+      { strike: lo, action: 'SELL', optionType: 'CALL' },
+      { strike: hi, action: 'BUY', optionType: 'CALL' },
     ];
   } else {
     // CDS

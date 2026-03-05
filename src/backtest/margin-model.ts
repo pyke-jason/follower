@@ -128,7 +128,9 @@ export function computeMarginRequirement(params: MarginParams): MarginRequiremen
 
     // ── Vertical spreads ─────────────────────────────
     case 'CDS':
-    case 'PDS': {
+    case 'PDS':
+    case 'PCS':
+    case 'CCS': {
       const width = getSpreadWidth(legs); 
       if (direction === 'LONG') {
         const debit = entryPrice * quantity * contractMult;

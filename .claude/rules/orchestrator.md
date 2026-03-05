@@ -10,11 +10,13 @@ The orchestrator routes messages through a decision tree:
 
 ```
 Message -> parser.ts (sync, zero I/O) -> routing decision:
-  1. Hard skip (paper trades, futures, expired worthless)
-  2. Strangle fork (split into 2 OPEN signals)
-  3. Deterministic: OPEN -> open-path.ts (market data only)
-  4. Deterministic: CLOSE/TRIM/LEG_OFF -> position-path.ts (DB only)
-  5. LLM path -> llm-path.ts (NLU for ambiguous messages)
+  1. Hard skip (paper trades, futures, expired worthless, etc.)
+  2. Strangle exit (CLOSE/TRIM on strangle) -> close all matching positions
+  3. Strangle open -> fork into CALL + PUT OPEN signals via open-path
+  4. Deterministic: ADD -> open-path.ts (match existing position, then resolve as OPEN)
+  5. Deterministic: OPEN -> open-path.ts (market data only)
+  6. Deterministic: CLOSE/TRIM/LEG_OFF -> position-path.ts (DB only)
+  7. LLM path -> llm-path.ts (NLU for ambiguous messages)
 ```
 
 ## Parser (parser.ts) — Pure & Sync
@@ -38,7 +40,7 @@ The LLM path also handles 422 retry (invalid strike from parser). When `failureC
 
 ## Event Emissions
 
-The orchestrator emits events in order: `PARSED` -> `SETTLED` (for skips) or `SIGNAL_RESOLVED` (per signal). These drive the `run_decisions` table. Don't skip event emissions — the backtest detail page depends on them.
+The orchestrator emits `PARSED` (always) and `SIGNAL_RESOLVED` (per signal, for EXECUTE outcomes). `SETTLED` is emitted by the caller (runner), not the orchestrator. These events drive the `run_decisions` table. Don't skip event emissions — the backtest detail page depends on them.
 
 ## Types (types.ts)
 

@@ -10,8 +10,9 @@ import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate, isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
 import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
-import { getConfig, getSummary, getEquityCurve } from '@src/db/accessors';
 import { pctDisplay, PROFIT_FACTOR_INF } from '@src/lib/numbers';
+import type { BacktestRunConfig, BacktestRunSummary } from '@src/db/schema';
+import type { EquityPoint } from '@src/backtest/types';
 import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
 function formatDuration(ms: number | null): string {
@@ -25,9 +26,9 @@ function formatDuration(ms: number | null): string {
 type Run = {
   id: string;
   status: string;
-  config: unknown;
-  summary: unknown;
-  equityCurve: unknown;
+  config: BacktestRunConfig;
+  summary: BacktestRunSummary | null;
+  equityCurve: EquityPoint[] | null;
   durationMs: number | null;
   createdAt: string | null;
   pinned: boolean | null;
@@ -176,9 +177,9 @@ export function BacktestList({
             </TableHeader>
             <TableBody>
               {filteredRuns.map((run) => {
-                const config = getConfig(run);
-                const summary = getSummary(run);
-                const equityCurve = getEquityCurve(run);
+                const config = run.config;
+                const summary = run.summary;
+                const equityCurve = run.equityCurve;
                 const sparkData = equityCurve?.map((e) => e.cumPnl) ?? [];
                 const startDate = isoToDateKey(config.startDate);
                 const endDate = isoToDateKey(config.endDate);

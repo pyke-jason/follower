@@ -63,17 +63,25 @@ export class FillSweep {
           await enrichTradeWithFill(trade.id, status);
           enriched++;
         } else if (status.status === 'REJECTED' || status.status === 'CANCELLED') {
-          await db.update(schema.trades)
-            .set({
-              status: 'CANCELLED',
-              metadata: {
-                ...metadata,
-                fillEnriched: true,
-                fillEnrichedAt: new Date().toISOString(),
-                brokerFinalStatus: status.status,
-              },
-            })
-            .where(eq(schema.trades.id, trade.id));
+          // Re-read metadata inside transaction to avoid stale-spread race
+          await db.transaction(async (tx) => {
+            const [fresh] = await tx.select({ metadata: schema.trades.metadata })
+              .from(schema.trades)
+              .where(eq(schema.trades.id, trade.id))
+              .limit(1);
+            if (!fresh) return;
+            await tx.update(schema.trades)
+              .set({
+                status: 'CANCELLED',
+                metadata: {
+                  ...(fresh.metadata ?? {}),
+                  fillEnriched: true,
+                  fillEnrichedAt: new Date().toISOString(),
+                  brokerFinalStatus: status.status,
+                },
+              })
+              .where(eq(schema.trades.id, trade.id));
+          });
           sendSystemAlert({
             title: `Order ${status.status}`,
             message: `Order ${metadata.brokerOrderId} for ${trade.symbol} was ${status.status}. Trade marked CANCELLED.`,

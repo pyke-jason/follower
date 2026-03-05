@@ -17,7 +17,6 @@ import { ParsedContext } from './parsed-context';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
 import type { CommissionSchedule } from '@src/db/schema';
-import { getConfig } from '@src/db/accessors';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +41,7 @@ export default async function TradeDetailPage({
   ]);
 
   const commissionSchedule: CommissionSchedule | undefined =
-    backtestRun ? getConfig(backtestRun).commissionSchedule : undefined;
+    backtestRun ? backtestRun.config.commissionSchedule : undefined;
 
   const [nearbyMessages, closeNearbyMessages, runDecision] = await Promise.all([
     sourceMessage

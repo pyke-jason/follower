@@ -18,6 +18,7 @@
  */
 
 import type { Message } from '../../db/schema.js';
+
 import { createLogger } from '../../lib/logger.js';
 import { parseMessage } from './parser.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
@@ -122,10 +123,14 @@ export async function resolveOrchestrator(
     if (parse.action === 'OPEN') {
       log.debug(`[${ctx.messageId}] → open path`);
       const r = await resolveOpenPath(parse, ctx);
-      const result = { ...r, parseResult: serializedParse };
-      logResult(ctx, parse, result);
-      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
-      return result;
+      if (r.outcome !== 'MANUAL_REVIEW') {
+        const result = { ...r, parseResult: serializedParse };
+        logResult(ctx, parse, result);
+        await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+        return result;
+      }
+      // Open path couldn't resolve — fall through to LLM for disambiguation
+      log.debug(`[${ctx.messageId}] open path → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
     }
 
     if (
@@ -135,10 +140,14 @@ export async function resolveOrchestrator(
     ) {
       log.debug(`[${ctx.messageId}] → position path (${parse.action})`);
       const r = await resolvePositionPath(parse, ctx);
-      const result = { ...r, parseResult: serializedParse };
-      logResult(ctx, parse, result);
-      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
-      return result;
+      if (r.outcome !== 'MANUAL_REVIEW') {
+        const result = { ...r, parseResult: serializedParse };
+        logResult(ctx, parse, result);
+        await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+        return result;
+      }
+      // Ambiguous position match — fall through to LLM for disambiguation
+      log.debug(`[${ctx.messageId}] position path → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
     }
   }
 
@@ -147,7 +156,9 @@ export async function resolveOrchestrator(
     ? '422-retry'
     : parse.complexityFlags.size > 0
       ? `flags: [${Array.from(parse.complexityFlags).join(', ')}]`
-      : 'action=null';
+      : parse.action !== null
+        ? 'position-ambiguity'
+        : 'action=null';
   log.debug(`[${ctx.messageId}] → LLM path (${flagDetail})`);
 
   if (!env.llm) {
@@ -182,8 +193,8 @@ async function buildContext(
     messageId: message.id,
     rawHtml: message.rawHtml,
     cleanText: message.cleanText,
-    badges: (message.badges as string[]) ?? [],
-    symbols: (message.symbols as string[]) ?? [],
+    badges: message.badges,
+    symbols: message.symbols,
     timestamp: message.timestamp,
     author: message.author,
     marketData: {

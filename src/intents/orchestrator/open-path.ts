@@ -24,6 +24,7 @@ import type {
   OpenPosition,
 } from './types.js';
 import type { Strategy } from '../../lib/enums.js';
+import { isSpread, getOptionLegs, type SpreadStrategy } from '../../lib/trade.js';
 import { spreadLegs } from '../../lib/spread-legs.js';
 import { strikesFromParse } from './parser.js';
 import { resolveExpiryHint, generateWeeklyExpiries } from './expiry-resolver.js';
@@ -32,11 +33,8 @@ import { toDateKeyET } from '../../lib/et-date.js';
 
 const log = createLogger('Orchestrator:OpenPath');
 
-type SpreadStrategy = 'CDS' | 'PDS' | 'PCS';
-const SPREAD_STRATEGIES = new Set<Strategy>(['CDS', 'PDS', 'PCS']);
-function isSpread(s: Strategy): s is SpreadStrategy { return SPREAD_STRATEGIES.has(s); }
 /** Credit strategies receive premium (negative limit price). */
-function isCreditStrategy(s: Strategy): boolean { return s === 'PCS'; }
+function isCreditStrategy(s: Strategy): boolean { return s === 'PCS' || s === 'CCS'; }
 
 // ── Strike helpers ─────────────────────────────────────────────────────────────
 
@@ -117,7 +115,7 @@ function computeSpreadMid(
 // ── Option type from strategy ──────────────────────────────────────────────────
 
 function optionTypeFromStrategy(strategy: Strategy): 'CALL' | 'PUT' {
-  return (strategy === 'CALL' || strategy === 'CDS') ? 'CALL' : 'PUT';
+  return (strategy === 'CALL' || strategy === 'CDS' || strategy === 'CCS') ? 'CALL' : 'PUT';
 }
 
 // ── Main resolver ──────────────────────────────────────────────────────────────
@@ -497,7 +495,7 @@ export async function resolveOpenPath(
     strikeSelection.method !== 'explicit' &&
     resolvedLegs.legs.length > 0
   ) {
-    const optionLegs = resolvedLegs.legs.filter((l): l is OptionLeg => l.type === 'option');
+    const optionLegs = getOptionLegs(resolvedLegs.legs);
     if (optionLegs.length > 0) {
       const optType = optionLegs[0].optionType;
       const chain = await ctx.marketData.getOptionChain(symbol, resolvedExpiry, optType);

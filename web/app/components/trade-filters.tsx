@@ -7,19 +7,23 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronsUpDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Trade } from '@src/db/schema';
+import { TRADE_FLAGS } from '@src/db/schema';
+import type { Trade, TradeFlag } from '@src/db/schema';
 
 // ── Filter values ──────────────────────────────────────────────────
 
-export type TradeFlag = 'closeFailed' | 'autoClose' | 'legOff' | 'trimmed' | 'added' | 'marketDataFail' | 'hasUpdate';
+export type { TradeFlag };
 
-const FLAG_LABELS: Record<TradeFlag, string> = {
+const FLAG_LABELS: Partial<Record<TradeFlag, string>> = {
   closeFailed: 'Close failed',
   autoClose: 'Auto-close',
   legOff: 'Leg off',
-  trimmed: 'Trimmed',
-  added: 'Added',
+  trim: 'Trimmed',
+  add: 'Added',
+  slippage: 'Slippage',
   marketDataFail: 'Market data fail',
+  chaseWarn: 'Chase warn',
+  chaseDanger: 'Chase danger',
   hasUpdate: 'Has update',
 };
 
@@ -111,7 +115,7 @@ export function TradeFilterProvider({
     for (const flags of Object.values(flagsByTradeId)) {
       for (const f of flags) seen.add(f);
     }
-    return (Object.keys(FLAG_LABELS) as TradeFlag[]).filter(f => seen.has(f));
+    return ([...TRADE_FLAGS] as TradeFlag[]).filter(f => seen.has(f));
   }, [flagsByTradeId]);
 
   const value = useMemo(
@@ -245,7 +249,7 @@ export function TradeFilters({ className }: { className?: string }) {
           onClear={() => clearKey('flags')}
           options={availableFlags}
           label="Flags"
-          labels={FLAG_LABELS}
+          labels={FLAG_LABELS as Record<string, string>}
         />
       )}
       {(() => {

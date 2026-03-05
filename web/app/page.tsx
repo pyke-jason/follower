@@ -15,7 +15,6 @@ import {
 } from '@/lib/queries';
 import { formatCurrency, pnlColor, relativeTime, signalBorderColor, positionBorderColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
-import { getEquityCurve } from '../../src/db/accessors';
 import { OverviewEquityCurve } from './components/overview-equity-curve';
 import { TraderLeaderboard } from './components/trader-leaderboard';
 import { RiskPanel } from './components/risk-panel';
@@ -49,7 +48,7 @@ export default async function OverviewPage({
 
   if (runId && backtestRun?.equityCurve) {
     // Backtest mode: use the run's equity curve
-    const curve = getEquityCurve(backtestRun) ?? [];
+    const curve = backtestRun.equityCurve;
     equityData = curve.map((pt) => ({
       date: pt.date,
       equity: pt.cumPnl ?? pt.equity ?? 0,

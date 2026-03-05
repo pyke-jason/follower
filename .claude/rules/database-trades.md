@@ -23,7 +23,7 @@ Cast/parse happens **once** inside the accessor. Call sites never cast. If you f
 
 ## Composable Filters (filters.ts)
 
-`src/trades/filters.ts` exports composable Drizzle query fragments: `isOpen`, `isClosed`, `notBacktest`, `forRun()`, `forSymbol()`, `forTrader()`, `forStrategy()`.
+`src/trades/filters.ts` exports composable Drizzle query fragments for common queries (e.g., `isOpen`, `isClosed`, `forChannel()`, `forSymbol()`, `forTrader()`). Check the file for the complete list of available filters.
 
 Filters import from `db/schema` only (not `db/client`) for web compatibility. The web frontend imports these filters directly.
 

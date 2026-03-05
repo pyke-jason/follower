@@ -1,13 +1,12 @@
 import { create } from 'zustand';
-import type { Trade, TradeEvent, CommissionSchedule } from '@src/db/schema';
+import type { Trade, TradeEvent, TradeFlag, CommissionSchedule } from '@src/db/schema';
 import type { TradeStory } from '@/app/trades/actions';
 import { fetchTradeStory } from '@/app/trades/actions';
 
 export type TradesHydration = {
   trades: Trade[];
   eventsByTradeId: Map<string, TradeEvent[]>;
-  cancelledTradeIds: Set<string>;
-  subsequentMessageTradeIds?: Set<string>;
+  flagsByTradeId: Record<string, TradeFlag[]>;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
   runId?: string;
@@ -16,8 +15,7 @@ export type TradesHydration = {
 interface TradesState {
   trades: Trade[];
   eventsByTradeId: Map<string, TradeEvent[]>;
-  cancelledTradeIds: Set<string>;
-  subsequentMessageTradeIds: Set<string>;
+  flagsByTradeId: Record<string, TradeFlag[]>;
   commissionSchedule: CommissionSchedule | null;
   startingEquity: number | null;
   runId: string | null;
@@ -34,8 +32,7 @@ interface TradesState {
 export const useTradesStore = create<TradesState>((set, get) => ({
   trades: [],
   eventsByTradeId: new Map(),
-  cancelledTradeIds: new Set(),
-  subsequentMessageTradeIds: new Set(),
+  flagsByTradeId: {},
   commissionSchedule: null,
   startingEquity: null,
   runId: null,
@@ -48,8 +45,7 @@ export const useTradesStore = create<TradesState>((set, get) => ({
     set({
       trades: data.trades,
       eventsByTradeId: data.eventsByTradeId,
-      cancelledTradeIds: data.cancelledTradeIds,
-      subsequentMessageTradeIds: data.subsequentMessageTradeIds ?? new Set(),
+      flagsByTradeId: data.flagsByTradeId,
       commissionSchedule: data.commissionSchedule ?? null,
       startingEquity: data.startingEquity ?? null,
       runId: data.runId ?? null,

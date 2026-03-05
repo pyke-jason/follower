@@ -5,7 +5,21 @@
  * fallback, and spread geometry — avoids scattering strategy checks everywhere.
  */
 
+import type { Strategy, SpreadStrategy, AssetType } from './enums.js';
 import type { TradeLeg } from '../db/schema.js';
+import type { Leg, OptionLeg } from '../intents/orchestrator/types.js';
+
+export type { SpreadStrategy };
+
+/** Filter orchestrator Leg[] to only OptionLeg[]. */
+export function getOptionLegs(legs: Leg[]): OptionLeg[] {
+  return legs.filter((l): l is OptionLeg => l.type === 'option');
+}
+
+const SPREAD_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(['CDS', 'PDS', 'PCS', 'CCS']);
+
+/** True if the strategy is a vertical spread (CDS, PDS, PCS, CCS). */
+export function isSpread(s: Strategy): s is SpreadStrategy { return SPREAD_STRATEGIES.has(s); }
 
 /** Options contracts represent 100 shares; stock is 1:1. */
 export function contractMultiplier(strategy: string): number {
@@ -13,7 +27,7 @@ export function contractMultiplier(strategy: string): number {
 }
 
 /** Broker asset type: equity or option. */
-export function assetType(strategy: string): 'EQ' | 'OP' {
+export function assetType(strategy: string): AssetType {
   return strategy === 'STOCK' ? 'EQ' : 'OP';
 }
 

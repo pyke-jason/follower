@@ -53,7 +53,7 @@ export function submitDecisionTool(): ToolDef {
               action: { type: 'string', enum: ['OPEN', 'CLOSE', 'TRIM', 'LEG_OFF'] },
               symbol: { type: 'string' },
               direction: { type: 'string', enum: ['LONG', 'SHORT'], description: 'Required for OPEN. Optional hint for exits.' },
-              strategy: { type: 'string', enum: ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS'], description: 'Required for OPEN. Optional hint for exits.' },
+              strategy: { type: 'string', enum: ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS', 'CCS'], description: 'Required for OPEN. Optional hint for exits.' },
               statedPremium: { type: 'number', description: 'OPEN only. The premium/price the trader stated in the message (e.g. 3.72 from "for $3.72"). Omit if no price stated.' },
               exitPercent: { type: 'number', description: '0.0-1.0 for TRIM' },
               targetStrategy: { type: 'string', enum: ['CALL', 'PUT'], description: 'For LEG_OFF: strategy after removing the leg' },

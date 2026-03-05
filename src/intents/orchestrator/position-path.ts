@@ -7,6 +7,7 @@
 
 import { createLogger } from '../../lib/logger.js';
 import { extractUnderlying } from '../../lib/occ-symbology.js';
+import { addTradeFlags } from '../../trades/trade-flags.js';
 import type {
   ParseResult,
   OrchestratorContext,
@@ -72,7 +73,7 @@ function orderTypeFromLegs(legs: Leg[]): 'SINGLE' | 'SPREAD' | 'STOCK' {
 function matchPosition(
   positions: OpenPosition[],
   parse: ParseResult,
-): { position: OpenPosition } | { flagReason: string } {
+): { position: OpenPosition; strategyMismatch?: boolean } | { flagReason: string } {
   const symbol = parse.symbol!; // caller ensures non-null
 
   // Primary filter: symbol match
@@ -84,16 +85,18 @@ function matchPosition(
 
   // Strategy filter
   let candidates = bySymbol;
+  let strategyMismatch = false;
   if (parse.strategy !== null) {
     const byStrategy = bySymbol.filter((p) => p.strategy === parse.strategy);
 
     if (byStrategy.length === 0) {
       // Fuzzy fallback: if only one position for this symbol, use it regardless of strategy
       if (bySymbol.length === 1) {
-        log.debug(
+        log.warn(
           `strategy mismatch for ${symbol}: parse=${parse.strategy}, position=${bySymbol[0].strategy} — using fuzzy fallback`,
         );
         candidates = bySymbol;
+        strategyMismatch = true;
       } else {
         // Multiple positions with no strategy match — ambiguous
         return {
@@ -107,14 +110,14 @@ function matchPosition(
 
   // Exactly one candidate — use it
   if (candidates.length === 1) {
-    return { position: candidates[0] };
+    return { position: candidates[0], strategyMismatch };
   }
 
   // Multiple candidates — try direction tie-breaking only when direction was explicitly parsed
   if (parse.direction !== null) {
     const byDirection = candidates.filter((p) => p.direction === parse.direction);
     if (byDirection.length === 1) {
-      return { position: byDirection[0] };
+      return { position: byDirection[0], strategyMismatch };
     }
   }
 
@@ -261,7 +264,11 @@ export async function resolvePositionPath(
     return { outcome: 'MANUAL_REVIEW', reason: matchResult.flagReason };
   }
 
-  const { position } = matchResult;
+  const { position, strategyMismatch } = matchResult;
+
+  if (strategyMismatch) {
+    await addTradeFlags(position.id, 'strategyMismatch');
+  }
 
   log.debug(
     `${action} matched position id=${position.id} symbol=${position.symbol} strategy=${position.strategy} direction=${position.direction} qty=${position.quantity}`,

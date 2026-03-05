@@ -248,7 +248,7 @@ async function isHealthy(): Promise<boolean> {
   }
 }
 
-export const liveService: BrokerService = {
+export const tsService: BrokerService = {
   getQuote, placeOrder, modifyOrder, cancelOrder, getOrderStatus,
   getPositions, getAccountBalance, isHealthy,
 };

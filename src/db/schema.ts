@@ -24,11 +24,11 @@ export const messages = sqliteTable('messages', {
   timestamp:          text('timestamp').notNull(), // ISO 8601
   rawHtml:            text('raw_html').notNull(),
   cleanText:          text('clean_text').notNull(),
-  badges:             text('badges', { mode: 'json' }).$type<string[]>().default([]),
-  symbols:            text('symbols', { mode: 'json' }).$type<string[]>().default([]),
+  badges:             text('badges', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  symbols:            text('symbols', { mode: 'json' }).$type<string[]>().notNull().default([]),
   actionHint:         text('action_hint'),       // OPEN | CLOSE | ADJUST | null
   directionHint:      text('direction_hint'),     // LONG | SHORT | null
-  detectedStrategies: text('detected_strategies', { mode: 'json' }).$type<DetectedStrategy[]>().default([]),
+  detectedStrategies: text('detected_strategies', { mode: 'json' }).$type<DetectedStrategy[]>().notNull().default([]),
   isPaperTrade:       integer('is_paper_trade', { mode: 'boolean' }).default(false),
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
@@ -44,7 +44,7 @@ export const messages = sqliteTable('messages', {
 export const messageLabels = sqliteTable('message_labels', {
   id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:  text('message_id').references(() => messages.id).notNull(),
-  signals:    text('signals', { mode: 'json' }).$type<Signal[]>().default([]),
+  signals:    text('signals', { mode: 'json' }).$type<Signal[]>().notNull().default([]),
   source:     text('source').notNull().default('manual'), // approved | manual
   reviewed:   integer('reviewed', { mode: 'boolean' }).default(false),
   notes:      text('notes'),
@@ -64,7 +64,7 @@ export const tasks = sqliteTable('tasks', {
   status:      text('status').notNull().default('PENDING'), // PENDING | IN_PROGRESS | COMPLETED | FAILED | SKIPPED
   assignee:    text('assignee').notNull().default('agent'),
   priority:    integer('priority').default(0),
-  context:     text('context', { mode: 'json' }).$type<TaskContext>().default({}),
+  context:     text('context', { mode: 'json' }).$type<TaskContext>().notNull().default({}),
   result:      text('result', { mode: 'json' }).$type<{ outcome: string } | null>(),
   createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:   text('started_at'),
@@ -100,7 +100,7 @@ export const trades = sqliteTable('trades', {
   closedAt:        text('closed_at'),
   closeMessageId:  text('close_message_id').references(() => messages.id),
   channelId:       text('channel_id').notNull(),
-  metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().default({}),
+  metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().notNull().default({}),
   avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
   brokerFillQty:   integer('broker_fill_qty'),
@@ -123,11 +123,11 @@ export const tradeEvents = sqliteTable('trade_events', {
   action:     text('action').notNull(),         // OPEN | CLOSE | ADD | TRIM | LEG_OFF
   price:      text('price'),                    // fill price for this action
   quantity:   integer('quantity'),               // contracts/shares involved
-  legs:       text('legs', { mode: 'json' }).$type<TradeLeg[]>().default([]),
+  legs:       text('legs', { mode: 'json' }).$type<TradeLeg[]>().notNull().default([]),
   strategy:   text('strategy').$type<Strategy>(),                 // strategy at time of event
   direction:  text('direction').$type<Direction>(),                // direction at time of event
   messageId:  text('message_id'),               // source message that triggered this
-  metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>().default({}),
+  metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
   timestamp:  text('timestamp').notNull(),       // ISO 8601 — when the action happened
   createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -212,7 +212,7 @@ export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
 export const trackedTraders = sqliteTable('tracked_traders', {
   name:            text('name').primaryKey(),
   enabled:         integer('enabled', { mode: 'boolean' }).default(true),
-  strategies:      text('strategies', { mode: 'json' }).$type<string[]>().default([]),
+  strategies:      text('strategies', { mode: 'json' }).$type<string[]>().notNull().default([]),
   notes:           text('notes'),
   positionSizingConfig: text('position_sizing_config', { mode: 'json' })
     .$type<PositionSizingConfig>(),
@@ -389,6 +389,11 @@ export type BacktestRunSummary = {
   netPnl?: number;
 };
 
+// ─── Trade Flags ─────────────────────────────────────
+
+export const TRADE_FLAGS = ['autoClose','legOff','trim','add','slippage','closeFailed','hasUpdate','marketDataFail','chaseWarn','chaseDanger','strategyMismatch'] as const;
+export type TradeFlag = (typeof TRADE_FLAGS)[number];
+
 // ─── Supporting Types ────────────────────────────────
 
 export const DetectedStrategySchema = z.object({
@@ -462,6 +467,8 @@ export type TradeMetadata = {
   forceExitStatus?: string;
   /** Number of price chase steps on the most recent fill. Per-event source of truth is in trade_events metadata. */
   chaseSteps?: number;
+  /** Materialized trade flags — set at write time by recordTrade and async updaters. */
+  flags?: TradeFlag[];
   /** Catch-all for genuinely unknown future fields. */
   extra?: Record<string, unknown>;
 };

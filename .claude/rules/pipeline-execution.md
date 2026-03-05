@@ -10,34 +10,37 @@ These files execute identically in both backtest and live. **Never** add path-sp
 
 - `execute-resolved.ts` — Main executor. Takes `ResolvedSignal[]`, places orders via `BrokerService` abstraction.
 - `process-task.ts` — Bridge: task queue -> `resolveOrchestrator()` -> `executeResolvedSignals()`.
-- `spread-midpoint.ts` — Computes net bid/ask for multi-leg orders. Broker-agnostic.
+- `leg-pricing.ts` — Canonical leg-level pricing: `getMidpoint()` (always positive) + `isCreditOrder()` (from leg structure, no quotes).
 
-## Limit Price Sources per Action
+## Limit Prices — Always Positive
 
-Every code path must ensure `limitPrice` is set for non-stock orders (see CLAUDE.md NEVER MARKET ON OPTIONS):
+`limitPrice` is ALWAYS a positive number. Credit vs debit is determined by leg structure (`isCreditOrder`), never by price sign. The `zPrice` schema enforces `> 0`.
 
-- OPEN: `getSpreadMidpoint()` computes midpoint. If `signal.limitPrice` is set, use `Math.min(abs(signal.limitPrice), mid)`.
-- CLOSE/TRIM/LEG_OFF: Always compute `mid` from `getSpreadMidpoint()`.
-- If `getSpreadMidpoint()` can throw, the caller **must** handle the error — never let it silently produce `undefined` limitPrice.
+- OPEN debit: `Math.min(signalPrice, mid)` — minimize what you pay.
+- OPEN credit: `Math.max(signalPrice, mid)` — maximize what you receive.
+- CLOSE/TRIM/LEG_OFF: `getMidpoint()` directly (already positive).
+- If `getMidpoint()` can throw, the caller **must** handle the error — never let it silently produce `undefined` limitPrice.
 
-## Order Defaults
+## Chase Profiles
 
-Two sets: `ORDER_DEFAULTS` (opening) and `CLOSE_ORDER_DEFAULTS` (position-reducing).
+Order chase behavior is controlled by `CHASE_PROFILES` in `execute-resolved.ts` — named profiles (one per strategy + action combination) selected by `selectChaseProfile(strategy, isPositionReducing, isBuy)`. Each profile defines step sizing, slippage bounds, and optional `cancelAfterSec`. The actual step amount and chase limit are computed by `resolveChaseParams(profile, signalPrice, isBuy)`.
 
-Position-reducing orders:
-- No `cancelAfterSec` — persist until filled or day boundary
-- Wider step amounts (e.g., $0.15 vs $0.10 for options)
-- `maxSteps` cap prevents infinite chasing
+Key invariants:
+- Opening profiles have `cancelAfterSec` set — orders cancel if not filled within the timeout window
+- Closing profiles (triggered when `isPositionReducing=true`) have **no** `cancelAfterSec` — they persist until filled or day boundary
+- `maxSteps` is derived from `chaseRange / stepAmount`, preventing infinite chasing
 
-**Do not add `cancelAfterSec` to CLOSE/TRIM/LEG_OFF orders.** They must persist.
+**Do not add `cancelAfterSec` to position-reducing (CLOSE/TRIM/LEG_OFF) profiles.** They must persist.
 
 ## ResolvedPipelineDeps Interface
 
-```
-broker, orderManager, calculatePositionSize, checkRiskLimits, recordTrade, onPending
-```
+Defined in `execute-resolved.ts`. All fields are REQUIRED (no `?`):
+- Core order execution: `broker`, `orderManager` — never optional, orders always go through OrderManager with pending intent tracking
+- Position sizing: `calculatePositionSize`
+- Risk checks: `checkRiskLimits`, `recordTrade`
+- Pending intent callback: `onPending` — never optional
 
-ALL fields are REQUIRED (no `?`). `orderManager` and `onPending` are never optional — orders always go through OrderManager with pending intent tracking.
+When adding a new field, ensure it has no `?` marker and is wired through the factory.
 
 ## buildPipelineDeps() Factory (`build-deps.ts`)
 

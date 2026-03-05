@@ -2,7 +2,7 @@
  * Broker selection from env vars.
  * Single source of truth — used by runner.ts, server.ts, and index.ts.
  */
-import { liveService as tsService } from './tradestation/index.js';
+import { tsService } from './tradestation/index.js';
 import { ibkrService } from './ibkr/index.js';
 import { liveChannel } from '../lib/channel.js';
 import type { BrokerService } from './interface.js';

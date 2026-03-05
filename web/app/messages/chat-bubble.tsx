@@ -8,8 +8,8 @@ import type { Message, MessageLabel } from '@src/db/schema';
 function getAccentBorder(message: Message): string {
   const action = message.actionHint;
   const direction = message.directionHint;
-  const badges = (message.badges as string[]) || [];
-  const symbols = (message.symbols as string[]) || [];
+  const badges = message.badges;
+  const symbols = message.symbols;
 
   const isSignal = action || badges.length > 0 || symbols.length > 0;
   if (!isSignal) return 'border-l-transparent';
@@ -20,8 +20,8 @@ function getAccentBorder(message: Message): string {
 }
 
 export const ChatBubble = memo(function ChatBubble({ message, noBorder, label }: { message: Message; noBorder?: boolean; label?: MessageLabel | null }) {
-  const badges = (message.badges as string[]) || [];
-  const symbols = (message.symbols as string[]) || [];
+  const badges = message.badges;
+  const symbols = message.symbols;
   const isSignal =
     !!message.actionHint || badges.length > 0 || symbols.length > 0;
 

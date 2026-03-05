@@ -25,7 +25,7 @@ import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { logExpiryNotices } from '../lib/expiry-warning.js';
 import type { Task } from '../db/schema.js';
-import { getLegs } from '../db/accessors.js';
+
 import { buildPipelineDeps } from '../pipeline/build-deps.js';
 import { btChannel } from '../lib/channel.js';
 
@@ -259,7 +259,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
         for (const pos of openPositions) {
           if (pos.strategy === 'STOCK') continue;
-          const hasExpiredLeg = getLegs(pos).some((l) => l.expiry <= sweepThrough);
+          const hasExpiredLeg = pos.legs.some((l) => l.expiry <= sweepThrough);
           if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
         }
 
@@ -345,7 +345,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
 
       for (const pos of finalOpenPositions) {
         if (pos.strategy === 'STOCK') continue;
-        const hasExpiredLeg = getLegs(pos).some((l) => l.expiry <= lastMsgDay);
+        const hasExpiredLeg = pos.legs.some((l) => l.expiry <= lastMsgDay);
         if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
       }
 

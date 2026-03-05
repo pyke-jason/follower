@@ -102,7 +102,7 @@ export async function fetchRelatedMessages(
   const source = await getMessageById(messageId);
   if (!source) return { messages: [], labels: {}, sourceSymbols: [] };
 
-  const sourceSymbols = (source.symbols as string[]) ?? [];
+  const sourceSymbols = source.symbols;
   if (sourceSymbols.length === 0) return { messages: [source], labels: {}, sourceSymbols };
 
   const messages = await getMessagesBySymbols(sourceSymbols, 200);

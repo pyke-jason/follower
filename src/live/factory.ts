@@ -1,7 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { isTrackedTrader } from '../config/traders.js';
 import type { Message, TaskContext } from '../db/schema.js';
-import { getDetectedStrategies } from '../db/accessors.js';
+
 import { safeParseFloat } from '../lib/numbers.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -12,8 +12,8 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
     return null;
   }
 
-  const badges = (message.badges as string[]) || [];
-  const symbols = (message.symbols as string[]) || [];
+  const badges = message.badges;
+  const symbols = message.symbols;
   // Must have badges OR symbols to be tradable
   if (badges.length === 0 && symbols.length === 0) return null;
 
@@ -33,10 +33,10 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
     cleanText: message.cleanText,
     rawHtml: message.rawHtml,
     badges,
-    symbols: (message.symbols as string[]) || [],
+    symbols: message.symbols,
     actionHint: message.actionHint,
     directionHint: message.directionHint,
-    detectedStrategies: getDetectedStrategies(message),
+    detectedStrategies: message.detectedStrategies,
     confidence,
   };
 

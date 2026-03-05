@@ -1,12 +1,12 @@
 import { db, schema } from './db';
-import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray, like, getTableColumns } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray, like } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { liveChannel, btChannel, parseChannel } from '@src/lib/channel';
 import { safeParseFloat } from '../../src/lib/numbers';
-import type { Trade } from '../../src/db/schema';
+import type { Trade, TradeFlag } from '../../src/db/schema';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '../../src/trades/filters';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../src/lib/enriched-message';
-import { getConfig } from '../../src/db/accessors';
+import { getTradeFlags } from '../../src/db/accessors';
 import { isoToDateKey } from './format';
 
 /** Derive the live channelId from env vars (same logic as backend selectBroker). */
@@ -56,28 +56,13 @@ export async function getStats(runId?: string) {
   };
 }
 
-const tradeColumns = getTableColumns(schema.trades);
-
-/** EXISTS subquery: did the trader post about this symbol after opening? */
-const subsequentMessageExists = sql<boolean>`EXISTS (
-  SELECT 1 FROM messages m
-  WHERE m.author = ${schema.trades.trader}
-  AND m.timestamp > ${schema.trades.openedAt}
-  AND m.id != COALESCE(${schema.trades.sourceMessageId}, '')
-  AND EXISTS (SELECT 1 FROM json_each(m.symbols) WHERE json_each.value = ${schema.trades.symbol})
-)`;
-
-const hasSubsequentMessage = subsequentMessageExists.as('has_subsequent_message');
-
-export type OpenTradeRow = Trade & { hasSubsequentMessage: boolean };
-
-export async function getOpenTrades(limit = 50, runId?: string): Promise<OpenTradeRow[]> {
+export async function getOpenTrades(limit = 50, runId?: string): Promise<Trade[]> {
   return db
-    .select({ ...tradeColumns, hasSubsequentMessage })
+    .select()
     .from(schema.trades)
     .where(and(isOpen, tradeScope(runId)))
     .orderBy(desc(schema.trades.openedAt))
-    .limit(limit) as Promise<OpenTradeRow[]>;
+    .limit(limit);
 }
 
 export async function getClosedTrades(opts: {
@@ -454,7 +439,7 @@ export async function getRunCommissionSchedule(runId: string) {
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, runId));
   if (!run) return undefined;
-  return getConfig(run).commissionSchedule;
+  return run.config.commissionSchedule;
 }
 
 export async function getBacktestRuns(opts: { limit?: number; offset?: number } = {}) {
@@ -626,7 +611,7 @@ export async function getBacktestRunBrief(id: string) {
     .from(schema.trades)
     .where(eq(schema.trades.channelId, btChannel(id)));
 
-  const config = getConfig(run);
+  const config = run.config;
   const closed = stats?.closed ?? 0;
   const wins = stats?.wins ?? 0;
   return {
@@ -949,47 +934,15 @@ export async function getTradeEventsForTrades(tradeIds: string[]) {
   return grouped;
 }
 
-/** Trade IDs where the trader posted about the same symbol after opening. */
-export async function getTradesWithSubsequentMessages(tradeIds: string[]): Promise<Set<string>> {
-  if (tradeIds.length === 0) return new Set();
-  const rows = await db
-    .select({ id: schema.trades.id })
-    .from(schema.trades)
-    .where(and(
-      inArray(schema.trades.id, tradeIds),
-      subsequentMessageExists,
-    ));
-  return new Set(rows.map(r => r.id));
-}
-
-/** Trade IDs that have at least one ORDER_CANCELLED event in run_decisions. */
-export async function getCancelledCloseTradeIds(tradeIds: string[]): Promise<Set<string>> {
-  if (tradeIds.length === 0) return new Set();
-  const rows = await db
-    .selectDistinct({ tradeId: schema.runDecisions.tradeId })
-    .from(schema.runDecisions)
-    .where(and(
-      eq(schema.runDecisions.event, 'ORDER_CANCELLED'),
-      isNotNull(schema.runDecisions.tradeId),
-      inArray(schema.runDecisions.tradeId, tradeIds),
-    ));
-  return new Set(rows.map(r => r.tradeId!));
-}
-
-/** Trade IDs that have at least one SETTLED FAIL with "No market data" reasoning. */
-export async function getMarketDataFailTradeIds(tradeIds: string[]): Promise<Set<string>> {
-  if (tradeIds.length === 0) return new Set();
-  const rows = await db
-    .selectDistinct({ tradeId: schema.runDecisions.tradeId })
-    .from(schema.runDecisions)
-    .where(and(
-      eq(schema.runDecisions.event, 'SETTLED'),
-      eq(schema.runDecisions.outcome, 'FAIL'),
-      like(schema.runDecisions.reasoning, 'No market data%'),
-      isNotNull(schema.runDecisions.tradeId),
-      inArray(schema.runDecisions.tradeId, tradeIds),
-    ));
-  return new Set(rows.map(r => r.tradeId!));
+/** Build per-trade flags from materialized metadata. All flags are stamped at write time. */
+export function buildFlagsByTradeId(trades: Trade[]): Record<string, TradeFlag[]> {
+  if (trades.length === 0) return {};
+  const result: Record<string, TradeFlag[]> = {};
+  for (const t of trades) {
+    const flags = getTradeFlags(t);
+    if (flags.length > 0) result[t.id] = flags;
+  }
+  return result;
 }
 
 /** All run_decisions linked to a trade (by tradeId or sourceMessageId).

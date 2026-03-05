@@ -1,5 +1,5 @@
 ---
-paths: src/live/**, src/broker/tradestation/**
+paths: src/live/**
 ---
 
 # Live Execution
@@ -9,21 +9,21 @@ paths: src/live/**, src/broker/tradestation/**
 Live task processing loop. Polls DB for pending tasks, executes through the shared pipeline.
 
 Uses `buildPipelineDeps()` from `src/pipeline/build-deps.ts` with:
-- `scope: liveChannel(accountId)` — e.g. `'live:U14368257'`
+- `scope: liveChannel(accountId)` — format `'live:<accountId>'` (broker agnostic)
 - `sendAlert: sendSystemAlert`
 - Risk limits always enforced (no `disableRiskLimits`)
 
-The factory builds a stateless pipeline bundle. `taskId` is injected per-task by `processTask()`, which wraps `pipeline.recordTrade` and `pipeline.onPending` to thread the current `task.id` through. This avoids mutable module-level state.
+The factory builds a stateless pipeline bundle. `broker` selection is delegated to `selectBroker()` from `src/broker/select.ts`, which picks the broker implementation based on the `BROKER` env var. See `selectBroker()` for supported brokers and their required env vars.
 
 ## Per-Task Pipeline Wrapping (processTask)
 
-For live scope, `processTask` wraps the pipeline to inject `task.id`:
+`processTask()` wraps the pipeline to inject `taskId` — applied to ALL tasks (live AND backtest):
 - `recordTrade(input)` → `recordTrade({ ...input, taskId: task.id })`
 - `onPending(orderId, ctx)` → `onPending(orderId, { ...ctx, taskId: task.id })`
 
-This ensures fill callbacks (which fire asynchronously) carry the taskId of the task that placed the order, not whatever task happens to be running at fill time.
+This ensures fill callbacks (which fire asynchronously) carry the taskId of the task that placed the order, not whatever task happens to be running at fill time. The wrapping happens unconditionally in `process-task.ts`.
 
-Backtest uses the pipeline as-is — `channelId` is baked immutably at factory construction via `btChannel(runId)`.
+For live, scope format `'live:<accountId>'` is baked at factory construction via `liveChannel(accountId)`. For backtest, `'bt:<runId>'` via `btChannel(runId)`.
 
 ## Positions
 
@@ -31,12 +31,13 @@ Both live and backtest positions come from the `trades` table — same query, di
 
 ## Risk Defaults
 
-Live uses `LIVE_RISK_DEFAULTS` from `src/config/risk-defaults.ts`:
-- `maxOnSymbol: 5` (vs 3 in backtest)
-- Includes `getReconciliationAlertCount()` check (blocks trading if unresolved alerts)
+Live uses `LIVE_RISK_DEFAULTS` from `src/config/risk-defaults.ts` (stricter `maxOnSymbol` than backtest). Includes `getReconciliationAlertCount()` check (blocks trading if unresolved DB-only reconciliation alerts).
 
 If adding a new risk check, add it to both `BACKTEST_RISK_DEFAULTS` and `LIVE_RISK_DEFAULTS`.
 
-## TradeStation API
+## Broker Selection
 
-`src/broker/tradestation/` implements `BrokerService`. OAuth tokens are managed in `auth.ts`. Never hardcode credentials — use environment variables via the secrets module.
+`selectBroker()` (`src/broker/select.ts`) is the single source of truth for live broker selection:
+- Both brokers implement `BrokerService` interface
+- TradeStation (`src/broker/tradestation/`) uses OAuth via `auth.ts`. Never hardcode credentials — use environment variables.
+- IBKR (`src/broker/ibkr/`) uses sidecar + WebSocket. IBKR runner starts `startWsListener()` on init and stops it on shutdown to avoid listener leaks.
