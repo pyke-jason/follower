@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zPrice, zPct01 } from '../lib/zod-financial.js';
 import {
-  DirectionSchema, LegActionSchema, StrategySchema,
+  DecisionOutcomeSchema, DirectionSchema, LegActionSchema, StrategySchema,
   TradeActionSchema,
 } from '../lib/enums.js';
 
@@ -43,7 +43,7 @@ export type Signal = z.infer<typeof SignalSchema>;
 // --- Agent decision schema ---
 
 export const AgentDecisionSchema = z.object({
-  decision: z.enum(['EXECUTE', 'SKIP', 'MANUAL_REVIEW']),
+  decision: DecisionOutcomeSchema,
   reasoning: z.string(),
   signals: z.array(SignalSchema).optional(),
 }).refine(

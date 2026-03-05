@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import { TradeLegSchema } from '../db/schema.js';
-import { DirectionSchema } from '../lib/enums.js';
+import { DirectionSchema, OrderTypeSchema } from '../lib/enums.js';
 import { zPrice } from '../lib/zod-financial.js';
 
 // ── OrderLeg (TradeLeg minus fillPrice) ──────────────────────────────
@@ -31,7 +31,7 @@ export const WorkingOrderParamsSchema = z.object({
   strategy: z.string().min(1),
   direction: DirectionSchema,
   legs: z.array(OrderLegSchema),
-  orderType: z.enum(['MARKET', 'LIMIT']),
+  orderType: OrderTypeSchema,
   limitPrice: zPrice.optional(),
   isClosing: z.boolean(),
   adjustmentRules: z.array(AdjustmentRuleSchema).optional(),

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { DetectedStrategy, BacktestRunConfig } from '../db/schema.js';
+import type { ActionHint, Direction } from '../lib/enums.js';
 
 export const FillModelSchema = z.enum(['orats', 'midpoint', 'natural']);
 export type FillModel = z.infer<typeof FillModelSchema>;
@@ -12,8 +13,8 @@ export type HistoricalMessage = {
   cleanText: string;
   badges: string[];
   symbols: string[];
-  actionHint: 'OPEN' | 'CLOSE' | null;
-  directionHint: 'LONG' | 'SHORT' | null;
+  actionHint: ActionHint | null;
+  directionHint: Direction | null;
   detectedStrategies: DetectedStrategy[];
   isPaperTrade: boolean;
   confidence: number;

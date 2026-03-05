@@ -1,12 +1,13 @@
 import { load } from 'cheerio';
+import type { ActionHint, Direction } from '../lib/enums.js';
 
 export type BadgeInfo = {
   badges: string[];          // ['Long'], ['Short'], ['Exit', 'Long'], etc.
-  actionHint: 'OPEN' | 'CLOSE' | null;
-  directionHint: 'LONG' | 'SHORT' | null;
+  actionHint: ActionHint | null;
+  directionHint: Direction | null;
 };
 
-const BADGE_MAP: Record<string, { direction?: 'LONG' | 'SHORT'; action?: 'OPEN' | 'CLOSE' }> = {
+const BADGE_MAP: Record<string, { direction?: Direction; action?: ActionHint }> = {
   'Long':  { direction: 'LONG', action: 'OPEN' },
   'Short': { direction: 'SHORT', action: 'OPEN' },
   'Exit':  { action: 'CLOSE' },
@@ -21,8 +22,8 @@ export function extractBadges(html: string): BadgeInfo {
     if (text) badges.push(text);
   });
 
-  let actionHint: 'OPEN' | 'CLOSE' | null = null;
-  let directionHint: 'LONG' | 'SHORT' | null = null;
+  let actionHint: ActionHint | null = null;
+  let directionHint: Direction | null = null;
 
   for (const badge of badges) {
     const info = BADGE_MAP[badge];

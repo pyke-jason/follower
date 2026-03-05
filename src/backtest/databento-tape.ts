@@ -8,6 +8,7 @@ import { formatLogTimeET } from '../lib/et-logging.js';
 import { parseOccSymbol } from '../lib/occ-symbology.js';
 import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
+import type { CallPutAbbrev } from '../lib/enums.js';
 
 /** Typed error for Databento 4xx client errors. Identifies deterministic failures
  *  that should not be retried and can safely populate a negative cache. */
@@ -265,7 +266,7 @@ export type ChainDefinition = {
   rawSymbol: string;   // OCC format, e.g. "GE    250912C00280000"
   expiry: string;      // YYYY-MM-DD
   strike: number;
-  callPut: 'C' | 'P';
+  callPut: CallPutAbbrev;
 };
 
 /** Zod schema for Databento definition records (instrument metadata, no prices). */

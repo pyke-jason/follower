@@ -5,12 +5,13 @@
  * else that needs direction-aware PnL from entry/exit prices.
  */
 
+import type { Direction } from './enums.js';
 import { contractMultiplier } from './trade.js';
 
 export function computeTradePnl(params: {
   entryPrice: number;
   exitPrice: number;
-  direction: 'LONG' | 'SHORT';
+  direction: Direction;
   strategy: string;
   quantity: number;
 }): number {

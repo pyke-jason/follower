@@ -1,4 +1,5 @@
 import type { DetectedStrategy } from '../db/schema.js';
+import type { ActionHint, Direction } from '../lib/enums.js';
 import { htmlToCleanText } from './html.js';
 import { extractBadges } from './badges.js';
 import { extractSymbols } from './symbols.js';
@@ -7,8 +8,8 @@ export type MessageClassification = {
   cleanText: string;
   badges: string[];
   symbols: string[];
-  actionHint: 'OPEN' | 'CLOSE' | null;
-  directionHint: 'LONG' | 'SHORT' | null;
+  actionHint: ActionHint | null;
+  directionHint: Direction | null;
   detectedStrategies: DetectedStrategy[];
   isPaperTrade: boolean;
   confidence: number;

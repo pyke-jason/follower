@@ -8,9 +8,11 @@
  * the canonical ordering rule (dominant leg first).
  */
 
+import type { LegAction } from './enums.js';
+
 export type SpreadLeg = {
   strike: number;
-  action: 'BUY' | 'SELL';
+  action: LegAction;
   optionType: 'PUT' | 'CALL';
 };
 

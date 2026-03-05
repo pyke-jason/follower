@@ -1,3 +1,4 @@
+import type { LegAction } from '../../lib/enums.js';
 import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, LegFill } from '../types.js';
 import type { BrokerService } from '../interface.js';
 import { getAccessToken } from './auth.js';
@@ -253,7 +254,7 @@ export const tsService: BrokerService = {
   getPositions, getAccountBalance, isHealthy,
 };
 
-function resolveTradeAction(action: 'BUY' | 'SELL', type: string, isClosing: boolean): string {
+function resolveTradeAction(action: LegAction, type: string, isClosing: boolean): string {
   if (type === 'STOCK') {
     return action === 'BUY' ? 'BUY' : 'SELL';
   }

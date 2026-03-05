@@ -1,3 +1,4 @@
+import type { LegAction } from '../lib/enums.js';
 import type { BrokerService } from '../broker/interface.js';
 import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
@@ -23,7 +24,7 @@ const log = createLogger('SimBroker');
 export type SimFillEvent = {
   orderId: string;
   symbol: string;
-  side: 'BUY' | 'SELL';
+  side: LegAction;
   price: number;
   quantity: number;
   timestamp: Date;

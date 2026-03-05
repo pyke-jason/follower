@@ -1,5 +1,6 @@
 // All shared types for the eval system.
 
+import type { DecisionOutcome } from '../../lib/enums.js';
 import type { OptionLeg, ResolvedSignal, OpenPosition } from '../orchestrator/types.js';
 
 export type EvalInput = {
@@ -24,7 +25,7 @@ export type EvalCase = {
   description: string;
   input: EvalInput;
   expected: {
-    outcome: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
+    outcome: DecisionOutcome;
     signals?: ExpectedSignal[];
   };
   /** Field paths that cause hard FAIL if mismatched. e.g. ['signals[0].orderType', 'signals[0].legs[0].side'] */

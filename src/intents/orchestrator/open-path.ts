@@ -23,7 +23,7 @@ import type {
   Leg,
   OpenPosition,
 } from './types.js';
-import type { Strategy } from '../../lib/enums.js';
+import type { OptionType, Strategy } from '../../lib/enums.js';
 import { isSpread, getOptionLegs, type SpreadStrategy } from '../../lib/trade.js';
 import { spreadLegs } from '../../lib/spread-legs.js';
 import { strikesFromParse } from './parser.js';
@@ -114,7 +114,7 @@ function computeSpreadMid(
 
 // ── Option type from strategy ──────────────────────────────────────────────────
 
-function optionTypeFromStrategy(strategy: Strategy): 'CALL' | 'PUT' {
+function optionTypeFromStrategy(strategy: Strategy): OptionType {
   return (strategy === 'CALL' || strategy === 'CDS' || strategy === 'CCS') ? 'CALL' : 'PUT';
 }
 

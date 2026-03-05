@@ -1,4 +1,5 @@
 import type { TradeLeg } from '../db/schema.js';
+import type { Direction, OrderType } from '../lib/enums.js';
 
 /** A leg before fill — same shape as TradeLeg without fillPrice. */
 export type OrderLeg = Omit<TradeLeg, 'fillPrice'>;
@@ -127,9 +128,9 @@ export type FilledWorkingOrder = WorkingOrder & {
 export type OrderParams = {
   symbol: string;
   strategy: string;
-  direction: 'LONG' | 'SHORT';
+  direction: Direction;
   legs: OrderLeg[];
-  orderType: 'MARKET' | 'LIMIT';
+  orderType: OrderType;
   limitPrice?: number;
   /** Signals a position-reducing order — broker skips buying power gate. */
   isClosing: boolean;

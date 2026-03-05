@@ -5,6 +5,7 @@
  * the reversal legs needed to close, trim, or leg off the position.
  */
 
+import type { LegAction, OptionType, OrderCategory } from '../../lib/enums.js';
 import { createLogger } from '../../lib/logger.js';
 import { extractUnderlying } from '../../lib/occ-symbology.js';
 import { addTradeFlags } from '../../trades/trade-flags.js';
@@ -22,7 +23,7 @@ import type {
 const log = createLogger('Orchestrator:PositionPath');
 
 /** Reverse a side: BUY → SELL, SELL → BUY. */
-function reverseSide(side: 'BUY' | 'SELL'): 'BUY' | 'SELL' {
+function reverseSide(side: LegAction): LegAction {
   return side === 'BUY' ? 'SELL' : 'BUY';
 }
 
@@ -58,7 +59,7 @@ function buildReversalLeg(
 }
 
 /** Determine orderType from the legs array. */
-function orderTypeFromLegs(legs: Leg[]): 'SINGLE' | 'SPREAD' | 'STOCK' {
+function orderTypeFromLegs(legs: Leg[]): OrderCategory {
   if (legs.length >= 2) return 'SPREAD';
   if (legs[0]?.type === 'stock') return 'STOCK';
   return 'SINGLE';
@@ -178,7 +179,7 @@ function buildLegOffLegs(
   }
 
   // Determine the option type we want to KEEP based on targetStrategy
-  const keepOptionType: 'CALL' | 'PUT' | null =
+  const keepOptionType: OptionType | null =
     targetStrategy === 'CALL'
       ? 'CALL'
       : targetStrategy === 'PUT'

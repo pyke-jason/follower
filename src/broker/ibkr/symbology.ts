@@ -8,6 +8,7 @@
 
 import { parseOccSymbol, isOccOptionSymbol } from '../../lib/occ-symbology.js';
 import { ContractResolveResponseSchema, parseSidecarResponse } from './schemas.js';
+import type { CallPutAbbrev } from '../../lib/enums.js';
 
 /** Parsed OCC fields in the shape the sidecar's resolve endpoint expects. */
 export type IbkrContractParams = {
@@ -15,7 +16,7 @@ export type IbkrContractParams = {
   secType: 'OPT';
   expiry: string;
   strike: number;
-  right: 'C' | 'P';
+  right: CallPutAbbrev;
 };
 
 /**

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Direction, LegAction } from '../../lib/enums.js';
 import type { BrokerService } from '../../broker/interface.js';
 import { recordTrade } from '../../trades/record-trade.js';
 
@@ -11,11 +12,11 @@ export function createTradesRouter(broker: BrokerService, channelId: string) {
       symbol: string;
       trader: string;
       strategy: string;
-      direction: 'LONG' | 'SHORT';
+      direction: Direction;
       legs: Array<{
         symbol: string;
         type: 'CALL' | 'PUT' | 'STOCK';
-        action: 'BUY' | 'SELL';
+        action: LegAction;
         quantity: number;
         expiry: string;
         strike: number;

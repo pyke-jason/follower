@@ -6,10 +6,12 @@
  * Example: "AAPL  260221C00250000" = AAPL Feb 21 2026 $250 Call
  */
 
+import type { CallPutAbbrev, OptionType } from './enums.js';
+
 export interface OccOptionParts {
   underlying: string;
   expiration: Date;
-  type: 'CALL' | 'PUT';
+  type: OptionType;
   strike: number;
 }
 
@@ -33,7 +35,7 @@ export function parseOccSymbol(symbol: string): OccOptionParts | null {
 
   const underlying = symbol.slice(0, 6).trim();
   const dateStr = symbol.slice(6, 12);
-  const optionType = symbol[12] as 'C' | 'P';
+  const optionType = symbol[12] as CallPutAbbrev;
   const strikeStr = symbol.slice(13, 21);
 
   const year = 2000 + parseInt(dateStr.slice(0, 2), 10);
@@ -271,7 +273,7 @@ export function normalizeExpiry(expiry: string, referenceDate: Date): string {
 export function formatOccSymbol(option: {
   underlying: string;
   expiration: string; // YYYY-MM-DD
-  type: 'CALL' | 'PUT';
+  type: OptionType;
   strike: number;
 }): string {
   const underlying = option.underlying.padEnd(6, ' ');
@@ -355,7 +357,7 @@ export function inferATMStrike(stockPrice: number): number {
 export function buildOccSymbols(params: {
   underlying: string;
   expiry: string;       // YYYY-MM-DD
-  optionType: 'CALL' | 'PUT';
+  optionType: OptionType;
   priceLow: number;
   priceHigh: number;
 }): string[] {

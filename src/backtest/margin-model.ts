@@ -14,13 +14,14 @@
  */
 
 import type { TradeLeg } from '../db/schema.js';
+import type { Direction } from '../lib/enums.js';
 import { contractMultiplier, getSpreadWidth } from '../lib/trade.js';
 
 // ─── Types ──────────────────────────────────────────
 
 export type MarginParams = {
   strategy: string;
-  direction: 'LONG' | 'SHORT';
+  direction: Direction;
   /** Fill price (net premium for options/spreads, stock price for equities). */
   entryPrice: number;
   quantity: number;

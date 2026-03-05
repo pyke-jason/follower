@@ -9,10 +9,12 @@
  * OCC is used by Databento; TS format is used by TradeStation API.
  */
 
+import type { OptionType } from '../../lib/enums.js';
+
 export function formatTsOptionSymbol(option: {
   underlying: string;
   expiration: string; // YYYY-MM-DD
-  type: 'CALL' | 'PUT';
+  type: OptionType;
   strike: number;
 }): string {
   const [yearStr, monthStr, dayStr] = option.expiration.split('-');

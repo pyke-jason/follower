@@ -16,7 +16,7 @@ import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
 import { parseChannel } from '../lib/channel.js';
 import type { TradeLeg, TradeMetadata, TradeFlag } from '../db/schema.js';
-import type { Direction, Strategy } from '../lib/enums.js';
+import type { Direction, Strategy, TradeAction } from '../lib/enums.js';
 import { buildFlags } from './trade-flags.js';
 
 const log = createLogger('RecordTrade');
@@ -28,7 +28,7 @@ export type RecordTradeInput = {
   /** Optional hint — recordTrade derives the actual action from legs vs existing position.
    *  If omitted, the function infers OPEN (no tradeId) or derives CLOSE/TRIM/ADD/LEG_OFF
    *  from leg comparison. If provided, used as fallback when derivation returns null. */
-  action?: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
+  action?: TradeAction;
   symbol: string;
   trader: string;
   direction?: Direction;
@@ -53,7 +53,7 @@ export type RecordTradeInput = {
 
 export type RecordTradeResult = {
   tradeId: string;
-  action: 'OPEN' | 'CLOSE' | 'ADD' | 'TRIM' | 'LEG_OFF';
+  action: TradeAction;
   /** The trade row after the operation */
   trade: typeof schema.trades.$inferSelect;
 };

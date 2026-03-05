@@ -8,7 +8,7 @@
  * See docs/plan-orchestrator-technical.md for the full design.
  */
 
-import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
+import type { Direction, LegAction, OptionType, OrderCategory, Strategy, TradeAction } from '../../lib/enums.js';
 import type { Quote, OptionsChain } from '../../broker/types.js';
 import type { LLMProvider } from '../../agent/providers.js';
 import type { BrokerService } from '../../broker/interface.js';
@@ -20,16 +20,16 @@ export type OptionLeg = {
   type: 'option';
   symbol: string;           // underlying ticker, e.g. "AAPL"
   expiry: string;           // YYYY-MM-DD
-  optionType: 'CALL' | 'PUT';
+  optionType: OptionType;
   strike: number;
-  side: 'BUY' | 'SELL';
+  side: LegAction;
   quantity: number;         // ratio per lot (1 = standard, 2 = ratio spread)
 };
 
 export type StockLeg = {
   type: 'stock';
   symbol: string;
-  side: 'BUY' | 'SELL';
+  side: LegAction;
   quantity: number;         // ratio per lot
 };
 
@@ -44,7 +44,7 @@ export type Leg = OptionLeg | StockLeg;
  *   by the sized lot count.
  */
 export type ResolvedSignal = {
-  orderType: 'SINGLE' | 'SPREAD' | 'STOCK';
+  orderType: OrderCategory;
   legs: Leg[];
   limitPrice?: number;
   /** The trade action resolved by the orchestrator. Required — no implicit defaults. */
@@ -83,7 +83,7 @@ export interface OrchestratorMarketDataProvider {
   getOptionChain(
     symbol: string,
     expiry: string,
-    optionType: 'CALL' | 'PUT',
+    optionType: OptionType,
   ): Promise<OptionsChain | null>;
 
   /**
@@ -101,12 +101,12 @@ export type OpenPosition = {
   direction: Direction;
   legs: Array<{
     symbol: string;    // OCC symbol for options, ticker for stock
-    side: 'BUY' | 'SELL';
+    side: LegAction;
     quantity: number;
     expiry: string;    // YYYY-MM-DD for options
     strike: number;    // 0 for stock
     type: 'option' | 'stock';
-    optionType?: 'CALL' | 'PUT';
+    optionType?: OptionType;
   }>;
   quantity: number;    // lot count
   /** Average fill price at which this position was opened (per-contract or per-share). */

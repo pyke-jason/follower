@@ -9,6 +9,7 @@ import fc from 'fast-check';
 import { sql } from 'drizzle-orm';
 import { btChannel } from '../lib/channel.js';
 import { parseOccSymbol } from '../lib/occ-symbology.js';
+import type { Direction, LegAction } from '../lib/enums.js';
 import type { Quote, OrderParams } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
@@ -28,7 +29,7 @@ export const arbSpread = fc
 
 export const arbIsBuy = fc.boolean();
 export const arbLegCount = fc.integer({ min: 1, max: 4 });
-export const arbDirection: fc.Arbitrary<'LONG' | 'SHORT'> = fc.constantFrom('LONG', 'SHORT');
+export const arbDirection: fc.Arbitrary<Direction> = fc.constantFrom('LONG', 'SHORT');
 export const arbStrategy = fc.constantFrom('STOCK', 'CALL_SPREAD', 'PUT_SPREAD', 'IRON_CONDOR');
 export const arbQuantity = fc.integer({ min: 1, max: 50 });
 export const arbPrice = fc.double({ min: 0.01, max: 5000, noNaN: true, noDefaultInfinity: true });
@@ -360,7 +361,7 @@ export const CREATE_TASKS_UNIQUE_IDX = sql`
 
 export type InsertOpenTradeParams = {
   symbol?: string;
-  direction: 'LONG' | 'SHORT';
+  direction: Direction;
   strategy: string;
   entryPrice: number;
   quantity: number;
@@ -372,7 +373,7 @@ export type InsertOpenTradeParams = {
 
 export type InsertClosedTradeParams = {
   symbol?: string;
-  direction: 'LONG' | 'SHORT';
+  direction: Direction;
   strategy: string;
   entryPrice: number;
   exitPrice: number;
@@ -383,7 +384,7 @@ export type InsertClosedTradeParams = {
 
 export type InsertOpenOptionTradeParams = {
   symbol?: string;
-  direction: 'LONG' | 'SHORT';
+  direction: Direction;
   strategy: string;
   entryPrice: number;
   quantity: number;
@@ -392,7 +393,7 @@ export type InsertOpenOptionTradeParams = {
     strike: number;
     expiry: string;
     type: 'CALL' | 'PUT' | 'STOCK';
-    action: 'BUY' | 'SELL';
+    action: LegAction;
     quantity: number;
     fillPrice?: number;
   }>;

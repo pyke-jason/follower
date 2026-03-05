@@ -5,7 +5,7 @@ import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
-import type { Direction, Strategy } from '../lib/enums.js';
+import type { DecisionOutcome, Direction, Strategy } from '../lib/enums.js';
 
 // Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
 // relative imports (its CJS bundler can't handle them).
@@ -436,7 +436,7 @@ export const TaskContextSchema = z.object({
 export type TaskContext = z.infer<typeof TaskContextSchema>;
 
 export type TaskResult = {
-  decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
+  decision: DecisionOutcome;
   reasoning: string;
   signals?: Signal[];
 };

@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { TradeLegSchema } from './schema.js';
 import type { TradeLeg } from './schema.js';
+import type { Direction } from '../lib/enums.js';
 import { DirectionSchema } from '../lib/enums.js';
 
 /**
@@ -29,7 +30,7 @@ export function parseLegs(raw: unknown, tradeId?: string): TradeLeg[] {
  * Parse the `direction` column from a trade row.
  * Throws on unexpected values like "long" (lowercase) or "BUY_TO_OPEN".
  */
-export function parseDirection(raw: string, tradeId?: string): 'LONG' | 'SHORT' {
+export function parseDirection(raw: string, tradeId?: string): Direction {
   const result = DirectionSchema.safeParse(raw);
   if (!result.success) {
     const ctx = tradeId ? ` (trade ${tradeId})` : '';

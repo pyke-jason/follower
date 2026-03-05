@@ -9,6 +9,7 @@ import { describe, test, expect } from 'vitest';
 import fc from 'fast-check';
 import { computeMarginRequirement } from './margin-model.js';
 import { getSpreadWidth } from '../lib/trade.js';
+import type { OptionType } from '../lib/enums.js';
 import type { TradeLeg } from '../db/schema.js';
 
 // ── Arbitraries ──────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ function makeLeg(overrides: Partial<TradeLeg> = {}): TradeLeg {
   } as TradeLeg;
 }
 
-function makeSpreadLegs(strike1: number, strike2: number, type: 'CALL' | 'PUT'): TradeLeg[] {
+function makeSpreadLegs(strike1: number, strike2: number, type: OptionType): TradeLeg[] {
   return [
     makeLeg({ strike: strike1, type, action: 'BUY' }),
     makeLeg({ strike: strike2, type, action: 'SELL' }),
@@ -289,7 +290,7 @@ describe('computeMarginRequirement cross-cutting properties', () => {
             ? makeSpreadLegs(100, 110, strategy === 'CDS' ? 'CALL' : 'PUT')
             : strategy === 'STOCK'
               ? [makeLeg()]
-              : [makeLeg({ type: strategy as 'CALL' | 'PUT', strike: 100 })];
+              : [makeLeg({ type: strategy as OptionType, strike: 100 })];
 
           const result = computeMarginRequirement({
             strategy, direction, entryPrice: entry,
@@ -312,7 +313,7 @@ describe('computeMarginRequirement cross-cutting properties', () => {
             ? makeSpreadLegs(100, 110, strategy === 'CDS' ? 'CALL' : 'PUT')
             : strategy === 'STOCK'
               ? [makeLeg()]
-              : [makeLeg({ type: strategy as 'CALL' | 'PUT', strike: 100 })];
+              : [makeLeg({ type: strategy as OptionType, strike: 100 })];
 
           const result = computeMarginRequirement({
             strategy, direction: 'LONG', entryPrice: entry,
@@ -334,7 +335,7 @@ describe('computeMarginRequirement cross-cutting properties', () => {
             ? makeSpreadLegs(100, 110, strategy === 'CDS' ? 'CALL' : 'PUT')
             : strategy === 'STOCK'
               ? [makeLeg()]
-              : [makeLeg({ type: strategy as 'CALL' | 'PUT', strike: 100 })];
+              : [makeLeg({ type: strategy as OptionType, strike: 100 })];
 
           const result = computeMarginRequirement({
             strategy, direction: 'SHORT', entryPrice: entry,
@@ -355,7 +356,7 @@ describe('computeMarginRequirement cross-cutting properties', () => {
         (strategy, premium, qty, underlying) => {
           const legs = strategy === 'CDS' || strategy === 'PDS'
             ? makeSpreadLegs(100, 110, strategy === 'CDS' ? 'CALL' : 'PUT')
-            : [makeLeg({ type: strategy as 'CALL' | 'PUT', strike: 100 })];
+            : [makeLeg({ type: strategy as OptionType, strike: 100 })];
 
           const result = computeMarginRequirement({
             strategy, direction: 'LONG', entryPrice: premium,

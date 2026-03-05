@@ -1,3 +1,4 @@
+import type { OptionType } from '../lib/enums.js';
 import type { Quote, OptionsChain, OptionsStrike } from '../broker/types.js';
 import {
   getFetchMeta,
@@ -191,7 +192,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   async getOptionsChain(
     symbol: string,
     expiry: string,
-    optionType: 'CALL' | 'PUT',
+    optionType: OptionType,
     at: Date,
   ): Promise<OptionsChain> {
     // Return cached snapshot if same symbol/expiry/type/timestamp
