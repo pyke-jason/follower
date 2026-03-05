@@ -1,34 +1,33 @@
 import { SimClock } from './clock.js';
 import { DatabentoMarketDataProvider } from './market-data.js';
-import type { BacktestPriceProvider } from './market-data.js';
 import { SimBroker, cutoffMinus15Min } from './sim-broker.js';
-import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
-import { checkRiskLimits } from '../orders/risk-check.js';
-import { BACKTEST_RISK_DEFAULTS, MAX_CONTRACTS, DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
+import type { AutoCloseResult } from './sim-broker.js';
+import type { Trade } from '../db/schema.js';
+import type { ResolvedPipelineDeps } from '../pipeline/execute-resolved.js';
+import type { OrderManager } from '../orders/order-manager.js';
+import { BACKTEST_RISK_DEFAULTS } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
-import { toDateKeyET, parseDateKey } from '../lib/et-date.js';
-import type { ResolvedPipelineDeps, ResolvedPendingContext } from '../pipeline/execute-resolved.js';
+import { toDateKeyET, parseDateKey, isoToDateKey, marketCloseUTC } from '../lib/et-date.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
-import { tradeToOpenPosition } from '../trades/adapters.js';
-import { getTrader } from '../config/traders.js';
-import { OrderManager } from '../orders/order-manager.js';
-import { buildPositionSizer } from '../position-sizing/index.js';
+import { ShadowTracker } from './shadow-tracker.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
-import { recordTrade } from '../trades/record-trade.js';
-import { isClosed, forRun, type PositionFilters } from '../trades/filters.js';
+import { createEmitter } from '../decisions/emitter.js';
+import { isClosed, forChannel, type PositionFilters } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
-import type { LLMUsage } from '../agent/providers.js';
 import { resetApiStats, getApiStats } from './databento-tape.js';
 import { tickCacheDb } from '../db/tick-cache-client.js';
 import { createLogger } from '../lib/logger.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { logExpiryNotices } from '../lib/expiry-warning.js';
-import type { Task, TradeLeg } from '../db/schema.js';
+import type { Task } from '../db/schema.js';
+import { getLegs } from '../db/accessors.js';
+import { buildPipelineDeps } from '../pipeline/build-deps.js';
+import { btChannel } from '../lib/channel.js';
 
 const log = createLogger('Backtest');
 
@@ -38,11 +37,10 @@ const log = createLogger('Backtest');
  */
 type BacktestContext = {
   runId: string;
-  config: BacktestConfig;
-  priceProvider: BacktestPriceProvider;
   agentProvider: LLMProvider;
+  agentIdentity: { provider: string; model: string };
   pipelineDeps: ResolvedPipelineDeps;
-  getOpenPositions: (filters?: PositionFilters) => Promise<typeof schema.trades.$inferSelect[]>;
+  getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
 };
 
 /**
@@ -105,7 +103,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   log.info(`Loading messages for ${config.traders.join(', ')}...`);
   const startDate = new Date(config.startDate);
   const endDate = new Date(config.endDate);
-  log.info(`Date range: ${config.startDate.split('T')[0]} to ${config.endDate.split('T')[0]}`);
+  log.info(`Date range: ${isoToDateKey(config.startDate)} to ${isoToDateKey(config.endDate)}`);
 
   const allMessages = await loadHistoricalMessages({
     startDate,
@@ -143,66 +141,15 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const clock = new SimClock(startDate);
   const priceProvider = new DatabentoMarketDataProvider(config.databentoApiKey, tickCacheDb, config.databentoDataset ?? 'DBEQ.BASIC', config.refreshQuoteCache ?? false, 'OPRA.PILLAR');
   const fillModel = config.fillModel ?? 'orats';
-  const startingEquity = config.startingEquity ?? DEFAULT_STARTING_EQUITY;
-  const broker = new SimBroker(priceProvider, clock, runId, fillModel, startingEquity);
+  const startingEquity = config.startingEquity;
+  const broker = new SimBroker(priceProvider, clock, btChannel(runId), fillModel, startingEquity);
 
-  const sizingService = {
-    async calculateSize(input: { trader: string; symbol: string; entryPrice: number; strategy: string; spreadMaxRisk?: number }) {
-      const traderConfig = await getTrader(input.trader);
-      const sizer = buildPositionSizer(traderConfig?.positionSizingConfig);
-      const balance = await broker.getAccountBalance();
-      return sizer.calculateSize({
-        symbol: input.symbol,
-        entryPrice: input.entryPrice,
-        equity: balance.equity,
-        spreadMaxRisk: input.spreadMaxRisk,
-        maxQuantity: MAX_CONTRACTS[input.strategy],
-      });
-    },
-  };
-
-  const getOpenPositions = async (filters: PositionFilters = {}) =>
-    broker.getOpenTrades(filters);
-
-  const riskConfig: RiskCheckConfig = {
+  const riskConfig = {
     maxOnSymbol: config.maxOnSymbol ?? BACKTEST_RISK_DEFAULTS.maxOnSymbol,
     maxTotalPositions: config.maxTotalPositions ?? BACKTEST_RISK_DEFAULTS.maxTotalPositions,
     maxDrawdownPct: config.maxDrawdownPct ?? BACKTEST_RISK_DEFAULTS.maxDrawdownPct,
     maxNotionalMultiplier: config.maxNotionalMultiplier ?? BACKTEST_RISK_DEFAULTS.maxNotionalMultiplier,
   };
-
-  const riskDeps: RiskCheckDeps = {
-    getOpenTrades: getOpenPositions,
-    getDailyClosedPnl: async () => {
-      const dateStr = clock.now().toISOString().split('T')[0];
-      const result = await db.select({
-        total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
-      }).from(schema.trades).where(and(
-        isClosed, forRun(runId),
-        sql`closed_at LIKE ${dateStr + '%'}`,
-      ));
-      return safeParseFloat(result[0]?.total);
-    },
-    getStartingEquity: async () => startingEquity,
-    getCurrentEquity: async () => (await broker.getAccountBalance()).equity,
-  };
-
-  const pendingIntents = new Map<string, ResolvedPendingContext>();
-
-  const orderManager = new OrderManager({
-    broker,
-    clock: () => clock.now(),
-    manualTick: true,
-    onFill: async (order) => {
-      const pending = pendingIntents.get(order.orderId);
-      if (!pending) return;
-      pendingIntents.delete(order.orderId);
-      await pending.recordFill(order.filledPrice, order.filledAt);
-    },
-    onCancel: (order) => {
-      pendingIntents.delete(order.orderId);
-    },
-  });
 
   const agentIdentity = {
     provider: (config.agentProvider ?? DEFAULT_TRADE_MODEL.provider) as 'anthropic' | 'xai',
@@ -211,29 +158,26 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   const agentProvider = await createProvider(agentIdentity);
   log.info(`Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
 
-  const pipelineDeps: ResolvedPipelineDeps = {
+  const bundle = buildPipelineDeps({
     broker,
-    orderManager,
-    calculatePositionSize: async (input) => sizingService.calculateSize(input),
-    checkRiskLimits: config.disableRiskLimits
-      ? async () => ({ allowed: true as boolean, dailyPnl: 0, openPositionsOnSymbol: 0, totalOpenPositions: 0, maxTotalPositions: 0, totalNotional: 0, maxNotional: 0 })
-      : (input) => checkRiskLimits(input, riskDeps, riskConfig),
-    recordTrade: (input) => recordTrade({
-      ...input,
-      backtestRunId: runId,
-      isBacktest: true,
-      metadata: { ...input.metadata, agentModel: `${agentIdentity.provider}:${agentIdentity.model}` },
-    }),
-    onPending: (orderId, context) => {
-      pendingIntents.set(orderId, context);
+    env: {
+      clock: () => clock.now(),
+      scope: btChannel(runId),
     },
-  };
+    config: {
+      riskConfig,
+      agentIdentity,
+      disableRiskLimits: config.disableRiskLimits,
+      startingEquity,
+      manualTick: true,
+    },
+  });
+  const { orderManager, pipelineDeps, pendingIntents, getOpenPositions } = bundle;
 
   const btCtx: BacktestContext = {
     runId,
-    config,
-    priceProvider,
     agentProvider,
+    agentIdentity,
     pipelineDeps,
     getOpenPositions,
   };
@@ -245,6 +189,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   let failedEntrySignals = 0;
   let failedExitSignals = 0;
   let expiredWithoutSignal = 0;
+  const shadows = new ShadowTracker();
 
   // Day-boundary tracking for MTM snapshots and option expiration sweeps
   let lastMsgDay = '';
@@ -268,6 +213,12 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     if (lastMsgDay && msgDay !== lastMsgDay) {
       log.info(`Day ${lastMsgDay} → ${msgDay}`);
 
+      // Give working orders a final chance to fill against remaining intraday ticks.
+      // The backtest is event-driven (time only moves on tradable messages), so orders
+      // placed during the last message of the day get zero tick evaluations without this.
+      const prevDayClose = marketCloseUTC(parseDateKey(lastMsgDay));
+      await advanceWithChaseInterleaving(broker, orderManager, clock.now(), prevDayClose);
+
       const cancelledCloseCallbacks = new Map<string, (price: number, at: Date) => Promise<void>>();
       const workingOrders = orderManager.getWorkingOrders();
       for (const wo of workingOrders) {
@@ -280,7 +231,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           }
           log.info(`Day boundary: cancelling unfilled close order ${wo.orderId} ${wo.params.symbol}`);
           await broker.cancelOrder(wo.orderId);
-          pendingIntents.delete(wo.orderId);
         } else {
           const hasExpiredLeg = wo.params.legs.some(leg =>
             leg.type !== 'STOCK' && leg.expiry && leg.expiry < msgDay
@@ -288,7 +238,6 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           if (hasExpiredLeg) {
             log.info(`Day boundary: cancelling expired-leg order ${wo.orderId} ${wo.params.symbol} (legs expired before ${msgDay})`);
             await broker.cancelOrder(wo.orderId);
-            pendingIntents.delete(wo.orderId);
           }
         }
       }
@@ -299,17 +248,18 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         const sweepThrough = new Date(parseDateKey(msgDay).getTime() - 86_400_000)
           .toISOString().slice(0, 10);
 
-        const autoClosedCount = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min, cancelledCloseCallbacks);
-        if (autoClosedCount > 0) {
-          log.info(`Auto-closed ${autoClosedCount} expiring position(s) on ${lastMsgDay} at market price`);
+        const autoClosed = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min, cancelledCloseCallbacks);
+        if (autoClosed.length > 0) {
+          log.info(`Auto-closed ${autoClosed.length} expiring position(s) on ${lastMsgDay} at market price`);
+          await emitAutoCloseDecisions(autoClosed, runId);
         }
 
-        const openPositions = await broker.getOpenTrades();
+        const openPositions = await getOpenPositions();
         logExpiryNotices(openPositions, sweepThrough);
 
         for (const pos of openPositions) {
           if (pos.strategy === 'STOCK') continue;
-          const hasExpiredLeg = (pos.legs as TradeLeg[] ?? []).some((l: TradeLeg) => l.expiry <= sweepThrough);
+          const hasExpiredLeg = getLegs(pos).some((l) => l.expiry <= sweepThrough);
           if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
         }
 
@@ -318,10 +268,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           log.info(`Swept ${expiredCount} expired option(s) through ${sweepThrough}`);
         }
 
-        const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
+        const eodTime = marketCloseUTC(parseDateKey(lastMsgDay));
         const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
         await db.insert(schema.backtestMtmSnapshots).values({
-          backtestRunId: runId,
+          channelId: btChannel(runId),
           date: lastMsgDay,
           unrealizedPnl,
         });
@@ -335,19 +285,19 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     }
 
     lastMsgDay = msgDay;
+    const prevSimTime = clock.now();
     clock.advance(msg.timestamp);
-    await broker.advanceTo(msg.timestamp);
-    await orderManager.tick(msg.timestamp);
+    await advanceWithChaseInterleaving(broker, orderManager, prevSimTime, msg.timestamp);
 
     if (i > 0 && i % 100 === 0) {
       const openTradesCount = await broker.getOpenPositionCount();
-      const closedTradesCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
-      const totalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
+      const closedTradesCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
+      const totalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
       log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
     }
 
     await processMessage(
-      msg, btCtx,
+      msg, btCtx, shadows,
       { agentTrades, skipped, skipReasons, failedEntrySignals, failedExitSignals },
       (stats) => { agentTrades = stats.agentTrades; skipped = stats.skipped; failedEntrySignals = stats.failedEntrySignals; failedExitSignals = stats.failedExitSignals; },
     );
@@ -385,16 +335,17 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     const openCount = await broker.getOpenPositionCount();
     if (openCount > 0) {
       const autoClosedFinal = await broker.autoCloseExpiring(lastMsgDay, cutoffMinus15Min);
-      if (autoClosedFinal > 0) {
-        log.info(`Auto-closed ${autoClosedFinal} expiring position(s) on ${lastMsgDay} at market price (final)`);
+      if (autoClosedFinal.length > 0) {
+        log.info(`Auto-closed ${autoClosedFinal.length} expiring position(s) on ${lastMsgDay} at market price (final)`);
+        await emitAutoCloseDecisions(autoClosedFinal, runId);
       }
 
-      const finalOpenPositions = await broker.getOpenTrades();
+      const finalOpenPositions = await getOpenPositions();
       logExpiryNotices(finalOpenPositions, lastMsgDay);
 
       for (const pos of finalOpenPositions) {
         if (pos.strategy === 'STOCK') continue;
-        const hasExpiredLeg = (pos.legs as TradeLeg[] ?? []).some((l: TradeLeg) => l.expiry <= lastMsgDay);
+        const hasExpiredLeg = getLegs(pos).some((l) => l.expiry <= lastMsgDay);
         if (hasExpiredLeg && !pos.closeMessageId) expiredWithoutSignal++;
       }
 
@@ -403,10 +354,10 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         log.info(`Swept ${expiredCount} expired option(s) on ${lastMsgDay} (final)`);
       }
 
-      const eodTime = new Date(lastMsgDay + 'T20:00:00Z');
+      const eodTime = marketCloseUTC(parseDateKey(lastMsgDay));
       const unrealizedPnl = await broker.getUnrealizedPnl(eodTime);
       await db.insert(schema.backtestMtmSnapshots).values({
-        backtestRunId: runId,
+        channelId: btChannel(runId),
         date: lastMsgDay,
         unrealizedPnl,
       });
@@ -414,7 +365,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     }
   }
 
-  orderManager.destroy();
+  bundle.destroy();
 
   const apiStats = getApiStats();
   if (apiStats.fetches > 0) {
@@ -424,8 +375,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   priceProvider.printDataSummary();
 
   const finalOpenCount = await broker.getOpenPositionCount();
-  const finalClosedCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
-  const finalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forRun(runId)));
+  const finalClosedCount = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
+  const finalPnlResult = await db.select({ total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)` }).from(schema.trades).where(and(isClosed, forChannel(btChannel(runId))));
   const totalPnl = safeParseFloat(finalPnlResult[0].total);
   log.info(`Done. trades=${agentTrades} skipped=${skipped} open=${finalOpenCount} closed=${finalClosedCount[0].count} PnL=$${totalPnl.toFixed(2)}`);
   if (failedEntrySignals > 0 || failedExitSignals > 0) {
@@ -440,9 +391,9 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   }
   log.info(`Generating report...`);
 
-  const allTrades = await db.select().from(schema.trades).where(forRun(runId));
-  const allDecisions = await db.select().from(schema.runDecisions).where(eq(schema.runDecisions.backtestRunId, runId));
-  const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.backtestRunId, runId));
+  const allTrades = await db.select().from(schema.trades).where(forChannel(btChannel(runId)));
+  const allDecisions = await db.select().from(schema.runDecisions).where(eq(schema.runDecisions.channelId, btChannel(runId)));
+  const mtmRows = await db.select().from(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, btChannel(runId)));
 
   const reportData = generateReportFromTrades({ trades: allTrades, decisions: allDecisions, mtmSnapshots: mtmRows, startingEquity, commissionSchedule: config.commissionSchedule });
 
@@ -469,11 +420,11 @@ async function backfillDecisionPnl(runId: string): Promise<void> {
     SET pnl = (
       SELECT CAST(SUM(CAST(t.pnl AS REAL)) AS TEXT) FROM trades t
       WHERE t.source_message_id = run_decisions.message_id
-        AND t.backtest_run_id = ${runId}
+        AND t.channel_id = ${btChannel(runId)}
         AND t.pnl IS NOT NULL
     )
-    WHERE backtest_run_id = ${runId}
-      AND decision = 'EXECUTE'
+    WHERE channel_id = ${btChannel(runId)}
+      AND outcome = 'EXECUTE'
   `);
 }
 
@@ -485,55 +436,13 @@ type Stats = {
   failedExitSignals: number;
 };
 
-type MessageContext = {
-  msg: HistoricalMessage;
-  runId: string;
-  stats: Stats;
-  updateStats: (stats: Stats) => void;
-  decisionStart: number;
-};
-
-async function recordSkip(ctx: MessageContext, path: string, category: string, reason: string, usage?: LLMUsage): Promise<void> {
-  log.debug(`  → skipped (${reason.slice(0, 100)}) (${Date.now() - ctx.decisionStart}ms)`);
-  ctx.stats.skipped++;
-  ctx.stats.skipReasons.set(category, (ctx.stats.skipReasons.get(category) ?? 0) + 1);
-  await db.insert(schema.runDecisions).values({
-    backtestRunId: ctx.runId,
-    messageId: ctx.msg.id,
-    path,
-    decision: 'SKIP',
-    skipCategory: category,
-    reasoning: reason,
-    durationMs: Date.now() - ctx.decisionStart,
-    ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
-  });
-}
-
-async function recordExecute(
-  ctx: MessageContext,
-  path: string,
-  reasoning: string,
-  tradeId?: string,
-  usage?: LLMUsage,
-): Promise<void> {
-  ctx.stats.agentTrades++;
-  await db.insert(schema.runDecisions).values({
-    backtestRunId: ctx.runId,
-    messageId: ctx.msg.id,
-    path,
-    decision: 'EXECUTE',
-    reasoning,
-    tradeId,
-    durationMs: Date.now() - ctx.decisionStart,
-    ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
-  });
-}
-
 // ── Adapter: HistoricalMessage → Task for processTask ───
 
-function taskFromMessage(msg: HistoricalMessage): Task {
+function taskFromMessage(msg: HistoricalMessage, channelId: string): Task {
+  const id = `${channelId}:${msg.id}`;
+  const ts = msg.timestamp.toISOString();
   return {
-    id: msg.id,
+    id,
     messageId: msg.id,
     taskType: 'REVIEW_MESSAGE',
     status: 'IN_PROGRESS',
@@ -545,12 +454,13 @@ function taskFromMessage(msg: HistoricalMessage): Task {
       badges: msg.badges,
     },
     result: null,
-    createdAt: msg.timestamp.toISOString(),
-    startedAt: msg.timestamp.toISOString(),
+    createdAt: ts,
+    startedAt: ts,
     completedAt: null,
     error: null,
     modelProvider: null,
     modelName: null,
+    channelId,
   } as Task;
 }
 
@@ -559,26 +469,33 @@ function taskFromMessage(msg: HistoricalMessage): Task {
 async function processMessage(
   msg: HistoricalMessage,
   btCtx: BacktestContext,
+  shadows: ShadowTracker,
   stats: Stats,
   updateStats: (stats: Stats) => void,
 ): Promise<void> {
-  const ctx: MessageContext = { msg, runId: btCtx.runId, stats, updateStats, decisionStart: Date.now() };
-  const task = taskFromMessage(msg);
+  const task = taskFromMessage(msg, btChannel(btCtx.runId));
 
   await processTaskShared(task, {
-    getPositions: async (symbol) => {
-      const filters: PositionFilters = symbol ? { symbol } : {};
-      const rows = await btCtx.getOpenPositions({ ...filters, trader: msg.author });
-      return rows.map(tradeToOpenPosition);
-    },
+    getOpenPositions: btCtx.getOpenPositions,
     llm: btCtx.agentProvider,
     pipeline: btCtx.pipelineDeps,
-    onResult: async (result) => {
+    scope: btChannel(btCtx.runId),
+    agentIdentity: btCtx.agentIdentity,
+    classifySkip: (result) => {
+      const isUnfollowed = shadows.isUnfollowedExit(
+        msg.author,
+        result.parseResult?.action ?? null,
+        result.parseResult?.symbol ?? null,
+      );
+      if (isUnfollowed) return 'unfollowed_exit';
+      return result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
+    },
+    onResult: async (result, emitter) => {
       if (result.outcome === 'EXECUTE') {
         const executedResults = result.results.filter(r => r.executed);
-        const pendingResults = result.results.filter(r => !r.executed && r.orderId);
+        const pendingResults = result.results.filter(r => !r.executed && !r.reason);
         const firstTradeId = executedResults[0]?.tradeId;
-        const failedResults = result.results.filter(r => !r.executed && !r.orderId && r.reason);
+        const failedResults = result.results.filter(r => !r.executed && r.reason);
 
         for (const r of failedResults) {
           if (r.signal.tradeId) stats.failedExitSignals++;
@@ -587,20 +504,117 @@ async function processMessage(
 
         if (executedResults.length > 0 || pendingResults.length > 0) {
           const reasoning = result.signals.map(s => `${s.orderType} ${s.legs.map(l => l.symbol).join('+')}`).join('; ');
-          await recordExecute(ctx, 'orchestrator', reasoning, firstTradeId);
+          stats.agentTrades++;
+          // Record followed open
+          if (result.parseResult?.action === 'OPEN' && result.parseResult?.symbol) {
+            shadows.recordFollowedOpen(msg.author, result.parseResult.symbol);
+          }
+          await emitter.emit('SETTLED', { outcome: 'EXECUTE' }, { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId });
         } else if (failedResults.length > 0) {
           const failReason = failedResults.map(r => r.reason).join('; ');
           log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
-          await recordSkip(ctx, 'pipeline_failure', 'pipeline failure', failReason);
+          stats.skipped++;
+          stats.skipReasons.set('pipeline failure', (stats.skipReasons.get('pipeline failure') ?? 0) + 1);
+          await emitter.emit('SETTLED', { outcome: 'FAIL' }, { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason, skipCategory: 'pipeline failure' });
         } else {
-          await recordSkip(ctx, 'orchestrator', 'no execution', 'Signals produced but none executed');
+          stats.skipped++;
+          stats.skipReasons.set('no execution', (stats.skipReasons.get('no execution') ?? 0) + 1);
+          await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' });
         }
-      } else if (result.outcome === 'MANUAL_REVIEW') {
-        await recordSkip(ctx, 'orchestrator', 'flagged', result.reason);
       } else {
-        await recordSkip(ctx, 'orchestrator', 'skip', result.reason);
+        // SKIP or MANUAL_REVIEW — classified by classifySkip, SETTLED emitted by processTask
+        const isUnfollowed = shadows.isUnfollowedExit(
+          msg.author,
+          result.parseResult?.action ?? null,
+          result.parseResult?.symbol ?? null,
+        );
+        const category = isUnfollowed ? 'unfollowed_exit' : (result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
+        stats.skipped++;
+        stats.skipReasons.set(category, (stats.skipReasons.get(category) ?? 0) + 1);
+
+        // Track skipped opens for shadow registry
+        if (result.parseResult?.action === 'OPEN' && result.parseResult?.symbol) {
+          shadows.recordSkippedOpen(msg.author, result.parseResult.symbol);
+        }
       }
       updateStats(stats);
     },
   });
+}
+
+/** Emit an AUTO_CLOSE run_decision for each auto-closed position that has a source message. */
+async function emitAutoCloseDecisions(results: AutoCloseResult[], runId: string): Promise<void> {
+  for (const ac of results) {
+    if (!ac.sourceMessageId) continue;
+    const emitter = createEmitter({ messageId: ac.sourceMessageId, channelId: btChannel(runId) });
+    await emitter.emit('AUTO_CLOSE', {
+      exitPrice: ac.exitPrice,
+      closeAt: ac.closeAt.toISOString(),
+      symbol: ac.symbol,
+      strategy: ac.strategy,
+      expiryDate: ac.expiryDate,
+    }, {
+      outcome: 'EXECUTE',
+      phase: 'expiry',
+      tradeId: ac.tradeId,
+      reasoning: `Option expiring ${ac.expiryDate}, auto-closed at $${ac.exitPrice.toFixed(2)}`,
+    });
+  }
+}
+
+async function advanceWithChaseInterleaving(
+  broker: SimBroker,
+  orderManager: OrderManager,
+  from: Date,
+  to: Date,
+): Promise<void> {
+  // Fast path: no active chase orders — single advance
+  const workingOrders = orderManager.getWorkingOrders();
+  const hasChaseRules = workingOrders.some(wo =>
+    wo.status === 'OPEN' &&
+    wo.params.adjustmentRules?.some(r => r.type === 'PRICE_CHASE')
+  );
+
+  if (!hasChaseRules) {
+    await broker.advanceTo(to);
+    await orderManager.tick(to);
+    return;
+  }
+
+  // Find minimum chase interval across all active orders
+  let minIntervalMs = Infinity;
+  for (const wo of workingOrders) {
+    if (wo.status !== 'OPEN') continue;
+    for (const rule of (wo.params.adjustmentRules ?? [])) {
+      if (rule.type === 'PRICE_CHASE') {
+        minIntervalMs = Math.min(minIntervalMs, rule.intervalSec * 1000);
+      }
+    }
+  }
+
+  // Sub-step through time at chase intervals
+  let t = from.getTime();
+  const target = to.getTime();
+
+  while (t < target) {
+    const nextT = Math.min(t + minIntervalMs, target);
+    const nextDate = new Date(nextT);
+
+    await broker.advanceTo(nextDate);   // ticks in [lastAdvance, nextDate]
+    await orderManager.tick(nextDate);  // applies 1 chase step, updates limit
+
+    t = nextT;
+
+    // Early exit: all chase orders resolved (filled/cancelled)
+    const remaining = orderManager.getWorkingOrders()
+      .filter(wo => wo.status === 'OPEN' &&
+        wo.params.adjustmentRules?.some(r => r.type === 'PRICE_CHASE'));
+    if (remaining.length === 0) {
+      if (nextT < target) {
+        await broker.advanceTo(to);
+        await orderManager.tick(to);
+      }
+      break;
+    }
+  }
 }

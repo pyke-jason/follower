@@ -1,7 +1,7 @@
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Badge } from './badge';
 import { formatCurrency } from '@/lib/format';
-import type { TradeLeg } from '../../../src/db/schema';
+import type { TradeLeg } from '@src/db/schema';
 
 export function LegsTable({
   legs,

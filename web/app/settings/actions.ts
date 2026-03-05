@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { getProvider, SECRET_KEYS } from '@secrets';
+import { getProvider, SECRET_KEYS } from '@src/lib/secrets';
 
 type Result = { ok: boolean; error?: string };
 

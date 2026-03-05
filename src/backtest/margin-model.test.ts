@@ -7,7 +7,8 @@
 
 import { describe, test, expect } from 'vitest';
 import fc from 'fast-check';
-import { computeMarginRequirement, getSpreadWidth } from './margin-model.js';
+import { computeMarginRequirement } from './margin-model.js';
+import { getSpreadWidth } from '../lib/trade.js';
 import type { TradeLeg } from '../db/schema.js';
 
 // ── Arbitraries ──────────────────────────────────────────────────────

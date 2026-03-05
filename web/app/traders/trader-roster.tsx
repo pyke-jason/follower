@@ -36,7 +36,7 @@ import {
   CommandItem,
 } from '@/components/ui/command';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import type { TrackedTrader } from '../../../src/db/schema';
+import type { TrackedTrader } from '@src/db/schema';
 import {
   quickAdd,
   removeTrader,

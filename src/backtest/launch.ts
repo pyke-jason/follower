@@ -8,11 +8,11 @@ await loadSecrets();
 
 import { runBacktest } from './runner.js';
 import { printReport } from './report.js';
-import { setLogLevel, createLogger } from '../lib/logger.js';
-import type { LogLevel } from '../lib/logger.js';
-import type { BacktestConfig, FillModel } from './types.js';
+import { setLogLevel, createLogger, LogLevelSchema } from '../lib/logger.js';
+import type { BacktestConfig } from './types.js';
+import { FillModelSchema } from './types.js';
 import { db, schema } from '../db/client.js';
-import { DEFAULT_STARTING_EQUITY } from '../config/risk-defaults.js';
+import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '../config/risk-defaults.js';
 
 
 function parseArg(args: string[], flag: string): string | undefined {
@@ -39,15 +39,13 @@ async function main() {
 
   const startDateIso = startDate.toISOString();
   const endDateIso = endDate.toISOString();
-  let fillModel: FillModel = 'orats';
   const fillModelArg = parseArg(args, '--fill-model');
-  if (fillModelArg) {
-    if (!['orats', 'midpoint', 'natural'].includes(fillModelArg)) {
-      console.error(`Invalid fill model "${fillModelArg}". Must be one of: orats, midpoint, natural`);
-      process.exit(1);
-    }
-    fillModel = fillModelArg as FillModel;
+  const fillModelResult = FillModelSchema.safeParse(fillModelArg ?? 'orats');
+  if (!fillModelResult.success) {
+    console.error(`Invalid fill model "${fillModelArg}". Must be one of: orats, midpoint, natural`);
+    process.exit(1);
   }
+  const fillModel = fillModelResult.data;
 
   const agentProvider = parseArg(args, '--agent-provider');
   const agentModel = parseArg(args, '--agent-model');
@@ -62,15 +60,13 @@ async function main() {
   const commissionOptionArg = parseArg(args, '--commission-option');
   const commissionStockArg = parseArg(args, '--commission-stock');
 
-  let logLevel: LogLevel = 'info';
   const logLevelArg = parseArg(args, '--log-level');
-  if (logLevelArg) {
-    if (!['debug', 'info', 'warn', 'error'].includes(logLevelArg)) {
-      console.error(`Invalid log level "${logLevelArg}". Must be one of: debug, info, warn, error`);
-      process.exit(1);
-    }
-    logLevel = logLevelArg as LogLevel;
+  const logLevelResult = LogLevelSchema.safeParse(logLevelArg ?? 'info');
+  if (!logLevelResult.success) {
+    console.error(`Invalid log level "${logLevelArg}". Must be one of: debug, info, warn, error`);
+    process.exit(1);
   }
+  const logLevel = logLevelResult.data;
   setLogLevel(logLevel);
 
   let runId = parseArg(args, '--run-id');
@@ -93,12 +89,10 @@ async function main() {
     ...(maxDrawdownPctArg ? { maxDrawdownPct: parseFloat(maxDrawdownPctArg) } : {}),
     ...(maxAgentCallsArg ? { maxAgentCalls: parseInt(maxAgentCallsArg, 10) } : {}),
     startingEquity: startingEquityArg ? parseInt(startingEquityArg, 10) : DEFAULT_STARTING_EQUITY,
-    ...((commissionOptionArg || commissionStockArg) ? {
-      commissionSchedule: {
-        ...(commissionOptionArg ? { option: { perContract: parseFloat(commissionOptionArg) } } : {}),
-        ...(commissionStockArg ? { stock: { perShare: parseFloat(commissionStockArg) } } : {}),
-      },
-    } : {}),
+    commissionSchedule: {
+      option: { perContract: commissionOptionArg ? parseFloat(commissionOptionArg) : DEFAULT_COMMISSION_SCHEDULE.option.perContract },
+      stock: { perShare: commissionStockArg ? parseFloat(commissionStockArg) : DEFAULT_COMMISSION_SCHEDULE.stock.perShare },
+    },
   };
 
   if (!config.databentoApiKey) {

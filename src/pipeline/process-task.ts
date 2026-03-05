@@ -2,41 +2,91 @@
  * Task processor — bridges the task queue to the orchestrator + resolved-signal executor.
  *
  * processTask(task, env) is the single entry point for both live and backtest paths.
- * It fetches the message, builds orchestrator context, resolves signals, and executes.
+ * It builds its own emitter and position callback from the provided scope + getOpenPositions,
+ * fetches the message, calls the orchestrator (which emits PARSED),
+ * then either emits SETTLED (for non-EXECUTE) or calls the executor (which emits per-signal events).
  */
 
-import type { Task, Message } from '../db/schema.js';
+import type { Task, Trade } from '../db/schema.js';
+import { TaskContextSchema } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
-import type { OrchestratorContext } from '../intents/orchestrator/types.js';
-import type { ResolvedSignal, OpenPosition } from '../intents/orchestrator/types.js';
-import type { ResolvedPipelineDeps, ResolvedPipelineResult } from './execute-resolved.js';
+import type { OrchestratorResult, ResolvedSignal, SignalEventEmitter, SerializedParseResult } from '../intents/orchestrator/types.js';
+import type { ResolvedPipelineDeps, ResolvedPipelineResult, ExecuteEnv } from './execute-resolved.js';
+import type { TradeScope } from './build-deps.js';
+import type { PositionFilters } from '../trades/filters.js';
 
 import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { executeResolvedSignals } from './execute-resolved.js';
-import { getRecentChatMessages, formatChatContext } from '../intents/trader-context.js';
-import { getTrader } from '../config/traders.js';
+import { createEmitter } from '../decisions/emitter.js';
+import { tradeToOpenPosition } from '../trades/adapters.js';
 
 // ─── Types ──────────────────────────────────────────
 
-export type TaskResult =
-  | { outcome: 'SKIP'; reason: string }
-  | { outcome: 'MANUAL_REVIEW'; reason: string }
-  | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[] };
+export type ProcessTaskResult =
+  | Extract<OrchestratorResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>
+  | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[]; parseResult?: SerializedParseResult };
 
 export type TaskEnv = {
-  getPositions: (symbol?: string) => Promise<OpenPosition[]>;
+  getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
   llm: LLMProvider;
   pipeline: ResolvedPipelineDeps;
-  onResult: (result: TaskResult) => Promise<void>;
+  scope: TradeScope;
+  agentIdentity: { provider: string; model: string };
+  onResult: (result: ProcessTaskResult, emitter: SignalEventEmitter) => Promise<void>;
+  /** Classify non-EXECUTE outcomes for the SETTLED event. Returns skipCategory. */
+  classifySkip?: (result: Extract<ProcessTaskResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>) => string;
 };
 
 // ─── Main ───────────────────────────────────────────
 
 export async function processTask(task: Task, env: TaskEnv): Promise<void> {
+  const context = TaskContextSchema.parse(task.context ?? {});
+
   const messageId = task.messageId;
   if (!messageId) throw new Error(`Task ${task.id} has no messageId`);
+
+  // Ensure task row exists (idempotent — live pre-creates, backtest does not)
+  await db.insert(schema.tasks).values({
+    id: task.id,
+    messageId: task.messageId,
+    taskType: task.taskType,
+    status: task.status,
+    assignee: task.assignee,
+    context: task.context,
+    createdAt: task.createdAt,
+    startedAt: task.startedAt,
+    channelId: env.scope,
+  }).onConflictDoNothing();
+
+  // Stamp model identity on the task row
+  await db.update(schema.tasks)
+    .set({ modelProvider: env.agentIdentity.provider, modelName: env.agentIdentity.model })
+    .where(eq(schema.tasks.id, task.id));
+
+  // Always wrap pipeline to inject taskId per-task.
+  const pipeline = {
+    ...env.pipeline,
+    recordTrade: (input: Parameters<ResolvedPipelineDeps['recordTrade']>[0]) =>
+      env.pipeline.recordTrade({ ...input, taskId: task.id }),
+    onPending: (orderId: string, ctx: Parameters<ResolvedPipelineDeps['onPending']>[1]) =>
+      env.pipeline.onPending(orderId, { ...ctx, taskId: task.id }),
+  };
+
+  // Derive emitter from scope
+  const emitter = createEmitter({
+    messageId,
+    channelId: env.scope,
+    taskId: task.id,
+  });
+
+  // Derive position lookup from getOpenPositions + context.author
+  const getPositions = async (symbol?: string) => {
+    const filters: PositionFilters = symbol ? { symbol } : {};
+    const rows = await env.getOpenPositions({ ...filters, trader: context.author ?? undefined });
+    return rows.map(tradeToOpenPosition);
+  };
 
   const [message] = await db
     .select()
@@ -46,62 +96,58 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
 
   if (!message) throw new Error(`Message ${messageId} not found for task ${task.id}`);
 
-  const orchCtx = await buildOrchestratorContext(message, env);
-  const resolved = await resolveOrchestrator(orchCtx, env.llm);
+  const executeEnv: ExecuteEnv = {
+    getPositions,
+    llm: env.llm,
+    pipeline,
+    emitter,
+  };
+
+  // Orchestrator emits PARSED (always) + SIGNAL_RESOLVED (for executes)
+  const resolved = await resolveOrchestrator(message, {
+    getPositions,
+    llm: env.llm,
+    broker: env.pipeline.broker,
+    emitter,
+  });
 
   if (resolved.outcome !== 'EXECUTE') {
-    await env.onResult({ outcome: resolved.outcome, reason: resolved.reason });
+    const result = {
+      outcome: resolved.outcome,
+      reason: resolved.reason,
+      parseResult: resolved.parseResult,
+      usage: resolved.usage,
+    } as Extract<ProcessTaskResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>;
+
+    const mappedOutcome = resolved.outcome === 'MANUAL_REVIEW' ? 'SKIP' : resolved.outcome;
+    const skipCategory = env.classifySkip?.(result)
+      ?? (resolved.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
+
+    await emitter.emit('SETTLED', { outcome: mappedOutcome }, {
+      outcome: mappedOutcome,
+      phase: 'orchestrator',
+      reasoning: resolved.reason,
+      skipCategory,
+      inputTokens: resolved.usage?.inputTokens ?? null,
+      outputTokens: resolved.usage?.outputTokens ?? null,
+    });
+
+    await env.onResult(result, emitter);
     return;
   }
 
-  const results = await executeResolvedSignals(
-    resolved.signals,
-    message.author,
-    env.pipeline,
-    { messageId: message.id },
-  );
+  // Executor emits per-signal SETTLED events via emitter
+  const results = await executeResolvedSignals({
+    resolved,
+    message,
+    env: executeEnv,
+  });
 
   await env.onResult({
     outcome: 'EXECUTE',
     reason: `${resolved.signals.length} signal(s)`,
     signals: resolved.signals,
     results,
-  });
-}
-
-// ─── Helpers ────────────────────────────────────────
-
-async function buildOrchestratorContext(
-  message: Message,
-  env: TaskEnv,
-): Promise<OrchestratorContext> {
-  const traderConfig = await getTrader(message.author);
-
-  return {
-    messageId: message.id,
-    rawHtml: message.rawHtml,
-    cleanText: message.cleanText,
-    badges: (message.badges as string[]) ?? [],
-    symbols: (message.symbols as string[]) ?? [],
-    timestamp: message.timestamp,
-    author: message.author,
-    marketData: {
-      getQuote: (s) => env.pipeline.broker.getQuote(s),
-      getOptionChain: async () => null,
-      getExpiryDates: async () => [],
-    },
-    positions: {
-      getPositions: env.getPositions,
-    },
-    chatHistory: {
-      getRecentMessages: async (author?: string, limit?: number) => {
-        const msgs = await getRecentChatMessages(message.timestamp, author, limit);
-        return formatChatContext(msgs);
-      },
-    },
-    traderConfig: {
-      strategies: traderConfig?.strategies ?? [],
-      notes: traderConfig?.notes ?? null,
-    },
-  };
+    parseResult: resolved.parseResult,
+  }, emitter);
 }

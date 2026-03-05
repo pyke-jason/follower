@@ -4,9 +4,10 @@ import type { BrokerService } from '../broker/interface.js';
 import type { BrokerPosition } from '../broker/types.js';
 import type { ReconciliationAlertType } from '../db/schema.js';
 import { sendDiscordAlert } from './notify.js';
-import { isOpen, notBacktest } from '../trades/filters.js';
+import { isOpen, forChannel } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import { tradeQty } from '../lib/trade.js';
+import { extractUnderlying } from '../lib/occ-symbology.js';
 
 const log = createLogger('Recon');
 
@@ -76,7 +77,7 @@ async function autoResolveAlerts(brokerPositions: BrokerPosition[]): Promise<voi
  * Compare broker positions vs DB open trades and produce alerts
  * for any discrepancies.
  */
-export async function runReconciliation(broker: BrokerService): Promise<ReconciliationAlertInput[]> {
+export async function runReconciliation(broker: BrokerService, channelId: string): Promise<ReconciliationAlertInput[]> {
   const brokerPositions = await broker.getPositions();
 
   // Auto-resolve stale alerts before running comparison
@@ -84,7 +85,7 @@ export async function runReconciliation(broker: BrokerService): Promise<Reconcil
 
   const dbTrades = await db.select()
     .from(schema.trades)
-    .where(and(isOpen, notBacktest));
+    .where(and(isOpen, forChannel(channelId)));
 
   const alerts: ReconciliationAlertInput[] = [];
 
@@ -177,15 +178,4 @@ export async function runReconciliation(broker: BrokerService): Promise<Reconcil
   return alerts;
 }
 
-/**
- * Extract the underlying symbol from an OCC option symbol or pass through.
- * OCC format: "SPY   250214C00500000" -> "SPY"
- */
-function extractUnderlying(symbol: string): string {
-  // If symbol has spaces (OCC format), extract the underlying
-  const trimmed = symbol.trim();
-  if (trimmed.length > 6 && /\d{6}[CP]\d{8}/.test(trimmed.replace(/\s/g, ''))) {
-    return trimmed.split(/\s/)[0].trim();
-  }
-  return trimmed;
-}
+

@@ -5,7 +5,7 @@ import { zCoercePrice } from '../lib/zod-financial.js';
 import { createLogger } from '../lib/logger.js';
 import { toDateKeyET, parseDateKey, isTradingDay, getPreviousTradingDayKey } from '../lib/et-date.js';
 import { formatLogTimeET } from '../lib/et-logging.js';
-import { parseOccSymbol } from './occ-symbology.js';
+import { parseOccSymbol } from '../lib/occ-symbology.js';
 import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
 
@@ -354,7 +354,7 @@ async function fetchDefinitionSnapshot(
   let skipped = 0;
   const seenSymbols = new Set<string>();
 
-  const reader = Readable.from(res.body as any);
+  const reader = Readable.from(res.body as any); // SAFETY: fetch body -> Node Readable compat
 
   for await (const line of readLines(reader)) {
     bytesRead += Buffer.byteLength(line) + 1;
@@ -476,7 +476,7 @@ export async function fetchTickWindow(params: {
   if (!res.body) return [];
 
   const ticks: QuoteTick[] = [];
-  const reader = Readable.from(res.body as any);
+  const reader = Readable.from(res.body as any); // SAFETY: fetch body -> Node Readable compat
 
   let bytesRead = 0;
   let records = 0;

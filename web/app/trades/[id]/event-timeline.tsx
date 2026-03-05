@@ -1,8 +1,8 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '../../components/badge';
 import { formatCurrency, formatDate } from '@/lib/format';
-import { safeParseFloat } from '../../../../src/lib/numbers';
-import type { TradeEvent } from '../../../../src/db/schema';
+import { safeParseFloat } from '@src/lib/numbers';
+import type { TradeEvent } from '@src/db/schema';
 import { Clock } from 'lucide-react';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -15,7 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 function EventDetail({ event }: { event: TradeEvent }) {
   const price = safeParseFloat(event.price);
-  const meta = event.metadata as Record<string, unknown> | null;
+  const meta = event.metadata;
 
   switch (event.action) {
     case 'OPEN':

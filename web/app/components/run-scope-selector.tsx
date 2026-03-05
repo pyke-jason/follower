@@ -18,7 +18,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
-import { useRunScope } from './run-scope-provider';
+import { useRunStore } from '@/stores/run-store';
 
 type RunItem = {
   id: string;
@@ -32,7 +32,9 @@ type RunItem = {
 };
 
 export function RunScopeSelector() {
-  const { runId, runBrief, selectRun } = useRunScope();
+  const runId = useRunStore((s) => s.runId);
+  const runBrief = useRunStore((s) => s.runBrief);
+  const selectRun = useRunStore((s) => s.selectRun);
 
   const [open, setOpen] = useState(false);
   const [runs, setRuns] = useState<RunItem[]>([]);

@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, computeBacktestAccuracy } from '@/lib/queries';
+import { getBacktestRunById, getRunDecisions, getTradesByBacktestRun, getMtmSnapshots, getTradeEventsForTrades, getCancelledCloseTradeIds, getMarketDataFailTradeIds, getTradesWithSubsequentMessages } from '@/lib/queries';
 import { Badge } from '../../components/badge';
 import { RunProgress } from './run-progress';
 
@@ -7,7 +7,7 @@ import { AutoRefresh } from '../../components/auto-refresh';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { formatCurrency } from '@/lib/format';
+import { formatCurrency, isoToDateKey } from '@/lib/format';
 import { deleteBacktestRun, cancelBacktestRun, invalidateIntentCache } from '../actions';
 import { LogViewer } from './log-viewer';
 import { BacktestTabs } from './backtest-tabs';
@@ -16,21 +16,21 @@ import { DrawdownChart } from './drawdown-chart';
 import { BreakdownCharts } from './breakdown-charts';
 import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
-import { StrategyEquityChart } from './strategy-equity';
 import { ChatRoom } from '../../messages/chat-room';
+import { ChatHydrator } from '../../messages/chat-hydrator';
 import { loadInitialChatData } from '../../messages/load-chat-data';
-import { DecisionScatter } from './decision-scatter';
-import { TradesTableClient } from '../../components/trades-table-client';
-import { AccuracyGrid } from '../../components/accuracy-grid';
+import { TradeFilterProvider, TradeFilters } from '../../components/trade-filters';
+import type { TradeFlag } from '../../components/trade-filters';
+import { BacktestTradesTable } from './backtest-trades-table';
 import Link from 'next/link';
 import { LayoutDashboard, TrendingUp, ListTodo, MessageSquare, Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
-import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
-import type { LiveMetrics } from '../../../../src/backtest/types';
+import type { CommissionSchedule } from '@src/db/schema';
+import { getConfig, getLiveMetrics } from '@src/db/accessors';
 
-import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '../../../../src/lib/numbers';
-import { computeCoreStats } from '../../../../src/backtest/report';
-import { computeTradeCommission } from '../../../../src/lib/commission';
-import { tradeQty } from '../../../../src/lib/trade';
+import { PROFIT_FACTOR_INF, pctDisplay, roundCents, safeParseFloat } from '@src/lib/numbers';
+import { computeCoreStats } from '@src/backtest/report';
+import { computeTradeCommission } from '@src/lib/commission';
+import { tradeQty } from '@src/lib/trade';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,9 +43,9 @@ export default async function BacktestDetailPage({
   const run = await getBacktestRunById(id);
   if (!run) notFound();
 
-  const config = run.config as BacktestRunConfig;
+  const config = getConfig(run);
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
-  const liveMetrics = run.liveMetrics as LiveMetrics | null;
+  const liveMetrics = getLiveMetrics(run);
   const lastProcessedTs = run.status !== 'COMPLETED'
     ? liveMetrics?.lastProcessedMessageTs ?? null
     : null;
@@ -56,7 +56,7 @@ export default async function BacktestDetailPage({
     ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString() // +1hr buffer
     : config.endDate;
 
-  const [decisions, allTrades, chatData, mtmSnapshots, accuracyResult] = await Promise.all([
+  const [decisions, allTrades, chatData, mtmSnapshots] = await Promise.all([
     getRunDecisions(id),
     getTradesByBacktestRun(id, { includeOpen: true }),
     loadInitialChatData({
@@ -66,22 +66,43 @@ export default async function BacktestDetailPage({
       runId: id,
     }),
     getMtmSnapshots(id),
-    computeBacktestAccuracy(id),
   ]);
+
+  const tradeIds = allTrades.map((t) => t.id);
+  const [eventsByTradeId, cancelledTradeIds, marketDataFailIds, subsequentMessageTradeIds] = await Promise.all([
+    getTradeEventsForTrades(tradeIds),
+    getCancelledCloseTradeIds(tradeIds),
+    getMarketDataFailTradeIds(tradeIds),
+    getTradesWithSubsequentMessages(tradeIds),
+  ]);
+  // Compute per-trade flags for filter toggles
+  const flagsByTradeId: Record<string, TradeFlag[]> = {};
+  for (const t of allTrades) {
+    const flags: TradeFlag[] = [];
+    if (cancelledTradeIds.has(t.id)) flags.push('closeFailed');
+    if (t.status === 'CLOSED' && !t.closeMessageId) flags.push('autoClose');
+    if (marketDataFailIds.has(t.id)) flags.push('marketDataFail');
+    const actions = new Set(eventsByTradeId.get(t.id)?.map(e => e.action));
+    if (actions.has('LEG_OFF')) flags.push('legOff');
+    if (actions.has('TRIM')) flags.push('trimmed');
+    if (actions.has('ADD')) flags.push('added');
+    if (subsequentMessageTradeIds.has(t.id)) flags.push('hasUpdate');
+    if (flags.length > 0) flagsByTradeId[t.id] = flags;
+  }
 
   const closedTrades = allTrades.filter((t) => t.status === 'CLOSED');
 
   // Clamp closedAt dates to the backtest end date so charts don't extend
   // to today's wall-clock time (backtest trades use real timestamps).
-  const backtestEnd = config.endDate.split('T')[0];
+  const backtestEnd = isoToDateKey(config.endDate);
   const clampedTrades = allTrades.map((t) => {
-    if (!t.closedAt || t.closedAt.split('T')[0] <= backtestEnd) return t;
+    if (!t.closedAt || isoToDateKey(t.closedAt) <= backtestEnd) return t;
     return { ...t, closedAt: `${backtestEnd}T16:00:00.000Z` };
   });
 
   // Compute everything from the trades table — works identically for
   // in-progress and completed runs, no precomputed JSON columns needed.
-  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate, strategyEquity, strategies } = computeFromTrades(clampedTrades, decisions, mtmSnapshots, config.commissionSchedule);
+  const { summary, byTrader, byStrategy, equityCurve, tradeScatter, rollingWinRate } = computeFromTrades(clampedTrades, decisions, mtmSnapshots, config.commissionSchedule);
 
   // Compute LLM token sums from already-loaded decisions — zero extra DB queries
   const llmTokens = decisions.reduce(
@@ -153,17 +174,6 @@ export default async function BacktestDetailPage({
       {/* Row 3: Breakdown Charts */}
       <BreakdownCharts byTrader={byTrader} byStrategy={byStrategy} runId={id} />
 
-      {/* Row 4: Strategy Equity (only if 2+ strategies) */}
-      {strategyEquity.length > 0 && strategies.length >= 2 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Strategy Equity</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <StrategyEquityChart data={strategyEquity} strategies={strategies} />
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 
@@ -174,58 +184,35 @@ export default async function BacktestDetailPage({
     return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
   })();
 
-  const scatterData = decisions
-    .filter((r) => r.decision.pnl != null)
-    .map((r) => ({
-      date: r.message.timestamp.split('T')[0],
-      pnl: safeParseFloat(r.decision.pnl),
-      decision: r.decision.decision,
-      message: r.message.cleanText.slice(0, 60),
-    }));
-
   const messagesContent = (
     <div className="space-y-3 flex flex-col flex-1 min-h-0">
-      {scatterData.length > 0 && (
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Decision Outcomes</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <DecisionScatter data={scatterData} />
-          </CardContent>
-        </Card>
-      )}
       <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
-        <ChatRoom
-          initialMessages={chatData.messages}
-          initialCursor={chatData.cursor}
-          initialIntents={chatData.intents}
-          initialLabels={chatData.labels}
-          initialEnrichment={chatData.enrichment}
-          authors={chatData.authors}
-          constraints={{
+        <ChatHydrator data={{
+          ...chatData,
+          constraints: {
             authors: config.traders,
             startDate: config.startDate,
             endDate: messagesEndDate,
             runId: id,
             lastProcessedTs: lastProcessedTs ?? undefined,
-          }}
-          stableDecisionCounts={stableDecisionCounts}
-        />
+          },
+          stableDecisionCounts,
+        }} />
+        <ChatRoom />
       </div>
     </div>
   );
 
   // --- Trades Tab content ---
-  const tradesContent = <TradesTableClient trades={allTrades} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity ?? 100_000} />;
+  const tradesContent = <BacktestTradesTable eventsByTradeId={eventsByTradeId} cancelledTradeIds={cancelledTradeIds} subsequentMessageTradeIds={subsequentMessageTradeIds} runId={id} commissionSchedule={config.commissionSchedule} startingEquity={config.startingEquity} />;
 
   // Consistent layout: same order regardless of state.
   // Sections show/hide but never move position.
 
 
   return (
-    <div className="flex flex-col min-h-full">
-    <div className="space-y-4 animate-in-up pb-6 flex-1 flex flex-col">
+    <div className="flex flex-col h-full">
+    <div className="space-y-4 animate-in-up pb-6 flex-1 flex flex-col min-h-0">
       {isRunning && <AutoRefresh intervalMs={3000} />}
 
       {/* Header with action toolbar */}
@@ -291,65 +278,66 @@ export default async function BacktestDetailPage({
           </div>
         </div>
 
-        {/* Compact info bar: config left, metrics right */}
-        <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-2.5 text-sm flex-wrap">
-          {/* Config */}
-          <span className="text-foreground font-medium">{config.traders.join(', ')}</span>
-          <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground tabular-nums">{config.startDate.split('T')[0]} &ndash; {config.endDate.split('T')[0]}</span>
-          <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
-          <Separator orientation="vertical" className="!h-4" />
-          <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
-          <span className="text-muted-foreground tabular-nums">${((config.startingEquity ?? 100_000) / 1000).toFixed(0)}k</span>
-          {config.commissionSchedule?.option?.perContract != null && (
-            <span className="text-muted-foreground text-xs">comm ${config.commissionSchedule.option.perContract}/ct</span>
-          )}
-          {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
-          {summary && (
-            <>
-              <Separator orientation="vertical" className="!h-4" />
-              <div className="flex items-center gap-3 ml-auto tabular-nums">
-                <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades{summary.openAtEnd > 0 && <span className="text-muted-foreground/60"> + {summary.openAtEnd} open</span>}</span>
-                <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
-                {(() => {
-                  const unrealized = liveMetrics?.unrealizedPnl ?? 0;
-                  const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
-                  const hasComm = (summary.totalCommissions ?? 0) > 0;
-                  const displayPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
-                  const totalPnl = hasOpen ? displayPnl + unrealized : displayPnl;
-                  return (
-                    <span className={totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>
-                      {formatCurrency(totalPnl)}
-                      {hasComm && <span className="text-muted-foreground font-normal text-xs ml-1">(gross {formatCurrency(summary.totalPnl)} &minus; {formatCurrency(summary.totalCommissions!)} comm)</span>}
-                      {!hasComm && hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
-                    </span>
-                  );
-                })()}
-                <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>
-                <span className="text-muted-foreground">PF <span className="text-foreground font-semibold">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</span></span>
-              </div>
-            </>
-          )}
+        {/* Unified info bar: config + metrics + progress */}
+        <div className="rounded-lg border bg-card text-sm overflow-hidden">
+          <div className="flex items-center gap-4 px-4 py-2.5 flex-wrap">
+            {/* Config */}
+            <span className="text-foreground font-medium">{config.traders.join(', ')}</span>
+            <Separator orientation="vertical" className="!h-4" />
+            <span className="text-muted-foreground tabular-nums">{isoToDateKey(config.startDate)} &ndash; {isoToDateKey(config.endDate)}</span>
+            <Separator orientation="vertical" className="!h-4" />
+            <span className="text-muted-foreground">{config.agentProvider ?? 'anthropic'}/{config.agentModel ?? 'default'}</span>
+            <Separator orientation="vertical" className="!h-4" />
+            <span className="text-muted-foreground">{config.fillModel ?? 'orats'}</span>
+            <span className="text-muted-foreground tabular-nums">${(config.startingEquity / 1000).toFixed(0)}k</span>
+            {config.commissionSchedule.option?.perContract != null && (
+              <span className="text-muted-foreground text-xs">comm ${config.commissionSchedule.option.perContract}/ct</span>
+            )}
+            {config.disableRiskLimits && <span className="text-amber-500 text-xs font-medium">risk off</span>}
+            {summary && (
+              <>
+                <Separator orientation="vertical" className="!h-4" />
+                <div className="flex items-center gap-3 ml-auto tabular-nums">
+                  <span className="text-muted-foreground"><span className="text-foreground font-semibold">{summary.totalTrades}</span> trades{summary.openAtEnd > 0 && <span className="text-muted-foreground/60"> + {summary.openAtEnd} open</span>}</span>
+                  <span className="text-muted-foreground"><span className="text-foreground font-semibold">{pctDisplay(summary.winRate)}</span> win</span>
+                  {(() => {
+                    const unrealized = liveMetrics?.unrealizedPnl ?? 0;
+                    const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
+                    const hasComm = (summary.totalCommissions ?? 0) > 0;
+                    const displayPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
+                    const totalPnl = hasOpen ? displayPnl + unrealized : displayPnl;
+                    return (
+                      <span className={totalPnl >= 0 ? 'text-profit font-semibold' : 'text-loss font-semibold'}>
+                        {formatCurrency(totalPnl)}
+                        {hasComm && <span className="text-muted-foreground font-normal text-xs ml-1">(gross {formatCurrency(summary.totalPnl)} &minus; {formatCurrency(summary.totalCommissions!)} comm)</span>}
+                        {!hasComm && hasOpen && <span className="text-muted-foreground font-normal text-xs ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
+                      </span>
+                    );
+                  })()}
+                  <span className="text-muted-foreground">DD <span className="text-foreground font-semibold">{formatCurrency(summary.maxDrawdown)}</span></span>
+                  <span className="text-muted-foreground">PF <span className="text-foreground font-semibold">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</span></span>
+                </div>
+              </>
+            )}
+          </div>
+          {/* Progress chips + bar embedded in the same card */}
+          <RunProgress
+            processedMessages={decisions.length}
+            totalMessages={run.summary?.tradedMessages ?? 0}
+            agentModel={config.agentModel ?? 'default'}
+            llmTokens={llmTokens}
+            liveMetrics={liveMetrics}
+            status={run.status}
+            startedAt={run.startedAt}
+            completedAt={run.completedAt}
+            lastMessageDate={
+              liveMetrics?.lastProcessedMessageTs
+              ?? (decisions.length > 0 ? decisions[0].message.timestamp : null)
+            }
+            rangeStart={config.startDate}
+            rangeEnd={config.endDate}
+          />
         </div>
-
-        {/* Progress / run stats — always visible for consistent layout */}
-        <RunProgress
-          processedMessages={decisions.length}
-          totalMessages={run.summary?.tradedMessages ?? 0}
-          agentModel={config.agentModel ?? 'default'}
-          llmTokens={llmTokens}
-          liveMetrics={liveMetrics}
-          status={run.status}
-          startedAt={run.startedAt}
-          completedAt={run.completedAt}
-          lastMessageDate={
-            liveMetrics?.lastProcessedMessageTs
-            ?? (decisions.length > 0 ? decisions[0].message.timestamp : null)
-          }
-          rangeStart={config.startDate}
-          rangeEnd={config.endDate}
-        />
 
         {/* Error — only when there is one (hide for cancelled runs) */}
         {run.error && run.status !== 'CANCELLED' && (
@@ -366,26 +354,15 @@ export default async function BacktestDetailPage({
         )}
 
         {/* Tabs — always in this slot when data exists */}
-      <BacktestTabs
-        performance={performanceContent}
-        messages={messagesContent}
-        trades={tradesContent}
-        accuracy={
-          accuracyResult ? (
-            <AccuracyGrid
-              result={accuracyResult}
-              totalMessages={accuracyResult.totalMessages}
-              labeledMessages={accuracyResult.labeledMessages}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground text-center py-6">
-              No reviewed labels overlap with this backtest&apos;s messages.
-            </p>
-          )
-        }
-        hasMessages={chatData.messages.length > 0}
-        hasAccuracy={accuracyResult != null}
-      />
+      <TradeFilterProvider trades={allTrades} flagsByTradeId={flagsByTradeId}>
+        <BacktestTabs
+          performance={performanceContent}
+          messages={messagesContent}
+          trades={tradesContent}
+          tabBarTrailing={<TradeFilters />}
+          hasMessages={chatData.messages.length > 0}
+        />
+      </TradeFilterProvider>
     </div>
 
     {/* Anchored log panel — outside content wrapper so sticky sits flush */}
@@ -419,16 +396,16 @@ export type StrategyEquityPoint = Record<string, number | string>;
 
 function computeFromTrades(
   allTrades: TradeRow[],
-  decisions: { decision: { path: string; decision: string } }[],
+  decisions: { decision: { phase: string; outcome: string } }[],
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
-  commissionSchedule?: CommissionSchedule,
+  commissionSchedule?: CommissionSchedule,  // optional: computeCoreStats handles absence
 ) {
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, commissionSchedule);
 
   // Execution stats from already-loaded decisions — no precomputed fallback
-  const agentCallsUsed = decisions.filter((d) => d.decision.path === 'agent').length;
-  const agentTrades = decisions.filter((d) => d.decision.path === 'agent' && d.decision.decision === 'EXECUTE').length;
-  const skipped = decisions.filter((d) => d.decision.decision === 'SKIP').length;
+  const agentCallsUsed = decisions.filter((d) => d.decision.phase === 'agent').length;
+  const agentTrades = decisions.filter((d) => d.decision.phase === 'agent' && d.decision.outcome === 'EXECUTE').length;
+  const skipped = decisions.filter((d) => d.decision.outcome === 'SKIP').length;
 
   const summary = { ...core, totalMessages: 0, tradedMessages: 0, agentCallsUsed, agentTrades, skipped };
 
@@ -436,7 +413,7 @@ function computeFromTrades(
   const netPnlOf = (t: TradeRow) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
 
   const tradeScatter: TradeScatterPoint[] = sortedClosed.map((t) => ({
-    date: (t.closedAt ?? t.openedAt ?? '').split('T')[0],
+    date: isoToDateKey(t.closedAt ?? t.openedAt ?? ''),
     pnl: netPnlOf(t),
     strategy: t.strategy,
     direction: t.direction,
@@ -453,7 +430,7 @@ function computeFromTrades(
       const windowWins = window.filter((t) => netPnlOf(t) > 0).length;
       rollingWinRate.push({
         tradeNum: i + 1,
-        date: (sortedClosed[i].closedAt ?? '').split('T')[0],
+        date: isoToDateKey(sortedClosed[i].closedAt ?? ''),
         winRate: roundCents(windowWins / windowSize),
         windowSize,
       });
@@ -467,7 +444,7 @@ function computeFromTrades(
     for (const s of strategies) cumByStrategy[s] = 0;
     const dateGroups = new Map<string, TradeRow[]>();
     for (const t of sortedClosed) {
-      const date = (t.closedAt ?? '').split('T')[0];
+      const date = isoToDateKey(t.closedAt ?? '');
       let group = dateGroups.get(date);
       if (!group) { group = []; dateGroups.set(date, group); }
       group.push(t);

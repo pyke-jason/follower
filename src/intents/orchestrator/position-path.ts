@@ -6,6 +6,7 @@
  */
 
 import { createLogger } from '../../lib/logger.js';
+import { extractUnderlying } from '../../lib/occ-symbology.js';
 import type {
   ParseResult,
   OrchestratorContext,
@@ -18,19 +19,6 @@ import type {
 } from './types.js';
 
 const log = createLogger('Orchestrator:PositionPath');
-
-/**
- * Extract the underlying ticker from an OCC option symbol or return the symbol
- * as-is if it's already a plain ticker.
- *
- * OCC format: "AAPL  260307C00180000" — leading alpha chars before the date.
- * Spaces between the ticker and date are variable (0–5).
- */
-function extractUnderlying(occOrTicker: string): string {
-  // OCC symbols have a 6-digit date immediately after the ticker (with optional spaces)
-  const match = /^([A-Z]{1,6})\s*\d{6}[CP]/i.exec(occOrTicker);
-  return match ? match[1] : occOrTicker;
-}
 
 /** Reverse a side: BUY → SELL, SELL → BUY. */
 function reverseSide(side: 'BUY' | 'SELL'): 'BUY' | 'SELL' {
@@ -122,17 +110,11 @@ function matchPosition(
     return { position: candidates[0] };
   }
 
-  // Multiple candidates — try direction tie-breaking
+  // Multiple candidates — try direction tie-breaking only when direction was explicitly parsed
   if (parse.direction !== null) {
     const byDirection = candidates.filter((p) => p.direction === parse.direction);
     if (byDirection.length === 1) {
       return { position: byDirection[0] };
-    }
-  } else {
-    // Default: prefer LONG positions (most common open position type)
-    const longPositions = candidates.filter((p) => p.direction === 'LONG');
-    if (longPositions.length === 1) {
-      return { position: longPositions[0] };
     }
   }
 
@@ -287,12 +269,19 @@ export async function resolvePositionPath(
 
   // Step 4: Build reversal legs based on action
   let legs: Leg[];
+  let trimExitPercent: number | undefined;
 
   if (action === 'CLOSE') {
     legs = buildCloseLegs(position, symbol);
   } else if (action === 'TRIM') {
-    const exitPercent = parse.exitPercent ?? 0.5;
-    const result = buildTrimLegs(position, symbol, exitPercent);
+    if (parse.exitPercent === null || parse.exitPercent === undefined) {
+      return {
+        outcome: 'MANUAL_REVIEW',
+        reason: 'TRIM without explicit exit percentage',
+      };
+    }
+    trimExitPercent = parse.exitPercent;
+    const result = buildTrimLegs(position, symbol, trimExitPercent);
     if ('flagReason' in result) {
       return { outcome: 'MANUAL_REVIEW', reason: result.flagReason };
     }
@@ -324,8 +313,9 @@ export async function resolvePositionPath(
   const signal: ResolvedSignal = {
     orderType: orderTypeFromLegs(legs),
     legs,
+    action,
     tradeId: position.id,
-    ...(action === 'TRIM' && { exitPercent: parse.exitPercent ?? 0.5 }),
+    ...(action === 'TRIM' && { exitPercent: trimExitPercent }),
   };
 
   return { outcome: 'EXECUTE', signals: [signal] };

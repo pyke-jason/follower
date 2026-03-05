@@ -10,6 +10,9 @@
 
 import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
 import type { Quote, OptionsChain } from '../../broker/types.js';
+import type { LLMProvider } from '../../agent/providers.js';
+import type { BrokerService } from '../../broker/interface.js';
+import type { SignalEventEmitter } from '../../decisions/emitter.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -44,16 +47,20 @@ export type ResolvedSignal = {
   orderType: 'SINGLE' | 'SPREAD' | 'STOCK';
   legs: Leg[];
   limitPrice?: number;
+  /** The trade action resolved by the orchestrator. Required — no implicit defaults. */
+  action: TradeAction;
   /** For position-reducing signals: the trade ID matched by the orchestrator. */
   tradeId?: string;
   /** For TRIM signals: the exit fraction (0.0–1.0) from the orchestrator parse. */
   exitPercent?: number;
 };
 
+export type { SignalEventEmitter } from '../../decisions/emitter.js';
+
 export type OrchestratorResult =
-  | { outcome: 'EXECUTE'; signals: ResolvedSignal[] }
-  | { outcome: 'SKIP'; reason: string }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[] };
+  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'SKIP'; reason: string; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
+  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } };
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -102,6 +109,8 @@ export type OpenPosition = {
     optionType?: 'CALL' | 'PUT';
   }>;
   quantity: number;    // lot count
+  /** Average fill price at which this position was opened (per-contract or per-share). */
+  entryPrice?: number;
 };
 
 export interface PositionProvider {
@@ -118,9 +127,12 @@ export interface ChatHistoryProvider {
   getRecentMessages(author?: string, limit?: number): Promise<string>;
 }
 
-export type TraderConfig = {
-  strategies: string[];
-  notes: string | null;
+/** Dependencies the orchestrator needs from the caller's environment. */
+export type OrchestratorEnv = {
+  getPositions: (symbol?: string) => Promise<OpenPosition[]>;
+  llm: LLMProvider;
+  broker: BrokerService;
+  emitter: SignalEventEmitter;
 };
 
 /** Everything the orchestrator might need, injected at the call site. */
@@ -135,13 +147,14 @@ export type OrchestratorContext = {
   marketData: OrchestratorMarketDataProvider;
   positions: PositionProvider;
   chatHistory: ChatHistoryProvider;
-  traderConfig: TraderConfig;
+  /**
+   * Set when retrying after a 422 symbol-not-found error at execution time.
+   * Presence of this field forces the LLM path so it can correct the bad strike.
+   */
+  failureContext?: { error: string };
 };
 
 // ── Internal parse types ──────────────────────────────────────────────────────
-
-/** Re-export for convenience — orchestrator actions are the same as trade actions. */
-export type Action = TradeAction;
 
 export type ComplexityFlag =
   | 'extra_text'     // significant commentary beyond core trade fields
@@ -157,7 +170,7 @@ export type ComplexityFlag =
  * This is an internal type — it never appears in the orchestrator's output.
  */
 export type ParseResult = {
-  action: Action | null;
+  action: TradeAction | null;
   symbol: string | null;
   direction: Direction | null;
   strategy: Strategy | null;
@@ -171,6 +184,15 @@ export type ParseResult = {
   isHardSkip: boolean;             // true when message is definitively not a trade
   skipReason: string | null;
   complexityFlags: Set<ComplexityFlag>;
+};
+
+/**
+ * Serializable subset of ParseResult — complexityFlags as array, minus
+ * internal-only fields (targetStrategy, skipReason).
+ * New ParseResult fields auto-flow through the Omit without changes here.
+ */
+export type SerializedParseResult = Omit<ParseResult, 'complexityFlags' | 'targetStrategy' | 'skipReason'> & {
+  complexityFlags: ComplexityFlag[];
 };
 
 /**

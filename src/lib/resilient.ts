@@ -2,7 +2,7 @@ import { createLogger } from './logger.js';
 
 const log = createLogger('Retry');
 
-type ErrorCategory = 'auth' | 'transient' | 'permanent';
+export type ErrorCategory = 'auth' | 'transient' | 'permanent';
 
 type RetryConfig = {
   maxRetries: number;
@@ -38,7 +38,7 @@ export const LLM_DEFAULTS: RetryConfig = {
 };
 
 /** Classify an error based on HTTP status codes and network error patterns. */
-function classifyError(err: unknown): ErrorCategory {
+export function classifyError(err: unknown): ErrorCategory {
   const msg = err instanceof Error ? err.message : String(err);
 
   // Extract HTTP status code
@@ -60,19 +60,6 @@ function classifyError(err: unknown): ErrorCategory {
 
   // Unknown → transient (safe default)
   return 'transient';
-}
-
-/** TradeStation-specific classifier: extracts status from "TradeStation NNN:" format. */
-export function tsClassify(err: unknown): ErrorCategory {
-  const msg = err instanceof Error ? err.message : String(err);
-  const tsMatch = msg.match(/TradeStation\s+(\d{3}):/);
-  if (tsMatch) {
-    const status = parseInt(tsMatch[1], 10);
-    if (status === 401 || status === 403) return 'auth';
-    if (status === 429 || (status >= 500 && status <= 599)) return 'transient';
-    if (status === 400 || status === 404 || status === 422) return 'permanent';
-  }
-  return classifyError(err);
 }
 
 /** OpenAI-compatible SDK error classifier: reads .status directly from error objects. */

@@ -120,6 +120,69 @@
       "when": 1771600000000,
       "tag": "0016_drop_eval_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1771700000000,
+      "tag": "0017_trade_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1771800000000,
+      "tag": "0018_trim_normalization",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1771900000000,
+      "tag": "0019_drop_message_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1772000000000,
+      "tag": "0020_drop_task_steps",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1772100000000,
+      "tag": "0021_add_decision_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1772200000000,
+      "tag": "0022_nullable_outcome_phase",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1772300000000,
+      "tag": "0023_channel_scoping",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1772400000000,
+      "tag": "0024_content_hash_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1772672644127,
+      "tag": "0025_rebuild_mtm_drop_backtest_run_id",
+      "breakpoints": true
     }
   ]
 }

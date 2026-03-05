@@ -1,7 +1,7 @@
 import { ChatBubble } from '../messages/chat-bubble';
 import { TradeOutcomeStrip } from './trade-outcome-strip';
-import { getMessageRole } from '../../../src/lib/enriched-message';
-import type { EnrichedMessage } from '../../../src/lib/enriched-message';
+import { getMessageRole } from '@src/lib/enriched-message';
+import type { EnrichedMessage } from '@src/lib/enriched-message';
 import { cn } from '@/lib/utils';
 
 function SkipReasonChip({ reason }: { reason: string }) {

@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "id": "fp-exit-001",
+      "description": "Hariseldon sarcastic commentary — 'closing down' means shutting business, not exiting a position",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>At this point, <a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\" data-criteria=\"Bull\"><b>AAPL</b></a> could announce they are closing down due to economic reasons and the market would go - \"More business for everyone else! Push higher!\"</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-04T20:07:18.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["false-positive-exit", "closing-down"],
+      "notes": "EXIT_VERB_RE matched 'closing' but 'closing down' means shutting a business, not exiting a trade. AAPL symbol was extracted from the <a> tag, causing a false CLOSE action routed to position-path. Real backtest hit: msg 464204 in run b2de6318, -$575 PnL."
+    },
+    {
+      "id": "fp-exit-002",
+      "description": "Hariseldon market commentary — 'Close to' means proximity, not exiting a position",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>&nbsp;Close to yesterdays high - also <a href=\"/option-stalker/chart/OSCR\" target=\"os\" data-symbol=\"OSCR\" data-criteria=\"Bull\"><b>OSCR</b></a> is developing a pattern of popping up, retreating and then heading back to the high&nbsp;<br><blockquote><i class=\"bx bxs-quote-left\"></i> <b><b data-user=\"va007\">@va007</b></b>: Question&nbsp;can you please explain your entry ?&nbsp; · <b data-user=\"Hariseldon\">@Hariseldon</b>: Seriously one can make a living trading OSCR alone <a data-msglink=\"\" href=\"#m-464890\">View<i class=\"bx bx-chevron-right\"></i></a></blockquote><div></div></div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-08T17:52:53.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["false-positive-exit", "close-to"],
+      "notes": "EXIT_VERB_RE matched 'Close' but 'Close to' means proximity (near yesterday's high). OSCR symbol present caused false CLOSE action. Real backtest hit: msg 464911 in run b2de6318."
+    },
+    {
+      "id": "fp-exit-003",
+      "description": "Hariseldon directional wish — 'into the close' means end-of-day, not exiting a position",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Now I just need <a href=\"/option-stalker/chart/MSFT\" target=\"os\" data-symbol=\"MSFT\"><b>MSFT</b></a> to drop into the close</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-19T17:55:33.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["false-positive-exit", "into-the-close"],
+      "notes": "EXIT_VERB_RE matched 'close' but 'into the close' means market close (end of trading day). MSFT symbol present caused false CLOSE action. Real backtest hit: msg 467976 in run b2de6318."
+    }
+  ]
+}

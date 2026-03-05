@@ -26,7 +26,9 @@ import type {
 import type { Strategy } from '../../lib/enums.js';
 import { spreadLegs } from '../../lib/spread-legs.js';
 import { strikesFromParse } from './parser.js';
+import { resolveExpiryHint, generateWeeklyExpiries } from './expiry-resolver.js';
 import { createLogger } from '../../lib/logger.js';
+import { toDateKeyET } from '../../lib/et-date.js';
 
 const log = createLogger('Orchestrator:OpenPath');
 
@@ -35,211 +37,6 @@ const SPREAD_STRATEGIES = new Set<Strategy>(['CDS', 'PDS', 'PCS']);
 function isSpread(s: Strategy): s is SpreadStrategy { return SPREAD_STRATEGIES.has(s); }
 /** Credit strategies receive premium (negative limit price). */
 function isCreditStrategy(s: Strategy): boolean { return s === 'PCS'; }
-
-// ── Date helpers ───────────────────────────────────────────────────────────────
-
-function parseMessageDate(timestamp: string): Date {
-  return new Date(timestamp);
-}
-
-function dateToYMD(date: Date): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-/** Next Friday on or after `from` (UTC). If `from` IS a Friday, returns `from`. */
-function nextFriday(from: Date): Date {
-  const d = new Date(from);
-  const dow = d.getUTCDay(); // 0=Sun … 6=Sat
-  const daysUntilFriday = (5 - dow + 7) % 7;
-  d.setUTCDate(d.getUTCDate() + daysUntilFriday);
-  return d;
-}
-
-/** Friday of the current week (week containing `from`). */
-function thisWeekFriday(from: Date): Date {
-  const d = new Date(from);
-  const dow = d.getUTCDay();
-  // Days until Friday this week (could be negative if already past Friday → return last Friday)
-  const delta = 5 - dow;
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d;
-}
-
-/** Friday of the NEXT calendar week (Mon–Sun week after the one containing `from`). */
-function nextWeekFriday(from: Date): Date {
-  const d = new Date(from);
-  const dow = d.getUTCDay(); // 0=Sun
-  // Move to the upcoming Monday (start of next week)
-  const daysToNextMonday = (8 - dow) % 7 || 7;
-  d.setUTCDate(d.getUTCDate() + daysToNextMonday);
-  // Then advance to Friday of that week (Mon+4)
-  d.setUTCDate(d.getUTCDate() + 4);
-  return d;
-}
-
-/** Third Friday of the given month (0-indexed month). */
-function thirdFriday(year: number, month: number): Date {
-  // First day of month
-  const d = new Date(Date.UTC(year, month, 1));
-  const dow = d.getUTCDay();
-  // First Friday of month
-  const firstFridayDate = 1 + ((5 - dow + 7) % 7);
-  // Third Friday
-  const thirdFridayDate = firstFridayDate + 14;
-  return new Date(Date.UTC(year, month, thirdFridayDate));
-}
-
-/** Add n business days (Mon–Fri) to date. */
-function addBusinessDays(date: Date, n: number): Date {
-  const d = new Date(date);
-  let remaining = n;
-  while (remaining > 0) {
-    d.setUTCDate(d.getUTCDate() + 1);
-    const dow = d.getUTCDay();
-    if (dow !== 0 && dow !== 6) {
-      remaining--;
-    }
-  }
-  return d;
-}
-
-/** Named weekday index (0=Sun). */
-const WEEKDAY_MAP: Record<string, number> = {
-  sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-  thursday: 4, friday: 5, saturday: 6,
-};
-
-const MONTH_MAP: Record<string, number> = {
-  jan: 0, january: 0,
-  feb: 1, february: 1,
-  mar: 2, march: 2,
-  apr: 3, april: 3,
-  may: 4,
-  jun: 5, june: 5,
-  jul: 6, july: 6,
-  aug: 7, august: 7,
-  sep: 8, sept: 8, september: 8,
-  oct: 9, october: 9,
-  nov: 10, november: 10,
-  dec: 11, december: 11,
-};
-
-/**
- * Resolve an expiryHint string to a YYYY-MM-DD date string.
- * Returns null if the hint cannot be interpreted.
- */
-function resolveExpiryHint(hint: string, messageDate: Date): string | null {
-  const normalized = hint.trim().toLowerCase();
-
-  // 0DTE
-  if (normalized === '0dte') {
-    return dateToYMD(messageDate);
-  }
-
-  // LEAP → third Friday of month, 1 year out (standard monthly option expiry)
-  if (normalized === 'leap') {
-    const leapDate = new Date(messageDate);
-    leapDate.setUTCFullYear(leapDate.getUTCFullYear() + 1);
-    return dateToYMD(thirdFriday(leapDate.getUTCFullYear(), leapDate.getUTCMonth()));
-  }
-
-  // overnight → next business day
-  if (normalized === 'overnight') {
-    return dateToYMD(addBusinessDays(messageDate, 1));
-  }
-
-  // tomorrow → next business day
-  if (normalized === 'tomorrow') {
-    return dateToYMD(addBusinessDays(messageDate, 1));
-  }
-
-  // "next friday"
-  if (normalized === 'next friday') {
-    // Strict "next" = the Friday of next week, not this week's Friday
-    return dateToYMD(nextWeekFriday(messageDate));
-  }
-
-  // "this week" / "this friday"
-  if (normalized === 'this week' || normalized === 'this friday') {
-    return dateToYMD(thisWeekFriday(messageDate));
-  }
-
-  // "next week"
-  if (normalized === 'next week') {
-    return dateToYMD(nextWeekFriday(messageDate));
-  }
-
-  // "next monday" / "next tuesday" etc.
-  const nextDayMatch = normalized.match(/^next\s+(\w+)$/);
-  if (nextDayMatch) {
-    const dayName = nextDayMatch[1];
-    const targetDow = WEEKDAY_MAP[dayName];
-    if (targetDow !== undefined) {
-      const d = new Date(messageDate);
-      const currentDow = d.getUTCDay();
-      // Days until that weekday next week (always at least 7+ days out, strictly next week)
-      const daysToNextMonday = (8 - currentDow) % 7 || 7;
-      d.setUTCDate(d.getUTCDate() + daysToNextMonday); // start of next week (Monday)
-      // From Monday, advance to the target day
-      const deltaFromMonday = (targetDow - 1 + 7) % 7;
-      d.setUTCDate(d.getUTCDate() + deltaFromMonday);
-      return dateToYMD(d);
-    }
-  }
-
-  // Explicit slash date: "3/6", "3/6/26", "3/6/2026"
-  const slashMatch = hint.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
-  if (slashMatch) {
-    const rawMonth = parseInt(slashMatch[1], 10);
-    const day = parseInt(slashMatch[2], 10);
-    // Validate ranges — reject impossible dates (e.g. strike pairs "68/67")
-    if (rawMonth < 1 || rawMonth > 12 || day < 1 || day > 31) return null;
-    const month = rawMonth - 1; // 0-indexed for Date constructor
-    let year: number;
-    if (slashMatch[3]) {
-      const rawYear = parseInt(slashMatch[3], 10);
-      year = rawYear < 100 ? 2000 + rawYear : rawYear;
-    } else {
-      year = messageDate.getUTCFullYear();
-      // If the resolved date is in the past, advance one year
-      const candidate = new Date(Date.UTC(year, month, day));
-      if (candidate < messageDate) year++;
-    }
-    const date = new Date(Date.UTC(year, month, day));
-    if (isNaN(date.getTime())) return null;
-    return dateToYMD(date);
-  }
-
-  // Month + day: "Jan 17", "feb 3"
-  const monthDayMatch = hint.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
-  if (monthDayMatch) {
-    const monthIdx = MONTH_MAP[monthDayMatch[1].toLowerCase()];
-    if (monthIdx !== undefined) {
-      const day = parseInt(monthDayMatch[2], 10);
-      let year = messageDate.getUTCFullYear();
-      const candidate = new Date(Date.UTC(year, monthIdx, day));
-      if (candidate < messageDate) year++;
-      const date = new Date(Date.UTC(year, monthIdx, day));
-      return dateToYMD(date);
-    }
-  }
-
-  // Bare month: "Oct", "January"
-  const bareMonthMatch = MONTH_MAP[normalized];
-  if (bareMonthMatch !== undefined) {
-    let year = messageDate.getUTCFullYear();
-    const candidate = thirdFriday(year, bareMonthMatch);
-    if (candidate < messageDate) {
-      year++;
-    }
-    return dateToYMD(thirdFriday(year, bareMonthMatch));
-  }
-
-  return null;
-}
 
 // ── Strike helpers ─────────────────────────────────────────────────────────────
 
@@ -317,20 +114,6 @@ function computeSpreadMid(
   return Math.abs(buyMid - sellMid);
 }
 
-/** Generate a set of weekly expiry candidates (Fri) starting from messageDate. */
-function generateWeeklyExpiries(from: Date, count = 6): string[] {
-  const expiries: string[] = [];
-  let d = thisWeekFriday(from);
-  // If this week's Friday is already past, start next week
-  if (d < from) d = nextWeekFriday(from);
-  for (let i = 0; i < count; i++) {
-    expiries.push(dateToYMD(d));
-    d = new Date(d);
-    d.setUTCDate(d.getUTCDate() + 7);
-  }
-  return expiries;
-}
-
 // ── Option type from strategy ──────────────────────────────────────────────────
 
 function optionTypeFromStrategy(strategy: Strategy): 'CALL' | 'PUT' {
@@ -373,7 +156,7 @@ export async function resolveOpenPath(
 
   // ── Step 2: Resolve expiry ───────────────────────────────────────────────────
 
-  const messageDate = parseMessageDate(ctx.timestamp);
+  const messageDate = new Date(ctx.timestamp);
   let strikeSelection = strikesFromParse(parse);
 
   // Safety net: reject explicit strikes that are wildly inconsistent with the stock price.
@@ -647,7 +430,7 @@ export async function resolveOpenPath(
   if (strategy === 'STOCK') {
     const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
     const stockLeg: StockLeg = { type: 'stock', symbol, side, quantity: 1 };
-    const signal: ResolvedSignal = { orderType: 'STOCK', legs: [stockLeg] };
+    const signal: ResolvedSignal = { action: 'OPEN', orderType: 'STOCK', legs: [stockLeg] };
     log.debug('open-path: built STOCK signal for %s', symbol);
     return { outcome: 'EXECUTE', signals: [signal] };
   }
@@ -676,6 +459,7 @@ export async function resolveOpenPath(
       log.debug('open-path: premium scan matched expiry %s for %s', expiry, symbol);
       const limitPrice = buildLimitPrice(result.limitPrice, strategy, direction);
       const signal: ResolvedSignal = {
+        action: 'OPEN',
         orderType: result.legs.length > 1 ? 'SPREAD' : 'SINGLE',
         legs: result.legs,
         ...(limitPrice !== undefined && { limitPrice }),
@@ -762,6 +546,7 @@ export async function resolveOpenPath(
   );
 
   const signal: ResolvedSignal = {
+    action: 'OPEN',
     orderType: isSpreadSignal ? 'SPREAD' : 'SINGLE',
     legs: resolvedLegs.legs,
     ...(limitPrice !== undefined && { limitPrice }),
@@ -830,10 +615,11 @@ export async function resolveAddPath(
 
   const result = await resolveOpenPath(enrichedParse, ctx);
 
-  // If EXECUTE and we matched a position, stamp tradeId so executor ADDs to existing trade
+  // If EXECUTE and we matched a position, stamp tradeId + action so executor ADDs to existing trade
   if (result.outcome === 'EXECUTE' && matched) {
     for (const signal of result.signals) {
       signal.tradeId = matched.id;
+      signal.action = 'ADD';
     }
   }
 

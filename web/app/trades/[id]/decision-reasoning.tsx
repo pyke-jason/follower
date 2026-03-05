@@ -8,9 +8,9 @@ import { formatCurrency, pnlColor, formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 type Decision = {
-  decision: string;
+  outcome: string;
   reasoning: string | null;
-  path: string | null;
+  phase: string | null;
   durationMs: number | null;
   pnl: string | null;
 };
@@ -33,8 +33,8 @@ export function DecisionReasoning({
           <AccordionTrigger className="px-4">Signal Decision</AccordionTrigger>
           <AccordionContent className="px-4">
             <div className="flex items-center gap-3 mb-3">
-              <Badge label={decision.decision} />
-              {decision.path ? <InfoChip label={decision.path} /> : <InfoChip label="agent" />}
+              <Badge label={decision.outcome} />
+              {decision.phase ? <InfoChip label={decision.phase} /> : <InfoChip label="agent" />}
               {decision.pnl != null && (
                 <span className={cn('font-medium tabular-nums', pnlColor(decision.pnl))}>
                   {formatCurrency(decision.pnl)}

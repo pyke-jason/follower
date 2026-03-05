@@ -13,9 +13,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { startBacktest } from '../actions';
+import { isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
-import type { BacktestRunConfig } from '../../../../src/db/schema';
-import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '../../../../src/config/risk-defaults';
+import type { BacktestRunConfig } from '@src/db/schema';
+import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: [
@@ -55,7 +56,7 @@ export function BacktestForm({
             name="startDate"
             type="date"
             required
-            defaultValue={defaultConfig?.startDate?.split('T')[0] ?? '2025-09-01'}
+            defaultValue={defaultConfig?.startDate ? isoToDateKey(defaultConfig.startDate) : '2025-09-01'}
             className="h-9"
           />
         </div>
@@ -65,7 +66,7 @@ export function BacktestForm({
             name="endDate"
             type="date"
             required
-            defaultValue={defaultConfig?.endDate?.split('T')[0] ?? '2025-09-30'}
+            defaultValue={defaultConfig?.endDate ? isoToDateKey(defaultConfig.endDate) : '2025-09-30'}
             className="h-9"
           />
         </div>
@@ -116,10 +117,6 @@ export function BacktestForm({
         <div className="flex items-center gap-3">
           <Switch name="disableRiskLimits" id="disableRiskLimits" defaultChecked={defaultConfig?.disableRiskLimits ?? false} />
           <Label htmlFor="disableRiskLimits" className="text-sm">Disable risk limits</Label>
-        </div>
-        <div className="flex items-center gap-3">
-          <Switch name="clearIntentCache" id="clearIntentCache" />
-          <Label htmlFor="clearIntentCache" className="text-sm">Clear intent cache</Label>
         </div>
       </div>
 

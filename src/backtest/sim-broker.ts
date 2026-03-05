@@ -5,19 +5,18 @@ import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
-import { isOpen, isClosed, forRun, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
+import { isOpen, isClosed, forChannel, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
 import { createLogger } from '../lib/logger.js';
 import type { FillModel } from './types.js';
 import type { Trade, TradeLeg } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
 import { computeTradePnl } from '../lib/pnl.js';
-import { formatOccSymbol } from './occ-symbology.js';
+import { formatOccSymbol } from '../lib/occ-symbology.js';
 import { parseLegs, parseDirection } from '../db/parse.js';
 import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
 import { recordTrade } from '../trades/record-trade.js';
 import { isMarketHours, lastMarketCloseUTC, dayBoundsUTC } from '../lib/et-date.js';
-import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('SimBroker');
 
@@ -95,6 +94,11 @@ export function computeModelFillPrice(params: FillPriceParams): number {
  *  Valuation paths use the wider default (60 min) in MarketDataProvider.getQuote(). */
 const EXECUTION_LOOKBACK_MINS = 5;
 
+/** When a LIMIT order has no market data within EXECUTION_LOOKBACK_MINS:
+ *  - true:  queue as OPEN (order waits for next tick — good for illiquid options)
+ *  - false: REJECT outright (original behavior) */
+const QUEUE_LIMIT_ON_STALE_DATA = true;
+
 /**
  * Strategy for auto-closing expiring positions before the options cutoff.
  * Swappable: implement to change when/how positions are priced on expiry day.
@@ -102,6 +106,16 @@ const EXECUTION_LOOKBACK_MINS = 5;
 export type ExpiryAutoCloseStrategy = {
   /** Returns the UTC timestamp to use for the closing quote. */
   getCloseTimestamp(expiryDateKey: string, symbol: string): Date;
+};
+
+export type AutoCloseResult = {
+  tradeId: string;
+  sourceMessageId: string | null;
+  exitPrice: number;
+  closeAt: Date;
+  symbol: string;
+  strategy: string;
+  expiryDate: string;
 };
 
 /** Symbols whose options trade until 4:15pm ET (vs 4:00pm for all others). */
@@ -141,7 +155,7 @@ export class SimBroker implements BrokerService {
   constructor(
     private marketData: BacktestPriceProvider,
     private clock: SimClock,
-    private backtestRunId: string,
+    private channelId: string,
     private fillModel: FillModel,
     private startingEquity: number,
   ) {}
@@ -303,9 +317,21 @@ export class SimBroker implements BrokerService {
         quote = isOptions
           ? await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS)
           : await this.getQuote(params.symbol);
-      } catch {
-        log.debug(`  LIMIT rejected: no market data for ${params.symbol}`);
-        return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        if (!QUEUE_LIMIT_ON_STALE_DATA) {
+          log.debug(`  LIMIT rejected: no market data for ${params.symbol}: ${detail}`);
+          return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}: ${detail}` };
+        }
+        log.debug(`  LIMIT queued (stale data): ${params.symbol}: ${detail}`);
+        this.workingOrders.set(orderId, {
+          params,
+          currentLimitPrice: params.limitPrice!,
+          status: 'OPEN',
+          isOptionOrder: isOptions,
+        });
+        this.balanceCache = null;
+        return { orderId, status: 'OPEN' };
       }
 
       if (shouldFillLimit(isBuyOrder(params), params.limitPrice, quote.bid, quote.ask)) {
@@ -336,9 +362,10 @@ export class SimBroker implements BrokerService {
       quote = isOptions
         ? await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS)
         : await this.getQuote(params.symbol);
-    } catch {
-      log.debug(`  MARKET rejected: no market data for ${params.symbol}`);
-      return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}` };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      log.debug(`  MARKET rejected: no market data for ${params.symbol}: ${detail}`);
+      return { orderId, status: 'REJECTED', message: `No market data for ${params.symbol}: ${detail}` };
     }
     const fillPrice = computeModelFillPrice({
       fillModel: this.fillModel,
@@ -367,6 +394,23 @@ export class SimBroker implements BrokerService {
       return { orderId, status: entry.status };
     }
     entry.currentLimitPrice = newLimitPrice;
+
+    // Re-evaluate fill — mirrors real broker behavior where a modify that
+    // crosses the market fills immediately instead of waiting for next tick.
+    const now = this.clock.now();
+    try {
+      const quote = entry.isOptionOrder
+        ? await this.getOptionSpreadQuote(entry.params, now, EXECUTION_LOOKBACK_MINS)
+        : await this.marketData.getQuote(entry.params.symbol, now);
+      if (shouldFillLimit(isBuyOrder(entry.params), newLimitPrice, quote.bid, quote.ask)) {
+        const fill = this.fillWorkingOrder(orderId, entry, entry.params.symbol, now, quote.bid, quote.ask);
+        this.balanceCache = null;
+        return { orderId, status: 'FILLED', filledPrice: fill.price, fillTimestamp: fill.timestamp.toISOString() };
+      }
+    } catch {
+      // No market data at current time — leave working
+    }
+
     return { orderId, status: 'OPEN' };
   }
 
@@ -420,6 +464,7 @@ export class SimBroker implements BrokerService {
       direction: 'LONG', // direction doesn't affect spread quote computation
       legs,
       orderType: 'MARKET',
+      isClosing: false,
     };
     return this.getOptionSpreadQuote(params, effectiveAt);
   }
@@ -430,7 +475,7 @@ export class SimBroker implements BrokerService {
   async markToMarket(at?: Date): Promise<Map<string, number>> {
     const time = at ?? this.clock.now();
     const markPrices = new Map<string, number>();
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     for (const t of openTrades) {
       try {
@@ -449,14 +494,13 @@ export class SimBroker implements BrokerService {
     if (!trade) throw new Error(`Trade ${tradeId} not found`);
 
     const result = await recordTrade({
-      action: 'CLOSE',
       tradeId,
       symbol: trade.symbol,
       trader: trade.trader,
+      action: 'CLOSE',
       exitPrice,
       closedAt,
-      backtestRunId: this.backtestRunId,
-      isBacktest: true,
+      channelId: this.channelId,
     });
 
     if (!result) throw new Error(`recordTrade CLOSE failed for trade ${tradeId}`);
@@ -470,7 +514,7 @@ export class SimBroker implements BrokerService {
   /** Sum unrealized PnL across all open positions using current marks. */
   async getUnrealizedPnl(at?: Date): Promise<number> {
     const time = at ?? this.clock.now();
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     let total = 0;
     for (const row of openTrades) {
@@ -499,7 +543,7 @@ export class SimBroker implements BrokerService {
    */
   async sweepExpired(currentDate: string): Promise<number> {
     let closedCount = 0;
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     for (const t of openTrades) {
       if (t.strategy === 'STOCK') continue;
@@ -518,8 +562,13 @@ export class SimBroker implements BrokerService {
         if (leg.expiry > latestExpiry) latestExpiry = leg.expiry;
 
         const expiryDate = new Date(leg.expiry + 'T20:00:00Z');
-        const quote = await this.marketData.getQuote(t.symbol, expiryDate);
-        const underlyingPrice = (quote.bid + quote.ask) / 2;
+        let underlyingPrice = 0;
+        try {
+          const quote = await this.marketData.getQuote(t.symbol, expiryDate);
+          underlyingPrice = (quote.bid + quote.ask) / 2;
+        } catch {
+          log.warn(`sweepExpired: no underlying quote for ${t.symbol} at ${leg.expiry}, closing at intrinsic with underlying=0`);
+        }
 
         const intrinsic = leg.type === 'CALL'
           ? Math.max(0, underlyingPrice - leg.strike)
@@ -551,15 +600,15 @@ export class SimBroker implements BrokerService {
    * Positions that can't be quoted at the strategy's timestamp are skipped —
    * sweepExpired() handles them as a fallback (closes at intrinsic).
    *
-   * Returns the count of positions closed.
+   * Returns details of each closed position.
    */
   async autoCloseExpiring(
     expiryDate: string,
     strategy: ExpiryAutoCloseStrategy,
     closeCallbacks?: Map<string, (price: number, at: Date) => Promise<void>>,
-  ): Promise<number> {
-    let closedCount = 0;
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+  ): Promise<AutoCloseResult[]> {
+    const results: AutoCloseResult[] = [];
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
 
     for (const t of openTrades) {
       if (t.strategy === 'STOCK') continue;
@@ -580,25 +629,34 @@ export class SimBroker implements BrokerService {
         continue;
       }
 
+      const exitPrice = Math.max(0, roundCents(price));
       const callback = closeCallbacks?.get(t.id);
       if (callback) {
         // Preserve closeMessageId from the original exit signal by using recordFill
         // instead of closePositionAtPrice (which has no message context).
-        await callback(Math.max(0, roundCents(price)), closeAt);
+        await callback(exitPrice, closeAt);
         log.debug(`AUTO-CLOSE: ${t.id} ${t.symbol} ${t.strategy} at $${price.toFixed(2)} (${closeAt.toISOString()}) [close signal preserved]`);
       } else {
-        await this.closePositionAtPrice(t.id, Math.max(0, roundCents(price)), closeAt.toISOString());
+        await this.closePositionAtPrice(t.id, exitPrice, closeAt.toISOString());
         log.debug(`AUTO-CLOSE: ${t.id} ${t.symbol} ${t.strategy} at $${price.toFixed(2)} (${closeAt.toISOString()})`);
       }
-      closedCount++;
+      results.push({
+        tradeId: t.id,
+        sourceMessageId: t.sourceMessageId,
+        exitPrice,
+        closeAt,
+        symbol: t.symbol,
+        strategy: t.strategy,
+        expiryDate,
+      });
     }
 
-    return closedCount;
+    return results;
   }
 
   /** Force-close all open positions at current mark prices. Throws if any position has no mark. */
   async forceCloseAll(at: Date): Promise<number> {
-    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forRun(this.backtestRunId)));
+    const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
     let totalPnl = 0;
 
     for (const t of openTrades) {
@@ -615,13 +673,13 @@ export class SimBroker implements BrokerService {
   async getOpenPositionCount(): Promise<number> {
     const [row] = await db.select({ count: sql<number>`COUNT(*)` })
       .from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
+      .where(and(isOpen, forChannel(this.channelId)));
     return row?.count ?? 0;
   }
 
   /** Get all open trade rows for this run, optionally filtered by trader/symbol/strategy. */
   async getOpenTrades(filters?: PositionFilters): Promise<Trade[]> {
-    const conditions = [isOpen, forRun(this.backtestRunId)];
+    const conditions = [isOpen, forChannel(this.channelId)];
     if (filters?.trader) conditions.push(forTrader(filters.trader));
     if (filters?.symbol) conditions.push(forSymbol(filters.symbol));
     if (filters?.strategy) conditions.push(forStrategy(filters.strategy));
@@ -634,7 +692,7 @@ export class SimBroker implements BrokerService {
     const openTrades = await db
       .select()
       .from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
+      .where(and(isOpen, forChannel(this.channelId)));
 
     const positions: BrokerPosition[] = [];
     for (const row of openTrades) {
@@ -673,13 +731,13 @@ export class SimBroker implements BrokerService {
     const [realizedRow] = await db
       .select({ total: sql<number>`COALESCE(SUM(CAST(${schema.trades.pnl} AS REAL)), 0)` })
       .from(schema.trades)
-      .where(and(isClosed, forRun(this.backtestRunId)));
+      .where(and(isClosed, forChannel(this.channelId)));
     const realizedPnl = roundCents(realizedRow?.total ?? 0);
     const tDb1 = Date.now();
 
     // Single pass over open trades: cash effects, margin, unrealized PnL, market value.
     const openTrades = await db.select().from(schema.trades)
-      .where(and(isOpen, forRun(this.backtestRunId)));
+      .where(and(isOpen, forChannel(this.channelId)));
     const tDb2 = Date.now();
 
     let cash = this.startingEquity + realizedPnl;
@@ -919,4 +977,7 @@ export class SimBroker implements BrokerService {
     return allFills;
   }
 
+  async isHealthy(): Promise<boolean> {
+    return true;
+  }
 }

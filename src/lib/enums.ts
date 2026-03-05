@@ -20,7 +20,5 @@ export type LegAction = z.infer<typeof LegActionSchema>;
 export const StrategySchema = z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS']);
 export type Strategy = z.infer<typeof StrategySchema>;
 
-/** Extended strategies for labeling / eval ground truth. */
-export const LabelStrategySchema = z.enum(['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS']);
 export const TradeActionSchema = z.enum(['OPEN', 'CLOSE', 'ADD', 'TRIM', 'LEG_OFF']);
 export type TradeAction = z.infer<typeof TradeActionSchema>;

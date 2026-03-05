@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation';
-import { getTradeById, getTradeSteps, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask, getBacktestRunById } from '@/lib/queries';
+import { getTradeById, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask, getBacktestRunById } from '@/lib/queries';
+import { parseChannel } from '@src/lib/channel';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
-import { StepViewer } from '../../components/step-viewer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
@@ -14,9 +14,10 @@ import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
-import { safeParseFloat } from '../../../../src/lib/numbers';
-import { computeTradeCommission } from '../../../../src/lib/commission';
-import type { BacktestRunConfig, CommissionSchedule } from '../../../../src/db/schema';
+import { safeParseFloat } from '@src/lib/numbers';
+import { computeTradeCommission } from '@src/lib/commission';
+import type { CommissionSchedule } from '@src/db/schema';
+import { getConfig } from '@src/db/accessors';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,8 +33,7 @@ export default async function TradeDetailPage({
   const trade = await getTradeById(id);
   if (!trade) notFound();
 
-  const [steps, sourceMessage, tradeEvents, task, closeMessage, backtestRun] = await Promise.all([
-    trade.taskId ? getTradeSteps(trade.taskId) : Promise.resolve([]),
+  const [sourceMessage, tradeEvents, task, closeMessage, backtestRun] = await Promise.all([
     trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
     getTradeEvents(trade.id),
     trade.taskId ? getTaskById(trade.taskId) : Promise.resolve(null),
@@ -42,7 +42,7 @@ export default async function TradeDetailPage({
   ]);
 
   const commissionSchedule: CommissionSchedule | undefined =
-    (backtestRun?.config as BacktestRunConfig | null)?.commissionSchedule;
+    backtestRun ? getConfig(backtestRun).commissionSchedule : undefined;
 
   const [nearbyMessages, closeNearbyMessages, runDecision] = await Promise.all([
     sourceMessage
@@ -51,25 +51,25 @@ export default async function TradeDetailPage({
     closeMessage
       ? getNearbyMessages(closeMessage.author, closeMessage.timestamp, 60, trade.symbol)
       : Promise.resolve([]),
-    sourceMessage && trade.backtestRunId
-      ? getRunDecisionForTask(sourceMessage.id, trade.backtestRunId)
+    sourceMessage && parseChannel(trade.channelId).mode === 'bt'
+      ? getRunDecisionForTask(sourceMessage.id, trade.channelId)
       : Promise.resolve(null),
   ]);
 
-  let decision: { decision: string; reasoning: string | null; path: string | null; durationMs: number | null; pnl: string | null } | null = null;
+  let decision: { outcome: string; reasoning: string | null; phase: string | null; durationMs: number | null; pnl: string | null } | null = null;
   if (runDecision) {
     decision = {
-      decision: runDecision.decision,
+      outcome: runDecision.outcome,
       reasoning: runDecision.reasoning,
-      path: runDecision.path,
+      phase: runDecision.phase,
       durationMs: runDecision.durationMs,
       pnl: runDecision.pnl,
     };
   } else if (task?.result) {
     decision = {
-      decision: task.result.decision ?? '',
+      outcome: task.result.decision ?? '',
       reasoning: task.result.reasoning ?? null,
-      path: null,
+      phase: null,
       durationMs: null,
       pnl: null,
     };
@@ -199,13 +199,6 @@ export default async function TradeDetailPage({
             />
           )}
 
-          {/* Audit Trail */}
-          {steps.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-foreground mb-3">Audit Trail</h3>
-              <StepViewer steps={steps} />
-            </div>
-          )}
         </div>
       </div>
     </div>

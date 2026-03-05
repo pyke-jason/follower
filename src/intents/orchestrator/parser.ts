@@ -7,14 +7,16 @@
  * selection, expiry resolution).
  */
 
-import type { Direction, Strategy } from '../../lib/enums.js';
+import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
 import type {
   OrchestratorContext,
   ParseResult,
   StrikeSelection,
   ComplexityFlag,
-  Action,
 } from './types.js';
+
+// ── Symbol blacklist (hard skip — add tickers here to suppress all signals) ───
+const BLACKLISTED_SYMBOLS = new Set(['PLTR']);
 
 // ── Hard-skip patterns ────────────────────────────────────────────────────────
 
@@ -35,6 +37,8 @@ const SPREAD_KW_RE = /\bcds\b|\bpcs\b|\bpds\b|call debit spread|put credit sprea
 const CALLS_RE = /\bcalls?\b/i;
 const PUTS_RE = /\bputs?\b/i;
 const STOCK_RE = /\bstocks?\b|\bshares?\b/i;
+const CONTRACT_RE = /\bcontracts?\b/i;
+const STOCK_QTY_RE = /\b\d{1,3}(,\d{3})+\b/;
 
 // ── Direction-override verb patterns ─────────────────────────────────────────
 
@@ -45,11 +49,10 @@ const BOUGHT_BUYING_RE = /\b(bought|buying)\b/i;
 const BOUGHT_BACK_RE = /\bbought\s+back\b/i;
 const BOUGHT_BACK_SHORT_CALLS_RE = /\bbought\s+back\s+(?:the\s+)?short\s+(?:call|calls)\b/i;
 const BOUGHT_BACK_SHORT_PUTS_RE = /\bbought\s+back\s+(?:the\s+)?short\s+(?:put|puts)\b/i;
-const SHORTING_RE = /\b(shorting|shorted)\b/i;
+const SHORTING_RE = /\b(shorting|shorted)\b|\bshort\b(?!\s*(?:term|squeeze|interest|sellers?|covering|side|dated|strike|week|leg|run))/i;
 
 // ── Strike detection (used in strategy detection fallback) ────────────────────
 
-// Single strike near option type keyword or bare dollar prefix
 const STRIKE_NEAR_OPTION_RE = /\$?(\d{2,5}(?:\.\d+)?)\s*(?:calls?|puts?|[cp]\b)/i;
 
 // ── Monitoring / observation patterns ────────────────────────────────────────
@@ -67,11 +70,16 @@ const FRACTION_HALF_RE = /\bhalf\b|1\s*\/\s*2/i;
 const FRACTION_THIRD_RE = /\bthird\b|1\s*\/\s*3/i;
 const FRACTION_QUARTER_RE = /\bquarter\b|1\s*\/\s*4/i;
 const FRACTION_TWO_THIRDS_RE = /\btwo\s+thirds?\b|2\s*\/\s*3/i;
+const FRACTION_PARTIAL_RE = /\bpartial\b/i;
 const PERCENT_RE = /(\d{1,3})\s*%/;
 
 // ── Exit-verb patterns (soft detection without badge) ─────────────────────────
 
-const EXIT_VERB_RE = /\b(exit(?:ing|ed)?|clos(?:e[ds]?|ing)|exiting|took profits?|stopped out|sold out)\b/i;
+const EXIT_VERB_RE = /\b(exit(?:ing|ed)?|clos(?:e[ds]?|ing)|exiting|took\s+(?:\w+\s+)?profits?|stopped out|sold out)\b/i;
+const EXIT_VERB_FALSE_POSITIVE_RE =
+  /\bclosing\s+down\b|\bclose\s+to\b|\b(?:into|near|before|after|towards?)\s+the\s+close\b/i;
+const EXIT_VERB_CONDITIONAL_RE =
+  /\b(?:would|could|might|may|should|looking\s+to|consider(?:ing)?|need\s+to|plan(?:ning)?\s+to|hoping\s+to|in\s+order\s+to)\s+(?:\w+\s+){0,3}(?:exit|close|cover|sell)\b/i;
 
 // ── LEG_OFF target patterns ───────────────────────────────────────────────────
 
@@ -98,6 +106,7 @@ function extractExitPercent(text: string): number | null {
   if (FRACTION_HALF_RE.test(text)) return 0.5;
   if (FRACTION_THIRD_RE.test(text)) return 1 / 3;
   if (FRACTION_QUARTER_RE.test(text)) return 0.25;
+  if (FRACTION_PARTIAL_RE.test(text)) return 0.5;
   const pm = PERCENT_RE.exec(text);
   if (pm) {
     const pct = parseInt(pm[1], 10);
@@ -108,6 +117,11 @@ function extractExitPercent(text: string): number | null {
 
 function looksLikeDate(a: number, b: number): boolean {
   return Number.isInteger(a) && Number.isInteger(b) && a >= 1 && a <= 12 && b >= 1 && b <= 31;
+}
+
+/** Strip parenthetical content for strategy detection (preserves for field extraction). */
+function stripParenthetical(text: string): string {
+  return text.replace(/\([^)]*\)/g, ' ').replace(/\s{2,}/g, ' ').trim();
 }
 
 // ── Coordinated token extraction ──────────────────────────────────────────────
@@ -144,8 +158,8 @@ function overlaps(a: Token, b: Token): boolean {
 
 /** Remove tokens that overlap with a higher-priority token (longer span wins). */
 function dedupeTokens(tokens: Token[]): Token[] {
-  // Sort by start position, then by span length descending (longer wins ties)
-  const sorted = [...tokens].sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  // Sort by span length descending (longer wins overlaps), then by start position
+  const sorted = [...tokens].sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
   const kept: Token[] = [];
   for (const tok of sorted) {
     if (kept.some(k => overlaps(k, tok))) continue;
@@ -405,9 +419,25 @@ function extractTradeFields(
         consumed.add(tok);
       }
     } else if (context.isSpread && !expiryHint) {
-      // Spread + no other expiry → ambiguous
-      ambiguousSlashPair = true;
-      consumed.add(tok);
+      // Strikes already found from another pair → this date-like pair IS the expiry
+      if (strikes) {
+        expiryHint = tok.value.replace(/\s/g, '');
+        consumed.add(tok);
+      } else {
+        // Check if another slash pair exists that is clearly strikes (not date-like)
+        const otherStrikePairs = allTokens.filter(t =>
+          t.type === 'slash_pair' && !consumed.has(t) && t !== tok &&
+          !looksLikeDate(t.parsed[0], t.parsed[1]));
+        if (otherStrikePairs.length > 0) {
+          // Another pair is clearly strikes → this date-like pair IS the expiry
+          expiryHint = tok.value.replace(/\s/g, '');
+          consumed.add(tok);
+        } else {
+          // Genuinely ambiguous — could be dates or cheap-stock strikes
+          ambiguousSlashPair = true;
+          consumed.add(tok);
+        }
+      }
     } else {
       // Non-spread + date-like → it's a date
       if (!expiryHint) {
@@ -504,6 +534,80 @@ function extractTradeFields(
   return { strikes, premiumHint, expiryHint, ambiguousSlashPair };
 }
 
+// ── Strategy detection (extracted for two-pass paren stripping) ──────────────
+
+function detectStrategy(
+  text: string,
+  isLotto: boolean,
+  fullText: string,
+): { strategy: Strategy | null; directionFromStrategy: Direction | null } {
+  let strategy: Strategy | null = null;
+  let directionFromStrategy: Direction | null = null;
+
+  if (CDS_RE.test(text)) {
+    strategy = 'CDS';
+    directionFromStrategy = 'LONG';
+  } else if (PCS_RE.test(text)) {
+    strategy = 'PCS';
+  } else if (PDS_RE.test(text)) {
+    strategy = 'PDS';
+    directionFromStrategy = 'LONG';
+  } else if (LEAP_RE.test(text)) {
+    strategy = 'CALL';
+    directionFromStrategy = 'LONG';
+  } else if (isLotto) {
+    // Always check full text since "(calls)" may be in parens
+    strategy = CALLS_RE.test(fullText) ? 'CALL' : 'PUT';
+    directionFromStrategy = 'LONG';
+  } else if (CALLS_RE.test(text) && !SPREAD_KW_RE.test(text)) {
+    strategy = 'CALL';
+    directionFromStrategy = 'LONG';
+  } else if (PUTS_RE.test(text) && !SPREAD_KW_RE.test(text)) {
+    strategy = 'PUT';
+    directionFromStrategy = 'LONG';
+  } else if (STOCK_RE.test(text)) {
+    strategy = 'STOCK';
+    directionFromStrategy = null;
+  }
+
+  // Positional STOCK override: if CALL/PUT was detected but the text also
+  // contains stock indicators, prefer STOCK (the option keyword is likely
+  // commentary about an existing position, not the primary trade action)
+  if ((strategy === 'CALL' || strategy === 'PUT') && !SPREAD_KW_RE.test(text)) {
+    if (STOCK_QTY_RE.test(text)) {
+      // Comma-separated quantities (1,000+) strongly indicate stock
+      strategy = 'STOCK';
+      directionFromStrategy = null;
+    } else if (STOCK_RE.test(text)) {
+      const stockPos = text.search(STOCK_RE);
+      const callPos = CALLS_RE.test(text) ? text.search(CALLS_RE) : Infinity;
+      const putPos = PUTS_RE.test(text) ? text.search(PUTS_RE) : Infinity;
+      if (stockPos < Math.min(callPos, putPos)) {
+        strategy = 'STOCK';
+        directionFromStrategy = null;
+      }
+    }
+  }
+
+  // Bare P/C abbreviation fallback (e.g. "$34 P", "$180 C")
+  if (strategy === null) {
+    const nearM = STRIKE_NEAR_OPTION_RE.exec(text);
+    if (nearM) {
+      const match = nearM[0].toLowerCase();
+      if (/p\b/.test(match)) { strategy = 'PUT'; directionFromStrategy = 'LONG'; }
+      else if (/c\b/.test(match)) { strategy = 'CALL'; directionFromStrategy = 'LONG'; }
+    }
+  }
+
+  // "put spread" + credit/debit disambiguation (when PCS_RE didn't match)
+  if (strategy === null && /\bput\s+spread\b/i.test(text)) {
+    if (/\bcredit\b/i.test(text) || /\bbullish\b/i.test(text)) strategy = 'PCS';
+    else if (/\bdebit\b/i.test(text) || /\bbearish\b/i.test(text)) strategy = 'PDS';
+  }
+
+  return { strategy, directionFromStrategy };
+}
+
 // ── Main parse function ───────────────────────────────────────────────────────
 
 /**
@@ -572,6 +676,11 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   const symbol = symbols.length > 0 ? symbols[0] : null;
 
+  // ── Symbol blacklist ─────────────────────────────────────────────────────
+  if (symbol && BLACKLISTED_SYMBOLS.has(symbol)) {
+    return hardSkip(`blacklisted symbol: ${symbol}`, complexityFlags);
+  }
+
   // ── Lotto/Yolo flag (affects strategy, direction, expiry) ─────────────────
 
   const isLotto = LOTTO_RE.test(cleanText);
@@ -583,70 +692,65 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     (STRANGLE_RE.test(cleanText) && CALLS_RE.test(cleanText) && PUTS_RE.test(cleanText)) ||
     (STRANGLE_RE.test(cleanText) && (hasLongBadge || hasShortBadge || hasExitBadge));
 
-  // ── Strategy detection ────────────────────────────────────────────────────
+  // ── Strategy detection (two-pass: primary text first, full text fallback) ──
+  //
+  // Phase 1: detect on paren-stripped text to prevent keyword hijacking from
+  //          parenthetical commentary (e.g., "PDS" in aside text).
+  // Phase 2: fall back to full text for messages where the trade strategy is
+  //          legitimately inside parentheses (e.g., "Long OSCR (sold $18 puts)").
 
-  let strategy: Strategy | null = null;
-  let directionFromStrategy: Direction | null = null;
+  const primaryText = stripParenthetical(cleanText);
+  let { strategy, directionFromStrategy } = detectStrategy(primaryText, isLotto, cleanText);
+  const strategyFromPrimary = strategy !== null;
 
-  if (CDS_RE.test(cleanText)) {
-    strategy = 'CDS';
-    directionFromStrategy = 'LONG';
-  } else if (PCS_RE.test(cleanText)) {
-    strategy = 'PCS';
-  } else if (PDS_RE.test(cleanText)) {
-    strategy = 'PDS';
-    directionFromStrategy = 'LONG';
-  } else if (LEAP_RE.test(cleanText)) {
-    strategy = 'CALL';
-    directionFromStrategy = 'LONG';
-  } else if (isLotto) {
-    // Lotto with "calls" → CALL; otherwise PUT (more common lotto play)
-    strategy = CALLS_RE.test(cleanText) ? 'CALL' : 'PUT';
-    directionFromStrategy = 'LONG';
-  } else if (CALLS_RE.test(cleanText) && !SPREAD_KW_RE.test(cleanText)) {
-    strategy = 'CALL';
-    directionFromStrategy = 'LONG';
-  } else if (PUTS_RE.test(cleanText) && !SPREAD_KW_RE.test(cleanText)) {
-    strategy = 'PUT';
-    directionFromStrategy = 'LONG';
-  } else if (STOCK_RE.test(cleanText)) {
-    strategy = 'STOCK';
-    directionFromStrategy = null; // badge-derived below
+  if (strategy === null) {
+    ({ strategy, directionFromStrategy } = detectStrategy(cleanText, isLotto, cleanText));
   }
 
-  // Bare P/C abbreviation fallback (e.g. "$34 P", "$180 C")
-  if (strategy === null) {
-    const nearM = STRIKE_NEAR_OPTION_RE.exec(cleanText);
-    if (nearM) {
-      const match = nearM[0].toLowerCase();
-      if (/p\b/.test(match)) { strategy = 'PUT'; directionFromStrategy = 'LONG'; }
-      else if (/c\b/.test(match)) { strategy = 'CALL'; directionFromStrategy = 'LONG'; }
+  // STOCK priority: strategy found only in parenthetical content but primary text
+  // has stock indicators, or badge implies stock with no trade fields in parens
+  if (!strategyFromPrimary && strategy !== null && strategy !== 'STOCK') {
+    const primaryHasStock = STOCK_RE.test(primaryText) || STOCK_QTY_RE.test(primaryText);
+    const parenContent = cleanText.match(/\([^)]*\)/g)?.join(' ') ?? '';
+    const parenHasTradeFields = /\$\d/.test(parenContent) || /\bexpir/i.test(parenContent);
+    const badgeImpliesStock = (hasLongBadge || hasShortBadge) && !hasExitBadge && !parenHasTradeFields;
+    if (primaryHasStock || badgeImpliesStock) {
+      strategy = 'STOCK';
+      directionFromStrategy = null;
     }
   }
 
-  // "put spread" + credit/debit disambiguation (when PCS_RE didn't match)
-  if (strategy === null && /\bput\s+spread\b/i.test(cleanText)) {
-    if (/\bcredit\b/i.test(cleanText) || /\bbullish\b/i.test(cleanText)) strategy = 'PCS';
-    else if (/\bdebit\b/i.test(cleanText) || /\bbearish\b/i.test(cleanText)) strategy = 'PDS';
+  // Badge-implied STOCK fallback: Long/Short badge + no option strategy detected.
+  // Guard: "contracts" keyword suggests an unlabeled options trade → leave for LLM.
+  if (strategy === null && (hasLongBadge || hasShortBadge) && !hasExitBadge && !CONTRACT_RE.test(cleanText)) {
+    strategy = 'STOCK';
+    directionFromStrategy = null;
   }
 
   // ── Direction derivation ──────────────────────────────────────────────────
 
   let direction: Direction | null = directionFromStrategy;
 
-  if (isLotto) {
-    // Lotto always overrides everything
+  if (isLotto && !hasShortBadge) {
+    // Lotto defaults to LONG (buying cheap options), but an explicit Short badge overrides.
+    // "Short ABNB Lotto $123 Puts" = selling puts for premium, not buying.
     direction = 'LONG';
+  } else if (isLotto && hasShortBadge) {
+    direction = 'SHORT';
   } else if (strategy === 'STOCK') {
-    // Badge-derived for stocks
-    if (hasLongBadge && !hasShortBadge) direction = 'LONG';
-    else if (hasShortBadge && !hasLongBadge) direction = 'SHORT';
-    else direction = null; // ambiguous — leave for LLM
-    // Authoritative verbs override badges for stock too
-    if (BOUGHT_BUYING_RE.test(cleanText)) direction = 'LONG';
-    if (WROTE_WRITING_RE.test(cleanText)) direction = 'SHORT';
-    if (SOLD_RE.test(cleanText) && !EXIT_VERB_RE.test(cleanText)) direction = 'SHORT';
-    if (SHORTING_RE.test(cleanText)) direction = 'SHORT';
+    if (hasLongBadge && !hasShortBadge) {
+      direction = 'LONG';
+      // Badge is authoritative — SHORTING_RE does not override
+    } else if (hasShortBadge && !hasLongBadge) {
+      direction = 'SHORT';
+    } else {
+      // No unambiguous badge: apply verb heuristics
+      direction = null;
+      if (BOUGHT_BUYING_RE.test(cleanText)) direction = 'LONG';
+      if (WROTE_WRITING_RE.test(cleanText)) direction = 'SHORT';
+      if (SOLD_RE.test(cleanText) && !EXIT_VERB_RE.test(cleanText)) direction = 'SHORT';
+      if (SHORTING_RE.test(cleanText)) direction = 'SHORT';
+    }
   } else if (strategy === 'CALL' || strategy === 'PUT') {
     // For naked options: default LONG unless sell verbs present
     direction = 'LONG';
@@ -662,7 +766,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   // ── Action determination ──────────────────────────────────────────────────
 
-  let action: Action | null = null;
+  let action: TradeAction | null = null;
   let exitPercent: number | null = null;
   let targetStrategy: Strategy | null = null;
 
@@ -686,7 +790,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     action = 'OPEN';
   } else {
     // No badge — soft detection from verbs
-    if (EXIT_VERB_RE.test(cleanText) && symbol !== null) {
+    if (EXIT_VERB_RE.test(cleanText) && !EXIT_VERB_FALSE_POSITIVE_RE.test(cleanText) && !EXIT_VERB_CONDITIONAL_RE.test(cleanText) && symbol !== null) {
       // Only set CLOSE when we have a ticker too (higher confidence)
       const exitPct = extractExitPercent(cleanText);
       if (exitPct !== null) {
@@ -725,6 +829,35 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     // Otherwise leave null — needs LLM
   }
 
+  // ── Suppress relational for position-reducing actions ───────────────────
+  // Relational phrases ("ty Hari", "from yesterday") are commentary, not
+  // signal modifiers, when the action is an exit. Guard: keep relational if
+  // multi_ticker or mixed_action are also set — those indicate genuine ambiguity.
+  if (
+    (action === 'CLOSE' || action === 'TRIM' || action === 'LEG_OFF') &&
+    complexityFlags.has('relational') &&
+    !complexityFlags.has('multi_ticker') &&
+    !complexityFlags.has('mixed_action')
+  ) {
+    complexityFlags.delete('relational');
+  }
+
+  // ── Suppress multi_ticker when secondary symbol is a non-tradable index ──
+  // "Exit TSLA with a .71 cent loss - don't like this drop in VIX" — VIX is a cash
+  // index that can't be traded directly, so it's purely explanatory context.
+  // ONLY suppress for indices you'd never open a position on. Tradable ETFs (SPY, QQQ,
+  // IWM, DIA, VXX, etc.) must keep multi_ticker so the LLM can decide.
+  const UNTRADABLE_INDICES = new Set(['VIX', 'SPX', 'DXY', 'TNX', 'TYX', 'RUT', 'NDX', 'DJIA']);
+
+  if (
+    (action === 'CLOSE' || action === 'TRIM' || action === 'LEG_OFF') &&
+    complexityFlags.has('multi_ticker') &&
+    symbols.length === 2 &&
+    UNTRADABLE_INDICES.has(symbols[1])
+  ) {
+    complexityFlags.delete('multi_ticker');
+  }
+
   // Monitoring-verb skip: position description without action intent
   if (action === null && badges.length === 0 && MONITORING_RE.test(cleanText)) {
     return hardSkip('monitoring/observation', complexityFlags);
@@ -748,9 +881,26 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   if (ambiguousSlashPair) complexityFlags.add('ambiguous_strikes');
 
   // ── Complexity: extra_text ────────────────────────────────────────────────
+  // Skip extra_text flag when all core trade fields are resolved — commentary
+  // after a fully-parsed trade shouldn't force the LLM path.
+  // Guard: badgeless STOCK trades rely purely on keyword matching ("shares",
+  // "buying") which is fragile in long educational/commentary messages.
+  // Only trust the STOCK bypass when a badge anchors the intent.
 
   if (action !== null && strategy !== null && wordCount(cleanText) > 25) {
-    complexityFlags.add('extra_text');
+    const hasBadge = hasLongBadge || hasShortBadge || hasExitBadge;
+    // STOCK trades don't have premiums — a dollar value extracted for STOCK is a
+    // price target, not a premium hint. Null it out so it can't satisfy fullyResolved
+    // and bypass the extra_text guard for long badgeless STOCK messages.
+    if (strategy === 'STOCK') premiumHint = null;
+    const fullyResolved = symbol !== null && (
+      (strategy === 'STOCK' && hasBadge) ||
+      (isSpread && strikes !== null && strikes.length >= 2) ||
+      (!isSpread && (strikes !== null || premiumHint !== null))
+    );
+    if (!fullyResolved) {
+      complexityFlags.add('extra_text');
+    }
   }
 
   // When lotto + extra_text, the context is too complex for the lotto=LONG default.

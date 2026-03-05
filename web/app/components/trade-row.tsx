@@ -1,14 +1,20 @@
+'use client';
+
 import Link from 'next/link';
-import { ChevronRight, AlertTriangle } from 'lucide-react';
+import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore, Zap } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
-import type { Trade, CommissionSchedule, TradeLeg } from '../../../src/db/schema';
-import { safeParseFloat } from '../../../src/lib/numbers';
-import { computeTradeCommission } from '../../../src/lib/commission';
-import { notionalValue } from '../../../src/lib/trade';
+import { getLegs } from '@src/db/accessors';
+import { safeParseFloat } from '@src/lib/numbers';
+import { computeTradeCommission } from '@src/lib/commission';
+import { notionalValue, formatLegsSummary } from '@src/lib/trade';
+import type { TradeLeg } from '@src/db/schema';
+import { useTradesStore } from '@/stores/trades-store';
+import type { LucideIcon } from 'lucide-react';
 
 function notionalConcentrationColor(pct: number): string {
   if (pct >= 0.25) return 'text-loss';
@@ -16,21 +22,128 @@ function notionalConcentrationColor(pct: number): string {
   return 'text-muted-foreground';
 }
 
+/** Slippage is significant if > 10% of entry price or > $0.20 absolute. */
+const SLIPPAGE_THRESHOLD_PCT = 0.10;
+const SLIPPAGE_THRESHOLD_ABS = 0.20;
+
+type FlagDef = {
+  icon: LucideIcon;
+  label: string;
+  tooltip: string;
+  color: string;
+  bgColor: string;
+};
+
+const FLAG_DEFS = {
+  autoClose: {
+    icon: Timer,
+    label: 'Auto',
+    tooltip: 'Auto-closed — no exit signal from trader',
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
+  legOff: {
+    icon: Scissors,
+    label: 'Leg off',
+    tooltip: 'Had a leg removed — spread became single-leg',
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
+  trim: {
+    icon: TrendingDown,
+    label: 'Trimmed',
+    tooltip: 'Position was partially exited',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted/50 border border-border/40',
+  },
+  add: {
+    icon: Plus,
+    label: 'Added',
+    tooltip: 'Position was scaled into',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted/50 border border-border/40',
+  },
+  slippage: {
+    icon: ArrowLeftRight,
+    label: 'Slip',
+    tooltip: '', // filled dynamically
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
+  closeCancelled: {
+    icon: XCircle,
+    label: 'Close failed',
+    tooltip: 'A close order was cancelled without filling — trade stayed open longer than intended',
+    color: 'text-rose-400',
+    bgColor: 'bg-rose-400/15 border border-rose-400/25',
+  },
+  chaseLow: {
+    icon: Zap,
+    label: '',
+    tooltip: '',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted/50 border border-border/40',
+  },
+  chaseWarn: {
+    icon: Zap,
+    label: '',
+    tooltip: '',
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
+  chaseDanger: {
+    icon: Zap,
+    label: '',
+    tooltip: '',
+    color: 'text-rose-400',
+    bgColor: 'bg-rose-400/15 border border-rose-400/25',
+  },
+  hasUpdate: {
+    icon: MessageSquareMore,
+    label: 'Update',
+    tooltip: 'Trader posted about this symbol after opening',
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
+} as const satisfies Record<string, FlagDef>;
+
+function FlagChip({ flag, tooltip }: { flag: FlagDef; tooltip?: string }) {
+  const Icon = flag.icon;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={`inline-flex items-center gap-0.5 rounded-sm px-1 py-px text-[9px] font-medium leading-tight ${flag.color} ${flag.bgColor}`}>
+          <Icon className="h-2.5 w-2.5" />
+          {flag.label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-60 text-xs">
+        {tooltip ?? flag.tooltip}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function TradeRow({
-  trade,
-  runId,
-  commissionSchedule,
-  startingEquity,
+  tradeId,
   onExpand,
   isExpanded,
 }: {
-  trade: Trade;
-  runId?: string;
-  commissionSchedule?: CommissionSchedule;
-  startingEquity?: number;
+  tradeId: string;
   onExpand?: () => void;
   isExpanded?: boolean;
 }) {
+  const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId));
+  const events = useTradesStore((s) => s.eventsByTradeId.get(tradeId)) ?? [];
+  const cancelledClose = useTradesStore((s) => s.cancelledTradeIds.has(tradeId));
+  const hasSubsequentMessage = useTradesStore((s) => s.subsequentMessageTradeIds.has(tradeId));
+  const runId = useTradesStore((s) => s.runId);
+  const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
+  const startingEquity = useTradesStore((s) => s.startingEquity);
+
+  if (!trade) return null;
+
+  const hasUpdate = trade.status !== 'CLOSED' && hasSubsequentMessage;
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
   const pnl = grossPnl != null ? grossPnl - comm : null;
@@ -44,8 +157,32 @@ export function TradeRow({
     ? notional / startingEquity
     : null;
 
+  // Compute flags
+  const actions = new Set(events?.map((e) => e.action));
+  const isAutoClose = trade.status === 'CLOSED' && !trade.closeMessageId;
+  const hasLegOff = actions.has('LEG_OFF');
+  const hasTrim = actions.has('TRIM');
+  const hasAdd = actions.has('ADD');
+
+  const entry = trade.entryPrice != null ? safeParseFloat(trade.entryPrice) : null;
+  const brokerFill = trade.brokerFillPrice != null ? safeParseFloat(trade.brokerFillPrice) : null;
+  const slippage = entry && brokerFill ? brokerFill - entry : null;
+  const slippagePct = entry && slippage ? Math.abs(slippage / entry) : null;
+  const hasSignificantSlippage = slippage != null && (
+    (slippagePct != null && slippagePct >= SLIPPAGE_THRESHOLD_PCT) ||
+    Math.abs(slippage) >= SLIPPAGE_THRESHOLD_ABS
+  );
+
+  const chaseSteps = events.reduce((sum, e) => {
+    const steps = (e.metadata as Record<string, unknown>)?.chaseSteps;
+    return sum + (typeof steps === 'number' ? steps : 0);
+  }, 0);
+
+  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose || hasUpdate || chaseSteps > 0;
+
   return (
     <TableRow
+      data-trade-id={tradeId}
       className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''}`}
       onClick={onExpand}
     >
@@ -59,7 +196,7 @@ export function TradeRow({
       {/* Symbol */}
       <TableCell>
         <Link
-          href={buildHref(`/trades/${trade.id}`, runId)}
+          href={buildHref(`/trades/${trade.id}`, runId ?? undefined)}
           className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40"
           onClick={(e) => e.stopPropagation()}
         >
@@ -67,21 +204,42 @@ export function TradeRow({
         </Link>
       </TableCell>
 
-      {/* Status */}
+      {/* Status + flags */}
       <TableCell>
-        <span className="inline-flex items-center gap-1">
+        <span className="inline-flex items-center gap-1 flex-wrap">
           <Badge label={trade.status} />
-          {trade.status === 'CLOSED' && !trade.closeMessageId && (
-            <span title="Auto-closed (no exit signal)">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            </span>
+          {cancelledClose && <FlagChip flag={FLAG_DEFS.closeCancelled} />}
+          {isAutoClose && <FlagChip flag={FLAG_DEFS.autoClose} />}
+          {hasLegOff && <FlagChip flag={FLAG_DEFS.legOff} />}
+          {hasTrim && <FlagChip flag={FLAG_DEFS.trim} />}
+          {hasAdd && <FlagChip flag={FLAG_DEFS.add} />}
+          {hasSignificantSlippage && (
+            <FlagChip
+              flag={FLAG_DEFS.slippage}
+              tooltip={`Slippage: ${slippage! > 0 ? '+' : ''}${formatCurrency(slippage)} (${(slippagePct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`}
+            />
           )}
+          {chaseSteps > 0 && (
+            <FlagChip
+              flag={{
+                ...(chaseSteps >= 10 ? FLAG_DEFS.chaseDanger : chaseSteps >= 5 ? FLAG_DEFS.chaseWarn : FLAG_DEFS.chaseLow),
+                label: `${chaseSteps} chase${chaseSteps > 1 ? 's' : ''}`,
+              }}
+              tooltip={`${chaseSteps} price chase step${chaseSteps > 1 ? 's' : ''} across all fills`}
+            />
+          )}
+          {hasUpdate && <FlagChip flag={FLAG_DEFS.hasUpdate} />}
         </span>
       </TableCell>
 
-      {/* Legs */}
+      {/* Contract — use OPEN event legs/strategy to show original trade (pre-leg-off) */}
       <TableCell className="hidden md:table-cell text-muted-foreground">
-        <LegsIndicator legs={trade.legs as TradeLeg[]} strategy={trade.strategy} />
+        {(() => {
+          const openEvent = events.find(e => e.action === 'OPEN');
+          const openLegs = openEvent ? (openEvent.legs as TradeLeg[] ?? []) : getLegs(trade);
+          const openStrategy = openEvent?.strategy ?? trade.strategy;
+          return <LegsIndicator legs={openLegs} strategy={openStrategy} />;
+        })()}
       </TableCell>
 
       {/* Trader */}
@@ -110,19 +268,44 @@ export function TradeRow({
         {trade.quantity ?? 1}
       </TableCell>
 
-      {/* Entry */}
-      <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.entryPrice)}</TableCell>
-
-      {/* Exit */}
-      <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.exitPrice)}</TableCell>
+      {/* Entry / Exit with delta */}
+      <TableCell className="text-right tabular-nums text-xs">
+        {(() => {
+          const entryNum = trade.entryPrice != null ? safeParseFloat(trade.entryPrice) : null;
+          const exitNum = trade.exitPrice != null ? safeParseFloat(trade.exitPrice) : null;
+          const delta = entryNum != null && exitNum != null ? exitNum - entryNum : null;
+          const deltaPct = entryNum && delta != null ? (delta / entryNum) * 100 : null;
+          const isLong = trade.direction === 'LONG';
+          // For longs, positive delta = profit. For shorts, negative delta = profit.
+          const deltaColor = delta != null && delta !== 0
+            ? (isLong ? delta > 0 : delta < 0) ? 'text-profit' : 'text-loss'
+            : '';
+          return (
+            <span className="whitespace-nowrap">
+              <span>{formatCurrency(trade.entryPrice)}</span>
+              {exitNum != null ? (
+                <>
+                  <span className="text-muted-foreground/40 mx-0.5">&rarr;</span>
+                  <span>{formatCurrency(trade.exitPrice)}</span>
+                  {delta != null && delta !== 0 && (
+                    <span className={`text-[10px] ml-1 ${deltaColor}`}>
+                      {delta > 0 ? '+' : ''}{delta.toFixed(2)} / {delta > 0 ? '+' : ''}{deltaPct != null ? `${deltaPct.toFixed(0)}%` : ''}
+                    </span>
+                  )}
+                </>
+              ) : null}
+            </span>
+          );
+        })()}
+      </TableCell>
 
       {/* Notional */}
       <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs">
         {notional > 0 ? (
-          <span className="flex flex-col items-end gap-0.5">
-            <span className="text-muted-foreground">{formatCurrency(notional)}</span>
+          <span className="text-muted-foreground whitespace-nowrap">
+            {formatCurrency(notional)}
             {notionalPct != null && (
-              <span className={`text-[10px] ${notionalConcentrationColor(notionalPct)}`}>
+              <span className={`text-[10px] ml-1 ${notionalConcentrationColor(notionalPct)}`}>
                 {(notionalPct * 100).toFixed(1)}%
               </span>
             )}

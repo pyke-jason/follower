@@ -7,11 +7,11 @@ import { Sparkline } from '../components/sparkline';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { formatCurrency, formatDate } from '@/lib/format';
+import { formatCurrency, formatDate, isoToDateKey } from '@/lib/format';
 import Link from 'next/link';
 import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
-import type { BacktestRunConfig, BacktestRunSummary } from '../../../src/db/schema';
-import { pctDisplay, PROFIT_FACTOR_INF } from '../../../src/lib/numbers';
+import { getConfig, getSummary, getEquityCurve } from '@src/db/accessors';
+import { pctDisplay, PROFIT_FACTOR_INF } from '@src/lib/numbers';
 import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
 function formatDuration(ms: number | null): string {
@@ -176,12 +176,12 @@ export function BacktestList({
             </TableHeader>
             <TableBody>
               {filteredRuns.map((run) => {
-                const config = run.config as BacktestRunConfig;
-                const summary = run.summary as BacktestRunSummary | null;
-                const equityCurve = run.equityCurve as { date: string; pnl: number; cumPnl: number }[] | null;
+                const config = getConfig(run);
+                const summary = getSummary(run);
+                const equityCurve = getEquityCurve(run);
                 const sparkData = equityCurve?.map((e) => e.cumPnl) ?? [];
-                const startDate = config.startDate.split('T')[0];
-                const endDate = config.endDate.split('T')[0];
+                const startDate = isoToDateKey(config.startDate);
+                const endDate = isoToDateKey(config.endDate);
                 const displayPnl = summary
                   ? ((summary.totalCommissions ?? 0) > 0 ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl)
                   : 0;

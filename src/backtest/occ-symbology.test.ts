@@ -13,7 +13,7 @@ import {
   isOccOptionSymbol,
   normalizeExpiry,
   buildOccSymbols,
-} from './occ-symbology.js';
+} from '../lib/occ-symbology.js';
 
 // ── Arbitraries ───────────────────────────────────────────────────────
 

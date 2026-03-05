@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getBacktestRuns } from '@/lib/queries';
-import type { BacktestRunConfig, BacktestRunSummary } from '../../../../src/db/schema';
+import { getConfig, getSummary } from '@src/db/accessors';
+import { isoToDateKey } from '@/lib/format';
 
 export async function GET() {
   const runs = await getBacktestRuns({ limit: 30 });
@@ -8,15 +9,15 @@ export async function GET() {
   const items = runs
     .filter((r) => r.status === 'COMPLETED' || r.status === 'RUNNING' || r.status === 'CANCELLED')
     .map((r) => {
-      const config = r.config as BacktestRunConfig;
-      const summary = r.summary as BacktestRunSummary | null;
+      const config = getConfig(r);
+      const summary = getSummary(r);
       return {
         id: r.id,
         name: r.name,
         status: r.status,
         traders: config.traders,
-        startDate: config.startDate.split('T')[0],
-        endDate: config.endDate.split('T')[0],
+        startDate: isoToDateKey(config.startDate),
+        endDate: isoToDateKey(config.endDate),
         totalPnl: summary?.totalPnl ?? null,
         winRate: summary?.winRate ?? null,
       };

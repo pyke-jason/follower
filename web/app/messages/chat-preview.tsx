@@ -3,9 +3,9 @@
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useTransition, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { fetchMessages, fetchMessage, type MessageIntent } from './actions';
+import { fetchMessages, fetchMessage } from './actions';
 import Link from 'next/link';
-import type { Message, MessageLabel } from '../../../src/db/schema';
+import type { Message, MessageLabel } from '@src/db/schema';
 
 const ChatFeed = dynamic(
   () => import('./chat-feed').then((m) => ({ default: m.ChatFeed })),
@@ -27,7 +27,6 @@ export function ChatPreview({
   author,
   title = 'Chat Context',
   viewAllHref,
-  initialIntents,
   initialLabels,
   className,
 }: {
@@ -36,7 +35,6 @@ export function ChatPreview({
   author?: string;
   title?: string;
   viewAllHref?: string;
-  initialIntents?: Record<string, MessageIntent>;
   initialLabels?: Record<string, MessageLabel>;
   /** Override height. Default: h-80 */
   className?: string;
@@ -44,7 +42,6 @@ export function ChatPreview({
   // initialMessages arrive ASC (oldest first) from getNearbyMessages.
   // ChatFeed expects DESC (newest first) — it reverses internally.
   const [messages, setMessages] = useState(() => [...initialMessages].reverse());
-  const [intents, setIntents] = useState<Record<string, MessageIntent>>(initialIntents ?? {});
   const [labels, setLabels] = useState<Record<string, MessageLabel>>(initialLabels ?? {});
   const [cursor, setCursor] = useState<string | null>(() => {
     if (initialMessages.length === 0) return null;
@@ -76,7 +73,6 @@ export function ChatPreview({
       const newItemCount = result.messages.length + 5;
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
-      setIntents((prev) => ({ ...prev, ...result.intents }));
       setLabels((prev) => ({ ...prev, ...result.labels }));
       setCursor(result.nextCursor);
     });
@@ -100,7 +96,6 @@ export function ChatPreview({
       <CardContent className={`p-0 flex flex-col ${className ?? 'h-80'}`}>
         <ChatFeed
           messages={messages}
-          intents={intents}
           labels={labels}
           firstItemIndex={firstItemIndex}
           focusMessageId={focusMessageId}

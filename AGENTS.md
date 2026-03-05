@@ -62,10 +62,10 @@ src/
 │   ├── badges.ts               # Extract trade signal badges
 │   ├── symbols.ts              # Extract ticker symbols
 │   └── strategy.ts             # Regex-based strategy detection (CDS, PDS, etc.)
-├── tasks/
+├── live/
 │   ├── factory.ts              # Message → Task (EXECUTE_TRADE or REVIEW_MESSAGE)
 │   ├── runner.ts               # Poll pending tasks, dispatch to agent, record trades
-│   └── recorder.ts             # Write steps + results + fill enrichment to DB
+│   └── recorder.ts             # Write task status (complete/fail/start) to DB
 ├── orders/
 │   └── risk-check.ts           # Pre-trade risk limits (max positions, drawdown, notional)
 ├── position-sizing/
@@ -118,7 +118,6 @@ web/
 | `messages` | Ingested chat messages with parsed badges, symbols, action/direction hints |
 | `message_labels` | Ground truth labels for eval (action, direction, strategy, strikes, expiry) |
 | `tasks` | Agent tasks: PENDING → IN_PROGRESS → COMPLETED/FAILED |
-| `task_steps` | Tool calls per task (tool name, input, output, reasoning, duration) |
 | `trades` | Open/closed trades with entry/exit price, P&L, broker fills, legs |
 | `tracked_traders` | Whitelist of traders to copy with position sizing config |
 | `backtest_runs` | Test runs with config, summary metrics, equity curve |
@@ -194,3 +193,27 @@ npm run test             # Vitest
 - Retry logic classifies errors: auth → 2 retries, transient → exponential backoff, permanent → fail immediately
 - Position sizing uses ATR-based approach: 5% equity risk per trade, 2x ATR stop loss
 - Risk limits: max 20 open positions, max 3 per symbol, 5% daily drawdown stop, 2x equity notional cap
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds

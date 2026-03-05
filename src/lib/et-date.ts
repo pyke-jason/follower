@@ -39,6 +39,11 @@ export function toDateKeyET(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: ET_TZ }); // YYYY-MM-DD
 }
 
+/** Format integer components directly to YYYY-MM-DD — no Date round-trip, no UTC/ET shift. */
+export function ymd(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 /** 0=Sun..6=Sat in ET. */
 function getDayOfWeekET(d: Date): number {
   const { year, month, day } = getETComponents(d);
@@ -127,6 +132,11 @@ export function getNextTradingDayKey(dayKey: string, maxCalendarDays = 10): stri
   return null;
 }
 
+/** Extract YYYY-MM-DD from an ISO timestamp string, or pass through if already a date key. */
+export function isoToDateKey(iso: string): string {
+  return iso.split('T')[0];
+}
+
 /** Parse a YYYY-MM-DD string to a Date (noon UTC to avoid DST ambiguity). */
 export function parseDateKey(day: string): Date {
   return new Date(`${day}T12:00:00Z`);
@@ -177,15 +187,59 @@ export function lastMarketCloseUTC(at: Date): Date {
   return marketCloseUTC(parseDateKey(prevKey));
 }
 
-// ── Date Helpers ────────────────────────────────────────────────────
+// ── ET-Anchored Date Helpers ─────────────────────────────────────────
 
-/** Returns the next Friday (YYYY-MM-DD) on or after referenceDate, using UTC day-of-week. */
-export function nextFriday(referenceDate: Date): string {
-  const d = new Date(referenceDate);
-  const dow = d.getUTCDay(); // 0=Sun, 5=Fri
-  const daysToAdd = dow <= 5 ? (5 - dow) : 6; // If Sat (6), next Fri is 6 days out
-  d.setUTCDate(d.getUTCDate() + daysToAdd);
-  return d.toISOString().split('T')[0];
+/** Noon-UTC anchor for the ET calendar day of `d`. Safe for UTC day-of-week arithmetic. */
+export function etAnchor(d: Date): Date {
+  return parseDateKey(toDateKeyET(d));
+}
+
+/** Friday of the current ET week (week containing `from`). */
+export function thisWeekFriday(from: Date): Date {
+  const anchor = etAnchor(from);
+  const dow = anchor.getUTCDay();
+  const result = new Date(anchor);
+  result.setUTCDate(result.getUTCDate() + (5 - dow));
+  return result;
+}
+
+/** Next Friday on or after `from` (ET calendar). If `from` IS a Friday in ET, returns `from`. */
+export function nextFridayET(from: Date): Date {
+  const anchor = etAnchor(from);
+  const dow = anchor.getUTCDay();
+  const daysUntilFriday = (5 - dow + 7) % 7;
+  const result = new Date(anchor);
+  result.setUTCDate(result.getUTCDate() + daysUntilFriday);
+  return result;
+}
+
+/** Friday of the NEXT ET calendar week (Mon–Sun week after the one containing `from`). */
+export function nextWeekFriday(from: Date): Date {
+  const anchor = etAnchor(from);
+  const dow = anchor.getUTCDay();
+  const daysToNextMonday = (8 - dow) % 7 || 7;
+  const result = new Date(anchor);
+  result.setUTCDate(result.getUTCDate() + daysToNextMonday + 4);
+  return result;
+}
+
+/** Third Friday of the given month (0-indexed month). Uses noon UTC to avoid ET-bleed. */
+export function thirdFriday(year: number, month: number): Date {
+  const d = new Date(Date.UTC(year, month, 1, 12, 0, 0));
+  const dow = d.getUTCDay();
+  const firstFridayDate = 1 + ((5 - dow + 7) % 7);
+  return new Date(Date.UTC(year, month, firstFridayDate + 14, 12, 0, 0));
+}
+
+/** Add `n` trading days (holiday-aware ET calendar) to `date`. */
+export function addBusinessDays(date: Date, n: number): Date {
+  let key = toDateKeyET(date);
+  for (let i = 0; i < n; i++) {
+    const next = getNextTradingDayKey(key);
+    if (!next) break;
+    key = next;
+  }
+  return parseDateKey(key);
 }
 
 // ── LLM-Friendly Formatting ─────────────────────────────────────────

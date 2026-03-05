@@ -13,8 +13,9 @@ import {
   getBacktestRunById,
   getRiskSnapshot,
 } from '@/lib/queries';
-import { formatCurrency, pnlColor } from '@/lib/format';
+import { formatCurrency, pnlColor, relativeTime, signalBorderColor, positionBorderColor } from '@/lib/format';
 import { buildHref } from '@/lib/run-scope';
+import { getEquityCurve } from '../../src/db/accessors';
 import { OverviewEquityCurve } from './components/overview-equity-curve';
 import { TraderLeaderboard } from './components/trader-leaderboard';
 import { RiskPanel } from './components/risk-panel';
@@ -22,28 +23,6 @@ import { ArrowRight, CheckCircle2, Clock, XCircle, AlertTriangle } from 'lucide-
 import { AutoRefresh } from './components/auto-refresh';
 
 export const dynamic = 'force-dynamic';
-
-function relativeTime(iso: string | null): string {
-  if (!iso) return '--';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'now';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-}
-
-function signalBorderColor(actionHint: string | null, directionHint: string | null): string {
-  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-loss/70';
-  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-profit/70';
-  return 'border-l-border';
-}
-
-function positionBorderColor(direction: string): string {
-  return direction === 'LONG' ? 'border-l-profit' : 'border-l-loss';
-}
 
 export default async function OverviewPage({
   searchParams,
@@ -70,10 +49,10 @@ export default async function OverviewPage({
 
   if (runId && backtestRun?.equityCurve) {
     // Backtest mode: use the run's equity curve
-    const curve = backtestRun.equityCurve as { date: string; cumulativePnl?: number; equity?: number }[];
+    const curve = getEquityCurve(backtestRun) ?? [];
     equityData = curve.map((pt) => ({
       date: pt.date,
-      equity: pt.cumulativePnl ?? pt.equity ?? 0,
+      equity: pt.cumPnl ?? pt.equity ?? 0,
     }));
   } else if (dailyBalances.length > 0) {
     // Live mode: use daily balance snapshots

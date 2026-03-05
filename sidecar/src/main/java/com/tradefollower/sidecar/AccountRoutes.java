@@ -21,7 +21,7 @@ public class AccountRoutes {
 
     // Tags to request from TWS account summary
     private static final String ACCOUNT_TAGS =
-            "NetLiquidation,AvailableFunds,MaintMarginReq,UnrealizedPnL";
+            "NetLiquidation,AvailableFunds,MaintMarginReq,UnrealizedPnL,Cushion,SMA-S,DayTradesRemaining,ExcessLiquidity-S";
 
     private final TwsBridge bridge;
 
@@ -34,8 +34,7 @@ public class AccountRoutes {
         app.get("/api/positions", this::positions);
     }
 
-    @SuppressWarnings("unchecked")
-    private void summary(Context ctx) {
+    private void summary(Context ctx) throws Exception {
         // Subscription-first: serve from persistent reqAccountUpdates data
         Map<String, String> subData = bridge.getAccountValues();
         if (bridge.isAccountSubscriptionActive() && !subData.isEmpty()) {
@@ -64,23 +63,28 @@ public class AccountRoutes {
         try {
             Map<String, Object> data = bridge.awaitRequest(future);
 
+            // Cancel subscription immediately — this is a one-shot query, not a persistent stream.
+            // Leaving it open exhausts TWS's limited account summary subscription slots.
+            bridge.getClient().cancelAccountSummary(reqId);
+
             ctx.json(Map.of(
                     "netLiquidation", data.getOrDefault("NetLiquidation", 0.0),
                     "availableFunds", data.getOrDefault("AvailableFunds", 0.0),
                     "maintenanceMargin", data.getOrDefault("MaintMarginReq", 0.0),
-                    "unrealizedPnl", data.getOrDefault("UnrealizedPnL", 0.0)
+                    "unrealizedPnl", data.getOrDefault("UnrealizedPnL", 0.0),
+                    "cushion", data.getOrDefault("Cushion", 0.0),
+                    "sma", data.getOrDefault("SMA-S", 0.0),
+                    "dayTradesRemaining", data.getOrDefault("DayTradesRemaining", 0.0),
+                    "excessLiquidity", data.getOrDefault("ExcessLiquidity-S", 0.0)
             ));
         } catch (TimeoutException e) {
             bridge.getClient().cancelAccountSummary(reqId);
             ctx.status(504).json(Map.of("error", "Account summary timed out"));
-        } catch (Exception e) {
-            String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            ctx.status(500).json(Map.of("error", msg));
         }
+        // Other exceptions propagate to global handler
     }
 
-    @SuppressWarnings("unchecked")
-    private void positions(Context ctx) {
+    private void positions(Context ctx) throws Exception {
         int reqId = bridge.getNextReqId();
         bridge.initPositionAccumulator(reqId);
         CompletableFuture<List<Map<String, Object>>> future = bridge.createRequest(reqId);
@@ -91,6 +95,7 @@ public class AccountRoutes {
 
         try {
             List<Map<String, Object>> positions = bridge.awaitRequest(future);
+            bridge.getClient().cancelPositions();
 
             // Enrich with marketValue/unrealizedPnl from portfolio subscription
             Map<Integer, Map<String, Object>> portfolio = bridge.getPortfolioPositions();
@@ -107,10 +112,8 @@ public class AccountRoutes {
         } catch (TimeoutException e) {
             bridge.getClient().cancelPositions();
             ctx.status(504).json(Map.of("error", "Positions request timed out"));
-        } catch (Exception e) {
-            String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            ctx.status(500).json(Map.of("error", msg));
         }
+        // Other exceptions propagate to global handler
     }
 
     private static double parseDouble(Map<String, String> map, String key) {

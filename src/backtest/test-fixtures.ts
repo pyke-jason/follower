@@ -7,7 +7,8 @@
 
 import fc from 'fast-check';
 import { sql } from 'drizzle-orm';
-import { parseOccSymbol } from './occ-symbology.js';
+import { btChannel } from '../lib/channel.js';
+import { parseOccSymbol } from '../lib/occ-symbology.js';
 import type { Quote, OrderParams } from '../broker/types.js';
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
@@ -49,6 +50,7 @@ export function makeStockBuyOrder(overrides: Partial<OrderParams> = {}): OrderPa
     direction: 'LONG',
     legs: [{ symbol: sym, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'BUY', quantity: 1 }],
     orderType: 'MARKET',
+    isClosing: false,
     ...overrides,
   };
 }
@@ -61,6 +63,7 @@ export function makeStockSellOrder(overrides: Partial<OrderParams> = {}): OrderP
     direction: 'SHORT',
     legs: [{ symbol: sym, strike: 0, expiry: '2026-12-31', type: 'STOCK', action: 'SELL', quantity: 1 }],
     orderType: 'MARKET',
+    isClosing: false,
     ...overrides,
   };
 }
@@ -279,8 +282,7 @@ export const CREATE_TRADES_SQL = sql`
     opened_at TEXT,
     closed_at TEXT,
     close_message_id TEXT,
-    is_backtest INTEGER DEFAULT 0,
-    backtest_run_id TEXT,
+    channel_id TEXT NOT NULL DEFAULT 'live:12345',
     metadata TEXT DEFAULT '{}',
     avg_entry_price TEXT,
     realized_pnl TEXT,
@@ -346,7 +348,7 @@ export const CREATE_TASKS_SQL = sql`
     error TEXT,
     model_provider TEXT,
     model_name TEXT,
-    backtest_run_id TEXT
+    channel_id TEXT
   )
 `;
 
@@ -422,8 +424,7 @@ export function makeDbHelpers(db: any, schema: any, defaultRunId = 'test-run') {
         status: 'OPEN',
         entryPrice: String(params.entryPrice),
         quantity: params.quantity,
-        isBacktest: true,
-        backtestRunId: params.runId ?? defaultRunId,
+        channelId: btChannel(params.runId ?? defaultRunId),
         openedAt: params.openedAt ?? new Date().toISOString(),
       });
       return id;
@@ -446,8 +447,7 @@ export function makeDbHelpers(db: any, schema: any, defaultRunId = 'test-run') {
         exitPrice: String(params.exitPrice),
         quantity: params.quantity,
         pnl: String(params.pnl),
-        isBacktest: true,
-        backtestRunId: params.runId ?? defaultRunId,
+        channelId: btChannel(params.runId ?? defaultRunId),
         openedAt: new Date().toISOString(),
         closedAt: new Date().toISOString(),
       });
@@ -467,8 +467,7 @@ export function makeDbHelpers(db: any, schema: any, defaultRunId = 'test-run') {
         status: 'OPEN',
         entryPrice: String(params.entryPrice),
         quantity: params.quantity,
-        isBacktest: true,
-        backtestRunId: defaultRunId,
+        channelId: btChannel(defaultRunId),
         openedAt: new Date().toISOString(),
       });
       return id;

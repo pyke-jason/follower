@@ -176,6 +176,38 @@
       "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
       "tags": ["core", "stock"],
       "notes": "Stock short entry. data-symbol is 'MNSTR' (DB typo) but bold text reads 'MSTR'. Parser uses extractSymbols from data-symbol attributes."
+    },
+    {
+      "id": "core-011",
+      "description": "Long badge + AAPL $230 Calls 9/12 for $9.60 — Hariseldon buy-to-open naked call",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/AAPL\" target=\"os\" data-symbol=\"AAPL\"><b>AAPL</b></a> $230 Calls 9/12 for $9.60 - 20 Contracts&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-04T18:52:55.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "AAPL",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 230, "expiry": "2025-09-12" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].symbol",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike",
+        "signals[0].legs[0].expiry"
+      ],
+      "tags": ["core", "call", "naked-call", "hariseldon"],
+      "notes": "Straightforward naked call buy. Long badge = bullish view, consistent with buying calls. 20 contracts, $9.60 premium. DB message id: 464161."
     }
   ]
 }

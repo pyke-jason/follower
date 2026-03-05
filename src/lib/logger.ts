@@ -1,10 +1,12 @@
+import { z } from 'zod';
 import { formatLogTimestampET } from './et-logging.js';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export const LogLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
+export type LogLevel = z.infer<typeof LogLevelSchema>;
 
 const LEVELS: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
-let currentLevel: LogLevel = (process.env.LOG_LEVEL as LogLevel) ?? 'info';
+let currentLevel: LogLevel = LogLevelSchema.catch('info').parse(process.env.LOG_LEVEL);
 
 export function setLogLevel(level: LogLevel): void {
   currentLevel = level;

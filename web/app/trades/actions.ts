@@ -1,7 +1,8 @@
 'use server';
 
 import { db, schema } from '@/lib/db';
-import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, TaskResult } from '@db/schema';
+import type { TradeLeg, Trade, TradeEvent, Task, Message, TaskContext, RunDecision } from '@src/db/schema';
+import { btChannel } from '@src/lib/channel';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import {
@@ -10,7 +11,9 @@ import {
   getTaskById,
   getMessagesByAuthorAndSymbol,
   getMessageById,
+  getMessagesByIds,
   getRunDecisionForTask,
+  getDecisionsForTrade,
 } from '@/lib/queries';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
@@ -58,22 +61,32 @@ export async function forceExitTrade(formData: FormData) {
 
 // ─── Trade Story (expanded row data) ────────────────
 
+export type TradeStoryDecision = {
+  outcome: string | null;
+  reasoning: string | null;
+  phase: string | null;
+  durationMs: number | null;
+  pnl: string | null;
+};
+
+export type TimelineMessage = {
+  id: string;
+  cleanText: string;
+  author: string;
+  timestamp: string;
+};
+
 export type TradeStory = {
   trade: Trade;
   events: TradeEvent[];
   task: Task | null;
   taskContext: TaskContext | null;
-  taskResult: TaskResult | null;
   sourceMessage: Message | null;
   closeMessage: Message | null;
   nearbyMessages: Message[];
-  decision: {
-    decision: string;
-    reasoning: string | null;
-    path: string | null;
-    durationMs: number | null;
-    pnl: string | null;
-  } | null;
+  decision: TradeStoryDecision | null;
+  decisions: RunDecision[];
+  timelineMessages: TimelineMessage[];
 };
 
 export async function fetchTradeStory(tradeId: string, runId?: string): Promise<TradeStory | null> {
@@ -92,32 +105,38 @@ export async function fetchTradeStory(tradeId: string, runId?: string): Promise<
     sourceMessage && trade.symbol
       ? getMessagesByAuthorAndSymbol(sourceMessage.author, trade.symbol)
       : Promise.resolve([]),
-    runId && trade.sourceMessageId ? getRunDecisionForTask(trade.sourceMessageId, runId) : Promise.resolve(null),
+    trade.sourceMessageId
+      ? getRunDecisionForTask(trade.sourceMessageId, {
+          channelId: runId ? btChannel(runId) : undefined,
+          taskId: !runId && trade.taskId ? trade.taskId : undefined,
+        })
+      : Promise.resolve(null),
   ]);
 
-  // Extract decision from run_decisions (backtest) or task result (live)
-  let decision: TradeStory['decision'] = null;
+  // Extract decision from run_decisions (works for both backtest and live)
+  let decision: TradeStoryDecision | null = null;
   if (runDecisionRow) {
     decision = {
-      decision: runDecisionRow.decision,
+      outcome: runDecisionRow.outcome,
       reasoning: runDecisionRow.reasoning,
-      path: runDecisionRow.path,
+      phase: runDecisionRow.phase,
       durationMs: runDecisionRow.durationMs,
       pnl: runDecisionRow.pnl,
-    };
-  } else if (task?.result) {
-    decision = {
-      decision: task.result.decision ?? '',
-      reasoning: task.result.reasoning ?? null,
-      path: null,
-      durationMs: null,
-      pnl: null,
     };
   }
 
   const taskContext = task?.context ?? null;
-  const taskResult = task?.result ?? null;
 
-  return { trade, events, task, taskContext, taskResult, sourceMessage, closeMessage, nearbyMessages, decision };
+  // Fetch full decisions for the execution timeline
+  const decisions = await getDecisionsForTrade(trade);
+  const knownMessageIds = new Set([trade.sourceMessageId, trade.closeMessageId].filter(Boolean));
+  const intermediateIds = [...new Set(decisions.map(d => d.messageId))].filter(id => !knownMessageIds.has(id));
+  const intermediateMessages = intermediateIds.length > 0 ? await getMessagesByIds(intermediateIds) : [];
+
+  const timelineMessages: TimelineMessage[] = [sourceMessage, closeMessage, ...intermediateMessages]
+    .filter((m): m is NonNullable<typeof m> => m != null)
+    .map(m => ({ id: m.id, cleanText: m.cleanText, author: m.author, timestamp: m.timestamp }));
+
+  return { trade, events, task, taskContext, sourceMessage, closeMessage, nearbyMessages, decision, decisions, timelineMessages };
 }
 

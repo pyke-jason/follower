@@ -17,23 +17,26 @@
  * See docs/plan-orchestrator-technical.md for the full design.
  */
 
+import type { Message } from '../../db/schema.js';
 import { createLogger } from '../../lib/logger.js';
-import type { LLMProvider } from '../../agent/providers.js';
 import { parseMessage } from './parser.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath } from './position-path.js';
 import { resolveLLMPath } from './llm-path.js';
+import { getRecentChatMessages, formatChatContext } from '../trader-context.js';
 import type {
   OrchestratorContext,
+  OrchestratorEnv,
   OrchestratorResult,
   ParseResult,
+  SerializedParseResult,
   ResolvedSignal,
   Leg,
 } from './types.js';
 
-export type { OrchestratorContext, OrchestratorResult, ResolvedSignal };
+export type { OrchestratorEnv, OrchestratorResult, ResolvedSignal };
 export type { Leg, OptionLeg, StockLeg } from './types.js';
-export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, OpenPosition, TraderConfig } from './types.js';
+export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, OpenPosition, SignalEventEmitter } from './types.js';
 
 const log = createLogger('Orchestrator');
 
@@ -42,15 +45,20 @@ const log = createLogger('Orchestrator');
 /**
  * Resolve a trading message to concrete signals (or SKIP/FLAG outcome).
  *
- * @param ctx      All context the orchestrator might need (message, market data, positions, chat)
- * @param provider Optional LLM provider. Required if the message needs NLU (complex language,
- *                 casual exits, follow trades). If null and the LLM path is triggered,
- *                 returns MANUAL_REVIEW.
+ * Builds OrchestratorContext internally from the message and env.
+ * Emits PARSED + SETTLED (for skips) or SIGNAL_RESOLVED (for executes) via env.emitter.
+ *
+ * @param message  The chat message to resolve
+ * @param env      Pipeline environment (positions, LLM, broker, emitter)
+ * @param opts     Optional: failureContext for 422 retry
  */
 export async function resolveOrchestrator(
-  ctx: OrchestratorContext,
-  provider?: LLMProvider,
+  message: Message,
+  env: OrchestratorEnv,
+  opts?: { failureContext?: { error: string } },
 ): Promise<OrchestratorResult> {
+  // Build internal context from message + env
+  const ctx = await buildContext(message, env, opts?.failureContext);
   const parse = parseMessage(ctx);
 
   log.debug(
@@ -60,10 +68,18 @@ export async function resolveOrchestrator(
     `hardSkip=${parse.isHardSkip} strangle=${parse.isStrangle}`,
   );
 
+  const serializedParse = serializeParseResult(parse);
+
   // ── 1. Hard skip ────────────────────────────────────────────────────────────
   if (parse.isHardSkip) {
-    logResult(ctx, parse, { outcome: 'SKIP', reason: parse.skipReason ?? 'hard skip' });
-    return { outcome: 'SKIP', reason: parse.skipReason ?? 'hard skip' };
+    const result: OrchestratorResult = {
+      outcome: 'SKIP',
+      reason: parse.skipReason ?? 'hard skip',
+      parseResult: serializedParse,
+    };
+    logResult(ctx, parse, result);
+    await emitOrchestratorEvents(env, result, serializedParse, 'hard-skip');
+    return result;
   }
 
   // ── 2. Strangle ─────────────────────────────────────────────────────────────
@@ -71,36 +87,45 @@ export async function resolveOrchestrator(
   if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
     log.debug(`[${ctx.messageId}] strangle exit → per-position close`);
     const r = await resolveStrangleExit(parse, ctx);
-    logResult(ctx, parse, r);
-    return r;
+    const result = { ...r, parseResult: serializedParse };
+    logResult(ctx, parse, result);
+    await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+    return result;
   }
 
   // Strangle/straddle OPEN: decompose into CALL + PUT signals
   if (parse.isStrangle) {
     log.debug(`[${ctx.messageId}] strangle → forking into CALL + PUT`);
     const r = await resolveStrangle(parse, ctx);
-    logResult(ctx, parse, r);
-    return r;
+    const result = { ...r, parseResult: serializedParse };
+    logResult(ctx, parse, result);
+    await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+    return result;
   }
 
   // ── 3 & 4. Deterministic paths ──────────────────────────────────────────────
   // Only take the fast path when there are no complexity flags and the action
-  // was unambiguously determined.
-  const needsLLM = parse.complexityFlags.size > 0 || parse.action === null;
+  // was unambiguously determined. A failureContext means execution already tried
+  // the deterministic result and got a 422 — force LLM to correct the strike.
+  const needsLLM = parse.complexityFlags.size > 0 || parse.action === null || ctx.failureContext != null;
 
   if (!needsLLM) {
     if (parse.action === 'ADD') {
       log.debug(`[${ctx.messageId}] → add path`);
       const r = await resolveAddPath(parse, ctx);
-      logResult(ctx, parse, r);
-      return r;
+      const result = { ...r, parseResult: serializedParse };
+      logResult(ctx, parse, result);
+      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+      return result;
     }
 
     if (parse.action === 'OPEN') {
       log.debug(`[${ctx.messageId}] → open path`);
       const r = await resolveOpenPath(parse, ctx);
-      logResult(ctx, parse, r);
-      return r;
+      const result = { ...r, parseResult: serializedParse };
+      logResult(ctx, parse, result);
+      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+      return result;
     }
 
     if (
@@ -110,32 +135,111 @@ export async function resolveOrchestrator(
     ) {
       log.debug(`[${ctx.messageId}] → position path (${parse.action})`);
       const r = await resolvePositionPath(parse, ctx);
-      logResult(ctx, parse, r);
-      return r;
+      const result = { ...r, parseResult: serializedParse };
+      logResult(ctx, parse, result);
+      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+      return result;
     }
   }
 
   // ── 5. LLM path ─────────────────────────────────────────────────────────────
-  const flagDetail = parse.complexityFlags.size > 0
-    ? `flags: [${Array.from(parse.complexityFlags).join(', ')}]`
-    : 'action=null';
+  const flagDetail = ctx.failureContext != null
+    ? '422-retry'
+    : parse.complexityFlags.size > 0
+      ? `flags: [${Array.from(parse.complexityFlags).join(', ')}]`
+      : 'action=null';
   log.debug(`[${ctx.messageId}] → LLM path (${flagDetail})`);
 
-  if (!provider) {
+  if (!env.llm) {
     log.warn(
       `[${ctx.messageId}] LLM path needed (${flagDetail}) but no provider supplied`,
     );
-    const r: OrchestratorResult = {
+    const result: OrchestratorResult = {
       outcome: 'MANUAL_REVIEW',
       reason: `Requires NLU (${flagDetail}) but no LLM provider available`,
+      parseResult: serializedParse,
     };
-    logResult(ctx, parse, r);
-    return r;
+    logResult(ctx, parse, result);
+    await emitOrchestratorEvents(env, result, serializedParse, 'llm');
+    return result;
   }
 
-  const r = await resolveLLMPath(parse, ctx, provider);
-  logResult(ctx, parse, r);
-  return r;
+  const r = await resolveLLMPath(parse, ctx, env.llm);
+  const result = { ...r, parseResult: serializedParse };
+  logResult(ctx, parse, result);
+  await emitOrchestratorEvents(env, result, serializedParse, 'llm');
+  return result;
+}
+
+// ── Build internal context ───────────────────────────────────────────────────
+
+async function buildContext(
+  message: Message,
+  env: OrchestratorEnv,
+  failureContext?: { error: string },
+): Promise<OrchestratorContext> {
+  return {
+    messageId: message.id,
+    rawHtml: message.rawHtml,
+    cleanText: message.cleanText,
+    badges: (message.badges as string[]) ?? [],
+    symbols: (message.symbols as string[]) ?? [],
+    timestamp: message.timestamp,
+    author: message.author,
+    marketData: {
+      getQuote: (s) => env.broker.getQuote(s),
+      getOptionChain: async () => null,
+      getExpiryDates: async () => [],
+    },
+    positions: {
+      getPositions: env.getPositions,
+    },
+    chatHistory: {
+      getRecentMessages: async (author?: string, limit?: number) => {
+        const msgs = await getRecentChatMessages(message.timestamp, author, limit);
+        return formatChatContext(msgs);
+      },
+    },
+    failureContext,
+  };
+}
+
+// ── Emit orchestrator events ──────────────────────────────────────────────────
+
+async function emitOrchestratorEvents(
+  env: OrchestratorEnv,
+  result: OrchestratorResult,
+  serializedParse: SerializedParseResult,
+  route: 'deterministic' | 'llm' | 'hard-skip',
+): Promise<void> {
+  // Always emit PARSED — include route so timeline knows how we got here
+  await env.emitter.emit('PARSED', { ...serializedParse, route });
+
+  // For EXECUTE, emit SIGNAL_RESOLVED per signal
+  // Non-EXECUTE outcomes: SETTLED is emitted by the caller (runner), not here
+  if (result.outcome === 'EXECUTE') {
+    for (let i = 0; i < result.signals.length; i++) {
+      const signal = result.signals[i];
+      await env.emitter.emit('SIGNAL_RESOLVED', {
+        orderType: signal.orderType,
+        legs: signal.legs,
+        limitPrice: signal.limitPrice,
+        tradeId: signal.tradeId,
+      }, {
+        signalIndex: i,
+        tradeId: signal.tradeId ?? null,
+        inputTokens: result.usage?.inputTokens ?? null,
+        outputTokens: result.usage?.outputTokens ?? null,
+      });
+    }
+  }
+}
+
+// ── Serialize ParseResult for snapshot ────────────────────────────────────────
+
+function serializeParseResult(parse: ParseResult): SerializedParseResult {
+  const { complexityFlags, targetStrategy, skipReason, ...rest } = parse;
+  return { ...rest, complexityFlags: Array.from(complexityFlags) };
 }
 
 // ── Info-level summary log ────────────────────────────────────────────────────
@@ -145,7 +249,7 @@ function logResult(ctx: OrchestratorContext, parse: ParseResult, result: Orchest
   const who = ctx.author;
 
   if (result.outcome === 'SKIP') {
-    log.info(`${id} ${who} | SKIP ${result.reason}`);
+    log.info(`${id} ${who} | SKIP ${result.reason}\n  msg: ${ctx.cleanText}`);
     return;
   }
 
@@ -165,9 +269,9 @@ function logResult(ctx: OrchestratorContext, parse: ParseResult, result: Orchest
 
   if (result.outcome === 'EXECUTE') {
     const legCount = result.signals.reduce((n, s) => n + s.legs.length, 0);
-    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)`);
+    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)\n  msg: ${ctx.cleanText}`);
   } else {
-    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}`);
+    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}\n  msg: ${ctx.cleanText}`);
   }
 }
 
@@ -260,6 +364,7 @@ async function resolveStrangleExit(
       };
     });
     signals.push({
+      action: 'CLOSE',
       orderType: legs.length > 1 ? 'SPREAD' : 'SINGLE',
       legs,
       tradeId: pos.id,

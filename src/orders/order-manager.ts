@@ -3,14 +3,22 @@ import type { FilledWorkingOrder, OrderResult, WorkingOrder, WorkingOrderParams 
 import { WorkingOrderParamsSchema, OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { roundCents } from '../lib/numbers.js';
+import { notionalValue } from '../lib/trade.js';
 
 const log = createLogger('OrderMgr');
+
+export type WorkingOrderExposure = {
+  totalCount: number;
+  countBySymbol: Map<string, number>;
+  totalNotional: number;
+};
 
 export type OrderManagerConfig = {
   broker: BrokerService;
   clock: () => Date;
-  onFill?: (order: FilledWorkingOrder) => void | Promise<void>;
-  onCancel?: (order: WorkingOrder) => void;
+  onFill: (order: FilledWorkingOrder) => void | Promise<void>;
+  onCancel: (order: WorkingOrder) => void | Promise<void>;
+  onAdjust: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
   manualTick?: boolean;
 };
@@ -18,8 +26,9 @@ export type OrderManagerConfig = {
 export class OrderManager {
   private broker: BrokerService;
   private clock: () => Date;
-  private onFill?: (order: FilledWorkingOrder) => void;
-  private onCancel?: (order: WorkingOrder) => void;
+  private onFill: (order: FilledWorkingOrder) => void | Promise<void>;
+  private onCancel: (order: WorkingOrder) => void | Promise<void>;
+  private onAdjust: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   private manualTick: boolean;
   private workingOrders = new Map<string, WorkingOrder>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -29,6 +38,7 @@ export class OrderManager {
     this.clock = config.clock;
     this.onFill = config.onFill;
     this.onCancel = config.onCancel;
+    this.onAdjust = config.onAdjust;
     this.manualTick = config.manualTick ?? false;
   }
 
@@ -95,14 +105,14 @@ export class OrderManager {
         order.legFills = status.legFills;
         this.workingOrders.delete(orderId);
         log.info(`Fill: ${orderId} ${order.params.symbol} @ $${status.filledPrice}`);
-        await this.onFill?.(order as FilledWorkingOrder);
+        await this.onFill(order as FilledWorkingOrder);
         this.stopTimerIfEmpty();
         continue;
       } else if (status.status === 'CANCELLED' || status.status === 'REJECTED') {
         order.status = status.status;
         order.cancelledAt = now;
         this.workingOrders.delete(orderId);
-        this.onCancel?.(order);
+        await this.onCancel(order);
         this.stopTimerIfEmpty();
         continue;
       }
@@ -116,7 +126,7 @@ export class OrderManager {
           order.status = 'CANCELLED';
           order.cancelledAt = now;
           this.workingOrders.delete(orderId);
-          this.onCancel?.(order);
+          await this.onCancel(order);
           this.stopTimerIfEmpty();
           continue;
         }
@@ -147,16 +157,41 @@ export class OrderManager {
           }
           const isBuy = firstLeg.action === 'BUY';
           const totalMovement = stepsToApply * rule.stepAmount;
-          const newPrice = isBuy
+          let newPrice = isBuy
             ? order.currentLimitPrice + totalMovement
             : order.currentLimitPrice - totalMovement;
 
-          const roundedPrice = roundCents(newPrice);
-          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${order.currentLimitPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
-          await this.broker.modifyOrder(orderId, roundedPrice);
+          // Clamp to chaseLimit boundary
+          if (rule.chaseLimit != null) {
+            newPrice = isBuy
+              ? Math.min(newPrice, rule.chaseLimit)   // BUY: don't exceed ceiling
+              : Math.max(newPrice, rule.chaseLimit);   // SELL: don't go below floor
+          }
+
+          const roundedPrice = roundCents(Math.max(0.01, newPrice));
+          const oldPrice = order.currentLimitPrice;
+          log.debug(`Price chase: ${orderId} ${isBuy ? 'BUY' : 'SELL'} $${oldPrice} -> $${roundedPrice} (${stepsToApply} steps, total ${order.adjustmentCount + stepsToApply}/${rule.maxSteps ?? '∞'})`);
+          const modResult = await this.broker.modifyOrder(orderId, roundedPrice);
           order.currentLimitPrice = roundedPrice;
           order.lastAdjustedAt = now;
           order.adjustmentCount += stepsToApply;
+          await this.onAdjust(order, oldPrice, roundedPrice, order.adjustmentCount);
+
+          // Broker may fill immediately if the new limit crosses the market
+          if (modResult.status === 'FILLED' && modResult.filledPrice != null && modResult.fillTimestamp != null) {
+            order.status = 'FILLED';
+            order.filledPrice = modResult.filledPrice;
+            order.filledAt = new Date(modResult.fillTimestamp);
+            order.filledQuantity = modResult.filledQuantity;
+            order.commission = modResult.commission;
+            order.fillTimestamp = modResult.fillTimestamp;
+            order.legFills = modResult.legFills;
+            this.workingOrders.delete(orderId);
+            log.info(`Fill on modify: ${orderId} ${order.params.symbol} @ $${modResult.filledPrice}`);
+            await this.onFill(order as FilledWorkingOrder);
+            this.stopTimerIfEmpty();
+            break; // exit adjustmentRules loop
+          }
         }
       }
     }
@@ -164,6 +199,24 @@ export class OrderManager {
 
   getWorkingOrders(): WorkingOrder[] {
     return Array.from(this.workingOrders.values());
+  }
+
+  getExposure(): WorkingOrderExposure {
+    const countBySymbol = new Map<string, number>();
+    let totalNotional = 0;
+    let totalCount = 0;
+    for (const wo of this.workingOrders.values()) {
+      if (wo.status !== 'OPEN') continue;
+      totalCount++;
+      const sym = wo.params.symbol;
+      countBySymbol.set(sym, (countBySymbol.get(sym) ?? 0) + 1);
+      totalNotional += notionalValue(
+        wo.currentLimitPrice,
+        wo.params.legs[0]?.quantity ?? 1,
+        wo.params.strategy,
+      );
+    }
+    return { totalCount, countBySymbol, totalNotional };
   }
 
   private startTimerIfNeeded(): void {

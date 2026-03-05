@@ -10,9 +10,10 @@ import {
   readCachedRanges, readCachedTicks, writeCachedTicks,
 } from './tick-cache-db.js';
 import type { TickCacheDB } from './tick-cache-db.js';
-import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from './occ-symbology.js';
+import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from '../lib/occ-symbology.js';
 import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
+import { QuoteResolutionError } from '../lib/errors.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('MarketData');
@@ -308,7 +309,10 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
    */
   private async ensureRange(symbol: string, start: Date, end: Date, schemaOverride?: string): Promise<QuoteTick[]> {
     if (this.deadSymbols.has(symbol)) {
-      throw new Error(`[MarketData] "${symbol}" skipped — prior 4xx blacklisted it this run`);
+      throw new QuoteResolutionError(
+        `[MarketData] "${symbol}" skipped — prior 4xx blacklisted it this run`,
+        symbol,
+      );
     }
 
     const startMs = start.getTime();
@@ -366,6 +370,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
         if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
           this.deadSymbols.add(symbol);
           log.warn(`[MarketData] Blacklisting "${symbol}" after HTTP ${err.status} — won't retry this run`);
+          if (err.status === 422) {
+            throw new QuoteResolutionError(`[ensureRange] Failed to fetch ${symbol}: ${err.message}`, symbol);
+          }
         }
         throw new Error(`[ensureRange] Failed to fetch ${symbol} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}: ${err instanceof Error ? err.message : err}`);
       }

@@ -4,9 +4,13 @@ import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
-import type { ExtendedMetrics, LiveMetrics } from '../backtest/types.js';
-import { LegTypeSchema, LegActionSchema } from '../lib/enums.js';
+import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
 import type { Direction, Strategy } from '../lib/enums.js';
+
+// Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
+// relative imports (its CJS bundler can't handle them).
+const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
+const LegActionSchema = z.enum(['BUY', 'SELL']);
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
 
@@ -28,9 +32,11 @@ export const messages = sqliteTable('messages', {
   isPaperTrade:       integer('is_paper_trade', { mode: 'boolean' }).default(false),
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
+  contentHash:        text('content_hash'),        // sha256 of normalized clean_text for dedup
 }, (table) => [
   index('idx_messages_author').on(table.author),
   index('idx_messages_timestamp').on(table.timestamp),
+  index('idx_messages_content_hash').on(table.author, table.contentHash),
 ]);
 
 // ─── Message Labels (Eval Ground Truth) ─────────────
@@ -59,35 +65,19 @@ export const tasks = sqliteTable('tasks', {
   assignee:    text('assignee').notNull().default('agent'),
   priority:    integer('priority').default(0),
   context:     text('context', { mode: 'json' }).$type<TaskContext>().default({}),
-  result:      text('result', { mode: 'json' }).$type<TaskResult | null>(),
+  result:      text('result', { mode: 'json' }).$type<{ outcome: string } | null>(),
   createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:   text('started_at'),
   completedAt: text('completed_at'),
   error:         text('error'),
   modelProvider: text('model_provider'),  // 'anthropic' | 'xai'
   modelName:     text('model_name'),      // full model ID or null
-  backtestRunId: text('backtest_run_id').references(() => backtestRuns.id),
+  channelId:     text('channel_id'),
 }, (table) => [
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_message').on(table.messageId),
-  index('idx_tasks_backtest_run').on(table.backtestRunId),
+  index('idx_tasks_channel').on(table.channelId),
   uniqueIndex('idx_tasks_message_unique').on(table.messageId).where(sql`message_id IS NOT NULL`),
-]);
-
-// ─── Task Steps ──────────────────────────────────────
-
-export const taskSteps = sqliteTable('task_steps', {
-  id:          text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  taskId:      text('task_id').references(() => tasks.id).notNull(),
-  stepNumber:  integer('step_number').notNull(),
-  toolName:    text('tool_name'),
-  toolInput:   text('tool_input', { mode: 'json' }),
-  toolOutput:  text('tool_output', { mode: 'json' }),
-  reasoning:   text('reasoning'),
-  durationMs:  integer('duration_ms'),
-  createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
-}, (table) => [
-  index('idx_steps_task').on(table.taskId),
 ]);
 
 // ─── Trades ──────────────────────────────────────────
@@ -109,8 +99,7 @@ export const trades = sqliteTable('trades', {
   openedAt:        text('opened_at'),
   closedAt:        text('closed_at'),
   closeMessageId:  text('close_message_id').references(() => messages.id),
-  isBacktest:      integer('is_backtest', { mode: 'boolean' }).default(false),
-  backtestRunId:   text('backtest_run_id').references(() => backtestRuns.id),
+  channelId:       text('channel_id').notNull(),
   metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().default({}),
   avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
@@ -123,7 +112,7 @@ export const trades = sqliteTable('trades', {
   index('idx_trades_trader').on(table.trader),
   index('idx_trades_symbol').on(table.symbol),
   index('idx_trades_status').on(table.status),
-  index('idx_trades_backtest_run').on(table.backtestRunId),
+  index('idx_trades_channel').on(table.channelId),
 ]);
 
 // ─── Trade Events (append-only action log) ──────────
@@ -155,9 +144,9 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   status:          text('status').notNull().default('PENDING'), // PENDING | RUNNING | COMPLETED | FAILED
   config:          text('config', { mode: 'json' }).$type<BacktestRunConfig>().notNull(),
   summary:         text('summary', { mode: 'json' }).$type<BacktestRunSummary | null>(),
-  byTrader:        text('by_trader', { mode: 'json' }).$type<Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number }> | null>(),
-  byStrategy:      text('by_strategy', { mode: 'json' }).$type<Record<string, { trades: number; wins: number; losses: number; winRate: number; totalPnl: number; avgPnl: number }> | null>(),
-  equityCurve:     text('equity_curve', { mode: 'json' }).$type<{ date: string; pnl: number; cumPnl: number; trades: number; unrealizedPnl?: number; equity?: number }[] | null>(),
+  byTrader:        text('by_trader', { mode: 'json' }).$type<Record<string, TraderStats> | null>(),
+  byStrategy:      text('by_strategy', { mode: 'json' }).$type<Record<string, StrategyStats> | null>(),
+  equityCurve:     text('equity_curve', { mode: 'json' }).$type<EquityPoint[] | null>(),
   createdAt:       text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:       text('started_at'),
   completedAt:     text('completed_at'),
@@ -179,35 +168,43 @@ export const backtestRuns = sqliteTable('backtest_runs', {
 
 export const runDecisions = sqliteTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id).notNull(),
+  channelId:      text('channel_id'),
+  taskId:         text('task_id').references(() => tasks.id),
   messageId:      text('message_id').references(() => messages.id).notNull(),
-  path:           text('path').notNull(),          // 'agent' | 'skipped'
-  decision:       text('decision').notNull(),      // 'EXECUTE' | 'SKIP'
+  event:          text('event').notNull().default('SETTLED'),
+  signalIndex:    integer('signal_index'),
+  outcome:        text('outcome'),
+  phase:          text('phase'),
   reasoning:      text('reasoning'),
-  skipCategory:   text('skip_category'),           // e.g. 'risk blocked', 'agent skip', 'no open position'
   tradeId:        text('trade_id'),                // FK to resulting trade (null if SKIP)
   pnl:            text('pnl'),                     // outcome P&L, back-filled after close
+  snapshot:       text('snapshot', { mode: 'json' }).$type<Record<string, unknown> | null>(),
   durationMs:     integer('duration_ms'),
   inputTokens:    integer('input_tokens'),          // LLM input tokens (null for deterministic skips)
   outputTokens:   integer('output_tokens'),         // LLM output tokens (null for deterministic skips)
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
+  path:           text('path'),                    // LEGACY
+  decision:       text('decision'),                // LEGACY
+  skipCategory:   text('skip_category'),
 }, (table) => [
-  index('idx_run_decisions_run').on(table.backtestRunId),
+  index('idx_run_decisions_channel').on(table.channelId),
   index('idx_run_decisions_message').on(table.messageId),
-  index('idx_run_decisions_run_message').on(table.backtestRunId, table.messageId),
+  index('idx_run_decisions_channel_message').on(table.channelId, table.messageId),
+  index('idx_run_decisions_task').on(table.taskId),
+  index('idx_run_decisions_settled').on(table.channelId, table.event),
 ]);
 
 // ─── Backtest MTM Snapshots ──────────────────────────
 
 export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  backtestRunId:  text('backtest_run_id').references(() => backtestRuns.id).notNull(),
+  channelId:      text('channel_id').notNull(),
   date:           text('date').notNull(),           // YYYY-MM-DD (trading day)
   unrealizedPnl:  real('unrealized_pnl').notNull(),
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
-  index('idx_mtm_snapshots_run').on(table.backtestRunId),
-  index('idx_mtm_snapshots_run_date').on(table.backtestRunId, table.date),
+  index('idx_mtm_snapshots_channel').on(table.channelId),
+  index('idx_mtm_snapshots_channel_date').on(table.channelId, table.date),
 ]);
 
 // ─── Tracked Traders ─────────────────────────────────
@@ -256,6 +253,25 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
   index('idx_recon_alerts_resolved').on(table.resolved),
   index('idx_recon_alerts_symbol').on(table.symbol),
 ]);
+
+// ─── Orphan Fills ─────────────────────────────────────
+
+export const orphanFills = sqliteTable('orphan_fills', {
+  orderId: text('order_id').primaryKey(),
+  symbol: text('symbol').notNull(),
+  strategy: text('strategy').notNull(),
+  direction: text('direction').notNull(),
+  filledPrice: real('filled_price').notNull(),
+  filledAt: text('filled_at').notNull(),
+  filledQuantity: integer('filled_quantity'),
+  commission: real('commission'),
+  legs: text('legs'),
+  rawOrder: text('raw_order'),
+  detectedAt: text('detected_at').notNull(),
+  resolved: integer('resolved').default(0),
+  taskId: text('task_id'),
+  channelId: text('channel_id'),
+});
 
 // ─── Historical Fetch Runs ──────────────────────────
 
@@ -342,7 +358,7 @@ export type BacktestRunConfig = {
   fillModel?: 'orats' | 'midpoint' | 'natural';
   name?: string;           // human label for the run
   refreshQuoteCache?: boolean;
-  startingEquity?: number;
+  startingEquity: number;
   maxAgentCalls?: number;
   // Risk limit overrides (see BACKTEST_RISK_DEFAULTS in src/config/risk-defaults.ts for defaults)
   maxOnSymbol?: number;
@@ -350,7 +366,7 @@ export type BacktestRunConfig = {
   maxDrawdownPct?: number;
   maxNotionalMultiplier?: number;
   disableRiskLimits?: boolean;
-  commissionSchedule?: CommissionSchedule;
+  commissionSchedule: CommissionSchedule;
 };
 
 export type BacktestRunSummary = {
@@ -375,14 +391,16 @@ export type BacktestRunSummary = {
 
 // ─── Supporting Types ────────────────────────────────
 
-export type DetectedStrategy = {
-  strategy: string;
-  confidence: number;
-  strikes?: number[];
-  expiry?: string;
-  price?: number;
-  quantity?: number;
-};
+export const DetectedStrategySchema = z.object({
+  strategy: z.string(),
+  confidence: z.number(),
+  strikes: z.array(z.number()).optional(),
+  expiry: z.string().optional(),
+  price: z.number().optional(),
+  quantity: z.number().optional(),
+});
+
+export type DetectedStrategy = z.infer<typeof DetectedStrategySchema>;
 
 export const TradeLegSchema = z.object({
   symbol: z.string(),
@@ -396,20 +414,21 @@ export const TradeLegSchema = z.object({
 
 export type TradeLeg = z.infer<typeof TradeLegSchema>;
 
-export type TaskContext = {
-  messageId?: string;
-  messageTimestamp?: string;  // ISO 8601 — when the chat message was posted
-  author?: string;
-  cleanText?: string;
-  rawHtml?: string;           // original HTML — used to derive llmText with inline badge markers
-  badges?: string[];
-  symbols?: string[];
-  actionHint?: string | null;
-  directionHint?: string | null;
-  detectedStrategies?: DetectedStrategy[];
-  confidence?: number;
-  [key: string]: unknown;
-};
+export const TaskContextSchema = z.object({
+  messageId: z.string().optional(),
+  messageTimestamp: z.string().optional(),
+  author: z.string().optional(),
+  cleanText: z.string().optional(),
+  rawHtml: z.string().optional(),
+  badges: z.array(z.string()).optional(),
+  symbols: z.array(z.string()).optional(),
+  actionHint: z.string().nullable().optional(),
+  directionHint: z.string().nullable().optional(),
+  detectedStrategies: z.array(DetectedStrategySchema).optional(),
+  confidence: z.number().optional(),
+}).passthrough();
+
+export type TaskContext = z.infer<typeof TaskContextSchema>;
 
 export type TaskResult = {
   decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
@@ -427,7 +446,24 @@ export type TradeMetadata = {
   /** Original leg count at open time. Set during LEG_OFF so commission
    *  can compute the open-side cost correctly after legs shrink. */
   openLegCount?: number;
-  [key: string]: unknown;
+  /** For LEG_OFF: the strategy after removing the closed leg (CALL or PUT). */
+  targetStrategy?: Strategy;
+  /** For LEG_OFF: the leg that was closed/bought back. */
+  closedLeg?: TradeLeg;
+  /** For LEG_OFF: the leg that remains open. */
+  keptLeg?: TradeLeg;
+  /** Final broker order status when order was rejected/cancelled (from fill sweep). */
+  brokerFinalStatus?: string;
+  /** Set when trade was force-exited via local API. */
+  forceExit?: boolean;
+  /** Broker order ID from a force-exit. */
+  forceExitOrderId?: string;
+  /** Broker order status from a force-exit. */
+  forceExitStatus?: string;
+  /** Number of price chase steps on the most recent fill. Per-event source of truth is in trade_events metadata. */
+  chaseSteps?: number;
+  /** Catch-all for genuinely unknown future fields. */
+  extra?: Record<string, unknown>;
 };
 
 // ─── Inferred Types ──────────────────────────────────
@@ -436,7 +472,6 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
-export type TaskStep = typeof taskSteps.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
 export type BacktestRun = typeof backtestRuns.$inferSelect;
 export type TrackedTrader = typeof trackedTraders.$inferSelect;

@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import { generateReportFromTrades } from './report.js';
 import { roundCents } from '../lib/numbers.js';
+import { DEFAULT_COMMISSION_SCHEDULE } from '../config/risk-defaults.js';
 
 // ── Trade factory ────────────────────────────────────────────────────
 
@@ -20,7 +21,7 @@ function makeTrade(overrides: Partial<TestTrade> = {}): TestTrade {
 }
 
 function makeDecisions(count: number) {
-  return Array.from({ length: count }, () => ({ path: 'agent', decision: 'EXECUTE' }));
+  return Array.from({ length: count }, () => ({ phase: 'agent', outcome: 'EXECUTE', inputTokens: 100 as number | null }));
 }
 
 // ── Extended metrics tests ───────────────────────────────────────────
@@ -39,6 +40,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.extendedMetrics.sortinoRatio).toBe(0);
   });
@@ -58,6 +60,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.extendedMetrics.sharpeRatio).toBe(0);
   });
@@ -74,6 +77,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.extendedMetrics.maxConsecutiveWins).toBe(3);
     expect(result.extendedMetrics.maxConsecutiveLosses).toBe(2);
@@ -89,6 +93,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.extendedMetrics.medianPnl).toBe(200);
   });
@@ -104,6 +109,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.extendedMetrics.medianPnl).toBe(250);
   });
@@ -125,6 +131,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.extendedMetrics.avgHoldingPeriodHours).toBe(3);
   });
@@ -140,6 +147,7 @@ describe('extended metrics', () => {
       trades,
       decisions: makeDecisions(trades.length),
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     expect(result.summary.netPnl).toBe(1000);
     expect(result.summary.maxDrawdown).toBe(500);
@@ -151,6 +159,7 @@ describe('extended metrics', () => {
       trades: [],
       decisions: [],
       startingEquity: 100_000,
+      commissionSchedule: DEFAULT_COMMISSION_SCHEDULE,
     });
     const em = result.extendedMetrics;
     expect(em.sharpeRatio).toBe(0);

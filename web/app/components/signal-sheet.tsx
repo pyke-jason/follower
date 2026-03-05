@@ -13,6 +13,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { relativeTime, signalBorderColor } from '@/lib/format';
 import { Badge } from './badge';
 
 interface Signal {
@@ -32,23 +33,6 @@ interface Signal {
     pnl: string | null;
     symbol: string;
   } | null;
-}
-
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function borderColor(actionHint: string | null, directionHint: string | null): string {
-  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-loss/60';
-  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-profit/60';
-  return 'border-l-border';
 }
 
 function formatCurrency(value: string | number | null): string {
@@ -116,7 +100,7 @@ export function SignalSheet() {
               {signals.map(({ message: m, trade: t }) => (
                 <div
                   key={m.id}
-                  className={`flex items-start gap-3 px-4 py-3 border-l-2 hover:bg-accent/30 transition-colors ${borderColor(m.actionHint, m.directionHint)}`}
+                  className={`flex items-start gap-3 px-4 py-3 border-l-2 hover:bg-accent/30 transition-colors ${signalBorderColor(m.actionHint, m.directionHint)}`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">

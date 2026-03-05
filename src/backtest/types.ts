@@ -1,6 +1,8 @@
+import { z } from 'zod';
 import type { DetectedStrategy, BacktestRunConfig } from '../db/schema.js';
 
-export type FillModel = 'orats' | 'midpoint' | 'natural';
+export const FillModelSchema = z.enum(['orats', 'midpoint', 'natural']);
+export type FillModel = z.infer<typeof FillModelSchema>;
 
 export type HistoricalMessage = {
   id: string;

@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { InfoChip } from '../../components/info-chip';
 import { formatBytes, formatCurrency, formatDateShort, isoToDateKey } from '@/lib/format';
-import { estimateLlmCost } from '../../../../src/lib/llm-cost';
-import type { LiveMetrics } from '../../../../src/backtest/types';
+import { estimateLlmCost } from '@src/lib/llm-cost';
+import type { LiveMetrics } from '@src/backtest/types';
 import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain } from 'lucide-react';
 
 interface RunProgressProps {
@@ -64,8 +64,8 @@ export function RunProgress({
 
   // During extraction phase, show extraction progress; otherwise show replay progress
   const progressLabel = isExtracting
-    ? `Extracting intents... ${liveMetrics.extractedMessages.toLocaleString()}/${liveMetrics.totalExtractMessages.toLocaleString()}`
-    : `${processedMessages.toLocaleString()}/${totalMessages.toLocaleString()} messages`;
+    ? `Extracting ${liveMetrics.extractedMessages.toLocaleString()}/${liveMetrics.totalExtractMessages.toLocaleString()}`
+    : `${processedMessages.toLocaleString()}/${totalMessages.toLocaleString()} msgs`;
 
   // Timeline position: where does currentKey sit between start and end?
   const rangeStartMs = new Date(startKey).getTime();
@@ -103,79 +103,76 @@ export function RunProgress({
       ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
       : `${elapsed}s`;
 
-  // Show the current date marker when not completed and we have a mid-range date
-  const showMarker = !isCompleted && !isExtracting && currentKey && timelinePct > 0 && timelinePct < 100;
+  // Show current date marker when mid-range during replay
+  const showCurrentDate = !isCompleted && !isExtracting && currentKey && timelinePct > 0 && timelinePct < 100;
+
+  // Determine if we have any chip content to show
+  const hasChips =
+    isExtracting ||
+    liveMetrics?.unrealizedPnl != null ||
+    (liveMetrics != null && liveMetrics.openPositionCount > 0) ||
+    llmCost > 0 ||
+    (liveMetrics != null && liveMetrics.databentoApiBytesRead > 0) ||
+    (startMs != null && elapsed != null && elapsed > 0);
+
+  // Nothing to render when completed with no runtime info
+  if (isCompleted && !hasChips) return null;
 
   return (
-    <div className="rounded-lg border bg-card px-4 py-3 space-y-2">
-      {/* Header: label left, message count right */}
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-foreground">Progress</span>
-        <span className="text-muted-foreground tabular-nums">
-          {progressLabel}
-        </span>
-      </div>
-
-      {/* Timeline bar with date labels */}
-      <div className="space-y-1">
-        <div className="relative">
-          {/* Bar track */}
-          <div className="h-2 w-full rounded-full bg-primary/20 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-primary transition-all duration-300"
-              style={{ width: `${barPct}%` }}
+    <>
+      {/* Chips row: runtime info left, message count right */}
+      {(hasChips || !isCompleted) && (
+        <div className="flex items-center gap-2 flex-wrap px-4 py-1.5 border-t border-border/50">
+          {isExtracting && (
+            <InfoChip label="Extracting intents" icon={Brain} />
+          )}
+          {liveMetrics?.unrealizedPnl != null && (
+            <InfoChip
+              label={`${formatCurrency(liveMetrics.unrealizedPnl)} unrealized`}
+              icon={liveMetrics.unrealizedPnl >= 0 ? TrendingUp : TrendingDown}
+              className={liveMetrics.unrealizedPnl >= 0 ? 'text-profit' : 'text-loss'}
             />
+          )}
+          {liveMetrics != null && liveMetrics.openPositionCount > 0 && (
+            <InfoChip label={`${liveMetrics.openPositionCount} open`} icon={Layers} />
+          )}
+          {llmCost > 0 && (
+            <InfoChip label={`~${formatCurrency(llmCost)} LLM`} icon={DollarSign} />
+          )}
+          {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
+            <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
+          )}
+          {startMs != null && elapsed != null && elapsed > 0 && (
+            <InfoChip label={elapsedStr} icon={Clock} />
+          )}
+
+          {/* Message count + current date position — right aligned */}
+          <div className="ml-auto flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
+            <span>{progressLabel}</span>
+            {showCurrentDate && (
+              <span className="text-foreground font-medium">{formatDateShort(currentKey)}</span>
+            )}
           </div>
-          {/* Current-date marker */}
-          {showMarker && (
+        </div>
+      )}
+
+      {/* Thin progress bar flush at bottom — only when not completed */}
+      {!isCompleted && (
+        <div className="relative h-1.5 bg-primary/10">
+          <div
+            className="absolute inset-y-0 left-0 bg-primary transition-all duration-300"
+            style={{ width: `${barPct}%` }}
+          />
+          {showCurrentDate && (
             <div
               className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none"
               style={{ left: `${timelinePct}%` }}
             >
-              <div className="size-3 rounded-full bg-primary ring-2 ring-card" />
+              <div className="size-2.5 rounded-full bg-primary ring-2 ring-card" />
             </div>
           )}
         </div>
-        {/* Date labels under the bar */}
-        <div className="relative flex items-center justify-between text-[10px] tabular-nums text-muted-foreground">
-          <span>{formatDateShort(startKey)}</span>
-          {showMarker && currentKey && (
-            <span
-              className="absolute text-foreground font-medium"
-              style={{ left: `${timelinePct}%`, transform: 'translateX(-50%)' }}
-            >
-              {formatDateShort(currentKey)}
-            </span>
-          )}
-          <span>{formatDateShort(endKey)}</span>
-        </div>
-      </div>
-
-      {/* Info chips */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {isExtracting && (
-          <InfoChip label="Extracting intents" icon={Brain} />
-        )}
-        {liveMetrics?.unrealizedPnl != null && (
-          <InfoChip
-            label={`${formatCurrency(liveMetrics.unrealizedPnl)} unrealized`}
-            icon={liveMetrics.unrealizedPnl >= 0 ? TrendingUp : TrendingDown}
-            className={liveMetrics.unrealizedPnl >= 0 ? 'text-profit' : 'text-loss'}
-          />
-        )}
-        {liveMetrics != null && liveMetrics.openPositionCount > 0 && (
-          <InfoChip label={`${liveMetrics.openPositionCount} open`} icon={Layers} />
-        )}
-        {llmCost > 0 && (
-          <InfoChip label={`~${formatCurrency(llmCost)} LLM`} icon={DollarSign} />
-        )}
-        {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
-          <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />
-        )}
-        {startMs != null && elapsed != null && elapsed > 0 && (
-          <InfoChip label={elapsedStr} icon={Clock} />
-        )}
-      </div>
-    </div>
+      )}
+    </>
   );
 }

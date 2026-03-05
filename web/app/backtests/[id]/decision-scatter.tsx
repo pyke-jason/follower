@@ -15,13 +15,14 @@ import { formatCurrency } from '@/lib/format';
 type DecisionPoint = {
   date: string;
   pnl: number;
-  decision: string;
+  outcome: string;
   message: string;
 };
 
 export function DecisionScatter({ data }: { data: DecisionPoint[] }) {
-  const executed = data.filter((d) => d.decision === 'EXECUTE');
-  const skipped = data.filter((d) => d.decision === 'SKIP');
+  const executed = data.filter((d) => d.outcome === 'EXECUTE');
+  const skipped = data.filter((d) => d.outcome === 'SKIP');
+  const failed = data.filter((d) => d.outcome === 'FAIL');
 
   if (data.length === 0) return null;
 
@@ -74,6 +75,14 @@ export function DecisionScatter({ data }: { data: DecisionPoint[] }) {
             data={skipped}
             fill="var(--color-muted-foreground)"
             opacity={0.5}
+          />
+        )}
+        {failed.length > 0 && (
+          <Scatter
+            name="Failed"
+            data={failed}
+            fill="var(--color-loss)"
+            opacity={0.7}
           />
         )}
       </ScatterChart>

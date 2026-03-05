@@ -1,29 +1,14 @@
 'use server';
 
-import { getMessages, getMessageById, getMessagesBySymbols, getLatestIntents, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
-import { compareSignals } from '../../../src/lib/eval';
+import { getMessages, getMessageById, getMessagesBySymbols, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
 import { db, schema } from '@/lib/db';
 import { PAGE_SIZE } from './load-chat-data';
 import { revalidatePath } from 'next/cache';
-import type { Message, MessageLabel } from '../../../src/db/schema';
-import type { Signal } from '../../../src/agent/schemas';
-import type { TradeOutcome, MessageDecision } from '../../../src/lib/enriched-message';
+import type { Message, MessageLabel } from '@src/db/schema';
+import type { Signal } from '@src/agent/schemas';
+import type { TradeOutcome, MessageDecision } from '@src/lib/enriched-message';
 
-export type MessageIntent = {
-  id: string;
-  messageId: string;
-  model: string;
-  version: number;
-  decision: string;
-  reasoning: string | null;
-  signals: Signal[] | null;
-  durationMs: number | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  createdAt: string | null;
-};
-
-export type LabelFilter = 'labeled' | 'unlabeled' | 'mismatched' | 'needs-review';
+export type LabelFilter = 'labeled' | 'unlabeled';
 
 export type MessageEnrichment = {
   decision: MessageDecision | null;
@@ -43,7 +28,6 @@ export type MessageFilters = {
 
 export type FetchMessagesResult = {
   messages: Message[];
-  intents: Record<string, MessageIntent>;
   labels: Record<string, MessageLabel>;
   enrichment: Record<string, MessageEnrichment>;
   nextCursor: string | null;
@@ -61,60 +45,24 @@ export async function fetchMessages(
 }
 
 async function fetchStandardPath(filters: MessageFilters): Promise<FetchMessagesResult> {
-  const isMismatchFilter = filters.labelFilter === 'mismatched';
-  const queryLabelFilter = (isMismatchFilter ? 'labeled' : filters.labelFilter) as 'labeled' | 'unlabeled' | 'needs-review' | undefined;
-  const fetchLimit = isMismatchFilter ? PAGE_SIZE * 4 : PAGE_SIZE + 1;
-
   const rows = await getMessages({
     authors: filters.authors,
     startDate: filters.startDate,
     endDate: filters.endDate,
     signalsOnly: filters.signalsOnly,
-    labelFilter: queryLabelFilter,
+    labelFilter: filters.labelFilter,
     cursor: filters.cursor,
-    limit: fetchLimit + 1,
+    limit: PAGE_SIZE + 1,
   });
 
-  if (!isMismatchFilter) {
-    const hasMore = rows.length > PAGE_SIZE;
-    const messages = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
-    const nextCursor = hasMore ? messages[messages.length - 1].timestamp : null;
-
-    const ids = messages.map((m) => m.id);
-    const [intents, labels] = await Promise.all([
-      getLatestIntents(ids),
-      getLabelsForMessages(ids),
-    ]);
-
-    return { messages, intents, labels, enrichment: {}, nextCursor };
-  }
-
-  // Mismatched: load intents+labels for all fetched rows, then filter to mismatches
-  const allIds = rows.map((m) => m.id);
-  const [allIntents, allLabels] = await Promise.all([
-    getLatestIntents(allIds),
-    getLabelsForMessages(allIds),
-  ]);
-
-  const mismatched = rows.filter((m) => {
-    const label = allLabels[m.id];
-    const intent = allIntents[m.id];
-    if (!label || !intent) return false;
-    return !compareSignals((label.signals as Signal[]) ?? [], intent);
-  });
-
-  const hasMore = mismatched.length > PAGE_SIZE;
-  const messages = hasMore ? mismatched.slice(0, PAGE_SIZE) : mismatched;
+  const hasMore = rows.length > PAGE_SIZE;
+  const messages = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
   const nextCursor = hasMore ? messages[messages.length - 1].timestamp : null;
 
-  const intents: Record<string, MessageIntent> = {};
-  const labels: Record<string, MessageLabel> = {};
-  for (const m of messages) {
-    if (allIntents[m.id]) intents[m.id] = allIntents[m.id];
-    if (allLabels[m.id]) labels[m.id] = allLabels[m.id];
-  }
+  const ids = messages.map((m) => m.id);
+  const labels = await getLabelsForMessages(ids);
 
-  return { messages, intents, labels, enrichment: {}, nextCursor };
+  return { messages, labels, enrichment: {}, nextCursor };
 }
 
 async function fetchEnrichedPath(filters: MessageFilters): Promise<FetchMessagesResult> {
@@ -133,14 +81,10 @@ async function fetchEnrichedPath(filters: MessageFilters): Promise<FetchMessages
     enrichment[r.message.id] = { decision: r.decision, trade: r.trade };
   }
 
-  // Also load intents + labels for the full ChatRoom experience
   const ids = messages.map((m) => m.id);
-  const [intents, labels] = await Promise.all([
-    getLatestIntents(ids),
-    getLabelsForMessages(ids),
-  ]);
+  const labels = await getLabelsForMessages(ids);
 
-  return { messages, intents, labels, enrichment, nextCursor: enrichedResult.nextCursor };
+  return { messages, labels, enrichment, nextCursor: enrichedResult.nextCursor };
 }
 
 export async function fetchMessage(id: string): Promise<Message | null> {
@@ -152,25 +96,21 @@ export async function fetchRelatedMessages(
   messageId: string,
 ): Promise<{
   messages: Message[];
-  intents: Record<string, MessageIntent>;
   labels: Record<string, MessageLabel>;
   sourceSymbols: string[];
 }> {
   const source = await getMessageById(messageId);
-  if (!source) return { messages: [], intents: {}, labels: {}, sourceSymbols: [] };
+  if (!source) return { messages: [], labels: {}, sourceSymbols: [] };
 
   const sourceSymbols = (source.symbols as string[]) ?? [];
-  if (sourceSymbols.length === 0) return { messages: [source], intents: {}, labels: {}, sourceSymbols };
+  if (sourceSymbols.length === 0) return { messages: [source], labels: {}, sourceSymbols };
 
   const messages = await getMessagesBySymbols(sourceSymbols, 200);
 
   const ids = messages.map((m) => m.id);
-  const [intents, labels] = await Promise.all([
-    getLatestIntents(ids),
-    getLabelsForMessages(ids),
-  ]);
+  const labels = await getLabelsForMessages(ids);
 
-  return { messages, intents, labels, sourceSymbols };
+  return { messages, labels, sourceSymbols };
 }
 
 // ─── Label Actions ──────────────────────────────────
@@ -179,7 +119,7 @@ export async function fetchRelatedMessages(
 export async function saveLabel(
   messageId: string,
   signals: Signal[],
-  source: 'approved' | 'manual' = 'manual',
+  source: 'manual' = 'manual',
 ) {
   const data = {
     signals,
@@ -197,9 +137,4 @@ export async function saveLabel(
     });
 
   revalidatePath('/messages');
-}
-
-/** One-click approve: store intent signals as reviewed label. */
-export async function approveIntent(messageId: string, intent: MessageIntent) {
-  await saveLabel(messageId, (intent.signals ?? []) as Signal[], 'approved');
 }

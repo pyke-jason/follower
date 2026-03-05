@@ -16,7 +16,6 @@ export const StatusResponseSchema = z.object({
   serverVersion: z.number(),
   wsClients: z.number(),
   maintenance: z.boolean(),
-  mode: z.enum(['paper', 'live']).optional(),
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
@@ -56,7 +55,6 @@ export const OrderResponseSchema = z.object({
   remaining: z.number().optional(),
   avgFillPrice: z.number().optional(),
   commission: z.number().optional(),
-  fillTime: z.string().optional(),
 });
 
 export type OrderResponse = z.infer<typeof OrderResponseSchema>;

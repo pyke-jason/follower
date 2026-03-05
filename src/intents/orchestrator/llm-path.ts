@@ -122,22 +122,25 @@ export async function resolveLLMPath(
     };
   }
 
+  const usage = loopResult.usage.inputTokens > 0
+    ? { inputTokens: loopResult.usage.inputTokens, outputTokens: loopResult.usage.outputTokens }
+    : undefined;
   const taskResult = loopResult.result as TaskResult | null;
 
   if (!taskResult) {
-    return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool', usage };
   }
 
   if (taskResult.decision === 'SKIP') {
-    return { outcome: 'SKIP', reason: taskResult.reasoning };
+    return { outcome: 'SKIP', reason: taskResult.reasoning, usage };
   }
 
   if (taskResult.decision === 'MANUAL_REVIEW') {
-    return { outcome: 'MANUAL_REVIEW', reason: taskResult.reasoning };
+    return { outcome: 'MANUAL_REVIEW', reason: taskResult.reasoning, usage };
   }
 
   if (!taskResult.signals || taskResult.signals.length === 0) {
-    return { outcome: 'MANUAL_REVIEW', reason: 'LLM returned EXECUTE with no signals' };
+    return { outcome: 'MANUAL_REVIEW', reason: 'LLM returned EXECUTE with no signals', usage };
   }
 
   log.debug(
@@ -145,7 +148,8 @@ export async function resolveLLMPath(
   );
 
   // Route each signal through the appropriate resolution path
-  return routeLLMSignals(taskResult.signals, parse, ctx);
+  const result = await routeLLMSignals(taskResult.signals, parse, ctx);
+  return { ...result, usage };
 }
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
@@ -163,14 +167,19 @@ function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): string {
     `Symbols detected: ${JSON.stringify(ctx.symbols)}`,
   ];
 
-  // Include what the parser already determined — LLM doesn't need to re-derive these
+  // Include what the parser already determined — LLM doesn't need to re-derive these.
+  // For multi_ticker messages, ALL per-symbol fields (action, strategy, direction,
+  // strikes, expiry, premium) come from the merged full text and reflect only the first
+  // symbol. Sending them anchors the LLM to a single signal, suppressing multi-trade
+  // decomposition. Suppress everything; let the LLM derive per-signal fields from text.
+  const isMultiTicker = parse.complexityFlags.has('multi_ticker');
   const knownParts: string[] = [];
-  if (parse.action) knownParts.push(`action=${parse.action}`);
-  if (parse.strategy) knownParts.push(`strategy=${parse.strategy}`);
-  if (parse.direction) knownParts.push(`direction=${parse.direction}`);
-  if (parse.strikes?.length) knownParts.push(`strikes=${parse.strikes.join('/')}`);
-  if (parse.expiryHint) knownParts.push(`expiryHint="${parse.expiryHint}"`);
-  if (parse.premiumHint !== null) knownParts.push(`premium=$${parse.premiumHint}`);
+  if (!isMultiTicker && parse.action) knownParts.push(`action=${parse.action}`);
+  if (!isMultiTicker && parse.strategy) knownParts.push(`strategy=${parse.strategy}`);
+  if (!isMultiTicker && parse.direction) knownParts.push(`direction=${parse.direction}`);
+  if (!isMultiTicker && parse.strikes?.length) knownParts.push(`strikes=${parse.strikes.join('/')}`);
+  if (!isMultiTicker && parse.expiryHint) knownParts.push(`expiryHint="${parse.expiryHint}"`);
+  if (!isMultiTicker && parse.premiumHint !== null) knownParts.push(`premium=$${parse.premiumHint}`);
 
   if (knownParts.length > 0) {
     lines.push(``, `Pre-parsed fields: ${knownParts.join(', ')}`);
@@ -178,6 +187,15 @@ function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): string {
 
   if (parse.complexityFlags.size > 0) {
     lines.push(`Complexity: ${Array.from(parse.complexityFlags).join(', ')}`);
+  }
+
+  if (ctx.failureContext) {
+    lines.push(
+      ``,
+      `⚠️ Previous execution attempt failed: ${ctx.failureContext.error}`,
+      `This usually means a strike was misread from the message (e.g. "$342/5" typed instead of "$342.5", or a typo).`,
+      `Re-examine the original message text and provide corrected strike(s).`,
+    );
   }
 
   lines.push(``, `Classify and call submit_decision.`);

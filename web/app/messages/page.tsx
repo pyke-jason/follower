@@ -1,4 +1,5 @@
 import { ChatRoom } from './chat-room';
+import { ChatHydrator } from './chat-hydrator';
 import { AutoRefresh } from '../components/auto-refresh';
 import { loadInitialChatData } from './load-chat-data';
 
@@ -11,14 +12,8 @@ export default async function MessagesPage() {
     // -m-6 counteracts the parent p-6 for full-bleed chat layout
     <div className="-m-6 h-full flex flex-col">
       <AutoRefresh />
-      <ChatRoom
-        initialMessages={data.messages}
-        initialCursor={data.cursor}
-        initialIntents={data.intents}
-        initialLabels={data.labels}
-        initialEnrichment={data.enrichment}
-        authors={data.authors}
-      />
+      <ChatHydrator data={data} />
+      <ChatRoom />
     </div>
   );
 }

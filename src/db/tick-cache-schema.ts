@@ -1,5 +1,4 @@
 import { sqliteTable, text, integer, real, index, primaryKey } from 'drizzle-orm/sqlite-core';
-import { createSelectSchema, createInsertSchema } from 'drizzle-orm/zod';
 
 // ─── Quote Ticks ────────────────────────────────────────
 
@@ -55,20 +54,6 @@ export const chainCacheMeta = sqliteTable('chain_cache_meta', {
 }, (table) => [
   primaryKey({ columns: [table.dataset, table.parentSymbol, table.day] }),
 ]);
-
-// ─── Zod Schemas ────────────────────────────────────────
-
-export const selectQuoteTickSchema = createSelectSchema(quoteTicks);
-export const insertQuoteTickSchema = createInsertSchema(quoteTicks);
-
-export const selectTickCacheRangeSchema = createSelectSchema(tickCacheRanges);
-export const insertTickCacheRangeSchema = createInsertSchema(tickCacheRanges);
-
-export const selectChainDefinitionSchema = createSelectSchema(chainDefinitions);
-export const insertChainDefinitionSchema = createInsertSchema(chainDefinitions);
-
-export const selectChainCacheMetaSchema = createSelectSchema(chainCacheMeta);
-export const insertChainCacheMetaSchema = createInsertSchema(chainCacheMeta);
 
 // ─── Inferred Types ─────────────────────────────────────
 

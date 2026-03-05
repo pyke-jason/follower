@@ -58,7 +58,6 @@ export async function resolveConId(occSymbol: string, sidecarUrl: string): Promi
 
   const res = await fetch(`${sidecarUrl}/contracts/resolve`, {
     method: 'POST',
-    signal: AbortSignal.timeout(10_000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       symbol: params.symbol,

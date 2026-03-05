@@ -2,6 +2,7 @@ import { db, schema } from '../db/client.js';
 import { eq, and, lt, desc } from 'drizzle-orm';
 import type { Message } from '../db/schema.js';
 import { htmlToLLMText } from '../parsing/html.js';
+import { isoToDateKey } from '../lib/et-date.js';
 
 /**
  * Fetch the last N messages from a trader before a given timestamp.
@@ -68,7 +69,7 @@ export function formatTraderContext(messages: Message[]): string {
 
   const lines = messages.map((m) => {
     const time = m.timestamp.split('T')[1]?.slice(0, 5) ?? '';
-    const date = m.timestamp.split('T')[0];
+    const date = isoToDateKey(m.timestamp);
     const text = (htmlToLLMText(m.rawHtml)).slice(0, 200);
     return `  ${date} ${time} | ${text}`;
   });

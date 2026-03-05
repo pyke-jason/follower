@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { AreaChartComponent } from '../../components/charts/area-chart';
 import { formatCurrency } from '@/lib/format';
-import type { EquityPoint } from '../../../../src/backtest/types';
+import type { EquityPoint } from '@src/backtest/types';
 
 export function DrawdownChart({ data }: { data: EquityPoint[] }) {
   const drawdownData = useMemo(() =>

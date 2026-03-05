@@ -26,9 +26,11 @@ public class TwsBridge extends DefaultEWrapper {
     static final long REQUEST_TIMEOUT_SECONDS = 5;
 
     // Informational codes — log at debug, don't push to WS
-    private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2158);
+    // 10089/10091: "market data requires subscription" — benign when delayed data (type=3) is active
+    // 10167: "Displaying delayed market data" — confirms delayed ticks will follow
+    private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2107, 2158, 10089, 10091, 10167);
     // Connection codes — trigger reconnect + WS event
-    private static final Set<Integer> CONNECTION_CODES = Set.of(504, 507, 509, 1100, 1101, 1102, 1300);
+    private static final Set<Integer> CONNECTION_CODES = Set.of(1100, 1101, 1102, 504);
     // Order error codes — push WS event
     private static final Set<Integer> ORDER_ERROR_CODES = Set.of(
             110, 200, 201, 202, 203, 392, 399, 404, 412, 426, 460, 10239);
@@ -79,9 +81,6 @@ public class TwsBridge extends DefaultEWrapper {
     private volatile String accountId;
     private volatile int serverVersion;
     private volatile boolean shuttingDown = false;
-    private volatile EReader reader;
-    private volatile Thread dispatchThread;
-    private final AtomicInteger consecutiveReconnectFailures = new AtomicInteger(0);
 
     private static final long HEARTBEAT_INTERVAL_MS = 30_000;
     private static final long HEARTBEAT_DEAD_MS     = 40_000;
@@ -96,39 +95,26 @@ public class TwsBridge extends DefaultEWrapper {
     private volatile ScheduledFuture<?> reconnectTask;
     private volatile ScheduledFuture<?> reaperTask;
 
-    private final String mode; // "paper" or "live"
-
     public TwsBridge(WsHandler wsHandler) {
         this.wsHandler = wsHandler;
         this.signal = new EJavaSignal();
         this.client = new EClientSocket(this, signal);
 
-        this.mode = System.getenv().getOrDefault("IBKR_MODE", "live").toLowerCase();
-        String defaultPort = "paper".equals(mode) ? "4002" : "4001";
-
         this.host = System.getenv().getOrDefault("IBKR_GATEWAY_HOST", "127.0.0.1");
-        this.port = Integer.parseInt(System.getenv().getOrDefault("IBKR_GATEWAY_PORT", defaultPort));
+        this.port = Integer.parseInt(System.getenv().getOrDefault("IBKR_GATEWAY_PORT", "4001"));
         this.clientId = Integer.parseInt(System.getenv().getOrDefault("IBKR_CLIENT_ID", "1"));
     }
-
-    public String getMode() { return mode; }
-    public boolean isPaperTrading() { return "paper".equals(mode); }
 
     // --- Connection lifecycle ---
 
     public void connect() {
         log.info("Connecting to IB Gateway at {}:{} (clientId={})", host, port, clientId);
-
-        // Stop old reader thread before creating new one (prevents thread stacking)
-        if (dispatchThread != null) dispatchThread.interrupt();
-
-        client.setConnectOptions("+PACEAPI");
         client.eConnect(host, port, clientId);
 
         // CRITICAL: EReader thread pattern — without this, ZERO callbacks fire
-        this.reader = new EReader(client, signal);
-        this.reader.start();
-        this.dispatchThread = new Thread(() -> {
+        EReader reader = new EReader(client, signal);
+        reader.start();
+        new Thread(() -> {
             while (client.isConnected()) {
                 signal.waitForSignal();
                 try {
@@ -137,9 +123,7 @@ public class TwsBridge extends DefaultEWrapper {
                     log.error("EReader processMsgs error: {}", e.getMessage());
                 }
             }
-        }, "ereader-dispatch");
-        this.dispatchThread.setDaemon(true);
-        this.dispatchThread.start();
+        }, "ereader-dispatch").start();
     }
 
     private void startHeartbeat() {
@@ -175,7 +159,6 @@ public class TwsBridge extends DefaultEWrapper {
     private void declareConnectionDead() {
         if (!connected) return;
         connected = false;
-        accountSubscriptionActive = false;
         log.warn("Connection declared dead by heartbeat watchdog");
         wsHandler.broadcastDisconnected();
 
@@ -218,11 +201,7 @@ public class TwsBridge extends DefaultEWrapper {
         try {
             connect();
         } catch (Exception e) {
-            int failures = consecutiveReconnectFailures.incrementAndGet();
-            log.warn("Reconnect failed (attempt {}): {}", failures, e.getMessage());
-            if (failures >= 5) {
-                wsHandler.broadcastError(0, "Persistent reconnect failure (" + failures + " attempts)", -1);
-            }
+            log.warn("Reconnect failed: {}", e.getMessage());
             if (!shuttingDown && !connected) {
                 reconnectTask = watchdog.schedule(this::attemptReconnect, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
             }
@@ -369,18 +348,19 @@ public class TwsBridge extends DefaultEWrapper {
     public void nextValidId(int orderId) {
         nextReqId.set(orderId);
         connected = true;
-        consecutiveReconnectFailures.set(0);
         serverVersion = client.serverVersion();
         lastHeartbeatResponse = System.currentTimeMillis();
         log.info("Connected to IB Gateway (serverVersion={}, nextValidId={})", serverVersion, orderId);
         wsHandler.broadcastConnected();
         startHeartbeat();
+
+        // Enable delayed market data for paper trading (no real-time subscription needed)
+        if (port == 4002) {
+            log.info("Paper mode (port 4002) — requesting delayed market data (type=3)");
+            client.reqMarketDataType(3);
+        }
         if (reaperTask != null) reaperTask.cancel(false);
         reaperTask = reaper.scheduleAtFixedRate(this::evictStaleEntries, 30, 30, TimeUnit.MINUTES);
-
-        // State reconciliation after reconnect — request current open orders and recent executions
-        client.reqOpenOrders();
-        client.reqExecutions(nextReqId.getAndIncrement(), new ExecutionFilter());
     }
 
     @Override
@@ -393,7 +373,6 @@ public class TwsBridge extends DefaultEWrapper {
     @Override
     public void connectionClosed() {
         connected = false;
-        accountSubscriptionActive = false;
         log.warn("Connection to IB Gateway closed");
         wsHandler.broadcastDisconnected();
 
@@ -417,31 +396,9 @@ public class TwsBridge extends DefaultEWrapper {
     }
 
     @Override
-    public void error(int id, long errorTime, int errorCode, String errorMsg, String advancedOrderRejectJson) {
+    public void error(int id, long reqId, int errorCode, String errorMsg, String advancedOrderRejectJson) {
         if (INFORMATIONAL_CODES.contains(errorCode)) {
             log.debug("TWS info [{}]: {} - {}", id, errorCode, errorMsg);
-            return;
-        }
-
-        // Error 2100: account subscription preempted by another client
-        if (errorCode == 2100) {
-            log.warn("Account subscription preempted (error 2100) — resubscribing");
-            accountSubscriptionActive = false;
-            if (accountId != null) {
-                client.reqAccountUpdates(true, accountId);
-                accountSubscriptionActive = true;
-            }
-            return;
-        }
-
-        // Error 326: client ID conflict — use longer reconnect delay
-        if (errorCode == 326) {
-            log.warn("Client ID {} in use — scheduling retry with longer delay", clientId);
-            connected = false;
-            wsHandler.broadcastDisconnected();
-            if (!shuttingDown) {
-                reconnectTask = watchdog.schedule(this::attemptReconnect, 15_000, TimeUnit.MILLISECONDS);
-            }
             return;
         }
 
@@ -451,12 +408,6 @@ public class TwsBridge extends DefaultEWrapper {
                 connected = false;
                 wsHandler.broadcastDisconnected();
                 scheduleReconnect();
-            } else if (errorCode == 507 || errorCode == 509 || errorCode == 1300) {
-                // Socket-level errors: must eDisconnect before reconnect
-                connected = false;
-                wsHandler.broadcastDisconnected();
-                try { client.eDisconnect(); } catch (Exception ignored) {}
-                scheduleReconnect();
             } else if (errorCode == 1101 || errorCode == 1102) {
                 connected = true;
                 wsHandler.broadcastReconnected();
@@ -464,14 +415,14 @@ public class TwsBridge extends DefaultEWrapper {
             return;
         }
 
-        log.error("TWS error [id={}, errorTime={}]: {} - {}", id, errorTime, errorCode, errorMsg);
+        log.error("TWS error [id={}, reqId={}]: {} - {}", id, reqId, errorCode, errorMsg);
 
         if (ORDER_ERROR_CODES.contains(errorCode)) {
             wsHandler.broadcastError(errorCode, errorMsg, id);
         }
 
-        // Fail pending request if there is one
-        failRequest(id, new RuntimeException("TWS error " + errorCode + ": " + errorMsg));
+        // Fail pending request with typed exception for proper HTTP status mapping
+        failRequest(id, new TwsException(errorCode, "TWS error " + errorCode + ": " + errorMsg));
     }
 
     @Override
@@ -498,7 +449,7 @@ public class TwsBridge extends DefaultEWrapper {
     public void contractDetailsEnd(int reqId) {
         CompletableFuture<Object> future = pendingRequests.get(reqId);
         if (future != null && !future.isDone()) {
-            failRequest(reqId, new RuntimeException("No contract found"));
+            failRequest(reqId, new TwsException(200, "No contract found"));
         }
     }
 
@@ -509,11 +460,12 @@ public class TwsBridge extends DefaultEWrapper {
         Map<String, Object> acc = tickAccumulators.get(tickerId);
         if (acc == null) return;
         // field: 1=bid, 2=ask, 4=last, 9=close
+        // Delayed equivalents: 66=bid, 67=ask, 68=last, 72=close
         switch (field) {
-            case 1 -> acc.put("bid", price);
-            case 2 -> acc.put("ask", price);
-            case 4 -> acc.put("last", price);
-            case 9 -> acc.put("close", price);
+            case 1, 66 -> acc.put("bid", price);
+            case 2, 67 -> acc.put("ask", price);
+            case 4, 68 -> acc.put("last", price);
+            case 9, 72 -> acc.put("close", price);
         }
     }
 
@@ -521,8 +473,8 @@ public class TwsBridge extends DefaultEWrapper {
     public void tickSize(int tickerId, int field, Decimal size) {
         Map<String, Object> acc = tickAccumulators.get(tickerId);
         if (acc == null) return;
-        // field: 8=volume
-        if (field == 8) acc.put("volume", size.longValue());
+        // field: 8=volume, 74=delayed volume
+        if (field == 8 || field == 74) acc.put("volume", size.longValue());
     }
 
     @Override
@@ -672,12 +624,6 @@ public class TwsBridge extends DefaultEWrapper {
         executionStore.put(execution.execId(), exec);
         executionTimestamps.put(execution.execId(), System.currentTimeMillis());
         wsHandler.broadcastExecDetails(exec);
-
-        // Store real fill time in orderStatuses for REST polling
-        Map<String, Object> existingStatus = orderStatuses.get(execution.orderId());
-        if (existingStatus != null) {
-            existingStatus.put("fillTime", execution.time());
-        }
     }
 
     @Override

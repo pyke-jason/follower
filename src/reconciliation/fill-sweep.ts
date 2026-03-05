@@ -1,8 +1,7 @@
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
-import type { TradeMetadata } from '../db/schema.js';
-import { enrichTradeWithFill } from '../tasks/recorder.js';
+import { enrichTradeWithFill } from './fill-enrichment.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { createLogger } from '../lib/logger.js';
 
@@ -19,6 +18,7 @@ export class FillSweep {
 
   constructor(
     private broker: BrokerService,
+    private channelId: string,
     private intervalMs: number = 60_000,
   ) {}
 
@@ -47,14 +47,14 @@ export class FillSweep {
     const trades = await db.select()
       .from(schema.trades)
       .where(and(
-        eq(schema.trades.isBacktest, false),
+        eq(schema.trades.channelId, this.channelId),
         sql`json_extract(metadata, '$.brokerOrderId') IS NOT NULL`,
         sql`json_extract(metadata, '$.fillEnriched') IS NOT true`,
       ));
 
     let enriched = 0;
     for (const trade of trades) {
-      const metadata = (trade.metadata ?? {}) as TradeMetadata;
+      const metadata = trade.metadata ?? {};
       if (!metadata.brokerOrderId) continue;
 
       try {

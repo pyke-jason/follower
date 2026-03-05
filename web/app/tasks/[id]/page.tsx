@@ -1,12 +1,12 @@
 import { notFound, redirect } from 'next/navigation';
 import {
-  getTaskById, getTradeSteps, getMessageById,
+  getTaskById, getMessageById,
   getTradeByTaskId, getRunDecisionForTask, getNearbyMessages,
 } from '@/lib/queries';
+import { parseChannel } from '@src/lib/channel';
 import { Badge } from '../../components/badge';
 import { InfoChip } from '../../components/info-chip';
 import { StatItem } from '../../components/stat-item';
-import { StepViewer } from '../../components/step-viewer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { formatDate, formatCurrency, pnlColor, formatDuration } from '@/lib/format';
@@ -45,11 +45,14 @@ export default async function TaskDetailPage({
   const result = task.result;
 
   // Round 1: parallel queries
-  const [steps, sourceMessage, runDecision] = await Promise.all([
-    getTradeSteps(task.id),
+  const isBt = task.channelId ? parseChannel(task.channelId).mode === 'bt' : false;
+  const [sourceMessage, runDecision] = await Promise.all([
     task.messageId ? getMessageById(task.messageId) : Promise.resolve(null),
-    task.messageId && task.backtestRunId
-      ? getRunDecisionForTask(task.messageId, task.backtestRunId)
+    task.messageId
+      ? getRunDecisionForTask(task.messageId, {
+          channelId: isBt ? task.channelId! : undefined,
+          taskId: !isBt ? task.id : undefined,
+        })
       : Promise.resolve(null),
   ]);
 
@@ -122,9 +125,9 @@ export default async function TaskDetailPage({
               </CardHeader>
               <CardContent className="py-4">
                 <div className="flex items-center gap-3 mb-3">
-                  <Badge label={result?.decision ?? runDecision?.decision ?? ''} />
-                  {runDecision?.path && <InfoChip label={runDecision.path} />}
-                  {!runDecision?.path && <InfoChip label="agent" />}
+                  <Badge label={runDecision?.outcome ?? result?.outcome ?? ''} />
+                  {runDecision?.phase && <InfoChip label={runDecision.phase} />}
+                  {!runDecision?.phase && <InfoChip label="agent" />}
                   {runDecision?.pnl != null && (
                     <span className={cn('font-medium tabular-nums', pnlColor(runDecision.pnl))}>
                       {formatCurrency(runDecision.pnl)}
@@ -143,7 +146,7 @@ export default async function TaskDetailPage({
                   ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  {result?.reasoning ?? runDecision?.reasoning}
+                  {runDecision?.reasoning}
                 </p>
               </CardContent>
             </Card>
@@ -173,25 +176,6 @@ export default async function TaskDetailPage({
             </form>
           )}
 
-          {/* ── Audit Trail ───────────────────────────────── */}
-          <div>
-            <h3 className="text-sm font-medium text-foreground mb-3">
-              Audit Trail {steps.length > 0 && `(${steps.length} steps)`}
-            </h3>
-            {steps.length > 0 ? (
-              <StepViewer steps={steps} />
-            ) : (
-              <Card className="py-4 gap-0">
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    {result?.decision === 'SKIP'
-                      ? 'This task was skipped. No processing steps were recorded.'
-                      : 'No audit trail steps recorded for this task.'}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
         </div>
 
         {/* ── Right Column (sticky) ────────────────────── */}

@@ -7,7 +7,7 @@ import parse, {
 import { TradeBadge } from './trade-badge';
 import { SymbolBadge } from './symbol-badge';
 import { QuoteDisplay } from './quote-display';
-import type { Message } from '../../../src/db/schema';
+import type { Message } from '@src/db/schema';
 
 function getTextContent(node: DOMNode): string {
   if (node.type === 'text') return (node as unknown as { data: string }).data;

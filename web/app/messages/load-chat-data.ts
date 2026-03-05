@@ -1,13 +1,12 @@
-import { getMessages, getDistinctAuthors, getLatestIntents, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
-import type { Message, MessageLabel } from '../../../src/db/schema';
-import type { MessageIntent, MessageEnrichment, LabelFilter } from './actions';
+import { getMessages, getDistinctAuthors, getLabelsForMessages, getEnrichedMessages } from '@/lib/queries';
+import type { Message, MessageLabel } from '@src/db/schema';
+import type { MessageEnrichment, LabelFilter } from './actions';
 
 export const PAGE_SIZE = 50;
 
 export type ChatInitialData = {
   messages: Message[];
   cursor: string | null;
-  intents: Record<string, MessageIntent>;
   labels: Record<string, MessageLabel>;
   enrichment: Record<string, MessageEnrichment>;
   authors: string[];
@@ -45,13 +44,12 @@ export async function loadInitialChatData(opts: {
     nextCursor = hasMore ? messages[messages.length - 1].timestamp : enrichedResult.nextCursor;
   } else {
     // Standard path
-    const queryLabelFilter = opts.labelFilter === 'mismatched' ? 'labeled' : opts.labelFilter;
     const rows = await getMessages({
       authors: opts.authors,
       startDate: opts.startDate,
       endDate: opts.endDate,
       signalsOnly: opts.signalsOnly,
-      labelFilter: queryLabelFilter as 'labeled' | 'unlabeled' | 'needs-review' | undefined,
+      labelFilter: opts.labelFilter,
       limit: PAGE_SIZE + 1,
     });
 
@@ -61,11 +59,10 @@ export async function loadInitialChatData(opts: {
   }
 
   const ids = messages.map((m) => m.id);
-  const [intents, labels, authors] = await Promise.all([
-    getLatestIntents(ids),
+  const [labels, authors] = await Promise.all([
     getLabelsForMessages(ids),
     authorsPromise,
   ]);
 
-  return { messages, cursor: nextCursor, intents, labels, enrichment, authors };
+  return { messages, cursor: nextCursor, labels, enrichment, authors };
 }

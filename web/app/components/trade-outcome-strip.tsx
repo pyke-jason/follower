@@ -1,10 +1,10 @@
 import Link from 'next/link';
 import { Badge } from './badge';
 import { formatCurrency, pnlColor } from '@/lib/format';
-import { safeParseFloat } from '../../../src/lib/numbers';
-import { tradeQty } from '../../../src/lib/trade';
+import { safeParseFloat } from '@src/lib/numbers';
+import { tradeQty } from '@src/lib/trade';
 import { ArrowRight } from 'lucide-react';
-import type { TradeOutcome } from '../../../src/lib/enriched-message';
+import type { TradeOutcome } from '@src/lib/enriched-message';
 
 export function TradeOutcomeStrip({
   trade,

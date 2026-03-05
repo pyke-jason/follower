@@ -8,8 +8,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Input } from '@/components/ui/input';
 import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
 import { Users, X, Check } from 'lucide-react';
+import { isoToDateKey } from '@/lib/format';
+import { useChatStore } from '@/stores/chat-store';
 import type { MessageFilters, LabelFilter } from './actions';
-import type { FilterConstraints } from './chat-room';
 
 type TimePeriod = 'today' | '7d' | '30d' | 'all';
 
@@ -27,29 +28,33 @@ function getDateRange(period: TimePeriod): { startDate?: string; endDate?: strin
   return { startDate: start.toISOString() };
 }
 
-function formatDateCompact(iso: string): string {
-  return iso.split('T')[0];
-}
-
 type DecisionSummary = {
   processedCount: number;
   executedCount: number;
   skippedCount: number;
 };
 
-export function ChatFilters({
-  authors,
-  filters,
-  onFilterChange,
-  constraints,
-  decisionSummary,
-}: {
-  authors: string[];
-  filters: MessageFilters;
-  onFilterChange: (filters: MessageFilters) => void;
-  constraints?: FilterConstraints;
-  decisionSummary?: DecisionSummary | null;
-}) {
+export function ChatFilters() {
+  const authors = useChatStore((s) => s.authors);
+  const filters = useChatStore((s) => s.filters);
+  const onFilterChange = useChatStore((s) => s.setFilters);
+  const constraints = useChatStore((s) => s.constraints);
+  const stableDecisionCounts = useChatStore((s) => s.stableDecisionCounts);
+  const enrichment = useChatStore((s) => s.enrichment);
+
+  const decisionSummary = useMemo<DecisionSummary | null>(() => {
+    if (stableDecisionCounts) return stableDecisionCounts;
+    if (!constraints?.runId) return null;
+    const entries = Object.values(enrichment);
+    if (entries.length === 0) return null;
+    let executed = 0;
+    let skipped = 0;
+    for (const e of entries) {
+      if (e.decision?.outcome === 'EXECUTE') executed++;
+      else if (e.decision?.outcome === 'SKIP') skipped++;
+    }
+    return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
+  }, [stableDecisionCounts, constraints?.runId, enrichment]);
   const [search, setSearch] = useState('');
 
   const hasDateConstraint = !!(constraints?.startDate && constraints?.endDate);
@@ -115,7 +120,7 @@ export function ChatFilters({
       {/* Date scope: locked range label OR time period toggle */}
       {hasDateConstraint ? (
         <span className="text-xs text-muted-foreground tabular-nums">
-          {formatDateCompact(constraints!.startDate!)} &ndash; {formatDateCompact(constraints!.endDate!)}
+          {isoToDateKey(constraints!.startDate!)} &ndash; {isoToDateKey(constraints!.endDate!)}
         </span>
       ) : (
         <ToggleGroup
@@ -293,8 +298,6 @@ export function ChatFilters({
       >
         <ToggleGroupItem value="labeled" className="text-xs">Labeled</ToggleGroupItem>
         <ToggleGroupItem value="unlabeled" className="text-xs">Unlabeled</ToggleGroupItem>
-        <ToggleGroupItem value="mismatched" className="text-xs">Mismatched</ToggleGroupItem>
-        <ToggleGroupItem value="needs-review" className="text-xs">Needs Review</ToggleGroupItem>
       </ToggleGroup>
     </div>
   );

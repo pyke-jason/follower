@@ -14,7 +14,7 @@ import {
   Cell,
 } from 'recharts';
 import { formatCurrency } from '@/lib/format';
-import type { EquityPoint } from '../../../../src/backtest/types';
+import type { EquityPoint } from '@src/backtest/types';
 
 export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
   const hasEquity = data.some((d) => d.equity != null);

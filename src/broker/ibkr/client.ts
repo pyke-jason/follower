@@ -25,11 +25,10 @@ const SIDECAR_URL = process.env.IBKR_SIDECAR_URL ?? 'http://localhost:8090/api';
 // ── Penny Pilot symbols (always use $0.01 tick increments) ──────────
 
 const PENNY_PILOT = new Set([
-  'AAPL', 'AMD', 'AMZN', 'BAC', 'C', 'COIN', 'CSCO', 'DIA', 'EEM', 'EWZ',
-  'F', 'GE', 'GLD', 'GOOG', 'GOOGL', 'HOOD', 'HYG', 'INTC', 'IWM', 'JPM',
-  'META', 'MSFT', 'MU', 'NFLX', 'NVDA', 'PFE', 'PLTR', 'QQQ', 'ROKU',
-  'SLV', 'SNAP', 'SOFI', 'SPY', 'SQ', 'T', 'TLT', 'TSLA', 'UBER',
-  'USO', 'VXX', 'XLE', 'XLF', 'XLK',
+  'AAPL', 'AMZN', 'BAC', 'C', 'CSCO', 'DIA', 'EEM', 'EWZ', 'F',
+  'GE', 'GLD', 'GOOG', 'GOOGL', 'HYG', 'INTC', 'IWM', 'JPM',
+  'META', 'MSFT', 'MU', 'NFLX', 'NVDA', 'PFE', 'QQQ', 'SLV',
+  'SPY', 'T', 'TLT', 'TSLA', 'USO', 'VXX', 'XLE', 'XLF', 'XLK',
 ]);
 
 /**
@@ -70,6 +69,7 @@ function ibkrClassify(err: unknown): ErrorCategory {
     const status = parseInt(httpMatch[1], 10);
     if (status === 503) return 'transient';
     if (status === 504) return 'transient';
+    if (status === 400 || status === 422) return 'permanent';
   }
 
   // Sidecar unreachable (fetch failed, ECONNREFUSED, etc.)
@@ -80,7 +80,7 @@ function ibkrClassify(err: unknown): ErrorCategory {
   if (twsMatch) {
     const code = parseInt(twsMatch[1], 10);
     if (code === 504 || code === 1100) return 'transient';
-    if (code === 110 || code === 201 || code === 460 || code === 422) return 'permanent';
+    if (code === 110 || code === 200 || code === 201 || code === 322 || code === 460 || code === 422) return 'permanent';
   }
 
   return classifyError(err);
@@ -113,6 +113,7 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
   switch (ibkrStatus) {
     case 'PreSubmitted':
     case 'Submitted':
+    case 'Inactive': // GTC orders outside RTH — not rejected, just waiting for market open
       return 'PENDING';
     case 'Filled':
       return 'FILLED';
@@ -121,8 +122,6 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
       return 'CANCELLED';
     case 'ApiCancelled':
       return 'REJECTED';
-    case 'Inactive':
-      return 'PENDING';  // Can recover to Submitted (short-locate, exchange reopen)
     default:
       return 'PENDING';
   }
@@ -232,7 +231,6 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
         orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
         quantity: params.legs[0].quantity,
         tif: 'GTC',
-        nonGuaranteed: true,
       };
       if (limitPrice != null) {
         comboBody.limitPrice = limitPrice;
@@ -262,8 +260,8 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
 
 async function modifyOrder(orderId: string, newLimitPrice: number): Promise<OrderResult> {
   return withRetry(async (signal) => {
-    // Round to penny — sidecar applies proper tick rounding based on the
-    // stored order's underlying symbol (including Penny Pilot awareness).
+    // We don't know the underlying here, but modifyOrder only changes limit price
+    // on existing orders. Round conservatively (penny increment is always safe).
     const rounded = Math.round(newLimitPrice * 100) / 100;
 
     const data = await sidecar(`/orders/${encodeURIComponent(orderId)}`, {
@@ -325,7 +323,7 @@ async function getOrderStatus(orderId: string): Promise<OrderResult> {
       result.filledPrice = order.avgFillPrice;
       result.filledQuantity = order.filledQuantity;
       result.commission = order.commission;
-      result.fillTimestamp = order.fillTime ?? new Date().toISOString();
+      result.fillTimestamp = new Date().toISOString();
     }
 
     return result;

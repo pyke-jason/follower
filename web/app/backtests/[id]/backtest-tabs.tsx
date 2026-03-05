@@ -4,35 +4,33 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, type ReactNode } from 'react';
 
-const VALID_TABS = ['performance', 'messages', 'trades', 'accuracy'] as const;
+const VALID_TABS = ['trades', 'messages', 'performance'] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 export function BacktestTabs({
   performance,
   messages,
   trades,
-  accuracy,
   hasMessages,
-  hasAccuracy,
+  tabBarTrailing,
 }: {
   performance: ReactNode;
   messages: ReactNode;
   trades: ReactNode;
-  accuracy: ReactNode;
   hasMessages: boolean;
-  hasAccuracy: boolean;
+  tabBarTrailing?: ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawTab = searchParams.get('tab');
   const activeTab: TabValue = VALID_TABS.includes(rawTab as TabValue)
     ? (rawTab as TabValue)
-    : 'performance';
+    : 'trades';
 
   const handleTabChange = useCallback(
     (value: string) => {
       const params = new URLSearchParams(searchParams.toString());
-      if (value === 'performance') {
+      if (value === 'trades') {
         params.delete('tab');
       } else {
         params.set('tab', value);
@@ -45,37 +43,33 @@ export function BacktestTabs({
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col flex-1 min-h-0">
-      <TabsList variant="line">
-        <TabsTrigger value="performance">Performance</TabsTrigger>
-        <TabsTrigger value="messages">
-          Messages
-          {hasMessages && (
-            <span className="ml-1 text-xs text-muted-foreground">&middot;</span>
-          )}
-        </TabsTrigger>
-        <TabsTrigger value="trades">Trades</TabsTrigger>
-        {hasAccuracy && (
-          <TabsTrigger value="accuracy">Accuracy</TabsTrigger>
+      <div className="flex items-center gap-2">
+        <TabsList variant="line">
+          <TabsTrigger value="trades">Trades</TabsTrigger>
+          <TabsTrigger value="messages">
+            Messages
+            {hasMessages && (
+              <span className="ml-1 text-xs text-muted-foreground">&middot;</span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
+        </TabsList>
+        {activeTab === 'trades' && tabBarTrailing && (
+          <div className="ml-auto">{tabBarTrailing}</div>
         )}
-      </TabsList>
+      </div>
 
-      <TabsContent value="performance" className="space-y-4 mt-2">
-        {performance}
+      <TabsContent value="trades" className="mt-2 flex flex-col min-h-0">
+        {trades}
       </TabsContent>
 
       <TabsContent value="messages" className="mt-2 flex flex-col flex-1 min-h-0">
         {messages}
       </TabsContent>
 
-      <TabsContent value="trades" className="mt-2">
-        {trades}
+      <TabsContent value="performance" className="mt-2 overflow-auto min-h-0 space-y-4">
+        {performance}
       </TabsContent>
-
-      {hasAccuracy && (
-        <TabsContent value="accuracy" className="space-y-4 mt-2">
-          {accuracy}
-        </TabsContent>
-      )}
     </Tabs>
   );
 }

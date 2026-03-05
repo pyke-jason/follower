@@ -20,13 +20,13 @@ export async function injectSignalRListener(page: Page, handler: MessageHandler)
 
   await page.evaluate(() => {
     // OneOption uses jQuery SignalR (not @microsoft/signalr)
-    const win = window as any;
+    const win = window as any; // SAFETY: browser-injected global (jQuery SignalR)
     if (win.$ && win.$.hubConnection) {
       const connection = win.$.hubConnection();
       const hub = connection.createHubProxy('chatHub');
 
       hub.on('addMessage', (msg: unknown) => {
-        (window as any).__onSignalRMessage(msg);
+        (window as any).__onSignalRMessage(msg); // SAFETY: browser-injected global via exposeFunction
       });
 
       console.log('[SignalR] Hook injected on chatHub.addMessage');

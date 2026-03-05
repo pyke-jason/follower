@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { zPrice, zPct01 } from '../lib/zod-financial.js';
 import {
   DirectionSchema, LegActionSchema, StrategySchema,
-  LabelStrategySchema, TradeActionSchema,
+  TradeActionSchema,
 } from '../lib/enums.js';
 
 // --- Tool input schemas (classification tools) ---
@@ -57,7 +57,7 @@ export const LabelResultSchema = z.object({
   isTrade: z.boolean(),
   action: TradeActionSchema.nullable().optional(),
   direction: DirectionSchema.nullable().optional(),
-  strategy: LabelStrategySchema.nullable().optional(),
+  strategy: StrategySchema.nullable().optional(),
   symbol: z.string().nullable().optional(),
   price: z.string().nullable().optional(),
   strikes: z.array(z.number()).nullable().optional(),

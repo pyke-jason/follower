@@ -29,7 +29,7 @@ Verify claims using REAL data — never from memory. Always run a query or read 
 
 **backtest_runs** (200) — `id` PK, `name`, `experiment_tag`, `status`, `config` JSON, `summary` JSON, `extended_metrics` JSON, `live_metrics` JSON
 **backtest_mtm_snapshots** (2,382) — daily equity: `backtest_run_id`, `date`, `unrealized_pnl` REAL
-**tasks** (3,686) / **task_steps** (4,643) — agent task queue with per-step tool call logs
+**tasks** (3,686) — agent task queue
 **tracked_traders** (3) — Pete, Hariseldon, Dave W
 **Empty**: daily_balances, eval_runs, message_labels, reconciliation_alerts, historical_fetch_runs, historical_fetch_chunks
 

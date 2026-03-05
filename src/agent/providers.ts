@@ -92,7 +92,9 @@ export async function createProvider(identity: ModelIdentity): Promise<LLMProvid
       const { XAIProvider } = await import('./providers/xai.js');
       return new XAIProvider(identity);
     }
-    default:
-      throw new Error(`Unknown provider: ${(identity as any).provider}`);
+    default: {
+      const _exhaustive: never = identity.provider;
+      throw new Error(`Unknown provider: ${_exhaustive}`);
+    }
   }
 }

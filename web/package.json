@@ -22,13 +22,16 @@
     "react-dom": "^19.0.0",
     "react-virtuoso": "^4.18.1",
     "recharts": "^2.15.4",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.1.0",
     "@types/node": "^25.2.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "eslint-plugin-paths": "^1.1.0",
     "postcss": "^8.5.0",
     "shadcn": "^3.8.4",
     "tailwindcss": "^4.1.0",
