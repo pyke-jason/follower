@@ -76,7 +76,8 @@ export function buildOrderCallbacks(
         originalLimitPrice: order.params.limitPrice,
         immediatelyFilled: false,
       }, { signalIndex: pending.signalIndex ?? null });
-      await pending.recordFill(order.filledPrice, order.filledAt);
+      const fillMetadata = order.adjustmentCount > 0 ? { chaseSteps: order.adjustmentCount } : undefined;
+      await pending.recordFill(order.filledPrice, order.filledAt, fillMetadata);
     },
 
     onCancel: async (order) => {

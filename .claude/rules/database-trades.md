@@ -1,5 +1,5 @@
 ---
-paths: src/db/**, src/trades/**
+paths: src/db/**, src/trades/**, drizzle/**, drizzle.config.ts
 ---
 
 # Database & Trade Recording
@@ -27,14 +27,24 @@ Cast/parse happens **once** inside the accessor. Call sites never cast. If you f
 
 Filters import from `db/schema` only (not `db/client`) for web compatibility. The web frontend imports these filters directly.
 
-## Schema (schema.ts)
+## Schema & Migrations
 
-This is the source of truth for all table definitions. When changing the schema:
-1. Update `schema.ts`
-2. Run `npm run db:generate` to create a migration
-3. Run `npm run db:migrate` to apply it
-4. Update any affected accessors in `accessors.ts`
-5. Update any affected types that derive from the schema
+`src/db/schema.ts` is the source of truth for all table definitions (SQLite dialect). **NEVER create or edit `.sql` files in `drizzle/` manually** — hand-written migrations have no matching snapshot JSON and corrupt the snapshot chain, which breaks `db:generate` for all future migrations.
+
+**schema.ts must be self-contained for drizzle-kit.** drizzle-kit loads it via a CJS bundler that cannot resolve relative `../` imports. Runtime values used in schema (e.g. Zod schemas for column validation) must be inlined or imported from npm packages only. Type-only imports (`import type`) are fine since they're erased.
+
+When changing the schema:
+1. Edit `src/db/schema.ts`
+2. `npm run db:generate` — generates migration + snapshot via `drizzle-kit generate`
+3. `npm run db:migrate` — applies via `tsx src/db/migrate.ts` (libsql migrator)
+4. Update any affected accessors in `src/db/accessors.ts`
+5. Update any affected types/queries
+
+For data-only or custom DDL migrations (e.g. table rebuilds for SQLite column drops): `npm run db:generate -- --custom --name=<name>` scaffolds an empty `.sql` with proper snapshot tracking. Write your SQL in the generated file. This is the **only** case where writing SQL in a migration file is allowed.
+
+**SQLite column constraints (NOT NULL, FK) survive forever** — `ALTER TABLE ADD COLUMN` in SQLite cannot remove constraints from old columns, and SQLite has no `ALTER COLUMN` or `DROP COLUMN` (for older versions). When replacing a column (e.g. `backtest_run_id` → `channel_id`), you must eventually rebuild the table via a custom migration to drop the old column, or the old NOT NULL/FK constraints will cause insert failures.
+
+Don't edit applied `.sql` migrations (checksum mismatch). Don't delete `drizzle/meta/` files. Don't use `drizzle-kit push` (project uses generate+migrate flow).
 
 ## computeCoreStats
 

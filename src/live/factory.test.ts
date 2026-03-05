@@ -59,6 +59,7 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
     isPaperTrade: false,
     confidence: '0.85',
     ingestedAt: '2026-01-15T14:30:05Z',
+    contentHash: null,
     ...overrides,
   };
 }

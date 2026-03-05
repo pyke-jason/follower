@@ -231,6 +231,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       strategy: strategy!,
       direction: direction!,
       messageId: sourceMessageId,
+      metadata: metadata ?? undefined,
       timestamp: ts,
     });
     const [trade] = await db.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
@@ -345,6 +346,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       strategy: existing.strategy,
       direction: existing.direction,
       messageId: closeMessageId,
+      metadata: metadata ?? undefined,
       timestamp: ts,
     });
 
@@ -383,6 +385,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       strategy: existing.strategy,
       direction: existing.direction,
       messageId: sourceMessageId,
+      metadata: metadata ?? undefined,
       timestamp: ts,
     });
 
@@ -429,7 +432,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       strategy: existing.strategy,
       direction: existing.direction,
       messageId: closeMessageId,
-      metadata: { exitPercent: exitPercent ?? (existingQty > 0 ? trimQty / existingQty : null), trimPnl },
+      metadata: { exitPercent: exitPercent ?? (existingQty > 0 ? trimQty / existingQty : null), trimPnl, ...metadata },
       timestamp: ts,
     });
 

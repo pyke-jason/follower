@@ -41,8 +41,10 @@ export type RiskCheckResult = {
 
 // ─── Implementation ─────────────────────────────────
 
+const DUPLICATE_OPEN_WINDOW_MS = 30_000; // 30-second window for duplicate OPEN detection
+
 export async function checkRiskLimits(
-  input: { symbol: string; strategy: string; trader: string; action?: string },
+  input: { symbol: string; strategy: string; trader: string; action?: string; direction?: string },
   deps: RiskCheckDeps,
   config: RiskCheckConfig,
 ): Promise<RiskCheckResult> {
@@ -68,6 +70,31 @@ export async function checkRiskLimits(
   const onSymbol = allOpen.filter(t => t.symbol === input.symbol);
   const totalOpenPositions = allOpen.length;
   const openPositionsOnSymbol = onSymbol.length;
+
+  // 1a. Duplicate OPEN guard: block if same symbol+direction was opened within 30s
+  if (input.action === 'OPEN' && input.direction) {
+    const windowStart = new Date(Date.now() - DUPLICATE_OPEN_WINDOW_MS).toISOString();
+    const recentDuplicate = onSymbol.find(t =>
+      t.direction === input.direction &&
+      t.openedAt != null &&
+      t.openedAt >= windowStart,
+    );
+    if (recentDuplicate) {
+      return {
+        allowed: false,
+        reason: `duplicate open suppressed (same position opened < 30s ago, trade ${recentDuplicate.id})`,
+        dailyPnl: 0,
+        openPositionsOnSymbol,
+        totalOpenPositions,
+        maxTotalPositions: config.maxTotalPositions,
+        totalNotional: 0,
+        maxNotional: 0,
+        workingOrdersOnSymbol: 0,
+        workingOrdersTotal: 0,
+        workingOrderNotional: 0,
+      };
+    }
+  }
 
   // 2. Daily closed PnL + drawdown
   const dailyPnl = await deps.getDailyClosedPnl();

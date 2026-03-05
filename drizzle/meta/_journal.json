@@ -169,6 +169,20 @@
       "when": 1772300000000,
       "tag": "0023_channel_scoping",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1772400000000,
+      "tag": "0024_content_hash_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1772672644127,
+      "tag": "0025_rebuild_mtm_drop_backtest_run_id",
+      "breakpoints": true
     }
   ]
 }

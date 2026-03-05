@@ -15,6 +15,10 @@ export function htmlToCleanText(html: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Strip trailing Discord artifacts: backslash, forward slash, and trailing
+  // punctuation sequences (e.g. the trailing " \" in edited Discord messages)
+  text = text.replace(/[\s\\\/;,!?.]+$/, '');
+
   return text;
 }
 

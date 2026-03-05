@@ -6,6 +6,6 @@ export default defineConfig({
   out: './drizzle',
   dialect: 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? resolve(import.meta.dirname, 'data/trade-follower.db'),
+    url: process.env.DATABASE_URL ?? resolve(import.meta.dirname ?? '.', 'data/trade-follower.db'),
   },
 });

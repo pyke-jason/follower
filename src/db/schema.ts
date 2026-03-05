@@ -5,8 +5,12 @@ import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
-import { LegTypeSchema, LegActionSchema } from '../lib/enums.js';
 import type { Direction, Strategy } from '../lib/enums.js';
+
+// Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
+// relative imports (its CJS bundler can't handle them).
+const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
+const LegActionSchema = z.enum(['BUY', 'SELL']);
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
 
@@ -28,9 +32,11 @@ export const messages = sqliteTable('messages', {
   isPaperTrade:       integer('is_paper_trade', { mode: 'boolean' }).default(false),
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
+  contentHash:        text('content_hash'),        // sha256 of normalized clean_text for dedup
 }, (table) => [
   index('idx_messages_author').on(table.author),
   index('idx_messages_timestamp').on(table.timestamp),
+  index('idx_messages_content_hash').on(table.author, table.contentHash),
 ]);
 
 // ─── Message Labels (Eval Ground Truth) ─────────────
@@ -454,6 +460,8 @@ export type TradeMetadata = {
   forceExitOrderId?: string;
   /** Broker order status from a force-exit. */
   forceExitStatus?: string;
+  /** Number of price chase steps on the most recent fill. Per-event source of truth is in trade_events metadata. */
+  chaseSteps?: number;
   /** Catch-all for genuinely unknown future fields. */
   extra?: Record<string, unknown>;
 };

@@ -78,6 +78,8 @@ const PERCENT_RE = /(\d{1,3})\s*%/;
 const EXIT_VERB_RE = /\b(exit(?:ing|ed)?|clos(?:e[ds]?|ing)|exiting|took\s+(?:\w+\s+)?profits?|stopped out|sold out)\b/i;
 const EXIT_VERB_FALSE_POSITIVE_RE =
   /\bclosing\s+down\b|\bclose\s+to\b|\b(?:into|near|before|after|towards?)\s+the\s+close\b/i;
+const EXIT_VERB_CONDITIONAL_RE =
+  /\b(?:would|could|might|may|should|looking\s+to|consider(?:ing)?|need\s+to|plan(?:ning)?\s+to|hoping\s+to|in\s+order\s+to)\s+(?:\w+\s+){0,3}(?:exit|close|cover|sell)\b/i;
 
 // ── LEG_OFF target patterns ───────────────────────────────────────────────────
 
@@ -729,19 +731,26 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   let direction: Direction | null = directionFromStrategy;
 
-  if (isLotto) {
-    // Lotto always overrides everything
+  if (isLotto && !hasShortBadge) {
+    // Lotto defaults to LONG (buying cheap options), but an explicit Short badge overrides.
+    // "Short ABNB Lotto $123 Puts" = selling puts for premium, not buying.
     direction = 'LONG';
+  } else if (isLotto && hasShortBadge) {
+    direction = 'SHORT';
   } else if (strategy === 'STOCK') {
-    // Badge-derived for stocks
-    if (hasLongBadge && !hasShortBadge) direction = 'LONG';
-    else if (hasShortBadge && !hasLongBadge) direction = 'SHORT';
-    else direction = null; // ambiguous — leave for LLM
-    // Authoritative verbs override badges for stock too
-    if (BOUGHT_BUYING_RE.test(cleanText)) direction = 'LONG';
-    if (WROTE_WRITING_RE.test(cleanText)) direction = 'SHORT';
-    if (SOLD_RE.test(cleanText) && !EXIT_VERB_RE.test(cleanText)) direction = 'SHORT';
-    if (SHORTING_RE.test(cleanText)) direction = 'SHORT';
+    if (hasLongBadge && !hasShortBadge) {
+      direction = 'LONG';
+      // Badge is authoritative — SHORTING_RE does not override
+    } else if (hasShortBadge && !hasLongBadge) {
+      direction = 'SHORT';
+    } else {
+      // No unambiguous badge: apply verb heuristics
+      direction = null;
+      if (BOUGHT_BUYING_RE.test(cleanText)) direction = 'LONG';
+      if (WROTE_WRITING_RE.test(cleanText)) direction = 'SHORT';
+      if (SOLD_RE.test(cleanText) && !EXIT_VERB_RE.test(cleanText)) direction = 'SHORT';
+      if (SHORTING_RE.test(cleanText)) direction = 'SHORT';
+    }
   } else if (strategy === 'CALL' || strategy === 'PUT') {
     // For naked options: default LONG unless sell verbs present
     direction = 'LONG';
@@ -781,7 +790,7 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     action = 'OPEN';
   } else {
     // No badge — soft detection from verbs
-    if (EXIT_VERB_RE.test(cleanText) && !EXIT_VERB_FALSE_POSITIVE_RE.test(cleanText) && symbol !== null) {
+    if (EXIT_VERB_RE.test(cleanText) && !EXIT_VERB_FALSE_POSITIVE_RE.test(cleanText) && !EXIT_VERB_CONDITIONAL_RE.test(cleanText) && symbol !== null) {
       // Only set CLOSE when we have a ticker too (higher confidence)
       const exitPct = extractExitPercent(cleanText);
       if (exitPct !== null) {
@@ -833,6 +842,22 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     complexityFlags.delete('relational');
   }
 
+  // ── Suppress multi_ticker when secondary symbol is a non-tradable index ──
+  // "Exit TSLA with a .71 cent loss - don't like this drop in VIX" — VIX is a cash
+  // index that can't be traded directly, so it's purely explanatory context.
+  // ONLY suppress for indices you'd never open a position on. Tradable ETFs (SPY, QQQ,
+  // IWM, DIA, VXX, etc.) must keep multi_ticker so the LLM can decide.
+  const UNTRADABLE_INDICES = new Set(['VIX', 'SPX', 'DXY', 'TNX', 'TYX', 'RUT', 'NDX', 'DJIA']);
+
+  if (
+    (action === 'CLOSE' || action === 'TRIM' || action === 'LEG_OFF') &&
+    complexityFlags.has('multi_ticker') &&
+    symbols.length === 2 &&
+    UNTRADABLE_INDICES.has(symbols[1])
+  ) {
+    complexityFlags.delete('multi_ticker');
+  }
+
   // Monitoring-verb skip: position description without action intent
   if (action === null && badges.length === 0 && MONITORING_RE.test(cleanText)) {
     return hardSkip('monitoring/observation', complexityFlags);
@@ -864,6 +889,10 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   if (action !== null && strategy !== null && wordCount(cleanText) > 25) {
     const hasBadge = hasLongBadge || hasShortBadge || hasExitBadge;
+    // STOCK trades don't have premiums — a dollar value extracted for STOCK is a
+    // price target, not a premium hint. Null it out so it can't satisfy fullyResolved
+    // and bypass the extra_text guard for long badgeless STOCK messages.
+    if (strategy === 'STOCK') premiumHint = null;
     const fullyResolved = symbol !== null && (
       (strategy === 'STOCK' && hasBadge) ||
       (isSpread && strikes !== null && strikes.length >= 2) ||

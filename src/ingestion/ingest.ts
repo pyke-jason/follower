@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor } from './browser.js';
 import { injectSignalRListener, type SignalRMessage } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { isMarketHours } from '../lib/et-date.js';
+import { and, eq, gte } from 'drizzle-orm';
 
 // ─── Message Watchdog ────────────────────────────────
 // Detects silent SignalR death: connection alive but no messages arriving.
@@ -147,15 +149,49 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void): Pr
   }
 }
 
+// ─── Dedup Helpers ───────────────────────────────────
+
+const DEDUP_WINDOW_MS = 60_000; // 60-second window for near-duplicate detection
+
+function normalizeForDedup(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function computeContentHash(normalizedText: string): string {
+  return createHash('sha256').update(normalizedText).digest('hex');
+}
+
 // ─── Message Processing ──────────────────────────────
 
 async function processMessage(msg: SignalRMessage): Promise<void> {
   const classification = classifyMessage(msg.MessageText);
 
+  const normalizedText = normalizeForDedup(classification.cleanText);
+  const contentHash = computeContentHash(normalizedText);
+  const author = msg.User.Name;
+  const timestamp = msg.PostTime || new Date().toISOString();
+  const windowStart = new Date(new Date(timestamp).getTime() - DEDUP_WINDOW_MS).toISOString();
+
+  // Near-duplicate check: same author + same content hash within 60-second window
+  const existing = await db
+    .select({ id: schema.messages.id })
+    .from(schema.messages)
+    .where(and(
+      eq(schema.messages.author, author),
+      eq(schema.messages.contentHash, contentHash),
+      gte(schema.messages.timestamp, windowStart),
+    ))
+    .limit(1);
+
+  if (existing.length > 0) {
+    console.log(`[Ingest] Near-duplicate suppressed for ${author} (hash ${contentHash.substring(0, 8)}…, existing msg ${existing[0].id})`);
+    return;
+  }
+
   await db.insert(schema.messages).values({
     id: msg.Id,
-    author: msg.User.Name,
-    timestamp: msg.PostTime || new Date().toISOString(),
+    author,
+    timestamp,
     rawHtml: msg.MessageText,
     cleanText: classification.cleanText,
     badges: classification.badges,
@@ -165,10 +201,11 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
     detectedStrategies: classification.detectedStrategies,
     isPaperTrade: classification.isPaperTrade,
     confidence: classification.confidence != null ? String(classification.confidence) : null,
+    contentHash,
   }).onConflictDoNothing();
 
   const badge = classification.badges.length > 0 ? `[${classification.badges.join(',')}]` : '';
-  console.log(`[Ingest] ${msg.User.Name} ${badge}: ${classification.cleanText.substring(0, 80)}`);
+  console.log(`[Ingest] ${author} ${badge}: ${classification.cleanText.substring(0, 80)}`);
 }
 
 export { closeBrowser } from './browser.js';

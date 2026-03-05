@@ -6,7 +6,8 @@ import { cn } from '@/lib/utils';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '@src/lib/numbers';
-import type { RunDecision, TradeEvent } from '@src/db/schema';
+import { formatLegsSummary } from '@src/lib/trade';
+import type { RunDecision, TradeEvent, TradeLeg } from '@src/db/schema';
 import type { TimelineMessage } from '../trades/actions';
 import { useTradesStore } from '@/stores/trades-store';
 import {
@@ -436,6 +437,9 @@ export function UnifiedTimeline() {
               const meta = ev.metadata as Record<string, unknown> | null;
               const trimPnl = meta?.trimPnl as number | undefined;
               const info = ev.messageId ? fillInfoByMsg.get(ev.messageId) : undefined;
+              const evLegs = (ev.legs as TradeLeg[] | null) ?? [];
+              const evStrategy = ev.strategy ?? '';
+              const contractDesc = formatLegsSummary(evLegs, evStrategy);
 
               return (
                 <Popover key={ev.id}>
@@ -450,6 +454,11 @@ export function UnifiedTimeline() {
                         <span className="text-[13px] font-bold text-foreground tracking-tight">
                           {ACTION_LABEL[ev.action] ?? ev.action}
                         </span>
+                        {contractDesc && (
+                          <span className="text-[11px] text-muted-foreground tabular-nums">
+                            {contractDesc}
+                          </span>
+                        )}
                         <span className="text-[13px] font-semibold text-foreground/90 tabular-nums">
                           {ev.action === 'TRIM' && '\u2212'}{ev.action === 'ADD' && '+'}{ev.quantity} @ {formatCurrency(price)}
                         </span>

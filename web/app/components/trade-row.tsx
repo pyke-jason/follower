@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore } from 'lucide-react';
+import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore, Zap } from 'lucide-react';
 import { Badge } from './badge';
 import { LegsIndicator } from './legs-indicator';
 import { TableRow, TableCell } from '@/components/ui/table';
@@ -11,7 +11,8 @@ import { buildHref } from '@/lib/run-scope';
 import { getLegs } from '@src/db/accessors';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
-import { notionalValue } from '@src/lib/trade';
+import { notionalValue, formatLegsSummary } from '@src/lib/trade';
+import type { TradeLeg } from '@src/db/schema';
 import { useTradesStore } from '@/stores/trades-store';
 import type { LucideIcon } from 'lucide-react';
 
@@ -73,6 +74,27 @@ const FLAG_DEFS = {
     icon: XCircle,
     label: 'Close failed',
     tooltip: 'A close order was cancelled without filling — trade stayed open longer than intended',
+    color: 'text-rose-400',
+    bgColor: 'bg-rose-400/15 border border-rose-400/25',
+  },
+  chaseLow: {
+    icon: Zap,
+    label: '',
+    tooltip: '',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted/50 border border-border/40',
+  },
+  chaseWarn: {
+    icon: Zap,
+    label: '',
+    tooltip: '',
+    color: 'text-amber-300',
+    bgColor: 'bg-amber-400/15 border border-amber-400/25',
+  },
+  chaseDanger: {
+    icon: Zap,
+    label: '',
+    tooltip: '',
     color: 'text-rose-400',
     bgColor: 'bg-rose-400/15 border border-rose-400/25',
   },
@@ -151,10 +173,16 @@ export function TradeRow({
     Math.abs(slippage) >= SLIPPAGE_THRESHOLD_ABS
   );
 
-  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose || hasUpdate;
+  const chaseSteps = events.reduce((sum, e) => {
+    const steps = (e.metadata as Record<string, unknown>)?.chaseSteps;
+    return sum + (typeof steps === 'number' ? steps : 0);
+  }, 0);
+
+  const hasFlags = isAutoClose || hasLegOff || hasTrim || hasAdd || hasSignificantSlippage || cancelledClose || hasUpdate || chaseSteps > 0;
 
   return (
     <TableRow
+      data-trade-id={tradeId}
       className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''}`}
       onClick={onExpand}
     >
@@ -191,13 +219,27 @@ export function TradeRow({
               tooltip={`Slippage: ${slippage! > 0 ? '+' : ''}${formatCurrency(slippage)} (${(slippagePct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`}
             />
           )}
+          {chaseSteps > 0 && (
+            <FlagChip
+              flag={{
+                ...(chaseSteps >= 10 ? FLAG_DEFS.chaseDanger : chaseSteps >= 5 ? FLAG_DEFS.chaseWarn : FLAG_DEFS.chaseLow),
+                label: `${chaseSteps} chase${chaseSteps > 1 ? 's' : ''}`,
+              }}
+              tooltip={`${chaseSteps} price chase step${chaseSteps > 1 ? 's' : ''} across all fills`}
+            />
+          )}
           {hasUpdate && <FlagChip flag={FLAG_DEFS.hasUpdate} />}
         </span>
       </TableCell>
 
-      {/* Legs */}
+      {/* Contract — use OPEN event legs/strategy to show original trade (pre-leg-off) */}
       <TableCell className="hidden md:table-cell text-muted-foreground">
-        <LegsIndicator legs={getLegs(trade)} strategy={trade.strategy} />
+        {(() => {
+          const openEvent = events.find(e => e.action === 'OPEN');
+          const openLegs = openEvent ? (openEvent.legs as TradeLeg[] ?? []) : getLegs(trade);
+          const openStrategy = openEvent?.strategy ?? trade.strategy;
+          return <LegsIndicator legs={openLegs} strategy={openStrategy} />;
+        })()}
       </TableCell>
 
       {/* Trader */}
@@ -226,11 +268,36 @@ export function TradeRow({
         {trade.quantity ?? 1}
       </TableCell>
 
-      {/* Entry */}
-      <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.entryPrice)}</TableCell>
-
-      {/* Exit */}
-      <TableCell className="text-right tabular-nums text-xs">{formatCurrency(trade.exitPrice)}</TableCell>
+      {/* Entry / Exit with delta */}
+      <TableCell className="text-right tabular-nums text-xs">
+        {(() => {
+          const entryNum = trade.entryPrice != null ? safeParseFloat(trade.entryPrice) : null;
+          const exitNum = trade.exitPrice != null ? safeParseFloat(trade.exitPrice) : null;
+          const delta = entryNum != null && exitNum != null ? exitNum - entryNum : null;
+          const deltaPct = entryNum && delta != null ? (delta / entryNum) * 100 : null;
+          const isLong = trade.direction === 'LONG';
+          // For longs, positive delta = profit. For shorts, negative delta = profit.
+          const deltaColor = delta != null && delta !== 0
+            ? (isLong ? delta > 0 : delta < 0) ? 'text-profit' : 'text-loss'
+            : '';
+          return (
+            <span className="whitespace-nowrap">
+              <span>{formatCurrency(trade.entryPrice)}</span>
+              {exitNum != null ? (
+                <>
+                  <span className="text-muted-foreground/40 mx-0.5">&rarr;</span>
+                  <span>{formatCurrency(trade.exitPrice)}</span>
+                  {delta != null && delta !== 0 && (
+                    <span className={`text-[10px] ml-1 ${deltaColor}`}>
+                      {delta > 0 ? '+' : ''}{delta.toFixed(2)} / {delta > 0 ? '+' : ''}{deltaPct != null ? `${deltaPct.toFixed(0)}%` : ''}
+                    </span>
+                  )}
+                </>
+              ) : null}
+            </span>
+          );
+        })()}
+      </TableCell>
 
       {/* Notional */}
       <TableCell className="hidden lg:table-cell text-right tabular-nums text-xs">

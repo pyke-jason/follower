@@ -17,7 +17,6 @@ import { computeMarginRequirement } from './margin-model.js';
 import { contractMultiplier, assetType, tradeQty } from '../lib/trade.js';
 import { recordTrade } from '../trades/record-trade.js';
 import { isMarketHours, lastMarketCloseUTC, dayBoundsUTC } from '../lib/et-date.js';
-import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('SimBroker');
 
@@ -563,8 +562,13 @@ export class SimBroker implements BrokerService {
         if (leg.expiry > latestExpiry) latestExpiry = leg.expiry;
 
         const expiryDate = new Date(leg.expiry + 'T20:00:00Z');
-        const quote = await this.marketData.getQuote(t.symbol, expiryDate);
-        const underlyingPrice = (quote.bid + quote.ask) / 2;
+        let underlyingPrice = 0;
+        try {
+          const quote = await this.marketData.getQuote(t.symbol, expiryDate);
+          underlyingPrice = (quote.bid + quote.ask) / 2;
+        } catch {
+          log.warn(`sweepExpired: no underlying quote for ${t.symbol} at ${leg.expiry}, closing at intrinsic with underlying=0`);
+        }
 
         const intrinsic = leg.type === 'CALL'
           ? Math.max(0, underlyingPrice - leg.strike)

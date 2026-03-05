@@ -8,7 +8,8 @@ import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from './badge';
 import { formatDate } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { Message } from '@src/db/schema';
+import type { Message, TradeLeg } from '@src/db/schema';
+import { formatLegsSummary } from '@src/lib/trade';
 
 const INITIAL_VISIBLE = 3;
 
@@ -75,12 +76,19 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
 
   if (!trade) return null;
 
+  // Use OPEN event legs/strategy to show original trade (pre-leg-off)
+  const openEvent = story?.events.find(e => e.action === 'OPEN');
+  const openLegs = openEvent ? (openEvent.legs as TradeLeg[] ?? []) : (trade.legs as TradeLeg[] ?? []);
+  const openStrategy = openEvent?.strategy ?? trade.strategy;
+  const contractSummary = formatLegsSummary(openLegs, openStrategy);
+
   return (
     <div className="flex flex-col h-full">
       {/* Sticky header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background sticky top-0 z-10">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-medium text-sm truncate">{trade.symbol}</span>
+          {contractSummary && <span className="text-xs text-muted-foreground tabular-nums">{contractSummary}</span>}
           <Badge label={trade.status} />
           <Badge label={trade.direction} />
           <Badge label={trade.strategy} />

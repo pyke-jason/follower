@@ -15,7 +15,7 @@ import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
 import type { ResolvedSignal, OrchestratorResult, OptionLeg, Leg, OpenPosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
-import type { Message } from '../db/schema.js';
+import type { Message, TradeMetadata } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
@@ -40,7 +40,7 @@ export type ResolvedPendingContext = {
   taskId?: string;
   tradeId?: string;
   signalIndex?: number;
-  recordFill: (filledPrice: number, filledAt?: Date) => Promise<RecordTradeResult | null>;
+  recordFill: (filledPrice: number, filledAt?: Date, fillMetadata?: TradeMetadata) => Promise<RecordTradeResult | null>;
 };
 
 export type ResolvedPipelineDeps = {
@@ -58,6 +58,7 @@ export type ResolvedPipelineDeps = {
     strategy: string;
     trader: string;
     action?: string;
+    direction?: string;
   }) => Promise<RiskCheckResult>;
   recordTrade: (input: Omit<RecordTradeInput, 'channelId'>) => Promise<RecordTradeResult | null>;
   onPending: (orderId: string, context: ResolvedPendingContext) => void;
@@ -320,9 +321,13 @@ async function placeOrder(
 
 // ─── Entry price estimate ───────────────────────────
 
-async function getEntryPriceEstimate(symbol: string, broker: BrokerService): Promise<number> {
-  const quote = await broker.getQuote(symbol);
-  return (quote.bid + quote.ask) / 2;
+async function getEntryPriceEstimate(legs: Leg[], broker: BrokerService): Promise<number> {
+  if (legs[0].type === 'stock') {
+    const quote = await broker.getQuote(legs[0].symbol);
+    return (quote.bid + quote.ask) / 2;
+  }
+  // Options/spreads: quote the actual contract(s), not the underlying.
+  return getSpreadMidpoint(broker, legsToOrderLegs(legs, 1));
 }
 
 // ─── Single signal executor ─────────────────────────
@@ -356,7 +361,7 @@ async function executeResolvedSignal(
 
   if (!isPositionReducing) {
     // 1. Size
-    const entryPrice = await getEntryPriceEstimate(symbol, deps.broker);
+    const entryPrice = await getEntryPriceEstimate(signal.legs, deps.broker);
     const size = await deps.calculatePositionSize({
       trader,
       symbol,
@@ -378,7 +383,7 @@ async function executeResolvedSignal(
     }, { signalIndex: signalIndex ?? null });
 
     // 2. Risk check
-    const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction });
+    const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction, direction });
     if (!risk.allowed) {
       return { signal, executed: false, reason: `Risk blocked: ${risk.reason}` };
     }
@@ -399,7 +404,7 @@ async function executeResolvedSignal(
       legs: orderLegs,
       messageId,
       signalIndex,
-      recordFill: async (fp, fa) => {
+      recordFill: async (fp, fa, fillMetadata) => {
         const recorded = await deps.recordTrade({
           action: signalAction,
           symbol,
@@ -412,6 +417,7 @@ async function executeResolvedSignal(
           openedAt: fa?.toISOString(),
           sourceMessageId: messageId,
           ...(signal.tradeId && { tradeId: signal.tradeId }),
+          ...(fillMetadata && { metadata: fillMetadata }),
         });
         if (recorded) tradeId = recorded.tradeId;
         return recorded;
@@ -448,7 +454,7 @@ async function executeResolvedSignal(
     messageId,
     tradeId: signal.tradeId,
     signalIndex,
-    recordFill: async (fp, fa) => {
+    recordFill: async (fp, fa, fillMetadata) => {
       const action = signal.exitPercent != null && signal.exitPercent < 1
         ? 'TRIM' as const
         : 'CLOSE' as const;
@@ -468,6 +474,7 @@ async function executeResolvedSignal(
         legs: orderLegs,
         closedAt: fa?.toISOString(),
         closeMessageId: messageId,
+        ...(fillMetadata && { metadata: fillMetadata }),
       });
       if (recorded) tradeId = recorded.tradeId;
       return recorded;
