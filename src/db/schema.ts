@@ -72,7 +72,7 @@ export const tasks = sqliteTable('tasks', {
   error:         text('error'),
   modelProvider: text('model_provider'),  // 'anthropic' | 'xai'
   modelName:     text('model_name'),      // full model ID or null
-  channelId:     text('channel_id'),
+  channelId:     text('channel_id').notNull(),
 }, (table) => [
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_message').on(table.messageId),
@@ -168,9 +168,9 @@ export const backtestRuns = sqliteTable('backtest_runs', {
 
 export const runDecisions = sqliteTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  channelId:      text('channel_id'),
+  channelId:      text('channel_id').notNull(),
   taskId:         text('task_id').references(() => tasks.id),
-  messageId:      text('message_id').references(() => messages.id).notNull(),
+  messageId:      text('message_id').references(() => messages.id),
   event:          text('event').notNull().default('SETTLED'),
   signalIndex:    integer('signal_index'),
   outcome:        text('outcome'),
@@ -222,6 +222,7 @@ export const trackedTraders = sqliteTable('tracked_traders', {
 
 export const dailyBalances = sqliteTable('daily_balances', {
   id:            text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  channelId:     text('channel_id').notNull(),
   date:          text('date').notNull(), // YYYY-MM-DD
   cashBalance:   text('cash_balance').notNull(),
   buyingPower:   text('buying_power').notNull(),
@@ -232,6 +233,8 @@ export const dailyBalances = sqliteTable('daily_balances', {
   capturedAt:    text('captured_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   index('idx_daily_balances_date').on(table.date),
+  index('idx_daily_balances_channel').on(table.channelId),
+  uniqueIndex('idx_daily_balances_channel_date_unique').on(table.channelId, table.date),
 ]);
 
 // ─── Reconciliation Alerts ──────────────────────────
@@ -240,6 +243,7 @@ export type ReconciliationAlertType = 'BROKER_ONLY' | 'DB_ONLY' | 'QUANTITY_MISM
 
 export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
   id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  channelId:  text('channel_id').notNull(),
   type:       text('type').notNull().$type<ReconciliationAlertType>(),
   symbol:     text('symbol').notNull(),
   tradeId:    text('trade_id'),
@@ -252,6 +256,8 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
 }, (table) => [
   index('idx_recon_alerts_resolved').on(table.resolved),
   index('idx_recon_alerts_symbol').on(table.symbol),
+  index('idx_recon_alerts_channel').on(table.channelId),
+  index('idx_recon_alerts_channel_resolved').on(table.channelId, table.resolved),
 ]);
 
 // ─── Orphan Fills ─────────────────────────────────────
@@ -467,11 +473,25 @@ export type TradeMetadata = {
   forceExitStatus?: string;
   /** Number of price chase steps on the most recent fill. Per-event source of truth is in trade_events metadata. */
   chaseSteps?: number;
+  /** Chase slippage on entry: fillPrice vs initial limit. Positive = worse (paid more / received less). */
+  entrySlippage?: number;
+  /** Chase slippage on exit: fillPrice vs initial limit. Positive = worse (paid more / received less). */
+  exitSlippage?: number;
   /** Materialized trade flags — set at write time by recordTrade and async updaters. */
   flags?: TradeFlag[];
   /** Catch-all for genuinely unknown future fields. */
   extra?: Record<string, unknown>;
 };
+
+// ─── Runtime Health ──────────────────────────────────
+
+export const runtimeHealth = sqliteTable('runtime_health', {
+  channelId:     text('channel_id').primaryKey(),
+  brokerHealthy: integer('broker_healthy', { mode: 'boolean' }).notNull().default(true),
+  circuitOpen:   integer('circuit_open', { mode: 'boolean' }).notNull().default(false),
+  lastError:     text('last_error'),
+  updatedAt:     text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
 
 // ─── Inferred Types ──────────────────────────────────
 
@@ -492,3 +512,4 @@ export type RunDecision = typeof runDecisions.$inferSelect;
 export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;
 export type MessageIntent = typeof messageIntents.$inferSelect;
 export type NewMessageIntent = typeof messageIntents.$inferInsert;
+export type RuntimeHealth = typeof runtimeHealth.$inferSelect;

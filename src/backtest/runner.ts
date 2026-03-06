@@ -3,20 +3,20 @@ import { DatabentoMarketDataProvider } from './market-data.js';
 import { SimBroker, cutoffMinus15Min } from './sim-broker.js';
 import type { AutoCloseResult } from './sim-broker.js';
 import type { Trade } from '../db/schema.js';
-import type { ResolvedPipelineDeps } from '../pipeline/execute-resolved.js';
+import type { PipelineBundle } from '../pipeline/build-deps.js';
 import type { OrderManager } from '../orders/order-manager.js';
 import { BACKTEST_RISK_DEFAULTS } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import { toDateKeyET, parseDateKey, isoToDateKey, marketCloseUTC } from '../lib/et-date.js';
 import type { LLMProvider } from '../agent/providers.js';
-import { createProvider, DEFAULT_TRADE_MODEL } from '../agent/providers.js';
+import { createProvider, getDefaultTradeModel } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { ShadowTracker } from './shadow-tracker.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { createEmitter } from '../decisions/emitter.js';
-import { isClosed, forChannel, type PositionFilters } from '../trades/filters.js';
+import { isClosed, forChannel } from '../trades/filters.js';
 import type { BacktestConfig, BacktestReport, HistoricalMessage } from './types.js';
 import { buildLiveMetrics } from './live-metrics.js';
 import { resetApiStats, getApiStats } from './databento-tape.js';
@@ -39,8 +39,7 @@ type BacktestContext = {
   runId: string;
   agentProvider: LLMProvider;
   agentIdentity: { provider: string; model: string };
-  pipelineDeps: ResolvedPipelineDeps;
-  getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
+  bundle: PipelineBundle;
 };
 
 /**
@@ -77,20 +76,24 @@ export async function runBacktest(config: BacktestConfig, runId: string): Promis
     return report;
   } catch (err) {
     if (runId) {
-      const [current] = await db
-        .select({ status: schema.backtestRuns.status })
-        .from(schema.backtestRuns)
-        .where(eq(schema.backtestRuns.id, runId));
-
-      if (!current || current.status !== 'CANCELLED') {
-        await db.update(schema.backtestRuns)
-          .set({
-            status: 'FAILED',
-            completedAt: new Date().toISOString(),
-            durationMs: Date.now() - startTime,
-            error: err instanceof Error ? err.message : String(err),
-          })
+      try {
+        const [current] = await db
+          .select({ status: schema.backtestRuns.status })
+          .from(schema.backtestRuns)
           .where(eq(schema.backtestRuns.id, runId));
+
+        if (!current || current.status !== 'CANCELLED') {
+          await db.update(schema.backtestRuns)
+            .set({
+              status: 'FAILED',
+              completedAt: new Date().toISOString(),
+              durationMs: Date.now() - startTime,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            .where(eq(schema.backtestRuns.id, runId));
+        }
+      } catch (statusErr) {
+        log.error('Failed to mark backtest as FAILED (DB may be locked):', statusErr);
       }
     }
     throw err;
@@ -152,8 +155,8 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   };
 
   const agentIdentity = {
-    provider: (config.agentProvider ?? DEFAULT_TRADE_MODEL.provider) as 'anthropic' | 'xai',
-    model: config.agentModel ?? DEFAULT_TRADE_MODEL.model,
+    provider: (config.agentProvider ?? getDefaultTradeModel().provider) as 'anthropic' | 'xai',
+    model: config.agentModel ?? getDefaultTradeModel().model,
   };
   const agentProvider = await createProvider(agentIdentity);
   log.info(`Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
@@ -172,14 +175,11 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       manualTick: true,
     },
   });
-  const { orderManager, pipelineDeps, pendingIntents, getOpenPositions } = bundle;
-
   const btCtx: BacktestContext = {
     runId,
     agentProvider,
     agentIdentity,
-    pipelineDeps,
-    getOpenPositions,
+    bundle,
   };
 
   // Stats tracking
@@ -217,17 +217,17 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       // The backtest is event-driven (time only moves on tradable messages), so orders
       // placed during the last message of the day get zero tick evaluations without this.
       const prevDayClose = marketCloseUTC(parseDateKey(lastMsgDay));
-      await advanceWithChaseInterleaving(broker, orderManager, clock.now(), prevDayClose);
+      await advanceWithChaseInterleaving(broker, bundle.orderManager, clock.now(), prevDayClose);
 
       const cancelledCloseCallbacks = new Map<string, (price: number, at: Date) => Promise<void>>();
-      const workingOrders = orderManager.getWorkingOrders();
+      const workingOrders = bundle.orderManager.getWorkingOrders();
       for (const wo of workingOrders) {
         if (wo.status !== 'OPEN') continue;
 
         if (wo.params.isClosing) {
-          const ctx = pendingIntents.get(wo.orderId);
+          const ctx = bundle.pendingIntents.get(wo.orderId);
           if (ctx?.tradeId) {
-            cancelledCloseCallbacks.set(ctx.tradeId, (price, at) => ctx.recordFill(price, at).then(() => undefined));
+            cancelledCloseCallbacks.set(ctx.tradeId, (price, at) => ctx.recordFill({ filledPrice: price, filledAt: at, adjustmentCount: 0 }).then(() => undefined));
           }
           log.info(`Day boundary: cancelling unfilled close order ${wo.orderId} ${wo.params.symbol}`);
           await broker.cancelOrder(wo.orderId);
@@ -241,7 +241,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           }
         }
       }
-      await orderManager.tick(clock.now());
+      await bundle.orderManager.tick(clock.now());
 
       const openCount = await broker.getOpenPositionCount();
       if (openCount > 0) {
@@ -254,7 +254,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
           await emitAutoCloseDecisions(autoClosed, runId);
         }
 
-        const openPositions = await getOpenPositions();
+        const openPositions = await bundle.getOpenPositions();
         logExpiryNotices(openPositions, sweepThrough);
 
         for (const pos of openPositions) {
@@ -287,7 +287,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     lastMsgDay = msgDay;
     const prevSimTime = clock.now();
     clock.advance(msg.timestamp);
-    await advanceWithChaseInterleaving(broker, orderManager, prevSimTime, msg.timestamp);
+    await advanceWithChaseInterleaving(broker, bundle.orderManager, prevSimTime, msg.timestamp);
 
     if (i > 0 && i % 100 === 0) {
       const openTradesCount = await broker.getOpenPositionCount();
@@ -340,7 +340,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
         await emitAutoCloseDecisions(autoClosedFinal, runId);
       }
 
-      const finalOpenPositions = await getOpenPositions();
+      const finalOpenPositions = await bundle.getOpenPositions();
       logExpiryNotices(finalOpenPositions, lastMsgDay);
 
       for (const pos of finalOpenPositions) {
@@ -476,9 +476,9 @@ async function processMessage(
   const task = taskFromMessage(msg, btChannel(btCtx.runId));
 
   await processTaskShared(task, {
-    getOpenPositions: btCtx.getOpenPositions,
+    getOpenPositions: btCtx.bundle.getOpenPositions,
     llm: btCtx.agentProvider,
-    pipeline: btCtx.pipelineDeps,
+    pipeline: btCtx.bundle.pipelineDeps,
     scope: btChannel(btCtx.runId),
     agentIdentity: btCtx.agentIdentity,
     classifySkip: (result) => {
@@ -509,17 +509,17 @@ async function processMessage(
           if (result.parseResult?.action === 'OPEN' && result.parseResult?.symbol) {
             shadows.recordFollowedOpen(msg.author, result.parseResult.symbol);
           }
-          await emitter.emit('SETTLED', { outcome: 'EXECUTE' }, { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId });
+          await emitter.emit('SETTLED', { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId });
         } else if (failedResults.length > 0) {
           const failReason = failedResults.map(r => r.reason).join('; ');
           log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
           stats.skipped++;
           stats.skipReasons.set('pipeline failure', (stats.skipReasons.get('pipeline failure') ?? 0) + 1);
-          await emitter.emit('SETTLED', { outcome: 'FAIL' }, { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason, skipCategory: 'pipeline failure' });
+          await emitter.emit('SETTLED', { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason, skipCategory: 'pipeline failure' });
         } else {
           stats.skipped++;
           stats.skipReasons.set('no execution', (stats.skipReasons.get('no execution') ?? 0) + 1);
-          await emitter.emit('SETTLED', { outcome: 'SKIP' }, { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' });
+          await emitter.emit('SETTLED', { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' });
         }
       } else {
         // SKIP or MANUAL_REVIEW — classified by classifySkip, SETTLED emitted by processTask
@@ -547,18 +547,10 @@ async function emitAutoCloseDecisions(results: AutoCloseResult[], runId: string)
   for (const ac of results) {
     if (!ac.sourceMessageId) continue;
     const emitter = createEmitter({ messageId: ac.sourceMessageId, channelId: btChannel(runId) });
-    await emitter.emit('AUTO_CLOSE', {
-      exitPrice: ac.exitPrice,
-      closeAt: ac.closeAt.toISOString(),
-      symbol: ac.symbol,
-      strategy: ac.strategy,
-      expiryDate: ac.expiryDate,
-    }, {
-      outcome: 'EXECUTE',
-      phase: 'expiry',
-      tradeId: ac.tradeId,
-      reasoning: `Option expiring ${ac.expiryDate}, auto-closed at $${ac.exitPrice.toFixed(2)}`,
-    });
+    await emitter.emit('AUTO_CLOSE',
+      { outcome: 'EXECUTE', phase: 'expiry', tradeId: ac.tradeId, reasoning: `Option expiring ${ac.expiryDate}, auto-closed at $${ac.exitPrice.toFixed(2)}` },
+      { ...ac },
+    );
   }
 }
 

@@ -1,17 +1,14 @@
-'use client';
-
 import { useState, forwardRef, useCallback } from 'react';
 import { TableVirtuoso } from 'react-virtuoso';
+import { Link } from 'react-router-dom';
 import { Badge } from '../components/badge';
 import { Button } from '@/components/ui/button';
 import { formatDate } from '@/lib/format';
-import { buildHref } from '@/lib/run-scope';
-import { AutoRefresh } from '../components/auto-refresh';
-import Link from 'next/link';
+import { useScopedHref } from '@/hooks/use-scoped-href';
 import { cn } from '@/lib/utils';
 import type { TaskContext } from '@src/db/schema';
 
-const STATUSES = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'SKIPPED'];
+const STATUSES = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'SKIPPED', 'EXPIRED'];
 
 // Shadcn table styling constants
 const thClass =
@@ -32,20 +29,23 @@ type Task = {
 
 export function TaskList({
   tasks,
-  runId,
   initialStatus,
 }: {
   tasks: Task[];
-  runId?: string;
   initialStatus?: string;
 }) {
+  const href = useScopedHref();
   const [status, setStatus] = useState(initialStatus);
 
   const filtered = status ? tasks.filter((t) => t.status === status) : tasks;
 
+  const renderItem = useCallback(
+    (_index: number, t: Task) => <TaskRow task={t} />,
+    [],
+  );
+
   return (
     <div className="h-full flex flex-col gap-4 pb-2">
-      <AutoRefresh />
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">
           Tasks
@@ -99,12 +99,7 @@ export function TaskList({
                 <th className={thClass} style={{ width: 160 }}>Error</th>
               </tr>
             )}
-            itemContent={useCallback(
-              (_index: number, t: Task) => (
-                <TaskRow task={t} runId={runId} />
-              ),
-              [runId],
-            )}
+            itemContent={renderItem}
           />
         )}
       </div>
@@ -151,7 +146,8 @@ const tableComponents = {
 
 /* ── Row content (extracted to avoid inline closure) ─── */
 
-function TaskRow({ task: t, runId }: { task: Task; runId?: string }) {
+function TaskRow({ task: t }: { task: Task }) {
+  const href = useScopedHref();
   const ctx = (t.context as TaskContext) || {};
   const symbol = ctx.symbols?.[0];
   const decision = t.result?.outcome;
@@ -160,7 +156,7 @@ function TaskRow({ task: t, runId }: { task: Task; runId?: string }) {
     <>
       <td className={tdClass}>
         <Link
-          href={buildHref(`/tasks/${t.id}`, runId)}
+          to={href(`/tasks/${t.id}`)}
           className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40"
         >
           {symbol ?? t.taskType}

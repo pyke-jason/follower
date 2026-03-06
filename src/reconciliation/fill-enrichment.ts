@@ -1,4 +1,4 @@
-import { db, schema } from '../db/client.js';
+import { db, schema, runTx } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 import type { OrderResult } from '../broker/types.js';
 import type { TradeFlag } from '../db/schema.js';
@@ -12,15 +12,16 @@ import { buildFlags } from '../trades/trade-flags.js';
  * Wrapped in a transaction to prevent read-modify-write races — the fill sweep
  * runs on a 60s interval and can race with recordTrade() updating metadata.
  */
-export async function enrichTradeWithFill(
+export function enrichTradeWithFill(
   tradeId: string,
   fillData: OrderResult,
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [trade] = await tx.select()
+): void {
+  runTx((tx) => {
+    const [trade] = tx.select()
       .from(schema.trades)
       .where(eq(schema.trades.id, tradeId))
-      .limit(1);
+      .limit(1)
+      .all();
 
     if (!trade) return;
 
@@ -44,7 +45,7 @@ export async function enrichTradeWithFill(
       }
     }
 
-    await tx.update(schema.trades)
+    tx.update(schema.trades)
       .set({
         brokerFillPrice: fillData.filledPrice != null ? String(fillData.filledPrice) : null,
         brokerFillQty: fillData.filledQuantity ?? null,
@@ -59,6 +60,7 @@ export async function enrichTradeWithFill(
           flags: buildFlags(metadata.flags, ...slippageFlags),
         },
       })
-      .where(eq(schema.trades.id, tradeId));
+      .where(eq(schema.trades.id, tradeId))
+      .run();
   });
 }

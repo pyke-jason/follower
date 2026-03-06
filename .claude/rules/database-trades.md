@@ -4,22 +4,17 @@ paths: src/db/**, src/trades/**, drizzle/**, drizzle.config.ts
 
 # Database & Trade Recording
 
-## Single Write Path
+## Trade Lifecycle Write Path
 
-`recordTrade()` in `src/trades/record-trade.ts` is the **only** way to mutate trade data. It handles OPEN, CLOSE, ADD, TRIM, and LEG_OFF actions. It writes to both `trade_events` (append-only source of truth) and `trades` (denormalized view).
+`recordTrade()` in `src/trades/record-trade.ts` handles the core trade lifecycle: OPEN, CLOSE, ADD, TRIM, and LEG_OFF. It writes to both `trade_events` (append-only source of truth) and `trades` (denormalized view).
 
-Never write directly to `trades` or `trade_events` tables outside of `recordTrade()`.
+Supplementary mutations exist outside `recordTrade()` for non-lifecycle concerns: `enrichTradeWithFill()` (broker fill enrichment), fill-sweep (cancel/reject status), `addTradeFlags()`/`stampHasUpdate()` (metadata flags). These touch `trades` only — never `trade_events`.
+
+Never write lifecycle events (OPEN/CLOSE/ADD/TRIM/LEG_OFF) outside of `recordTrade()`.
 
 ## JSON Column Accessors
 
-Drizzle's `$type<>()` does NOT propagate through `select()`. For every JSON column, create a typed accessor in `src/db/accessors.ts`:
-
-```ts
-export function getLegs(row: { legs: unknown }): TradeLeg[] { ... }
-export function getConfig(row: { config: unknown }): BacktestConfig { ... }
-```
-
-Cast/parse happens **once** inside the accessor. Call sites never cast. If you find yourself writing `as TradeLeg[]` at a call site, you're missing an accessor.
+Drizzle's `$type<>()` does NOT propagate through `select()`. For JSON columns that are cast repeatedly, create a typed accessor in `src/db/accessors.ts`. Cast/parse happens **once** inside the accessor. If you find yourself writing the same `as X` cast at multiple call sites, extract an accessor.
 
 ## Composable Filters (filters.ts)
 

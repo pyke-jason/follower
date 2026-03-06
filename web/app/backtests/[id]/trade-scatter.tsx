@@ -1,9 +1,16 @@
-'use client';
-
 import { useState, useMemo } from 'react';
 import { ScatterPlotChart } from '../../components/charts/scatter-chart';
 import { formatCurrency } from '@/lib/format';
-import type { TradeScatterPoint } from './page';
+export type TradeScatterPoint = {
+  symbol: string;
+  pnl: number;
+  strategy: string;
+  direction: string;
+  trader: string;
+  holdDays: number;
+  date?: string;
+  quantity?: number;
+};
 
 const CHART_COLORS = [
   'var(--color-chart-1)',

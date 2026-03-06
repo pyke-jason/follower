@@ -17,22 +17,27 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "cd web && npm run build",
-    "gateway": "~/ibc/gatewaystartmacos.sh -inline"
+    "gateway": "~/ibc/gatewaystartmacos.sh -inline",
+    "up": "tsx scripts/dev-up.ts",
+    "up:ui": "tsx scripts/dev-up.ts --no-backend",
+    "up:full": "tsx scripts/dev-up.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
     "@hono/node-server": "^1.19.9",
-    "@libsql/client": "^0.17.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "better-sqlite3": "^12.6.2",
     "cheerio": "^1.2.0",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.11.9",
     "openai": "^6.22.0",
     "playwright": "^1.58.2",
+    "unique-names-generator": "^4.7.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
     "drizzle-kit": "^0.31.9",
     "eslint": "^9.39.3",

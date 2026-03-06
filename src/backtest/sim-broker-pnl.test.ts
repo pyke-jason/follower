@@ -16,12 +16,16 @@ import { sql, eq } from 'drizzle-orm';
 
 // Mock db/client with a real in-memory SQLite + drizzle instance.
 vi.mock('../db/client.js', async () => {
-  const { createClient } = await import('@libsql/client');
-  const { drizzle } = await import('drizzle-orm/libsql');
+  const Database = (await import('better-sqlite3')).default;
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
   const schema = await import('../db/schema.js');
-  const client = createClient({ url: ':memory:' });
-  const db = drizzle({ client, schema });
-  return { db, schema, sqliteClient: client };
+  const sqlite = new Database(':memory:');
+  const db = drizzle(sqlite, { schema });
+  return {
+    db, schema, sqliteClient: sqlite,
+    runTx: (cb: any) => db.transaction(cb),
+    withBusyRetry: (fn: any) => fn(),
+  };
 });
 
 import { db, schema } from '../db/client.js';

@@ -1,13 +1,20 @@
-import { getTrackedTraders, getDistinctAuthors } from '@/lib/queries';
+import { useQuery } from '@tanstack/react-query';
+import { fetchTradersPageData } from '@/lib/page-adapters';
 import { TraderRoster } from './trader-roster';
 
-export const dynamic = 'force-dynamic';
+const Spinner = () => (
+  <div className="flex items-center justify-center py-20">
+    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
+  </div>
+);
 
-export default async function TradersPage() {
-  const [traders, authors] = await Promise.all([
-    getTrackedTraders(),
-    getDistinctAuthors(),
-  ]);
+export default function TradersPage() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['traders'],
+    queryFn: fetchTradersPageData,
+  });
 
-  return <TraderRoster traders={traders} authors={authors} />;
+  if (isLoading || !data) return <Spinner />;
+
+  return <TraderRoster traders={data.traders} authors={data.authors} />;
 }

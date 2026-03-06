@@ -11,12 +11,16 @@ import { sql } from 'drizzle-orm';
 
 // In-memory SQLite
 vi.mock('../db/client.js', async () => {
-  const { createClient } = await import('@libsql/client');
-  const { drizzle } = await import('drizzle-orm/libsql');
+  const Database = (await import('better-sqlite3')).default;
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
   const schema = await import('../db/schema.js');
-  const client = createClient({ url: ':memory:' });
-  const db = drizzle({ client, schema });
-  return { db, schema, sqliteClient: client };
+  const sqlite = new Database(':memory:');
+  const db = drizzle(sqlite, { schema });
+  return {
+    db, schema, sqliteClient: sqlite,
+    runTx: (cb: any) => db.transaction(cb),
+    withBusyRetry: (fn: any) => fn(),
+  };
 });
 
 // Mock getTrader
@@ -42,6 +46,7 @@ import { btChannel, liveChannel } from '../lib/channel.js';
 const CREATE_RECON_ALERTS_SQL = sql`
   CREATE TABLE IF NOT EXISTS reconciliation_alerts (
     id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL DEFAULT 'test:channel',
     type TEXT NOT NULL,
     symbol TEXT NOT NULL,
     trade_id TEXT,
@@ -97,10 +102,12 @@ const CREATE_RUN_DECISIONS_SQL = sql`
 const CREATE_DAILY_BALANCES_SQL = sql`
   CREATE TABLE IF NOT EXISTS daily_balances (
     id TEXT PRIMARY KEY,
-    date TEXT NOT NULL UNIQUE,
+    channel_id TEXT NOT NULL DEFAULT 'test:channel',
+    date TEXT NOT NULL,
     equity REAL NOT NULL,
     buying_power REAL,
-    captured_at TEXT NOT NULL
+    captured_at TEXT NOT NULL,
+    UNIQUE(channel_id, date)
   )
 `;
 
@@ -136,6 +143,11 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.run(CREATE_TRADES_SQL);
+  await db.run(CREATE_TRADE_EVENTS_SQL);
+  await db.run(CREATE_RECON_ALERTS_SQL);
+  await db.run(CREATE_RUN_DECISIONS_SQL);
+  await db.run(CREATE_DAILY_BALANCES_SQL);
   await db.run(sql`DELETE FROM trades`);
   await db.run(sql`DELETE FROM trade_events`);
   await db.run(sql`DELETE FROM reconciliation_alerts`);
@@ -176,7 +188,11 @@ describe('buildPipelineDeps', () => {
     const bundle = buildPipelineDeps({
       broker,
       env: { clock: () => new Date(), scope: 'bt:run-1' },
-      config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
+      config: {
+        riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 },
+        agentIdentity: { provider: 'test', model: 'test' },
+        isBacktestScope: true,
+      },
     });
 
     // Insert trades: one scoped to run-1, one scoped to run-2, one live
@@ -214,7 +230,11 @@ describe('buildPipelineDeps', () => {
     const bundle = buildPipelineDeps({
       broker,
       env: { clock: () => new Date(), scope: 'bt:run-1' },
-      config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'anthropic', model: 'claude-4' } },
+      config: {
+        riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 },
+        agentIdentity: { provider: 'anthropic', model: 'claude-4' },
+        isBacktestScope: true,
+      },
     });
 
     const result = await bundle.pipelineDeps.recordTrade({
@@ -277,6 +297,7 @@ describe('buildPipelineDeps', () => {
         riskConfig: { maxOnSymbol: 1, maxTotalPositions: 1, maxDrawdownPct: 1, maxNotionalMultiplier: 0.01 },
         agentIdentity: { provider: 'test', model: 'test' },
         disableRiskLimits: true,
+        isBacktestScope: true,
       },
     });
 
@@ -297,7 +318,7 @@ describe('buildPipelineDeps', () => {
     });
 
     const ctx = {
-      symbol: 'SPY', direction: 'LONG' as const, strategy: 'CALL' as const,
+      symbol: 'SPY', trader: 'alice', direction: 'LONG' as const, strategy: 'CALL' as const,
       quantity: 1, legs: [], messageId: 'msg-1',
       recordFill: async () => null,
     };
@@ -316,7 +337,7 @@ describe('buildPipelineDeps', () => {
     });
 
     bundle.pipelineDeps.onPending('order-1', {
-      symbol: 'SPY', direction: 'LONG' as const, strategy: 'CALL' as const,
+      symbol: 'SPY', trader: 'alice', direction: 'LONG' as const, strategy: 'CALL' as const,
       quantity: 1, legs: [], recordFill: async () => null,
     });
 
@@ -329,11 +350,15 @@ describe('buildPipelineDeps', () => {
     const bundle = buildPipelineDeps({
       broker,
       env: { clock: () => new Date(), scope: 'bt:run-1' },
-      config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
+      config: {
+        riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 },
+        agentIdentity: { provider: 'test', model: 'test' },
+        isBacktestScope: true,
+      },
     });
 
     // Insert a DB_ONLY alert
-    await db.run(sql`INSERT INTO reconciliation_alerts (id, type, symbol, detected_at) VALUES ('alert-1', 'DB_ONLY', 'SPY', '2026-01-01')`);
+    await db.run(sql`INSERT INTO reconciliation_alerts (id, channel_id, type, symbol, detected_at) VALUES ('alert-1', 'bt:run-1', 'DB_ONLY', 'SPY', '2026-01-01')`);
 
     // Backtest risk check should not be blocked by reconciliation alerts
     const result = await bundle.pipelineDeps.checkRiskLimits({
@@ -353,7 +378,7 @@ describe('buildPipelineDeps', () => {
     });
 
     // Insert a DB_ONLY alert (unresolved)
-    await db.run(sql`INSERT INTO reconciliation_alerts (id, type, symbol, detected_at, resolved) VALUES ('alert-1', 'DB_ONLY', 'SPY', '2026-01-01', 0)`);
+    await db.run(sql`INSERT INTO reconciliation_alerts (id, channel_id, type, symbol, detected_at, resolved) VALUES ('alert-1', 'live:test-account', 'DB_ONLY', 'SPY', '2026-01-01', 0)`);
 
     // Live risk check should be blocked by reconciliation alerts
     const result = await bundle.pipelineDeps.checkRiskLimits({
@@ -376,6 +401,7 @@ describe('buildPipelineDeps', () => {
         riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 },
         agentIdentity: { provider: 'test', model: 'test' },
         startingEquity: 50_000,
+        isBacktestScope: true,
       },
     });
 
@@ -393,7 +419,7 @@ describe('buildPipelineDeps', () => {
     bundle.destroy();
   });
 
-  test('calculatePositionSize forwards spreadMaxRisk', async () => {
+  test('calculatePositionSize uses legs to compute credit spread risk', async () => {
     const broker = createMockBroker(100_000);
     const bundle = buildPipelineDeps({
       broker,
@@ -401,16 +427,26 @@ describe('buildPipelineDeps', () => {
       config: { riskConfig: { maxOnSymbol: 5, maxTotalPositions: 20, maxDrawdownPct: 5, maxNotionalMultiplier: 2 }, agentIdentity: { provider: 'test', model: 'test' } },
     });
 
-    const size = await bundle.pipelineDeps.calculatePositionSize({
-      trader: 'alice',
-      symbol: 'SPY',
-      entryPrice: 5.00,
-      strategy: 'CDS',
-      spreadMaxRisk: 2.50,
+    const pcsLegs = [
+      { type: 'option' as const, symbol: 'SPY', expiry: '2026-03-20', optionType: 'PUT' as const, strike: 260, side: 'SELL' as const, quantity: 1 },
+      { type: 'option' as const, symbol: 'SPY', expiry: '2026-03-20', optionType: 'PUT' as const, strike: 255, side: 'BUY' as const, quantity: 1 },
+    ];
+
+    // Credit spread — sizer computes risk from legs (width $5 - prem $1.20 = $3.80)
+    const credit = await bundle.pipelineDeps.calculatePositionSize({
+      trader: 'alice', symbol: 'SPY', entryPrice: 1.20, strategy: 'PCS', legs: pcsLegs,
     });
 
-    expect(size.quantity).toBeGreaterThan(0);
-    expect(size.reasoning).toBeDefined();
+    // Debit spread with same legs — sizer uses entryPrice directly
+    const debit = await bundle.pipelineDeps.calculatePositionSize({
+      trader: 'alice', symbol: 'SPY', entryPrice: 1.20, strategy: 'CDS', legs: pcsLegs,
+    });
+
+    // equity=100k, target=5000. Credit: floor(5000/380)=13, Debit: floor(5000/120)=41 but MAX_CONTRACTS caps CDS at 20
+    expect(credit.quantity).toBe(13);
+    expect(debit.quantity).toBe(20);
+    expect(credit.quantity).toBeLessThan(debit.quantity);
+    expect(credit.reasoning).toContain('width $5');
 
     bundle.destroy();
   });

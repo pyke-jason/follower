@@ -1,7 +1,6 @@
-'use client';
-
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { useScopedHref } from '@/hooks/use-scoped-href';
 
 interface TraderData {
   trader: string;
@@ -15,6 +14,8 @@ interface Props {
 }
 
 export function TraderLeaderboard({ data }: Props) {
+  const href = useScopedHref();
+
   if (data.length === 0) return null;
 
   const maxAbs = Math.max(...data.map((d) => Math.abs(d.pnl)), 1);
@@ -31,7 +32,7 @@ export function TraderLeaderboard({ data }: Props) {
         return (
           <div key={t.trader} className="group flex items-center gap-3">
             <Link
-              href={`/traders/${encodeURIComponent(t.trader)}`}
+              to={href(`/traders/${encodeURIComponent(t.trader)}`)}
               className="text-xs font-medium w-20 truncate shrink-0 text-muted-foreground group-hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/40 transition-colors"
             >
               {t.trader}

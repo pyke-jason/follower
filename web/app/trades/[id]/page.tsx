@@ -1,87 +1,64 @@
-import { notFound } from 'next/navigation';
-import { getTradeById, getMessageById, getTradeEvents, getNearbyMessages, getTaskById, getRunDecisionForTask, getBacktestRunById } from '@/lib/queries';
-import { parseChannel } from '@src/lib/channel';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useChannelId } from '@/hooks/use-channel-id';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import { Badge } from '../../components/badge';
 import { StatItem } from '../../components/stat-item';
 import { LegsTable } from '../../components/legs-table';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
-import { buildHref } from '@/lib/run-scope';
-import Link from 'next/link';
+import { useScopedHref } from '@/hooks/use-scoped-href';
 import { ArrowLeft } from 'lucide-react';
 import { ChatPreview } from '../../messages/chat-preview';
 import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
-import { safeParseFloat } from '@src/lib/numbers';
-import { computeTradeCommission } from '@src/lib/commission';
-import type { CommissionSchedule } from '@src/db/schema';
+import type { Trade, Message, TradeEvent, Task, RunDecision } from '@src/db/schema';
 
-export const dynamic = 'force-dynamic';
+type TradeStoryResponse = {
+  trade: Trade;
+  events: TradeEvent[];
+  task: Task | null;
+  sourceMessage: Message | null;
+  closeMessage: Message | null;
+  nearbyMessages: Message[];
+  decision: RunDecision | null;
+  decisions: RunDecision[];
+  timelineMessages: Message[];
+};
 
-export default async function TradeDetailPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ run?: string; from?: string }>;
-}) {
-  const { id } = await params;
-  const { run: runId, from } = await searchParams;
-  const trade = await getTradeById(id);
-  if (!trade) notFound();
+const Spinner = () => (
+  <div className="flex items-center justify-center py-20">
+    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
+  </div>
+);
 
-  const [sourceMessage, tradeEvents, task, closeMessage, backtestRun] = await Promise.all([
-    trade.sourceMessageId ? getMessageById(trade.sourceMessageId) : Promise.resolve(null),
-    getTradeEvents(trade.id),
-    trade.taskId ? getTaskById(trade.taskId) : Promise.resolve(null),
-    trade.closeMessageId ? getMessageById(trade.closeMessageId) : Promise.resolve(null),
-    runId ? getBacktestRunById(runId) : Promise.resolve(null),
-  ]);
+export default function TradeDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const [params] = useSearchParams();
+  const channelId = useChannelId();
+  const href = useScopedHref();
+  const from = params.get('from') ?? undefined;
 
-  const commissionSchedule: CommissionSchedule | undefined =
-    backtestRun ? backtestRun.config.commissionSchedule : undefined;
+  const { data } = useQuery<TradeStoryResponse>({
+    queryKey: ['trade', id, channelId],
+    queryFn: () => api<TradeStoryResponse>(href(`/trades/${id}/story`)),
+  });
 
-  const [nearbyMessages, closeNearbyMessages, runDecision] = await Promise.all([
-    sourceMessage
-      ? getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60, trade.symbol)
-      : Promise.resolve([]),
-    closeMessage
-      ? getNearbyMessages(closeMessage.author, closeMessage.timestamp, 60, trade.symbol)
-      : Promise.resolve([]),
-    sourceMessage && parseChannel(trade.channelId).mode === 'bt'
-      ? getRunDecisionForTask(sourceMessage.id, trade.channelId)
-      : Promise.resolve(null),
-  ]);
+  if (!data) return <Spinner />;
 
-  let decision: { outcome: string; reasoning: string | null; phase: string | null; durationMs: number | null; pnl: string | null } | null = null;
-  if (runDecision) {
-    decision = {
-      outcome: runDecision.outcome,
-      reasoning: runDecision.reasoning,
-      phase: runDecision.phase,
-      durationMs: runDecision.durationMs,
-      pnl: runDecision.pnl,
-    };
-  } else if (task?.result) {
-    decision = {
-      outcome: task.result.decision ?? '',
-      reasoning: task.result.reasoning ?? null,
-      phase: null,
-      durationMs: null,
-      pnl: null,
-    };
-  }
-
-  const context = task?.context;
+  const { trade, events: tradeEvents, task, sourceMessage, closeMessage, nearbyMessages, decision } = data;
+  const context = task?.context ?? null;
   const legs = trade.legs;
+  const commission = 0;
+  const closeNearbyMessages: Message[] = [];
 
   return (
     <div className="space-y-6 animate-in-up">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link href={buildHref(from === 'tasks' ? '/tasks' : '/trades', runId)} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <Link to={href(from === 'tasks' ? '/tasks' : '/trades')} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <h2 className="text-lg font-bold text-foreground tracking-tight">{trade.symbol}</h2>
@@ -93,7 +70,7 @@ export default async function TradeDetailPage({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6">
-        {/* ── Left Column ──────────────────────────────── */}
+        {/* Left Column */}
         <div className="space-y-6 min-w-0">
           {/* Trade Info */}
           <Card className="py-4 gap-0">
@@ -109,8 +86,8 @@ export default async function TradeDetailPage({
               </StatItem>
               <StatItem label="P&L">
                 {(() => {
-                  const gross = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
-                  const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
+                  const gross = trade.pnl != null ? parseFloat(String(trade.pnl)) : null;
+                  const comm = commission ?? 0;
                   const net = gross != null ? gross - comm : null;
                   return (
                     <>
@@ -129,7 +106,7 @@ export default async function TradeDetailPage({
               <StatItem label="Quantity">
                 <p className="text-foreground tabular-nums font-medium">{trade.quantity ?? 1}</p>
               </StatItem>
-              {trade.realizedPnl && safeParseFloat(trade.realizedPnl) !== 0 && (
+              {trade.realizedPnl && parseFloat(String(trade.realizedPnl)) !== 0 && (
                 <StatItem label="Realized P&L (trims)">
                   <p className={`tabular-nums font-medium ${pnlColor(trade.realizedPnl)}`}>
                     {formatCurrency(trade.realizedPnl)}
@@ -178,14 +155,14 @@ export default async function TradeDetailPage({
           {context && <ParsedContext context={context} />}
         </div>
 
-        {/* ── Right Column (sticky) ────────────────────── */}
+        {/* Right Column (sticky) */}
         <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
           {/* Chat Context */}
           <ChatPreview
             messages={nearbyMessages.length > 0 ? nearbyMessages : sourceMessage ? [sourceMessage] : []}
             focusMessageId={trade.sourceMessageId ?? undefined}
             author={sourceMessage?.author ?? trade.trader}
-            viewAllHref={`/messages?authors=${encodeURIComponent(sourceMessage?.author ?? trade.trader)}`}
+            viewAllHref={href('/messages', { authors: sourceMessage?.author ?? trade.trader })}
           />
 
           {/* Close Context */}
@@ -197,7 +174,6 @@ export default async function TradeDetailPage({
               title="Close Context"
             />
           )}
-
         </div>
       </div>
     </div>

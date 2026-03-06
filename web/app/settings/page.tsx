@@ -1,13 +1,32 @@
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { TestButton } from './test-button';
-import { testDiscord, testPushover, listSecrets, getToggleStates } from './actions';
 import { SettingToggle } from './alert-toggle';
 import { SecretsTable } from './secrets-table';
 
-export const dynamic = 'force-dynamic';
+type SecretEntry = { key: string; isSet: boolean };
+type ToggleStates = { discord: boolean; pushover: boolean; ingestion: boolean };
 
-export default async function SettingsPage() {
-  const [secrets, toggles] = await Promise.all([listSecrets(), getToggleStates()]);
+const Spinner = () => (
+  <div className="flex items-center justify-center py-20">
+    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
+  </div>
+);
+
+export default function SettingsPage() {
+  const { data: secrets, isLoading: loadingSecrets } = useQuery({
+    queryKey: ['settings-secrets'],
+    queryFn: () => api<SecretEntry[]>('/settings/secrets'),
+  });
+
+  const { data: toggles, isLoading: loadingToggles } = useQuery({
+    queryKey: ['settings-toggles'],
+    queryFn: () => api<ToggleStates>('/settings/toggles'),
+  });
+
+  if (loadingSecrets || loadingToggles || !secrets || !toggles) return <Spinner />;
+
   const discordConfigured = secrets.find((s) => s.key === 'DISCORD_WEBHOOK_URL')?.isSet ?? false;
   const pushoverConfigured =
     (secrets.find((s) => s.key === 'PUSHOVER_APP_TOKEN')?.isSet ?? false) &&
@@ -57,7 +76,7 @@ export default async function SettingsPage() {
                 </span>
               </span>
             </div>
-            <TestButton action={testDiscord} />
+            <TestButton service="discord" />
           </CardContent>
         </Card>
 
@@ -84,7 +103,7 @@ export default async function SettingsPage() {
                 </span>
               </span>
             </div>
-            <TestButton action={testPushover} />
+            <TestButton service="pushover" />
           </CardContent>
         </Card>
       </div>

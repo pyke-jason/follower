@@ -21,13 +21,12 @@ import { buildPositionSizer } from '../position-sizing/index.js';
 import { getTrader } from '../config/traders.js';
 import { MAX_CONTRACTS } from '../config/risk-defaults.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
-import { recordTrade } from '../trades/record-trade.js';
+import { recordTrade, recordCancelledOpen } from '../trades/record-trade.js';
 import { createEmitter } from '../decisions/emitter.js';
 import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { toDateKeyET } from '../lib/et-date.js';
 import { isOpen, isClosed, forChannel, forSymbol, forTrader, forStrategy } from '../trades/filters.js';
-import { parseChannel } from '../lib/channel.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
 
@@ -52,6 +51,7 @@ export type PipelineConfig = {
   startingEquity?: number;
   manualTick?: boolean;
   skipReconciliationCheck?: boolean;
+  isBacktestScope?: boolean;
   requireExplicitTimestamps?: boolean;
 };
 
@@ -95,7 +95,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
   const pendingIntents = new Map<string, ResolvedPendingContext>();
 
   // ── Emitter scope helper ──
-  const createScopedEmitter = (messageId: string, taskId?: string) =>
+  const createScopedEmitter = (messageId?: string, taskId?: string) =>
     createEmitter({ messageId, channelId: scope, taskId });
 
   // ── OrderManager ──
@@ -108,6 +108,11 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       createScopedEmitter,
       clock,
       scope: { channelId: scope },
+      recordCancelledOpen: (input) => recordCancelledOpen({
+        ...input,
+        channelId: scope,
+        agentModel,
+      }),
       sendAlert: env.sendAlert as ((params: { title: string; message: string; severity: 'critical' | 'warning' }) => Promise<void>) | undefined,
     }),
   });
@@ -130,7 +135,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
 
     getStartingEquity: async () => {
       if (config.startingEquity != null) return config.startingEquity;
-      const bal = await getTodayStartingBalance();
+      const bal = await getTodayStartingBalance(scope);
       return bal?.equity ?? null;
     },
 
@@ -139,12 +144,13 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       return balance.equity;
     },
 
-    getReconciliationAlertCount: (config.skipReconciliationCheck ?? parseChannel(scope).mode === 'bt')
+    getReconciliationAlertCount: (config.skipReconciliationCheck ?? config.isBacktestScope ?? false)
       ? async () => 0
       : async () => {
           const alerts = await db.select({ count: sql<number>`COUNT(*)` })
             .from(schema.reconciliationAlerts)
             .where(and(
+              eq(schema.reconciliationAlerts.channelId, scope),
               eq(schema.reconciliationAlerts.resolved, false),
               eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
             ));
@@ -170,7 +176,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
         strategy: input.strategy,
         entryPrice: input.entryPrice,
         equity: balance.equity,
-        spreadMaxRisk: input.spreadMaxRisk,
+        legs: input.legs,
         maxQuantity: MAX_CONTRACTS[input.strategy],
       });
     },
@@ -194,6 +200,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       return recordTrade({
         ...input,
         channelId: scope,
+        requireExplicitTimestamps: config.requireExplicitTimestamps,
         metadata: { ...input.metadata, agentModel },
       });
     },

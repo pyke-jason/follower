@@ -1,24 +1,35 @@
 import { create } from 'zustand';
-import type { Trade, TradeEvent, TradeFlag, CommissionSchedule } from '@src/db/schema';
-import type { TradeStory } from '@/app/trades/actions';
-import { fetchTradeStory } from '@/app/trades/actions';
+import type { Trade, TradeEvent, TradeFlag, CommissionSchedule, Task, Message, RunDecision } from '@src/db/schema';
+import { api } from '@/lib/api';
+
+export type TradeStory = {
+  trade: Trade;
+  events: TradeEvent[];
+  task: Task | null;
+  sourceMessage: Message | null;
+  closeMessage: Message | null;
+  nearbyMessages: Message[];
+  decision: RunDecision | null;
+  decisions: RunDecision[];
+  timelineMessages: Message[];
+};
 
 export type TradesHydration = {
   trades: Trade[];
-  eventsByTradeId: Map<string, TradeEvent[]>;
+  eventsByTradeId: Record<string, TradeEvent[]>;
   flagsByTradeId: Record<string, TradeFlag[]>;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
-  runId?: string;
+  channelId?: string;
 };
 
 interface TradesState {
   trades: Trade[];
-  eventsByTradeId: Map<string, TradeEvent[]>;
+  eventsByTradeId: Record<string, TradeEvent[]>;
   flagsByTradeId: Record<string, TradeFlag[]>;
-  commissionSchedule: CommissionSchedule | null;
-  startingEquity: number | null;
-  runId: string | null;
+  commissionSchedule: CommissionSchedule | undefined;
+  startingEquity: number | undefined;
+  channelId: string | undefined;
 
   selectedTradeId: string | null;
   story: TradeStory | null;
@@ -31,11 +42,11 @@ interface TradesState {
 
 export const useTradesStore = create<TradesState>((set, get) => ({
   trades: [],
-  eventsByTradeId: new Map(),
+  eventsByTradeId: {},
   flagsByTradeId: {},
-  commissionSchedule: null,
-  startingEquity: null,
-  runId: null,
+  commissionSchedule: undefined,
+  startingEquity: undefined,
+  channelId: undefined,
 
   selectedTradeId: null,
   story: null,
@@ -46,9 +57,9 @@ export const useTradesStore = create<TradesState>((set, get) => ({
       trades: data.trades,
       eventsByTradeId: data.eventsByTradeId,
       flagsByTradeId: data.flagsByTradeId,
-      commissionSchedule: data.commissionSchedule ?? null,
-      startingEquity: data.startingEquity ?? null,
-      runId: data.runId ?? null,
+      commissionSchedule: data.commissionSchedule,
+      startingEquity: data.startingEquity,
+      channelId: data.channelId,
     }),
 
   selectTrade: (id) => {
@@ -58,7 +69,9 @@ export const useTradesStore = create<TradesState>((set, get) => ({
   },
 
   loadTradeStory: async (tradeId) => {
-    const result = await fetchTradeStory(tradeId, get().runId ?? undefined);
+    const channelId = get().channelId;
+    const params = channelId ? `?channel=${channelId}` : '';
+    const result = await api<TradeStory>(`/trades/${tradeId}/story${params}`);
     if (get().selectedTradeId === tradeId) {
       set({ story: result, isLoadingStory: false });
     }

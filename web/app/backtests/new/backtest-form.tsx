@@ -1,6 +1,6 @@
-'use client';
-
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useApiMutation } from '@/hooks/use-api-mutation';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -12,9 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { startBacktest } from '../actions';
 import { isoToDateKey } from '@/lib/format';
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import type { BacktestRunConfig } from '@src/db/schema';
 import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
 
@@ -37,18 +36,57 @@ export function BacktestForm({
   defaultTraders: string;
   defaultConfig?: BacktestRunConfig;
 }) {
+  const navigate = useNavigate();
   const [provider, setProvider] = useState(defaultConfig?.agentProvider ?? 'xai');
   const [model, setModel] = useState(
     defaultConfig?.agentModel ?? MODELS_BY_PROVIDER[defaultConfig?.agentProvider ?? 'xai']?.[1] ?? MODELS_BY_PROVIDER.xai[1],
   );
+
+  const startMut = useApiMutation<Record<string, unknown>, { id: string }>('POST', '/backtests/start', {
+    onSuccess: (data) => navigate(`/backtests/${data.id}`),
+  });
 
   function handleProviderChange(value: string) {
     setProvider(value);
     setModel(MODELS_BY_PROVIDER[value][0]);
   }
 
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    const body: Record<string, unknown> = {
+      startDate: fd.get('startDate') as string,
+      endDate: fd.get('endDate') as string,
+      traders: (fd.get('traders') as string).split(',').map((t) => t.trim()).filter(Boolean),
+      agentProvider: provider,
+      agentModel: model,
+      disableRiskLimits: fd.get('disableRiskLimits') === 'on',
+    };
+
+    const startingEquity = fd.get('startingEquity');
+    if (startingEquity) body.startingEquity = Number(startingEquity);
+    const maxOnSymbol = fd.get('maxOnSymbol');
+    if (maxOnSymbol) body.maxOnSymbol = Number(maxOnSymbol);
+    const maxTotalPositions = fd.get('maxTotalPositions');
+    if (maxTotalPositions) body.maxTotalPositions = Number(maxTotalPositions);
+    const maxDrawdownPct = fd.get('maxDrawdownPct');
+    if (maxDrawdownPct) body.maxDrawdownPct = Number(maxDrawdownPct);
+    const maxAgentCalls = fd.get('maxAgentCalls');
+    if (maxAgentCalls) body.maxAgentCalls = Number(maxAgentCalls);
+
+    const commOptionPerContract = fd.get('commissionOptionPerContract');
+    const commStockPerShare = fd.get('commissionStockPerShare');
+    body.commissionSchedule = {
+      option: { perContract: commOptionPerContract ? Number(commOptionPerContract) : DEFAULT_COMMISSION_SCHEDULE.option.perContract },
+      stock: { perShare: commStockPerShare ? Number(commStockPerShare) : DEFAULT_COMMISSION_SCHEDULE.stock.perShare },
+    };
+
+    startMut.mutate(body);
+  }
+
   return (
-    <form action={startBacktest} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label className="text-xs text-muted-foreground mb-1">Start Date</Label>
@@ -155,11 +193,16 @@ export function BacktestForm({
       </div>
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit">Start Backtest</Button>
+        <Button type="submit" disabled={startMut.isPending}>
+          {startMut.isPending ? 'Starting...' : 'Start Backtest'}
+        </Button>
         <Button type="button" variant="ghost" asChild>
-          <Link href="/backtests">Cancel</Link>
+          <Link to="/backtests">Cancel</Link>
         </Button>
       </div>
+      {startMut.isError && (
+        <p className="text-sm text-loss">{startMut.error.message}</p>
+      )}
     </form>
   );
 }

@@ -10,12 +10,16 @@ import { sql } from 'drizzle-orm';
 
 // In-memory SQLite
 vi.mock('../db/client.js', async () => {
-  const { createClient } = await import('@libsql/client');
-  const { drizzle } = await import('drizzle-orm/libsql');
+  const Database = (await import('better-sqlite3')).default;
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
   const schema = await import('../db/schema.js');
-  const client = createClient({ url: ':memory:' });
-  const db = drizzle({ client, schema });
-  return { db, schema, sqliteClient: client };
+  const sqlite = new Database(':memory:');
+  const db = drizzle(sqlite, { schema });
+  return {
+    db, schema, sqliteClient: sqlite,
+    runTx: (cb: any) => db.transaction(cb),
+    withBusyRetry: (fn: any) => fn(),
+  };
 });
 
 // Mock isTrackedTrader to always return true
@@ -29,6 +33,8 @@ import { db, schema } from '../db/client.js';
 import { createTaskFromMessage } from './factory.js';
 import { CREATE_MESSAGES_SQL, CREATE_TASKS_SQL, CREATE_TASKS_UNIQUE_IDX } from '../backtest/test-fixtures.js';
 import type { Message } from '../db/schema.js';
+
+const CHANNEL_ID = 'ibkr:paper:test-account';
 
 beforeAll(async () => {
   await db.run(CREATE_MESSAGES_SQL);
@@ -80,7 +86,7 @@ describe('createTaskFromMessage', () => {
       confidence: '0.95',
     });
 
-    const taskId = await createTaskFromMessage(msg);
+    const taskId = await createTaskFromMessage(msg, CHANNEL_ID);
 
     // Current code returns null because badges.length === 0.
     // After fix, it should create a REVIEW_MESSAGE task.
@@ -98,7 +104,7 @@ describe('createTaskFromMessage', () => {
       confidence: '0.85',
     });
 
-    const taskId = await createTaskFromMessage(msg);
+    const taskId = await createTaskFromMessage(msg, CHANNEL_ID);
     expect(taskId).toBeNull();
   });
 
@@ -109,7 +115,7 @@ describe('createTaskFromMessage', () => {
       confidence: '0.85',
     });
 
-    const taskId = await createTaskFromMessage(msg);
+    const taskId = await createTaskFromMessage(msg, CHANNEL_ID);
     expect(taskId).not.toBeNull();
 
     const [task] = await db.select().from(schema.tasks);
@@ -123,7 +129,7 @@ describe('createTaskFromMessage', () => {
       confidence: '0.50',
     });
 
-    const taskId = await createTaskFromMessage(msg);
+    const taskId = await createTaskFromMessage(msg, CHANNEL_ID);
     expect(taskId).not.toBeNull();
 
     const [task] = await db.select().from(schema.tasks);
@@ -138,7 +144,7 @@ describe('createTaskFromMessage', () => {
       isPaperTrade: true,
     });
 
-    const taskId = await createTaskFromMessage(msg);
+    const taskId = await createTaskFromMessage(msg, CHANNEL_ID);
     expect(taskId).toBeNull();
   });
 
@@ -151,7 +157,7 @@ describe('createTaskFromMessage', () => {
       confidence: '0.95',
     });
 
-    const taskId = await createTaskFromMessage(msg);
+    const taskId = await createTaskFromMessage(msg, CHANNEL_ID);
 
     // After fix, this should create a task...
     expect(taskId).not.toBeNull();
@@ -168,8 +174,8 @@ describe('createTaskFromMessage', () => {
       confidence: '0.85',
     });
 
-    const taskId1 = await createTaskFromMessage(msg);
-    const taskId2 = await createTaskFromMessage(msg);
+    const taskId1 = await createTaskFromMessage(msg, CHANNEL_ID);
+    const taskId2 = await createTaskFromMessage(msg, CHANNEL_ID);
 
     expect(taskId1).not.toBeNull();
     expect(taskId2).toBeNull(); // unique constraint prevents duplicate

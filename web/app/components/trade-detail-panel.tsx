@@ -1,14 +1,11 @@
-'use client';
-
 import { useState } from 'react';
 import { useTradesStore } from '@/stores/trades-store';
-import type { TradeStoryDecision } from '../trades/actions';
 import { SignalDecisionSummary } from './signal-decision-summary';
 import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from './badge';
 import { formatDate } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { Message } from '@src/db/schema';
+import type { Message, RunDecision } from '@src/db/schema';
 import { formatLegsSummary } from '@src/lib/trade';
 
 function NearbyMessages({
@@ -92,9 +89,9 @@ function MessageRow({ message: m, isAssociated }: { message: Message; isAssociat
   );
 }
 
-function narrowDecision(d: TradeStoryDecision | null) {
+function narrowDecision(d: RunDecision | null) {
   if (!d?.outcome) return null;
-  return { ...d, outcome: d.outcome };
+  return d;
 }
 
 export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
@@ -104,7 +101,7 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
   });
   const story = useTradesStore((s) => s.story);
   const isLoading = useTradesStore((s) => s.isLoadingStory);
-  const runId = useTradesStore((s) => s.runId);
+  const channelId = useTradesStore((s) => s.channelId);
 
   if (!trade) return null;
 
@@ -151,7 +148,6 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
                 } : null}
                 decision={narrowDecision(story.decision)}
                 taskId={story.task?.id}
-                runId={runId ?? undefined}
               />
             </section>
 

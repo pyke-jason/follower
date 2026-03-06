@@ -1,19 +1,34 @@
 import { create } from 'zustand';
 import type { Message, MessageLabel } from '@src/db/schema';
-import {
-  fetchMessages,
-  fetchRelatedMessages,
-  type MessageFilters,
-  type MessageEnrichment,
-} from '@/app/messages/actions';
+import type { TradeOutcome, MessageDecision } from '@src/lib/enriched-message';
+import { api } from '@/lib/api';
 
+export type LabelFilter = 'labeled' | 'unlabeled';
+
+export type MessageEnrichment = {
+  decision: MessageDecision | null;
+  trade: TradeOutcome | null;
+};
+
+export type MessageFilters = {
+  authors?: string[];
+  startDate?: string;
+  endDate?: string;
+  signalsOnly?: boolean;
+  labelFilter?: LabelFilter;
+  cursor?: string;
+  channelId?: string;
+  roleFilter?: 'all' | 'processed' | 'executed' | 'skipped';
+};
+
+const PAGE_SIZE = 50;
 const START_INDEX = 100_000;
 
 export type FilterConstraints = {
   authors?: string[];
   startDate?: string;
   endDate?: string;
-  runId?: string;
+  channelId?: string;
   lastProcessedTs?: string;
 };
 
@@ -31,9 +46,9 @@ export type StableDecisionCounts = {
 
 export type ChatHydration = {
   messages: Message[];
-  cursor: string | null;
+  nextCursor: string | null;
   labels: Record<string, MessageLabel>;
-  enrichment: Record<string, MessageEnrichment>;
+  enrichment: Record<string, MessageEnrichment> | null;
   authors: string[];
   constraints?: FilterConstraints;
   stableDecisionCounts?: StableDecisionCounts;
@@ -48,14 +63,28 @@ function buildMergedFilters(
     ...(constraints?.authors && { authors: constraints.authors }),
     ...(constraints?.startDate && { startDate: constraints.startDate }),
     ...(constraints?.endDate && { endDate: constraints.endDate }),
-    ...(constraints?.runId && { runId: constraints.runId }),
+    ...(constraints?.channelId && { channelId: constraints.channelId }),
   };
+}
+
+function buildMessageParams(filters: MessageFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.authors?.length) params.set('authors', filters.authors.join(','));
+  if (filters.startDate) params.set('startDate', filters.startDate);
+  if (filters.endDate) params.set('endDate', filters.endDate);
+  if (filters.signalsOnly) params.set('signalsOnly', 'true');
+  if (filters.labelFilter) params.set('labelFilter', filters.labelFilter);
+  if (filters.cursor) params.set('cursor', filters.cursor);
+  if (filters.channelId) params.set('channel', filters.channelId);
+  if (filters.roleFilter) params.set('roleFilter', filters.roleFilter);
+  params.set('limit', String(PAGE_SIZE + 1));
+  return params;
 }
 
 interface ChatState {
   messages: Message[];
   labels: Record<string, MessageLabel>;
-  enrichment: Record<string, MessageEnrichment>;
+  enrichment: Record<string, MessageEnrichment> | null;
   cursor: string | null;
   firstItemIndex: number;
   filters: MessageFilters;
@@ -72,7 +101,7 @@ interface ChatState {
   mergeNewMessages: (
     msgs: Message[],
     newLabels: Record<string, MessageLabel>,
-    newEnrichment: Record<string, MessageEnrichment>,
+    newEnrichment: Record<string, MessageEnrichment> | null,
   ) => void;
   setFilters: (filters: MessageFilters) => void;
   loadOlderMessages: () => Promise<void>;
@@ -82,7 +111,7 @@ interface ChatState {
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   labels: {},
-  enrichment: {},
+  enrichment: null,
   cursor: null,
   firstItemIndex: START_INDEX,
   filters: {},
@@ -100,7 +129,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: data.messages,
       labels: data.labels,
       enrichment: data.enrichment,
-      cursor: data.cursor,
+      cursor: data.nextCursor,
       authors: data.authors,
       constraints: data.constraints,
       stableDecisionCounts: data.stableDecisionCounts,
@@ -121,7 +150,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       messages: [...incoming, ...state.messages],
       labels: { ...state.labels, ...newLabels },
-      enrichment: { ...state.enrichment, ...newEnrichment },
+      enrichment: newEnrichment ? { ...state.enrichment, ...newEnrichment } : state.enrichment,
     }));
   },
 
@@ -130,7 +159,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ filters: newFilters, firstItemIndex: START_INDEX, isLoadingOlder: true });
 
     const merged = buildMergedFilters(newFilters, constraints);
-    const result = await fetchMessages(merged);
+    const params = buildMessageParams(merged);
+    const result = await api<ChatHydration>(`/messages?${params}`);
     set({
       messages: result.messages,
       labels: result.labels,
@@ -146,7 +176,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({ isLoadingOlder: true });
     const merged = buildMergedFilters(filters, constraints);
-    const result = await fetchMessages({ ...merged, cursor });
+    const params = buildMessageParams({ ...merged, cursor });
+    const result = await api<ChatHydration>(`/messages?${params}`);
 
     if (result.messages.length === 0) {
       set({ cursor: null, isLoadingOlder: false });
@@ -156,9 +187,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const newItemCount = result.messages.length + 5;
     set((state) => ({
       firstItemIndex: state.firstItemIndex - newItemCount,
-      messages: [...result.messages, ...state.messages],
+      messages: [...state.messages, ...result.messages],
       labels: { ...state.labels, ...result.labels },
-      enrichment: { ...state.enrichment, ...result.enrichment },
+      enrichment: result.enrichment ? { ...state.enrichment, ...result.enrichment } : state.enrichment,
       cursor: result.nextCursor,
       isLoadingOlder: false,
     }));
@@ -171,7 +202,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     set({ selectedMessage: msg, relatedContext: null, isLoadingRelated: true });
-    const result = await fetchRelatedMessages(msg.id);
+    const result = await api<RelatedContext>(`/messages/${msg.id}/related`);
     if (get().selectedMessage?.id === msg.id) {
       set({ relatedContext: result, isLoadingRelated: false });
     }

@@ -1,6 +1,7 @@
 let timer: ReturnType<typeof setInterval> | null = null;
 
 const INTERVAL_MS = 60_000; // 1 minute
+const DEFAULT_SIDECAR_URL = 'http://localhost:8090/api';
 
 /**
  * Check whether the IBKR sidecar is reachable and connected to IB Gateway.
@@ -8,17 +9,22 @@ const INTERVAL_MS = 60_000; // 1 minute
  * Non-IBKR brokers always return true (no sidecar to check).
  */
 async function isSidecarHealthy(): Promise<boolean> {
-  if (process.env.BROKER !== 'ibkr') return true;
+  const { getRuntimeChannelDefinitions } = await import('./runtime-channels.js');
+  const defs = getRuntimeChannelDefinitions().filter((d) => d.brokerName === 'ibkr');
+  if (defs.length === 0) return true;
 
-  const base = process.env.IBKR_SIDECAR_URL ?? 'http://localhost:8090/api';
-  try {
-    const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(5_000) });
-    if (!res.ok) return false;
-    const body = await res.json() as { connected?: boolean };
-    return body.connected === true;
-  } catch {
-    return false;
+  const sidecarUrls = [...new Set(defs.map((d) => d.sidecarUrl ?? DEFAULT_SIDECAR_URL))];
+  for (const base of sidecarUrls) {
+    try {
+      const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(5_000) });
+      if (!res.ok) return false;
+      const body = await res.json() as { connected?: boolean };
+      if (body.connected !== true) return false;
+    } catch {
+      return false;
+    }
   }
+  return true;
 }
 
 /**
@@ -29,7 +35,6 @@ async function isSidecarHealthy(): Promise<boolean> {
  */
 export function startHealthcheck(): void {
   if (process.env.HEALTHCHECK_ENABLED === '0') return;
-  if (process.env.IBKR_GATEWAY_PORT === '4002') return; // paper trading
   const url = process.env.HEALTHCHECK_PING_URL;
   if (!url) return;
 

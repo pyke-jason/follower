@@ -70,10 +70,16 @@ export interface LLMProvider {
 
 // ─── Defaults ────────────────────────────────────────
 
-export const DEFAULT_TRADE_MODEL: ModelIdentity = {
-  provider: 'anthropic',
-  model: 'claude-sonnet-4-6',
-};
+let _defaultTradeModel: ModelIdentity | null = null;
+export function getDefaultTradeModel(): ModelIdentity {
+  if (!_defaultTradeModel) {
+    _defaultTradeModel = {
+      provider: (process.env.TRADE_MODEL_PROVIDER ?? 'anthropic') as ModelProvider,
+      model: process.env.TRADE_MODEL ?? 'claude-sonnet-4-6',
+    };
+  }
+  return _defaultTradeModel;
+}
 
 export const DEFAULT_LABEL_MODEL: ModelIdentity = {
   provider: 'anthropic',

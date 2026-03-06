@@ -163,7 +163,8 @@ export function SizedView({ data }: { data: Record<string, unknown> }) {
 }
 
 export function OrderPlacedView({ data }: { data: Record<string, unknown> }) {
-  const legs = Array.isArray(data.legs) ? (data.legs as LegRow[]) : [];
+  const params = data.params as Record<string, unknown> | undefined;
+  const legs = Array.isArray(params?.legs) ? (params.legs as LegRow[]) : [];
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
@@ -172,9 +173,9 @@ export function OrderPlacedView({ data }: { data: Record<string, unknown> }) {
             <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
           </StatItem>
         ) : null}
-        {data.orderType != null ? (
+        {params?.orderType != null ? (
           <StatItem label="Order Type">
-            <Badge label={String(data.orderType)} />
+            <Badge label={String(params.orderType)} />
           </StatItem>
         ) : null}
         {data.status != null ? (
@@ -182,19 +183,19 @@ export function OrderPlacedView({ data }: { data: Record<string, unknown> }) {
             <Badge label={String(data.status)} />
           </StatItem>
         ) : null}
-        {data.limitPrice != null ? (
+        {params?.limitPrice != null ? (
           <StatItem label="Limit Price">
-            <span className="text-foreground tabular-nums">${String(data.limitPrice)}</span>
+            <span className="text-foreground tabular-nums">${String(params.limitPrice)}</span>
           </StatItem>
         ) : null}
-        {data.symbol != null ? (
+        {params?.symbol != null ? (
           <StatItem label="Symbol">
-            <InfoChip label={String(data.symbol)} />
+            <InfoChip label={String(params.symbol)} />
           </StatItem>
         ) : null}
-        {data.direction != null ? (
+        {params?.direction != null ? (
           <StatItem label="Direction">
-            <Badge label={String(data.direction)} />
+            <Badge label={String(params.direction)} />
           </StatItem>
         ) : null}
       </div>
@@ -229,6 +230,7 @@ export function OrderPlacedView({ data }: { data: Record<string, unknown> }) {
 }
 
 export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
+  const params = data.params as Record<string, unknown> | undefined;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
       {data.orderId != null ? (
@@ -256,9 +258,9 @@ export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
           <span className="text-foreground tabular-nums">{String(data.adjustmentCount)}</span>
         </StatItem>
       ) : null}
-      {data.originalLimitPrice != null ? (
+      {params?.limitPrice != null ? (
         <StatItem label="Original Limit">
-          <span className="text-foreground tabular-nums">${String(data.originalLimitPrice)}</span>
+          <span className="text-foreground tabular-nums">${String(params.limitPrice)}</span>
         </StatItem>
       ) : null}
     </div>
@@ -266,6 +268,7 @@ export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
 }
 
 export function OrderCancelledView({ data }: { data: Record<string, unknown> }) {
+  const params = data.params as Record<string, unknown> | undefined;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
       {data.orderId != null ? (
@@ -273,19 +276,19 @@ export function OrderCancelledView({ data }: { data: Record<string, unknown> }) 
           <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
         </StatItem>
       ) : null}
-      {data.symbol != null ? (
+      {params?.symbol != null ? (
         <StatItem label="Symbol">
-          <InfoChip label={String(data.symbol)} />
+          <InfoChip label={String(params.symbol)} />
         </StatItem>
       ) : null}
-      {data.originalLimitPrice != null ? (
+      {params?.limitPrice != null ? (
         <StatItem label="Original Limit">
-          <span className="text-foreground tabular-nums">${String(data.originalLimitPrice)}</span>
+          <span className="text-foreground tabular-nums">${String(params.limitPrice)}</span>
         </StatItem>
       ) : null}
-      {data.finalLimitPrice != null ? (
+      {data.currentLimitPrice != null ? (
         <StatItem label="Final Limit">
-          <span className="text-foreground tabular-nums">${String(data.finalLimitPrice)}</span>
+          <span className="text-foreground tabular-nums">${String(data.currentLimitPrice)}</span>
         </StatItem>
       ) : null}
       {data.adjustmentCount != null ? (
@@ -293,9 +296,9 @@ export function OrderCancelledView({ data }: { data: Record<string, unknown> }) 
           <span className="text-foreground tabular-nums">{String(data.adjustmentCount)}</span>
         </StatItem>
       ) : null}
-      {data.reason != null ? (
+      {data.status != null ? (
         <StatItem label="Reason">
-          <Badge label={String(data.reason)} />
+          <Badge label={String(data.status)} />
         </StatItem>
       ) : null}
     </div>

@@ -1,5 +1,3 @@
-'use client';
-
 import { useRef, useEffect } from 'react';
 import { useChatStore, type ChatHydration } from '@/stores/chat-store';
 

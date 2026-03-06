@@ -22,7 +22,7 @@ import type { Message } from '../../db/schema.js';
 import { createLogger } from '../../lib/logger.js';
 import { parseMessage } from './parser.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
-import { resolvePositionPath } from './position-path.js';
+import { resolvePositionPath, buildReversalLeg } from './position-path.js';
 import { resolveLLMPath } from './llm-path.js';
 import { getRecentChatMessages, formatChatContext } from '../trader-context.js';
 import type {
@@ -63,7 +63,7 @@ export async function resolveOrchestrator(
   const parse = parseMessage(ctx);
 
   log.debug(
-    `[${ctx.messageId}] parse: action=${parse.action} symbol=${parse.symbol} ` +
+    `[${ctx.message.id}] parse: action=${parse.action} symbol=${parse.symbol} ` +
     `strategy=${parse.strategy} direction=${parse.direction} ` +
     `flags=[${Array.from(parse.complexityFlags).join(',')}] ` +
     `hardSkip=${parse.isHardSkip} strangle=${parse.isStrangle}`,
@@ -86,7 +86,7 @@ export async function resolveOrchestrator(
   // ── 2. Strangle ─────────────────────────────────────────────────────────────
   // Strangle/straddle EXIT: close all matching positions for symbol
   if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
-    log.debug(`[${ctx.messageId}] strangle exit → per-position close`);
+    log.debug(`[${ctx.message.id}] strangle exit → per-position close`);
     const r = await resolveStrangleExit(parse, ctx);
     const result = { ...r, parseResult: serializedParse };
     logResult(ctx, parse, result);
@@ -96,7 +96,7 @@ export async function resolveOrchestrator(
 
   // Strangle/straddle OPEN: decompose into CALL + PUT signals
   if (parse.isStrangle) {
-    log.debug(`[${ctx.messageId}] strangle → forking into CALL + PUT`);
+    log.debug(`[${ctx.message.id}] strangle → forking into CALL + PUT`);
     const r = await resolveStrangle(parse, ctx);
     const result = { ...r, parseResult: serializedParse };
     logResult(ctx, parse, result);
@@ -112,7 +112,7 @@ export async function resolveOrchestrator(
 
   if (!needsLLM) {
     if (parse.action === 'ADD') {
-      log.debug(`[${ctx.messageId}] → add path`);
+      log.debug(`[${ctx.message.id}] → add path`);
       const r = await resolveAddPath(parse, ctx);
       const result = { ...r, parseResult: serializedParse };
       logResult(ctx, parse, result);
@@ -121,7 +121,7 @@ export async function resolveOrchestrator(
     }
 
     if (parse.action === 'OPEN') {
-      log.debug(`[${ctx.messageId}] → open path`);
+      log.debug(`[${ctx.message.id}] → open path`);
       const r = await resolveOpenPath(parse, ctx);
       if (r.outcome !== 'MANUAL_REVIEW') {
         const result = { ...r, parseResult: serializedParse };
@@ -130,7 +130,7 @@ export async function resolveOrchestrator(
         return result;
       }
       // Open path couldn't resolve — fall through to LLM for disambiguation
-      log.debug(`[${ctx.messageId}] open path → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
+      log.debug(`[${ctx.message.id}] open path → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
     }
 
     if (
@@ -138,7 +138,7 @@ export async function resolveOrchestrator(
       parse.action === 'TRIM' ||
       parse.action === 'LEG_OFF'
     ) {
-      log.debug(`[${ctx.messageId}] → position path (${parse.action})`);
+      log.debug(`[${ctx.message.id}] → position path (${parse.action})`);
       const r = await resolvePositionPath(parse, ctx);
       if (r.outcome !== 'MANUAL_REVIEW') {
         const result = { ...r, parseResult: serializedParse };
@@ -147,7 +147,7 @@ export async function resolveOrchestrator(
         return result;
       }
       // Ambiguous position match — fall through to LLM for disambiguation
-      log.debug(`[${ctx.messageId}] position path → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
+      log.debug(`[${ctx.message.id}] position path → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
     }
   }
 
@@ -159,11 +159,11 @@ export async function resolveOrchestrator(
       : parse.action !== null
         ? 'position-ambiguity'
         : 'action=null';
-  log.debug(`[${ctx.messageId}] → LLM path (${flagDetail})`);
+  log.debug(`[${ctx.message.id}] → LLM path (${flagDetail})`);
 
   if (!env.llm) {
     log.warn(
-      `[${ctx.messageId}] LLM path needed (${flagDetail}) but no provider supplied`,
+      `[${ctx.message.id}] LLM path needed (${flagDetail}) but no provider supplied`,
     );
     const result: OrchestratorResult = {
       outcome: 'MANUAL_REVIEW',
@@ -190,13 +190,7 @@ async function buildContext(
   failureContext?: { error: string },
 ): Promise<OrchestratorContext> {
   return {
-    messageId: message.id,
-    rawHtml: message.rawHtml,
-    cleanText: message.cleanText,
-    badges: message.badges,
-    symbols: message.symbols,
-    timestamp: message.timestamp,
-    author: message.author,
+    message,
     marketData: {
       getQuote: (s) => env.broker.getQuote(s),
       getOptionChain: async () => null,
@@ -224,7 +218,7 @@ async function emitOrchestratorEvents(
   route: 'deterministic' | 'llm' | 'hard-skip',
 ): Promise<void> {
   // Always emit PARSED — include route so timeline knows how we got here
-  await env.emitter.emit('PARSED', { ...serializedParse, route });
+  await env.emitter.emit('PARSED', {}, { ...serializedParse, route });
 
   // For EXECUTE, emit SIGNAL_RESOLVED per signal
   // Non-EXECUTE outcomes: SETTLED is emitted by the caller (runner), not here
@@ -232,16 +226,11 @@ async function emitOrchestratorEvents(
     for (let i = 0; i < result.signals.length; i++) {
       const signal = result.signals[i];
       await env.emitter.emit('SIGNAL_RESOLVED', {
-        orderType: signal.orderType,
-        legs: signal.legs,
-        limitPrice: signal.limitPrice,
-        tradeId: signal.tradeId,
-      }, {
         signalIndex: i,
-        tradeId: signal.tradeId ?? null,
-        inputTokens: result.usage?.inputTokens ?? null,
-        outputTokens: result.usage?.outputTokens ?? null,
-      });
+        tradeId: signal.tradeId ?? undefined,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+      }, { ...signal });
     }
   }
 }
@@ -256,11 +245,11 @@ function serializeParseResult(parse: ParseResult): SerializedParseResult {
 // ── Info-level summary log ────────────────────────────────────────────────────
 
 function logResult(ctx: OrchestratorContext, parse: ParseResult, result: OrchestratorResult): void {
-  const id = `[${ctx.messageId}]`;
-  const who = ctx.author;
+  const id = `[${ctx.message.id}]`;
+  const who = ctx.message.author;
 
   if (result.outcome === 'SKIP') {
-    log.info(`${id} ${who} | SKIP ${result.reason}\n  msg: ${ctx.cleanText}`);
+    log.info(`${id} ${who} | SKIP ${result.reason}\n  msg: ${ctx.message.cleanText}`);
     return;
   }
 
@@ -280,9 +269,9 @@ function logResult(ctx: OrchestratorContext, parse: ParseResult, result: Orchest
 
   if (result.outcome === 'EXECUTE') {
     const legCount = result.signals.reduce((n, s) => n + s.legs.length, 0);
-    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)\n  msg: ${ctx.cleanText}`);
+    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)\n  msg: ${ctx.message.cleanText}`);
   } else {
-    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}\n  msg: ${ctx.cleanText}`);
+    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}\n  msg: ${ctx.message.cleanText}`);
   }
 }
 
@@ -354,26 +343,7 @@ async function resolveStrangleExit(
 
   const signals: ResolvedSignal[] = [];
   for (const pos of positions) {
-    const legs: Leg[] = pos.legs.map(leg => {
-      const closeSide = leg.action === 'BUY' ? 'SELL' as const : 'BUY' as const;
-      if (leg.type !== 'STOCK') {
-        return {
-          type: 'option' as const,
-          symbol: pos.symbol,
-          expiry: leg.expiry,
-          optionType: leg.type,
-          strike: leg.strike,
-          side: closeSide,
-          quantity: leg.quantity,
-        };
-      }
-      return {
-        type: 'stock' as const,
-        symbol: pos.symbol,
-        side: closeSide,
-        quantity: leg.quantity,
-      };
-    });
+    const legs: Leg[] = pos.legs.map(leg => buildReversalLeg(leg, pos.symbol, leg.quantity));
     signals.push({
       action: 'CLOSE',
       orderType: legs.length > 1 ? 'SPREAD' : 'SINGLE',

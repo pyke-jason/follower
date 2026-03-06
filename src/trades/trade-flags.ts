@@ -1,4 +1,4 @@
-import { db, schema } from '../db/client.js';
+import { db, schema, runTx } from '../db/client.js';
 import { and, eq, ne } from 'drizzle-orm';
 
 import { isOpen, forChannel, forSymbol, forTrader } from './filters.js';
@@ -14,18 +14,20 @@ export function buildFlags(existing: TradeFlag[] | undefined, ...newFlags: (Trad
 }
 
 /** Read a trade's metadata, append flags, write back atomically. For async updaters outside recordTrade. */
-export async function addTradeFlags(tradeId: string, ...flags: TradeFlag[]): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [row] = await tx.select({ metadata: schema.trades.metadata })
+export function addTradeFlags(tradeId: string, ...flags: TradeFlag[]): void {
+  runTx((tx) => {
+    const [row] = tx.select({ metadata: schema.trades.metadata })
       .from(schema.trades)
       .where(eq(schema.trades.id, tradeId))
-      .limit(1);
+      .limit(1)
+      .all();
     if (!row) return;
     const meta = row.metadata;
     const merged = buildFlags(meta.flags, ...flags);
-    await tx.update(schema.trades)
+    tx.update(schema.trades)
       .set({ metadata: { ...meta, flags: merged } satisfies TradeMetadata })
-      .where(eq(schema.trades.id, tradeId));
+      .where(eq(schema.trades.id, tradeId))
+      .run();
   });
 }
 

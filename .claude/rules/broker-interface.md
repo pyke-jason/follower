@@ -11,7 +11,7 @@ paths: src/broker/**
 - `SimBroker` (`src/backtest/sim-broker.ts`) — simulated fills for backtesting
 - Live brokers under `src/broker/` (e.g. `tradestation/`, `ibkr/`) — real API integrations
 
-`src/broker/select.ts` selects the live broker at runtime via the `BROKER` env var.
+`src/broker/select.ts` provides `getRuntimeChannelServices()` — reads env vars (`IBKR_LIVE_ACCOUNT_ID`, `TS_ACCOUNT_ID`, etc.) and returns a map of `channelId → BrokerService`, supporting multiple brokers/accounts concurrently.
 
 ## Rules
 

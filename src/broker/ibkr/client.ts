@@ -22,7 +22,15 @@ import {
   parseSidecarResponse,
 } from './schemas.js';
 
-const SIDECAR_URL = process.env.IBKR_SIDECAR_URL ?? 'http://localhost:8090/api';
+export type IbkrServiceOptions = {
+  sidecarUrl: string;
+  accountId: string;
+};
+
+type IbkrRuntime = {
+  sidecarUrl: string;
+  accountId: string;
+};
 
 /** Round a price to the nearest valid tick using the contract's actual minTick from IBKR. */
 export function roundToTick(price: number, minTick: number): number {
@@ -71,10 +79,11 @@ function ibkrClassify(err: unknown): ErrorCategory {
 // ── HTTP helper ─────────────────────────────────────────────────────
 
 async function sidecar(
+  baseUrl: string,
   path: string,
   options?: RequestInit & { signal?: AbortSignal },
 ): Promise<unknown> {
-  const res = await fetch(`${SIDECAR_URL}${path}`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     ...options,
     signal: options?.signal,
     headers: {
@@ -111,18 +120,18 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
 
 // ── BrokerService Implementation ────────────────────────────────────
 
-async function getQuote(symbol: string): Promise<Quote> {
+async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
   return withRetry(async (signal) => {
     let body: Record<string, unknown>;
 
     if (isOccOptionSymbol(symbol)) {
-      const { conId } = await resolveContract(symbol, SIDECAR_URL);
+      const { conId } = await resolveContract(symbol, runtime.sidecarUrl);
       body = { conId };
     } else {
       body = { symbol, secType: 'STK' };
     }
 
-    const data = await sidecar('/market-data/snapshot', {
+    const data = await sidecar(runtime.sidecarUrl, '/market-data/snapshot', {
       method: 'POST',
       body: JSON.stringify(body),
       signal,
@@ -142,14 +151,14 @@ async function getQuote(symbol: string): Promise<Quote> {
       symbol,
       bid: quote.bid,
       ask: quote.ask,
-      last: quote.last ?? quote.close,
-      volume: quote.volume,
+      last: quote.last ?? quote.close ?? quote.bid ?? quote.ask,
+      volume: quote.volume ?? 0,
       timestamp: new Date().toISOString(),
     };
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
 }
 
-async function placeOrder(params: OrderParams): Promise<OrderResult> {
+async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<OrderResult> {
   // Resolve conIds + minTick for all option legs
   const resolvedLegs = await Promise.all(
     params.legs.map(async (leg) => {
@@ -162,7 +171,7 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
         type: leg.type,
         strike: leg.strike,
       });
-      const { conId, minTick } = await resolveContract(occSymbol, SIDECAR_URL);
+      const { conId, minTick } = await resolveContract(occSymbol, runtime.sidecarUrl);
       return { leg, conId, minTick };
     }),
   );
@@ -192,7 +201,7 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
       if (limitPrice != null) {
         singleBody.limitPrice = limitPrice;
       }
-      data = await sidecar('/orders/single', {
+      data = await sidecar(runtime.sidecarUrl, '/orders/single', {
         method: 'POST',
         body: JSON.stringify(singleBody),
         signal,
@@ -223,7 +232,7 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
       if (limitPrice != null) {
         comboBody.limitPrice = limitPrice;
       }
-      data = await sidecar('/orders/combo', {
+      data = await sidecar(runtime.sidecarUrl, '/orders/combo', {
         method: 'POST',
         body: JSON.stringify(comboBody),
         signal,
@@ -246,13 +255,17 @@ async function placeOrder(params: OrderParams): Promise<OrderResult> {
   }, { maxRetries: 0, timeoutMs: 15_000, classify: ibkrClassify }, 'placeOrder');
 }
 
-async function modifyOrder(orderId: string, newLimitPrice: number): Promise<OrderResult> {
+async function modifyOrder(
+  orderId: string,
+  newLimitPrice: number,
+  runtime: IbkrRuntime,
+): Promise<OrderResult> {
   return withRetry(async (signal) => {
     // We don't know the underlying here, but modifyOrder only changes limit price
     // on existing orders. Round conservatively (penny increment is always safe).
     const rounded = Math.round(newLimitPrice * 100) / 100;
 
-    const data = await sidecar(`/orders/${encodeURIComponent(orderId)}`, {
+    const data = await sidecar(runtime.sidecarUrl, `/orders/${encodeURIComponent(orderId)}`, {
       method: 'PUT',
       body: JSON.stringify({ limitPrice: rounded }),
       signal,
@@ -271,9 +284,9 @@ async function modifyOrder(orderId: string, newLimitPrice: number): Promise<Orde
   }, { ...WRITE_DEFAULTS, classify: ibkrClassify }, `modifyOrder(${orderId})`);
 }
 
-async function cancelOrder(orderId: string): Promise<OrderResult> {
+async function cancelOrder(orderId: string, runtime: IbkrRuntime): Promise<OrderResult> {
   return withRetry(async (signal) => {
-    const data = await sidecar(`/orders/${encodeURIComponent(orderId)}`, {
+    const data = await sidecar(runtime.sidecarUrl, `/orders/${encodeURIComponent(orderId)}`, {
       method: 'DELETE',
       signal,
     });
@@ -291,9 +304,9 @@ async function cancelOrder(orderId: string): Promise<OrderResult> {
   }, { ...WRITE_DEFAULTS, classify: ibkrClassify }, `cancelOrder(${orderId})`);
 }
 
-async function getOrderStatus(orderId: string): Promise<OrderResult> {
+async function getOrderStatus(orderId: string, runtime: IbkrRuntime): Promise<OrderResult> {
   return withRetry(async (signal) => {
-    const data = await sidecar(`/orders/${encodeURIComponent(orderId)}`, { signal });
+    const data = await sidecar(runtime.sidecarUrl, `/orders/${encodeURIComponent(orderId)}`, { signal });
 
     const order = parseSidecarResponse(
       OrderResponseSchema,
@@ -318,9 +331,9 @@ async function getOrderStatus(orderId: string): Promise<OrderResult> {
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getOrderStatus(${orderId})`);
 }
 
-async function getPositions(): Promise<BrokerPosition[]> {
+async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
   return withRetry(async (signal) => {
-    const data = await sidecar('/positions', { signal });
+    const data = await sidecar(runtime.sidecarUrl, '/positions', { signal });
 
     // Sidecar returns an array directly
     const positions = parseSidecarResponse(
@@ -355,11 +368,9 @@ async function getPositions(): Promise<BrokerPosition[]> {
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, 'getPositions');
 }
 
-async function getAccountBalance(): Promise<AccountBalance> {
-  const accountId = process.env.IBKR_ACCOUNT_ID ?? '';
-
+async function getAccountBalance(runtime: IbkrRuntime): Promise<AccountBalance> {
   return withRetry(async (signal) => {
-    const data = await sidecar('/account/summary', { signal });
+    const data = await sidecar(runtime.sidecarUrl, '/account/summary', { signal });
 
     const summary = parseSidecarResponse(
       AccountSummaryResponseSchema,
@@ -368,7 +379,7 @@ async function getAccountBalance(): Promise<AccountBalance> {
     );
 
     return {
-      accountId,
+      accountId: runtime.accountId,
       cashBalance: summary.availableFunds,
       buyingPower: summary.availableFunds,
       equity: summary.netLiquidation,
@@ -386,11 +397,11 @@ async function getAccountBalance(): Promise<AccountBalance> {
 
 // ── Health Check ─────────────────────────────────────────────────────
 
-async function isHealthy(): Promise<boolean> {
+async function isHealthy(runtime: IbkrRuntime): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
-    const raw = await sidecar('/status', { signal: controller.signal });
+    const raw = await sidecar(runtime.sidecarUrl, '/status', { signal: controller.signal });
     clearTimeout(timeout);
     const status = StatusResponseSchema.parse(raw);
     return status.connected && !status.maintenance;
@@ -401,13 +412,19 @@ async function isHealthy(): Promise<boolean> {
 
 // ── Export ───────────────────────────────────────────────────────────
 
-export const ibkrService: BrokerService = {
-  getQuote,
-  placeOrder,
-  modifyOrder,
-  cancelOrder,
-  getOrderStatus,
-  getPositions,
-  getAccountBalance,
-  isHealthy,
-};
+export function createIbkrService(options: IbkrServiceOptions): BrokerService {
+  const runtime: IbkrRuntime = {
+    sidecarUrl: options.sidecarUrl,
+    accountId: options.accountId,
+  };
+  return {
+    getQuote: (symbol) => getQuote(symbol, runtime),
+    placeOrder: (params) => placeOrder(params, runtime),
+    modifyOrder: (orderId, newLimitPrice) => modifyOrder(orderId, newLimitPrice, runtime),
+    cancelOrder: (orderId) => cancelOrder(orderId, runtime),
+    getOrderStatus: (orderId) => getOrderStatus(orderId, runtime),
+    getPositions: () => getPositions(runtime),
+    getAccountBalance: () => getAccountBalance(runtime),
+    isHealthy: () => isHealthy(runtime),
+  };
+}

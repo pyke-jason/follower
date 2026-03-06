@@ -25,7 +25,7 @@ JSON files in `evals/fixtures/`, one per concern (e.g. `core.json`, `direction.j
 
 ## Scoring Rules
 
-1. Outcome mismatch (EXECUTE vs SKIP) -> score 0, immediate fail (not a hard fail).
+1. Outcome mismatch (EXECUTE vs SKIP) -> score 0. Becomes `hardFail` only if `'outcome'` is in the case's `mustMatch` array.
 2. Outcome match with no expected signals -> score 1.0, pass.
 3. Signal matching: match expected to actual by leg optionType composition, then positional fallback.
 4. Fields scored per signal (only if present in expected): see `scoreSignal()` in scorer.ts. Includes `orderType`, `exitPercent`, `symbol`, and leg-level fields.

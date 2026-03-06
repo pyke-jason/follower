@@ -12,7 +12,9 @@ import { createLogger } from '../../lib/logger.js';
 
 const log = createLogger('IBKR-WS');
 
-const SIDECAR_WS = process.env.IBKR_SIDECAR_WS ?? 'ws://localhost:8090/events';
+const SIDECAR_WS = process.env.IBKR_LIVE_SIDECAR_WS
+  ?? process.env.IBKR_PAPER_SIDECAR_WS
+  ?? 'ws://localhost:8090/events';
 const RECONNECT_DELAY_MS = 5_000;
 const PING_INTERVAL_MS = 15_000; // keepalive ping every 15s
 const ESCALATION_THRESHOLD_MS = 300_000; // 5 minutes

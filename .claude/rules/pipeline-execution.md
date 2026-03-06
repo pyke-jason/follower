@@ -52,7 +52,7 @@ Single construction site for all pipeline dependencies. Runners provide 3 primit
 **When adding a new dep**, add it to `buildPipelineDeps()` in `build-deps.ts`. Do NOT add it to individual runners — the factory is the only place pipeline deps are constructed.
 
 Parity invariants (enforced by the factory):
-- `calculatePositionSize` ALWAYS forwards `input.spreadMaxRisk` to the sizer
+- `calculatePositionSize` receives `legs: Leg[]` — the sizer owns all risk calculation including credit spread risk (PCS/CCS: `strikeWidth - premium`)
 - `recordTrade` ALWAYS includes `agentModel` in metadata and `channelId` from scope
 - `getOpenPositions` derived from `env.scope` via `forChannel(scope)` (same DB query, different scope filter)
 - `riskDeps` derived from `env.scope` + `env.clock` + `broker`

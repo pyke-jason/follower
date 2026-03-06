@@ -12,11 +12,11 @@ const CHUNK_DELAY_MS = 500;
 // ─── API Response Schema ────────────────────────────
 
 const ApiMessageSchema = z.object({
-  Id: z.string(),
+  Id: z.coerce.string(),
   Author: z.string(),
   TimeUtc: z.string(),
   Message: z.string(),
-  Tag: z.string().optional().default(''),
+  Tag: z.coerce.string().optional().default(''),
   Votes: z.number().optional().default(0),
   Reactions: z.array(z.unknown()).optional().default([]),
 });
@@ -183,7 +183,11 @@ export async function cancelFetch(runId: string): Promise<boolean> {
 // ─── Internals ──────────────────────────────────────
 
 async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: number; saved: number }> {
-  const url = `${SEARCH_URL}?term=&author=&since=${date}&until=${date}`;
+  // The API treats `until` as exclusive, so we pass the next day
+  const nextDay = new Date(date + 'T00:00:00Z');
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const untilDate = isoToDateKey(nextDay.toISOString());
+  const url = `${SEARCH_URL}?term=&author=&since=${date}&until=${untilDate}`;
   const raw = await fetchJson<unknown>(url, signal);
 
   // The API returns either { messages: [...] } or just an array
@@ -215,7 +219,7 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
       confidence: classification.confidence != null ? String(classification.confidence) : null,
     }).onConflictDoNothing();
 
-    if (result.rowsAffected > 0) saved++;
+    if (result.changes > 0) saved++;
   }
 
   return { fetched: messages.length, saved };

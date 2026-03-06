@@ -1,22 +1,44 @@
 /**
  * Channel ID helpers.
  *
- * Format: `<mode>:<id>`
- *   - `live:<accountId>`  — e.g. live:U14368257
- *   - `paper:<accountId>` — e.g. paper:DU12345
- *   - `bt:<runId>`        — e.g. bt:a1b2c3d4-...
+ * Runtime format: `<broker>:<mode>:<accountId>`
+ *   - `ibkr:live:<accountId>`         — e.g. ibkr:live:U14368257
+ *   - `ibkr:paper:<accountId>`        — e.g. ibkr:paper:DU12345
+ *   - `tradestation:live:<accountId>` — e.g. tradestation:live:12345678
  *
- * The pipeline never parses this — only the web layer and runner setup code need it.
+ * Backtest format: `bt:<runId>` — e.g. bt:myopic-tuna
+ *
+ * IMPORTANT: Channel IDs are opaque identifiers. Construct them here, then
+ * pass them through the system unchanged.
  */
 
-export function parseChannel(channelId: string): { mode: string; id: string } {
-  const idx = channelId.indexOf(':');
-  if (idx === -1) return { mode: channelId, id: '' };
-  return { mode: channelId.slice(0, idx), id: channelId.slice(idx + 1) };
+import { uniqueNamesGenerator, adjectives, animals } from 'unique-names-generator';
+
+export function generateRunId(): string {
+  return uniqueNamesGenerator({ dictionaries: [adjectives, animals], separator: '-', length: 2 });
+}
+
+export type RuntimeBroker = 'ibkr' | 'tradestation';
+export type RuntimeMode = 'live' | 'paper';
+
+export function runtimeChannel(
+  broker: RuntimeBroker,
+  mode: RuntimeMode,
+  accountId: string,
+): string {
+  return `${broker}:${mode}:${accountId}`;
+}
+
+export function ibkrChannel(mode: RuntimeMode, accountId: string): string {
+  return runtimeChannel('ibkr', mode, accountId);
+}
+
+export function tradestationChannel(mode: RuntimeMode, accountId: string): string {
+  return runtimeChannel('tradestation', mode, accountId);
 }
 
 export function liveChannel(accountId: string): string {
-  return `live:${accountId}`;
+  return ibkrChannel('live', accountId);
 }
 
 export function btChannel(runId: string): string {
@@ -24,5 +46,5 @@ export function btChannel(runId: string): string {
 }
 
 export function paperChannel(accountId: string): string {
-  return `paper:${accountId}`;
+  return ibkrChannel('paper', accountId);
 }

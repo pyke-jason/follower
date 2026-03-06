@@ -7,16 +7,22 @@ A trade exit signal was misclassified (e.g., labeled as auto-close when a trader
 
 ## Steps
 
-1. **Identify the trade**: From the context below, find the trade ID, message ID, and relevant signals in the database.
-2. **Trace the signal path**: Follow the pipeline — message → intent extraction → signal → execute — to find where the classification went wrong. Key files:
-   - `src/intents/extract-intent.ts` (intent prompt + version)
-   - `src/intents/postprocess.ts` (signal postprocessing)
-   - `src/pipeline/execute.ts` (signal execution)
-   - `src/lib/skip-position-alert.ts` (skip logic)
-3. **Root cause**: Was it a prompt gap, a postprocessing bug, a matching failure, or a pipeline issue? Query the DB (`message_intents`, `trade_events`, `trades`, `messages`) to confirm what actually happened vs what should have happened.
-4. **Fix**: If it's a prompt/extraction issue, update the prompt or postprocessing. If it's a pipeline issue, fix the code.
-5. **Add eval cases**: Add fixture(s) to `src/intents/evals/fixtures/` covering this scenario. Follow the existing fixture format in that directory.
-6. **Verify**: Run `npx tsx scripts/eval-intents.ts` and confirm the new cases pass.
+1. **Identify the trade**: From the context below, find the trade ID, message ID, and relevant signals in the database. Query `messages`, `trades`, `trade_events`, and `run_decisions`.
+
+2. **Trace the signal path**: The pipeline is: message → `orchestrator/parser.ts` (sync, zero I/O) → routing in `orchestrator/index.ts` → resolve path → `execute-resolved.ts`. For exits specifically:
+   - Parser detects action (CLOSE/TRIM/LEG_OFF) and complexity flags
+   - If deterministic → `position-path.ts` (fuzzy-matches DB positions)
+   - If ambiguous → `llm-path.ts` (NLU agent loop)
+   - Skip logic: `src/lib/skip-position-alert.ts`
+   Find where in this chain the classification went wrong.
+
+3. **Root cause**: Was it a parser pattern gap (e.g., missing regex for an exit phrase), a position-matching failure in position-path, an LLM misclassification, or a pipeline issue? Query the DB to confirm what actually happened vs what should have happened.
+
+4. **Fix**: If it's a parser issue, add/fix patterns. If it's a position-path matching bug, fix the matcher. If it's an LLM prompt gap, update `llm-path.ts`.
+
+5. **Add eval cases**: Add fixture(s) to `src/intents/evals/fixtures/` covering this scenario. Follow the existing fixture format (see `.claude/rules/intent-evals.md`).
+
+6. **Verify**: Run `npx tsx scripts/eval-orchestrator.ts` and confirm the new cases pass.
 
 ## Context
 

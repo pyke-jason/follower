@@ -1,5 +1,3 @@
-'use client';
-
 import { ChatFeed } from './chat-feed';
 import { Card } from '@/components/ui/card';
 import { X } from 'lucide-react';

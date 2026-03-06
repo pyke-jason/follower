@@ -12,6 +12,7 @@ import { setLogLevel, createLogger, LogLevelSchema } from '../lib/logger.js';
 import type { BacktestConfig } from './types.js';
 import { FillModelSchema } from './types.js';
 import { db, schema } from '../db/client.js';
+import { generateRunId } from '../lib/channel.js';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '../config/risk-defaults.js';
 
 
@@ -102,7 +103,7 @@ async function main() {
 
   // Auto-create DB run row when launched from CLI (no --run-id)
   if (!runId) {
-    runId = crypto.randomUUID();
+    runId = generateRunId();
     await db.insert(schema.backtestRuns).values({
       id: runId,
       status: 'PENDING',

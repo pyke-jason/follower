@@ -1,4 +1,4 @@
-import { db, schema } from '../db/client.js';
+import { db, schema, runTx } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import type { BrokerService } from '../broker/interface.js';
 import { enrichTradeWithFill } from './fill-enrichment.js';
@@ -64,13 +64,14 @@ export class FillSweep {
           enriched++;
         } else if (status.status === 'REJECTED' || status.status === 'CANCELLED') {
           // Re-read metadata inside transaction to avoid stale-spread race
-          await db.transaction(async (tx) => {
-            const [fresh] = await tx.select({ metadata: schema.trades.metadata })
+          runTx((tx) => {
+            const [fresh] = tx.select({ metadata: schema.trades.metadata })
               .from(schema.trades)
               .where(eq(schema.trades.id, trade.id))
-              .limit(1);
+              .limit(1)
+              .all();
             if (!fresh) return;
-            await tx.update(schema.trades)
+            tx.update(schema.trades)
               .set({
                 status: 'CANCELLED',
                 metadata: {
@@ -80,7 +81,8 @@ export class FillSweep {
                   brokerFinalStatus: status.status,
                 },
               })
-              .where(eq(schema.trades.id, trade.id));
+              .where(eq(schema.trades.id, trade.id))
+              .run();
           });
           sendSystemAlert({
             title: `Order ${status.status}`,

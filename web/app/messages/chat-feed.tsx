@@ -1,14 +1,13 @@
-'use client';
-
 import { useRef, useCallback, useState, useMemo, type ReactNode } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { Virtuoso, type VirtuosoHandle, type ListRange } from 'react-virtuoso';
 import { ChatBubble } from './chat-bubble';
 import { EnrichedChatBubble } from '../components/enriched-chat-bubble';
 import { DateSeparator } from './date-separator';
+import { StickyDateBadge } from './sticky-date-badge';
 import { ScrollToBottom } from '../components/scroll-to-bottom';
 import { cn } from '@/lib/utils';
 import type { Message, MessageLabel } from '@src/db/schema';
-import type { MessageEnrichment } from './actions';
+import type { MessageEnrichment } from '@/stores/chat-store';
 
 type FeedItem =
   | { type: 'date'; date: string; key: string }
@@ -47,7 +46,6 @@ export function ChatFeed({
   labels,
   enrichment,
   lastProcessedTs,
-  runId,
   renderItem,
   onMessageClick,
 }: {
@@ -62,14 +60,14 @@ export function ChatFeed({
   /** When set, scroll-to-bottom button scrolls here instead of absolute bottom. */
   anchorMessageId?: string;
   labels?: Record<string, MessageLabel>;
-  enrichment?: Record<string, MessageEnrichment>;
+  enrichment?: Record<string, MessageEnrichment> | null;
   lastProcessedTs?: string;
-  runId?: string;
   renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
   onMessageClick?: (message: Message) => void;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [stickyDate, setStickyDate] = useState<string | null>(null);
 
   const feedItems = useMemo(() => buildFeedItems(messages), [messages]);
 
@@ -101,6 +99,14 @@ export function ChatFeed({
     });
   }, [anchorIndex, feedItems.length]);
 
+  // Track the topmost visible item to derive the current day
+  const handleRangeChanged = useCallback((range: ListRange) => {
+    const localIndex = range.startIndex - firstItemIndex;
+    const item = feedItems[localIndex];
+    if (!item) { setStickyDate(null); return; }
+    setStickyDate(item.type === 'date' ? item.date : item.message.timestamp);
+  }, [feedItems, firstItemIndex]);
+
   const renderItemContent = useCallback((_index: number, item: FeedItem) => {
     if (item.type === 'date') {
       return <DateSeparator date={item.date} />;
@@ -123,7 +129,6 @@ export function ChatFeed({
         >
           <EnrichedChatBubble
             enriched={{ message: item.message, trade: msgEnrichment.trade, decision: msgEnrichment.decision }}
-            runId={runId}
             isHighlighted={isHighlighted}
             isPending={isPending}
           />
@@ -143,7 +148,7 @@ export function ChatFeed({
         <ChatBubble message={item.message} label={labels?.[item.message.id]} />
       </div>
     );
-  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, runId, labels, renderItem, onMessageClick]);
+  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, labels, renderItem, onMessageClick]);
 
   if (messages.length === 0) {
     return (
@@ -164,6 +169,7 @@ export function ChatFeed({
         initialTopMostItemIndex={initialIndex}
         startReached={handleStartReached}
         atBottomStateChange={(atBottom) => setShowScrollBtn(!atBottom)}
+        rangeChanged={handleRangeChanged}
         followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
         defaultItemHeight={60}
         increaseViewportBy={{ top: 300, bottom: 100 }}
@@ -184,6 +190,8 @@ export function ChatFeed({
             ) : null,
         } : {}}
       />
+
+      <StickyDateBadge date={stickyDate} />
 
       {onLoadOlder && showScrollBtn && (
         <ScrollToBottom onClick={scrollToAnchor} />

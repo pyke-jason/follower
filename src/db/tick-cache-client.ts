@@ -1,22 +1,19 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as tickCacheSchema from './tick-cache-schema.js';
 import { PATHS } from '../lib/paths.js';
 
-// Ensure parent directory exists before opening DB
 mkdirSync(dirname(PATHS.tickCacheDb), { recursive: true });
 
-const client = createClient({ url: `file:${PATHS.tickCacheDb}` });
-
-await client.executeMultiple(
-  'PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000;',
-);
+const sqlite = new Database(PATHS.tickCacheDb);
+sqlite.pragma('journal_mode = WAL');
+sqlite.pragma('busy_timeout = 30000');
 
 // Hand-written DDL — WITHOUT ROWID for composite-PK tables (faster lookups, smaller on disk).
 // tick_cache_ranges uses regular CREATE TABLE (has AUTOINCREMENT rowid).
-await client.executeMultiple(`
+sqlite.exec(`
   CREATE TABLE IF NOT EXISTS quote_ticks (
     symbol TEXT NOT NULL,
     dbn_schema TEXT NOT NULL,
@@ -67,6 +64,6 @@ await client.executeMultiple(`
   ) WITHOUT ROWID;
 `);
 
-export const tickCacheDb = drizzle({ client, schema: tickCacheSchema });
+export const tickCacheDb = drizzle(sqlite, { schema: tickCacheSchema });
 export { tickCacheSchema };
-export { client as tickCacheSqliteClient };
+export { sqlite as tickCacheSqliteClient };

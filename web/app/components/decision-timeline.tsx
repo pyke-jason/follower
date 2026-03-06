@@ -1,5 +1,3 @@
-'use client';
-
 import { Badge } from './badge';
 import { StatItem } from './stat-item';
 import { cn } from '@/lib/utils';
@@ -7,8 +5,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '@src/lib/numbers';
 import { formatLegsSummary } from '@src/lib/trade';
-import type { RunDecision, TradeEvent } from '@src/db/schema';
-import type { TimelineMessage } from '../trades/actions';
+import type { RunDecision, TradeEvent, Message } from '@src/db/schema';
 import { useTradesStore } from '@/stores/trades-store';
 import {
   ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,
@@ -71,9 +68,10 @@ function getInlineSummary(d: RunDecision): string | null {
       return null;
     }
     case 'ORDER_PLACED': {
+      const params = snap.params as Record<string, unknown> | undefined;
       const parts: string[] = [];
       if (snap.orderId) parts.push(`#${snap.orderId}`);
-      if (snap.limitPrice != null) parts.push(`limit $${snap.limitPrice}`);
+      if (params?.limitPrice != null) parts.push(`limit $${params.limitPrice}`);
       return parts.length > 0 ? parts.join(' ') : null;
     }
     case 'ORDER_ADJUSTED': {
@@ -91,13 +89,14 @@ function getInlineSummary(d: RunDecision): string | null {
     case 'RETRY_LLM':
       return snap.reason ? String(snap.reason) : null;
     case 'ORDER_CANCELLED': {
+      const params = snap.params as Record<string, unknown> | undefined;
       const parts: string[] = [];
-      if (snap.symbol) parts.push(String(snap.symbol));
-      if (snap.originalLimitPrice != null && snap.finalLimitPrice != null &&
-          snap.originalLimitPrice !== snap.finalLimitPrice) {
-        parts.push(`$${snap.originalLimitPrice} → $${snap.finalLimitPrice}`);
-      } else if (snap.finalLimitPrice != null) {
-        parts.push(`$${snap.finalLimitPrice}`);
+      if (params?.symbol) parts.push(String(params.symbol));
+      if (params?.limitPrice != null && snap.currentLimitPrice != null &&
+          params.limitPrice !== snap.currentLimitPrice) {
+        parts.push(`$${params.limitPrice} → $${snap.currentLimitPrice}`);
+      } else if (snap.currentLimitPrice != null) {
+        parts.push(`$${snap.currentLimitPrice}`);
       }
       return parts.length > 0 ? parts.join(' ') : null;
     }
@@ -346,16 +345,18 @@ export function UnifiedTimeline() {
     if (!snap || !d.messageId) continue;
     const existing = fillInfoByMsg.get(d.messageId) ?? {};
     if (d.event === 'ORDER_PLACED') {
+      const params = snap.params as Record<string, unknown> | undefined;
       existing.orderId = snap.orderId ? String(snap.orderId) : existing.orderId;
-      existing.orderType = snap.orderType ? String(snap.orderType) : existing.orderType;
-      existing.limitPrice = snap.limitPrice != null ? Number(snap.limitPrice) : existing.limitPrice;
+      existing.orderType = params?.orderType ? String(params.orderType) : existing.orderType;
+      existing.limitPrice = params?.limitPrice != null ? Number(params.limitPrice) : existing.limitPrice;
     }
     if (d.event === 'ORDER_FILLED') {
+      const params = snap.params as Record<string, unknown> | undefined;
       existing.orderId = snap.orderId ? String(snap.orderId) : existing.orderId;
       existing.filledPrice = snap.filledPrice != null ? Number(snap.filledPrice) : existing.filledPrice;
       existing.adjustmentCount = snap.adjustmentCount != null ? Number(snap.adjustmentCount) : existing.adjustmentCount;
       existing.commission = snap.commission != null ? Number(snap.commission) : existing.commission;
-      existing.originalLimitPrice = snap.originalLimitPrice != null ? Number(snap.originalLimitPrice) : existing.originalLimitPrice;
+      existing.originalLimitPrice = params?.limitPrice != null ? Number(params.limitPrice) : existing.originalLimitPrice;
       existing.immediatelyFilled = snap.immediatelyFilled === true;
       existing.filledQuantity = snap.filledQuantity != null ? Number(snap.filledQuantity) : existing.filledQuantity;
     }
@@ -495,7 +496,8 @@ export function UnifiedTimeline() {
             // ─── Promoted ORDER_CANCELLED — trade-event weight ───
             if (event === 'ORDER_CANCELLED') {
               const snap = d.snapshot as Record<string, unknown> | null;
-              const symbol = snap?.symbol ? String(snap.symbol) : null;
+              const params = (snap?.params as Record<string, unknown> | undefined);
+              const symbol = params?.symbol ? String(params.symbol) : null;
               const parsedDecision = filtered.find(
                 o => o.event === 'PARSED' && o.messageId === d.messageId && o.signalIndex === d.signalIndex,
               );

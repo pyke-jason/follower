@@ -1,5 +1,3 @@
-'use client';
-
 import { useMemo } from 'react';
 import { AreaChartComponent } from '../../components/charts/area-chart';
 import { formatCurrency } from '@/lib/format';

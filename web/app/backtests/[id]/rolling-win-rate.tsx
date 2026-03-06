@@ -1,7 +1,6 @@
-'use client';
-
 import { MultiLineChart } from '../../components/charts/line-chart';
-import type { RollingWinRatePoint } from './page';
+
+export type RollingWinRatePoint = { tradeIndex: number; tradeNum: number; winRate: number; windowSize?: number };
 
 export function RollingWinRate({ data }: { data: RollingWinRatePoint[] }) {
   if (data.length === 0) {

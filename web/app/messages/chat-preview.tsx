@@ -1,15 +1,11 @@
-'use client';
-
-import dynamic from 'next/dynamic';
-import { useState, useCallback, useTransition, useEffect } from 'react';
+import { lazy, Suspense, useState, useCallback, useTransition, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { fetchMessages, fetchMessage } from './actions';
-import Link from 'next/link';
+import { api } from '@/lib/api';
 import type { Message, MessageLabel } from '@src/db/schema';
 
-const ChatFeed = dynamic(
+const ChatFeed = lazy(
   () => import('./chat-feed').then((m) => ({ default: m.ChatFeed })),
-  { ssr: false },
 );
 
 const START_INDEX = 100_000;
@@ -55,7 +51,7 @@ export function ChatPreview({
   useEffect(() => {
     if (!focusMessageId) return;
     if (initialMessages.some((m) => m.id === focusMessageId)) return;
-    fetchMessage(focusMessageId).then((msg) => {
+    api<Message>(`/messages/${focusMessageId}`).then((msg) => {
       if (msg) setMessages((prev) =>
         prev.some((m) => m.id === msg.id) ? prev : mergeMessageDesc(prev, msg),
       );
@@ -65,7 +61,9 @@ export function ChatPreview({
   const handleLoadOlder = useCallback(() => {
     if (!cursor || !author) return;
     startTransition(async () => {
-      const result = await fetchMessages({ authors: [author], cursor });
+      const result = await api<{ messages: Message[]; labels: Record<string, MessageLabel>; nextCursor: string | null }>(
+        `/messages?authors=${encodeURIComponent(author)}&cursor=${encodeURIComponent(cursor)}`,
+      );
       if (result.messages.length === 0) {
         setCursor(null);
         return;
@@ -86,7 +84,7 @@ export function ChatPreview({
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         {viewAllHref && (
           <Link
-            href={viewAllHref}
+            to={viewAllHref}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             View all &rarr;

@@ -2,7 +2,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from './badge';
 import { formatCurrency } from '@/lib/format';
-import Link from 'next/link';
+import { useScopedHref } from '@/hooks/use-scoped-href';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, ShieldAlert } from 'lucide-react';
 
 interface RiskData {
@@ -18,6 +19,7 @@ interface RiskData {
 }
 
 export function RiskPanel({ data }: { data: RiskData }) {
+  const href = useScopedHref();
   const positionPct = (data.openPositions / data.maxPositions) * 100;
   const drawdownBarPct = (data.drawdownPct / data.maxDrawdownPct) * 100;
 
@@ -75,7 +77,7 @@ export function RiskPanel({ data }: { data: RiskData }) {
         {/* Recon alerts */}
         {data.unresolvedAlerts > 0 && (
           <Link
-            href="/reconciliation"
+            to={href('/reconciliation')}
             className="flex items-center gap-2 text-xs text-warning hover:text-warning/80 transition-colors pt-1 border-t border-border/50"
           >
             <AlertTriangle className="h-3 w-3" />

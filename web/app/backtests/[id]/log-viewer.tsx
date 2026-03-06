@@ -1,5 +1,3 @@
-'use client';
-
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Terminal } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
@@ -7,11 +5,11 @@ import { CopyButton } from '../../components/copy-button';
 import { ScrollToBottom } from '../../components/scroll-to-bottom';
 
 export function LogViewer({
-  runId,
+  backtestRunId,
   isRunning,
   defaultCollapsed = true,
 }: {
-  runId: string;
+  backtestRunId: string;
   isRunning: boolean;
   defaultCollapsed?: boolean;
 }) {
@@ -41,7 +39,7 @@ export function LogViewer({
 
     async function fetchLogs() {
       try {
-        const res = await fetch(`/api/backtests/${runId}/logs`);
+        const res = await fetch(`/logs/${backtestRunId}`);
         if (!cancelled && res.ok) {
           const text = await res.text();
           if (text === logsRef.current) return;
@@ -76,7 +74,7 @@ export function LogViewer({
     }
 
     return () => { cancelled = true; };
-  }, [runId, isRunning, open]);
+  }, [backtestRunId, isRunning, open]);
 
   // When the panel opens, render the full log text we already have.
   useEffect(() => {

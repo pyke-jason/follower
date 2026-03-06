@@ -1,87 +1,89 @@
-import { notFound, redirect } from 'next/navigation';
-import {
-  getTaskById, getMessageById,
-  getTradeByTaskId, getRunDecisionForTask, getNearbyMessages,
-} from '@/lib/queries';
-import { parseChannel } from '@src/lib/channel';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { useApiMutation } from '@/hooks/use-api-mutation';
+import type { Task, Message, RunDecision } from '@src/db/schema';
+import { useEffect } from 'react';
 import { Badge } from '../../components/badge';
 import { InfoChip } from '../../components/info-chip';
 import { StatItem } from '../../components/stat-item';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { formatDate, formatCurrency, pnlColor, formatDuration } from '@/lib/format';
-import { buildHref } from '@/lib/run-scope';
-import { skipTask } from '../actions';
-import Link from 'next/link';
-import { AutoRefresh } from '../../components/auto-refresh';
+import { useScopedHref } from '@/hooks/use-scoped-href';
 import { ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ChatPreview } from '../../messages/chat-preview';
 import { ParsedContext } from '../../trades/[id]/parsed-context';
 
-export const dynamic = 'force-dynamic';
+type TaskDetailResponse = {
+  redirect?: string;
+  task?: Task;
+  sourceMessage?: Message | null;
+  runDecision?: RunDecision | null;
+  nearbyMessages?: Message[];
+  channelId?: string;
+};
 
-export default async function TaskDetailPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ run?: string }>;
-}) {
-  const { id } = await params;
-  const { run: runId } = await searchParams;
-  const task = await getTaskById(id);
-  if (!task) notFound();
+const Spinner = () => (
+  <div className="flex items-center justify-center py-20">
+    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
+  </div>
+);
 
-  // If this task produced a trade, redirect to the consolidated trade detail page
-  const redirectTrade = await getTradeByTaskId(task.id);
-  if (redirectTrade) {
-    const base = `/trades/${redirectTrade.id}`;
-    const url = runId ? `${base}?from=tasks&run=${runId}` : `${base}?from=tasks`;
-    redirect(url);
-  }
+export default function TaskDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['task', id],
+    queryFn: () => api<TaskDetailResponse>(`/tasks/${id}`),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (d?.task?.status === 'PENDING' || d?.task?.status === 'IN_PROGRESS') return 2000;
+      return false;
+    },
+  });
+
+  useEffect(() => {
+    if (data?.redirect) {
+      navigate(data.redirect, { replace: true });
+    }
+  }, [data?.redirect, navigate]);
+
+  const href = useScopedHref();
+  const skipMut = useApiMutation('POST', `/tasks/${id}/skip`, {
+    invalidate: [['task', id]],
+  });
+
+  if (isLoading || !data) return <Spinner />;
+  if (data.redirect) return <Spinner />;
+  const { task, sourceMessage, runDecision, nearbyMessages } = data;
+  if (!task) return <div className="py-20 text-center text-muted-foreground">Task not found</div>;
 
   const context = task.context;
   const result = task.result;
-
-  // Round 1: parallel queries
-  const isBt = task.channelId ? parseChannel(task.channelId).mode === 'bt' : false;
-  const [sourceMessage, runDecision] = await Promise.all([
-    task.messageId ? getMessageById(task.messageId) : Promise.resolve(null),
-    task.messageId
-      ? getRunDecisionForTask(task.messageId, {
-          channelId: isBt ? task.channelId! : undefined,
-          taskId: !isBt ? task.id : undefined,
-        })
-      : Promise.resolve(null),
-  ]);
-
-  // Round 2: depends on sourceMessage
-  // Task page has no trade symbol — show all nearby messages (no symbol filter)
-  const nearbyMessages = sourceMessage
-    ? await getNearbyMessages(sourceMessage.author, sourceMessage.timestamp, 60)
-    : [];
+  const messages = nearbyMessages && nearbyMessages.length > 0
+    ? nearbyMessages
+    : sourceMessage ? [sourceMessage] : [];
 
   return (
     <div className="space-y-6 animate-in-up">
-      {(task.status === 'PENDING' || task.status === 'IN_PROGRESS') && <AutoRefresh />}
-
-      {/* ── Rich Header ──────────────────────────────── */}
       <div className="flex items-center gap-3">
-        <Link href={buildHref('/tasks', runId)} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <Link to={href('/tasks')} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <h2 className="text-lg font-bold text-foreground tracking-tight">
-          {context.symbols?.[0] ?? task.taskType}
+          {context?.symbols?.[0] ?? task.taskType}
         </h2>
         <Badge label={task.status} />
-        {context.directionHint && <Badge label={context.directionHint} />}
-        {context.detectedStrategies?.[0]?.strategy && (
+        {context?.directionHint && <Badge label={context.directionHint} />}
+        {context?.detectedStrategies?.[0]?.strategy && (
           <Badge label={context.detectedStrategies[0].strategy} />
         )}
-        {context.author && (
+        {context?.author && (
           <Link
-            href={`/traders/${encodeURIComponent(context.author)}`}
+            to={href(`/traders/${encodeURIComponent(context.author)}`)}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             {context.author}
@@ -91,9 +93,7 @@ export default async function TaskDetailPage({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6">
-        {/* ── Left Column ──────────────────────────────── */}
         <div className="space-y-6 min-w-0">
-          {/* ── Task Info Grid ────────────────────────────── */}
           <Card className="py-4 gap-0">
             <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <StatItem label="Assignee">
@@ -117,7 +117,6 @@ export default async function TaskDetailPage({
             )}
           </Card>
 
-          {/* ── Decision Card (merged with runDecision) ───── */}
           {(result || runDecision) && (
             <Card className="py-0 gap-0 overflow-hidden">
               <CardHeader className="border-b py-3 px-4">
@@ -126,8 +125,7 @@ export default async function TaskDetailPage({
               <CardContent className="py-4">
                 <div className="flex items-center gap-3 mb-3">
                   <Badge label={runDecision?.outcome ?? result?.outcome ?? ''} />
-                  {runDecision?.phase && <InfoChip label={runDecision.phase} />}
-                  {!runDecision?.phase && <InfoChip label="agent" />}
+                  {runDecision?.phase ? <InfoChip label={runDecision.phase} /> : <InfoChip label="agent" />}
                   {runDecision?.pnl != null && (
                     <span className={cn('font-medium tabular-nums', pnlColor(runDecision.pnl))}>
                       {formatCurrency(runDecision.pnl)}
@@ -145,14 +143,15 @@ export default async function TaskDetailPage({
                     </span>
                   ) : null}
                 </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {runDecision?.reasoning}
-                </p>
+                {runDecision?.reasoning && (
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {runDecision.reasoning}
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
 
-          {/* ── Error ─────────────────────────────────────── */}
           {task.error && (
             <Card className="py-4 gap-2 border-loss/30 bg-loss/5">
               <CardHeader className="py-0">
@@ -166,33 +165,25 @@ export default async function TaskDetailPage({
             </Card>
           )}
 
-          {/* ── Skip Action ───────────────────────────────── */}
           {task.status === 'PENDING' && (
-            <form action={skipTask}>
-              <input type="hidden" name="taskId" value={task.id} />
-              <Button type="submit" variant="secondary">
-                Skip Task
-              </Button>
-            </form>
+            <Button
+              variant="secondary"
+              disabled={skipMut.isPending}
+              onClick={() => skipMut.mutate()}
+            >
+              {skipMut.isPending ? 'Skipping...' : 'Skip Task'}
+            </Button>
           )}
-
         </div>
 
-        {/* ── Right Column (sticky) ────────────────────── */}
         <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
-          {/* ── Chat Context ─────────────────────────────── */}
           <ChatPreview
-            messages={nearbyMessages.length > 0 ? nearbyMessages : sourceMessage ? [sourceMessage] : []}
+            messages={messages}
             focusMessageId={task.messageId ?? undefined}
-            author={sourceMessage?.author ?? context.author ?? undefined}
-            viewAllHref={
-              context.author
-                ? `/messages?authors=${encodeURIComponent(context.author)}`
-                : '/messages'
-            }
+            author={sourceMessage?.author ?? context?.author}
+            viewAllHref={href('/messages', context?.author ? { authors: context.author } : {})}
           />
 
-          {/* ── Parsed Context ────────────────────────────── */}
           <ParsedContext context={context} />
         </div>
       </div>

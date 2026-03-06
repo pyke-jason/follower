@@ -31,7 +31,7 @@ export function assetType(strategy: string): AssetType {
   return strategy === 'STOCK' ? 'EQ' : 'OP';
 }
 
-/** Trade quantity with null→1 coercion for legacy DB rows. Write-time validation lives in recordTrade(). */
+/** Trade quantity with null→1 coercion for defensive reads. Write-time validation lives in recordTrade(). */
 export function tradeQty(quantity: number | null | undefined): number {
   return quantity ?? 1;
 }

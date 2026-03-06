@@ -1,6 +1,6 @@
 <project_overview>
   You are an expert AI assistant working on "Trade Follower 3".
-  Stack: Monorepo with Node.js backend (src/), Next.js frontend (web/), SQLite via Drizzle ORM.
+  Stack: Monorepo with Node.js backend (src/), Vite + React SPA frontend (web/), SQLite via Drizzle ORM.
   Schema: `src/db/schema.ts`. Web imports from `src/` use `@src/*` alias (e.g., `@src/db/schema`, `@src/lib/numbers`). Never use relative `../` paths to reach `src/`.
 </project_overview>
 
@@ -29,6 +29,7 @@
   - DERIVE, DON'T DUPLICATE TYPES: Downstream types use `Pick`, `Omit`, `Extract`, or Zod `.infer` from the canonical type. If two types share 80%+ fields, one derives from the other. Inline anonymous object types are banned in cross-module signatures — name them.
   - TWO CASTS = HELPER, THREE = BUG: If the same `as X` cast appears twice, extract an accessor. Three times means the type should flow correctly from the source. `as any` requires `// SAFETY:` comment. Prefer Zod `.parse()` over `as` at CLI/env boundaries.
   - FIELD NAME CONSISTENCY: Same concept (e.g., BUY/SELL on a leg) uses the same field name everywhere. If DB says `action` and orchestrator says `side`, pick one or make the adapter the SINGLE named conversion point.
+  - API IS THE CONTRACT: The API response shape is the source of truth for frontend types. When the frontend needs a field, add it to the API — do not add defensive fallbacks (`?? []`, `?? {}`) in the consumer. If the API returns `authors: string[]`, the store types it as `string[]` and trusts it. Mismatches between API and frontend types are bugs to fix at the source (the API), not to paper over with defaults. Same applies to any cross-boundary data: pick one contract, make the producer conform, update all consumers to match — no silent coercion layer in between.
   - ONE LOG LINE PER EVENT: When multiple layers handle the same event (e.g., broker fill → order manager → record-trade), only the authoritative layer logs at info level. Others use debug or stay silent. The authoritative layer is the one that owns the state change.
   - WARN MEANS ACTIONABLE: `log.warn` is reserved for conditions a human should investigate. Expected behavior (dedup hits, API 206 responses, timing metrics) belongs at info or debug.
 </coding_standards>

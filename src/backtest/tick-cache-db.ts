@@ -1,11 +1,11 @@
 import { eq, and } from 'drizzle-orm';
-import type { LibSQLDatabase } from 'drizzle-orm/libsql';
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type * as tickCacheSchema from '../db/tick-cache-schema.js';
 import { quoteTicks, tickCacheRanges, chainDefinitions, chainCacheMeta } from '../db/tick-cache-schema.js';
 import type { QuoteTick, ChainDefinition } from './databento-tape.js';
 import { mergeRanges } from './databento-tape.js';
 
-export type TickCacheDB = LibSQLDatabase<typeof tickCacheSchema>;
+export type TickCacheDB = BetterSQLite3Database<typeof tickCacheSchema>;
 
 /** Read all cached ranges for a given dataset/schema/symbol. */
 export async function readCachedRanges(

@@ -2,9 +2,8 @@ import { loadSecrets } from './lib/secrets/index.js';
 await loadSecrets();
 
 import { startIngestion, stopIngestion, closeBrowser } from './ingestion/ingest.js';
-import { startTaskRunner, stopTaskRunner, awaitCurrentTask, destroyOrderManager, liveService, liveChannelId } from './live/runner.js';
-import { createTaskFromMessage } from './live/factory.js';
-import { classifyMessage } from './parsing/classify.js';
+import { initRunner, submitTask, stopRunner, awaitDrain, destroyOrderManager } from './live/runner.js';
+import { createTasksFromMessage } from './live/factory.js';
 import { db, schema } from './db/client.js';
 import { eq } from 'drizzle-orm';
 import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
@@ -17,8 +16,8 @@ import { sendSystemAlert } from './lib/alert.js';
 
 const LOCK_PATH = PATHS.lockFile;
 
-let reconScheduler: ReconciliationScheduler | null = null;
-let fillSweep: FillSweep | null = null;
+let reconSchedulers: ReconciliationScheduler[] = [];
+let fillSweeps: FillSweep[] = [];
 
 async function main() {
   const lock = acquireLock(LOCK_PATH);
@@ -28,41 +27,53 @@ async function main() {
   }
   console.log(`[pidlock] Backend lock acquired (PID ${process.pid})`);
 
+  const { channels } = await initRunner();
+  const runtimeChannelIds = channels.map((c) => c.channelId);
+
   console.log('═'.repeat(60));
   console.log('  TRADE FOLLOWER v0');
   console.log('═'.repeat(60));
 
-  // Capture daily starting balance (non-fatal)
-  try {
-    await captureStartingBalance(liveService);
-  } catch (err) {
-    console.warn('Failed to capture starting balance:', err);
+  // Capture daily starting balance per channel (non-fatal)
+  for (const channel of channels) {
+    try {
+      await captureStartingBalance(channel.broker, channel.channelId);
+    } catch (err) {
+      console.warn(`[Balance ${channel.channelId}] Failed to capture starting balance:`, err);
+    }
   }
 
-  // Start reconciliation scheduler
-  reconScheduler = new ReconciliationScheduler(liveService, liveChannelId);
-  reconScheduler.start();
-
-  // Start fill sweep (enriches trades with broker fill data)
-  fillSweep = new FillSweep(liveService, liveChannelId);
-  fillSweep.start();
-
-  // Start the task runner (polls for pending tasks)
-  startTaskRunner();
+  // Start reconciliation scheduler and fill sweep per channel
+  reconSchedulers = channels.map((channel) => {
+    const scheduler = new ReconciliationScheduler(channel.broker, channel.channelId);
+    scheduler.start();
+    return scheduler;
+  });
+  fillSweeps = channels.map((channel) => {
+    const sweep = new FillSweep(channel.broker, channel.channelId);
+    sweep.start();
+    return sweep;
+  });
 
   // Start message ingestion (Playwright + SignalR) — self-supervising, fire-and-forget
   if (process.env.LIVE_INGESTION_ENABLED === '0') {
     console.log('[Ingest] Live ingestion disabled via LIVE_INGESTION_ENABLED=0, skipping browser launch');
   } else {
     startIngestion(async (msg) => {
-      // After message is stored, try to create a task
-      const stored = await db.select()
-        .from(schema.messages)
-        .where(eq(schema.messages.id, msg.Id))
-        .limit(1);
+      try {
+        const stored = await db.select()
+          .from(schema.messages)
+          .where(eq(schema.messages.id, msg.Id))
+          .limit(1);
 
-      if (stored[0]) {
-        await createTaskFromMessage(stored[0]);
+        if (stored[0]) {
+          const tasks = await createTasksFromMessage(stored[0], runtimeChannelIds);
+          for (const task of tasks) {
+            submitTask(task);
+          }
+        }
+      } catch (err) {
+        console.error('[Ingest] Task creation failed:', err);
       }
     });
   }
@@ -78,13 +89,13 @@ async function main() {
 async function shutdown() {
   console.log('\nShutting down...');
   stopIngestion();                // stops supervision loop + watchdog + auth monitor
-  stopTaskRunner();               // sets running = false, stops polling
+  stopRunner();                   // stops accepting new tasks
   stopHealthcheck();
 
   // Wait for in-flight task (the critical window: placeOrder → recordTrade)
   try {
     await Promise.race([
-      awaitCurrentTask(),
+      awaitDrain(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30_000)),
     ]);
     console.log('[Shutdown] In-flight task completed');
@@ -99,8 +110,12 @@ async function shutdown() {
 
   // Drain background services
   destroyOrderManager();
-  await reconScheduler?.stop();
-  await fillSweep?.stop();
+  for (const scheduler of reconSchedulers) {
+    await scheduler.stop();
+  }
+  for (const sweep of fillSweeps) {
+    await sweep.stop();
+  }
   await closeBrowser();
   releaseLock(LOCK_PATH);
   process.exit(0);

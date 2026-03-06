@@ -15,12 +15,10 @@ function SkipReasonChip({ reason }: { reason: string }) {
 
 export function EnrichedChatBubble({
   enriched,
-  runId,
   isHighlighted,
   isPending,
 }: {
   enriched: EnrichedMessage;
-  runId?: string;
   isHighlighted?: boolean;
   isPending?: boolean;
 }) {
@@ -39,7 +37,7 @@ export function EnrichedChatBubble({
     >
       <ChatBubble message={enriched.message} noBorder />
       {role === 'executed' && enriched.trade && (
-        <TradeOutcomeStrip trade={enriched.trade} runId={runId} />
+        <TradeOutcomeStrip trade={enriched.trade} />
       )}
       {role === 'skipped' && enriched.decision?.reasoning && (
         <SkipReasonChip reason={enriched.decision.reasoning} />

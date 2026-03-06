@@ -23,10 +23,13 @@ export type ReconciliationAlertInput = {
  * Auto-resolve stale reconciliation alerts that are no longer valid.
  * Runs before the comparison logic using the already-fetched broker positions.
  */
-async function autoResolveAlerts(brokerPositions: BrokerPosition[]): Promise<void> {
+async function autoResolveAlerts(brokerPositions: BrokerPosition[], channelId: string): Promise<void> {
   const unresolved = await db.select()
     .from(schema.reconciliationAlerts)
-    .where(eq(schema.reconciliationAlerts.resolved, false));
+    .where(and(
+      eq(schema.reconciliationAlerts.channelId, channelId),
+      eq(schema.reconciliationAlerts.resolved, false),
+    ));
 
   if (unresolved.length === 0) return;
 
@@ -81,7 +84,7 @@ export async function runReconciliation(broker: BrokerService, channelId: string
   const brokerPositions = await broker.getPositions();
 
   // Auto-resolve stale alerts before running comparison
-  await autoResolveAlerts(brokerPositions);
+  await autoResolveAlerts(brokerPositions, channelId);
 
   const dbTrades = await db.select()
     .from(schema.trades)
@@ -156,13 +159,7 @@ export async function runReconciliation(broker: BrokerService, channelId: string
   // Persist alerts to DB
   if (alerts.length > 0) {
     await db.insert(schema.reconciliationAlerts).values(
-      alerts.map((a) => ({
-        type: a.type,
-        symbol: a.symbol,
-        tradeId: a.tradeId ?? null,
-        expected: a.expected,
-        actual: a.actual,
-      })),
+      alerts.map((a) => ({ channelId, ...a, tradeId: a.tradeId ?? null })),
     );
 
     for (const alert of alerts) {

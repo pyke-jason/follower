@@ -1,25 +1,45 @@
+import { loadSecrets } from '../lib/secrets/index.js';
+await loadSecrets();
+
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { eq, and, lt, inArray } from 'drizzle-orm';
 import backtests from './routes/backtests.js';
 import logs from './routes/logs.js';
 import { createTradesRouter } from './routes/trades.js';
-import { selectBroker } from '../broker/select.js';
+import webQueries from './routes/web-queries.js';
+import webMutations from './routes/web-mutations.js';
+import { getRuntimeBrokerMap } from '../broker/select.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
 
-const { broker: liveService, channelId: liveChannelId } = selectBroker();
+const channelBrokerMap = getRuntimeBrokerMap();
+if (channelBrokerMap.size === 0) {
+  throw new Error('No runtime broker channels configured for local API.');
+}
 
 const app = new Hono();
 
-app.use('*', cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }));
+app.use('*', cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'] }));
 
 app.route('/backtests', backtests);
 app.route('/logs', logs);
-app.route('/trades', createTradesRouter(liveService, liveChannelId));
+app.route('/trades', createTradesRouter(channelBrokerMap));
+
+app.route('/web', webQueries);
+app.route('/web', webMutations);
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+// ─── Static SPA Serving ─────────────────────────────
+
+app.use('/assets/*', serveStatic({ root: 'web/dist' }));
+app.use('/favicon.ico', serveStatic({ root: 'web/dist' }));
+
+// SPA fallback: any GET not matching API routes serves index.html
+app.get('*', serveStatic({ root: 'web/dist', path: 'index.html' }));
 
 // ─── Stale Run Sweeper ───────────────────────────────
 

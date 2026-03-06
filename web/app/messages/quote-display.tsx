@@ -1,5 +1,3 @@
-'use client';
-
 import { useCallback } from 'react';
 import { MessageSquareQuote } from 'lucide-react';
 import { getAuthorTextColor } from '@/lib/author-colors';

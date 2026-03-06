@@ -1,5 +1,3 @@
-'use client';
-
 import { useState, useEffect } from 'react';
 import { InfoChip } from '../../components/info-chip';
 import { formatBytes, formatCurrency, formatDateShort, isoToDateKey } from '@/lib/format';

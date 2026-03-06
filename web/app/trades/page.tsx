@@ -1,162 +1,45 @@
-import { getClosedTrades, getTradeHistorySummary, getRunCommissionSchedule, getTradeEventsForTrades, buildFlagsByTradeId } from '@/lib/queries';
-import { TradesTableClient } from '../components/trades-table-client';
-import { TradesHydrator } from './trades-hydrator';
-import { MetricStrip } from '../components/metric-strip';
-import type { Metric } from '../components/metric-strip';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { buildHref } from '@/lib/run-scope';
-import Link from 'next/link';
-import { Filter, X } from 'lucide-react';
+import { useChannelId } from '@/hooks/use-channel-id';
+import { useScopedHref } from '@/hooks/use-scoped-href';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { TradeFilterProvider, TradeFilters } from '../components/trade-filters';
+import { FilteredTradesView } from '../components/filtered-trades-view';
+import type { Trade, TradeFlag } from '@src/db/schema';
 
-export const dynamic = 'force-dynamic';
+type TradesResponse = {
+  trades: Trade[];
+  flags: Record<string, TradeFlag[]>;
+};
 
-export default async function TradeHistoryPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ trader?: string; symbol?: string; strategy?: string; page?: string; run?: string }>;
-}) {
-  const params = await searchParams;
-  const runId = params.run;
-  const page = parseInt(params.page ?? '1');
-  const limit = 50;
-  const offset = (page - 1) * limit;
+const Spinner = () => (
+  <div className="flex items-center justify-center py-20">
+    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
+  </div>
+);
 
-  const hasFilters = !!(params.trader || params.symbol || params.strategy);
+export default function TradesPage() {
+  const channelId = useChannelId();
+  const href = useScopedHref();
 
-  const [trades, summary, commissionSchedule] = await Promise.all([
-    getClosedTrades({
-      trader: params.trader,
-      symbol: params.symbol,
-      strategy: params.strategy,
-      limit,
-      offset,
-      runId,
-    }),
-    getTradeHistorySummary({
-      trader: params.trader,
-      symbol: params.symbol,
-      strategy: params.strategy,
-      runId,
-    }),
-    runId ? getRunCommissionSchedule(runId) : undefined,
-  ]);
+  const { data, isLoading } = useQuery({
+    queryKey: ['trades', channelId],
+    queryFn: () => api<TradesResponse>(href('/trades', { limit: 10000 })),
+  });
 
-  const eventsByTradeId = await getTradeEventsForTrades(trades.map((t) => t.id));
-  const flagsByTradeId = buildFlagsByTradeId(trades);
-
-  const metrics: Metric[] = [
-    {
-      label: 'Total P&L',
-      value: summary.totalPnl,
-      format: 'currency',
-      colorBySign: true,
-    },
-    {
-      label: 'Trades',
-      value: summary.totalTrades,
-      format: 'integer',
-    },
-    {
-      label: 'Win Rate',
-      value: summary.winRate,
-      format: 'percent',
-    },
-    {
-      label: 'Best Trade',
-      value: summary.bestTrade,
-      format: 'currency',
-      colorBySign: true,
-    },
-    {
-      label: 'Worst Trade',
-      value: summary.worstTrade,
-      format: 'currency',
-      colorBySign: true,
-    },
-  ];
+  if (isLoading || !data) return <Spinner />;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-foreground">Trade History</h2>
+    <TradeFilterProvider trades={data.trades} flagsByTradeId={data.flags}>
+      <div className="space-y-4 flex flex-col flex-1 min-h-0">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-foreground">Trades</h2>
+          <TradeFilters />
+        </div>
+        <FilteredTradesView
+          flagsByTradeId={data.flags}
+          channelId={channelId!}
+        />
       </div>
-
-      {/* Summary strip */}
-      {summary.totalTrades > 0 && (
-        <MetricStrip metrics={metrics} />
-      )}
-
-      {/* Filters */}
-      <div className="flex items-center gap-2">
-        <form className="flex gap-2 items-center">
-          {runId && <input type="hidden" name="run" value={runId} />}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Filter className="h-3.5 w-3.5" />
-          </div>
-          <Input
-            name="trader"
-            placeholder="Trader"
-            defaultValue={params.trader ?? ''}
-            className="w-28 h-8 text-xs"
-          />
-          <Input
-            name="symbol"
-            placeholder="Symbol"
-            defaultValue={params.symbol ?? ''}
-            className="w-24 h-8 text-xs"
-          />
-          <Input
-            name="strategy"
-            placeholder="Strategy"
-            defaultValue={params.strategy ?? ''}
-            className="w-24 h-8 text-xs"
-          />
-          <Button type="submit" variant="secondary" size="xs">
-            Filter
-          </Button>
-        </form>
-        {hasFilters && (
-          <Button variant="ghost" size="xs" asChild className="text-muted-foreground">
-            <Link href={buildHref('/trades', runId)}>
-              <X className="h-3 w-3 mr-1" />
-              Clear
-            </Link>
-          </Button>
-        )}
-      </div>
-
-      <div className="animate-in-up">
-        <TradesHydrator data={{ trades, eventsByTradeId, flagsByTradeId, commissionSchedule, runId }} />
-        <TradesTableClient />
-        {trades.length === 0 && hasFilters && (
-          <p className="px-4 py-6 text-sm text-muted-foreground text-center">
-            No closed trades matching filters
-          </p>
-        )}
-      </div>
-
-      <div className="flex gap-2 justify-center items-center">
-        {page > 1 && (
-          <Button variant="ghost" size="sm" asChild>
-            <Link
-              href={buildHref(`/trades?page=${page - 1}${params.trader ? `&trader=${params.trader}` : ''}${params.symbol ? `&symbol=${params.symbol}` : ''}${params.strategy ? `&strategy=${params.strategy}` : ''}`, runId)}
-            >
-              Previous
-            </Link>
-          </Button>
-        )}
-        <span className="text-sm text-muted-foreground tabular-nums">Page {page}</span>
-        {trades.length === limit && (
-          <Button variant="ghost" size="sm" asChild>
-            <Link
-              href={buildHref(`/trades?page=${page + 1}${params.trader ? `&trader=${params.trader}` : ''}${params.symbol ? `&symbol=${params.symbol}` : ''}${params.strategy ? `&strategy=${params.strategy}` : ''}`, runId)}
-            >
-              Next
-            </Link>
-          </Button>
-        )}
-      </div>
-    </div>
+    </TradeFilterProvider>
   );
 }

@@ -19,7 +19,6 @@ export function InfoChip({ label, icon: Icon, onClick, className, href }: InfoCh
   );
 
   if (href) {
-    // eslint-disable-next-line @next/next/no-html-link-for-pages
     return (
       <a href={href} className={classes}>
         {Icon && <Icon className="h-2.5 w-2.5" />}

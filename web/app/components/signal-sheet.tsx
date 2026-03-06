@@ -1,8 +1,6 @@
-'use client';
-
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
+import { useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Radio, ArrowRight, CheckCircle2, Clock, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +12,8 @@ import {
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { relativeTime, signalBorderColor } from '@/lib/format';
+import { useScopedHref } from '@/hooks/use-scoped-href';
+import { api } from '@/lib/api';
 import { Badge } from './badge';
 
 interface Signal {
@@ -55,9 +55,11 @@ function pnlColorClass(value: string | null): string {
 }
 
 export function SignalSheet() {
-  const searchParams = useSearchParams();
-  const runId = searchParams.get('run');
+  const [searchParams] = useSearchParams();
+  const channelId = searchParams.get('channel');
+  const href = useScopedHref();
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -68,13 +70,16 @@ export function SignalSheet() {
     const params = new URLSearchParams();
     params.set('signalsOnly', '1');
     params.set('limit', '20');
-    if (runId) params.set('run', runId);
+    if (channelId) params.set('channel', channelId);
+    setLoadError(null);
 
-    fetch(`/api/signals?${params}`)
-      .then((r) => r.json())
+    api<Signal[]>(`/signals?${params}`)
       .then(setSignals)
-      .catch(() => {});
-  }, [open, runId]);
+      .catch(() => {
+        setSignals([]);
+        setLoadError('Unable to load recent signals');
+      });
+  }, [open, channelId]);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -89,7 +94,13 @@ export function SignalSheet() {
           <SheetTitle className="text-sm font-medium">Recent Signals</SheetTitle>
         </SheetHeader>
         <ScrollArea className="h-[calc(100vh-8rem)]">
-          {signals.length === 0 ? (
+          {loadError ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Radio className="h-8 w-8 opacity-20 mb-3" />
+              <p className="text-sm">{loadError}</p>
+              <p className="text-xs mt-1 opacity-50">Check local API status and retry</p>
+            </div>
+          ) : signals.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Radio className="h-8 w-8 opacity-20 mb-3" />
               <p className="text-sm">No signals yet</p>
@@ -142,7 +153,7 @@ export function SignalSheet() {
         </ScrollArea>
         <div className="border-t px-4 py-3">
           <Link
-            href="/messages"
+            to={href('/messages')}
             onClick={() => setOpen(false)}
             className="flex items-center justify-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >

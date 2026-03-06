@@ -53,7 +53,7 @@ export function stopMessageWatchdog(): void {
 const RETRY_DELAYS = [10_000, 20_000, 40_000, 60_000]; // cap at 60s
 let shouldRun = true;
 
-export function startIngestion(onMessage?: (msg: SignalRMessage) => void): void {
+export function startIngestion(onMessage?: (msg: SignalRMessage) => void | Promise<void>): void {
   shouldRun = true;
   superviseIngestion(onMessage).catch(err => {
     console.error('[Ingest] Supervisor crashed unexpectedly:', err);
@@ -66,7 +66,7 @@ export function stopIngestion(): void {
   stopAuthMonitor();
 }
 
-async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void): Promise<void> {
+async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Promise<void>): Promise<void> {
   let consecutiveFailures = 0;
 
   while (shouldRun) {
@@ -98,7 +98,7 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void): Pr
         lastMessageReceivedAt = new Date();
         try {
           await processMessage(msg);
-          onMessage?.(msg);
+          await onMessage?.(msg);
         } catch (err) {
           console.error('[Ingest] Error processing message:', err);
           sendSystemAlert({

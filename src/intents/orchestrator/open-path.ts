@@ -23,7 +23,7 @@ import type {
   Leg,
   TradePosition,
 } from './types.js';
-import type { OptionType, Strategy } from '../../lib/enums.js';
+import type { LegAction, OptionType, Strategy } from '../../lib/enums.js';
 import { isSpread, getOptionLegs, type SpreadStrategy } from '../../lib/trade.js';
 import { strikesFromParse } from './parser.js';
 import { resolveExpiryHint, generateWeeklyExpiries } from './expiry-resolver.js';
@@ -62,15 +62,18 @@ function buildSpreadOptionLegs(
     CCS: [{ strike: lo, side: 'SELL' as const, optionType: 'CALL' as const }, { strike: hi, side: 'BUY' as const, optionType: 'CALL' as const }],
   };
 
-  return table[strategy].map(l => ({
-    type: 'option' as const,
-    symbol,
-    expiry,
-    optionType: l.optionType,
-    strike: l.strike,
-    side: l.side,
-    quantity: 1,
-  }));
+  return table[strategy].map(l => ({ ...l, type: 'option' as const, symbol, expiry, quantity: 1 }));
+}
+
+/** Build a single naked option leg (quantity: 1). */
+function buildNakedLeg(
+  symbol: string,
+  expiry: string,
+  optionType: OptionType,
+  strike: number,
+  side: LegAction,
+): OptionLeg {
+  return { type: 'option', symbol, expiry, optionType, strike, side, quantity: 1 };
 }
 
 /** Credit strategies receive premium (negative limit price). */
@@ -194,7 +197,7 @@ export async function resolveOpenPath(
 
   // ── Step 2: Resolve expiry ───────────────────────────────────────────────────
 
-  const messageDate = new Date(ctx.timestamp);
+  const messageDate = new Date(ctx.message.timestamp);
   let strikeSelection = strikesFromParse(parse);
 
   // Safety net: reject explicit strikes that are wildly inconsistent with the stock price.
@@ -283,16 +286,7 @@ export async function resolveOpenPath(
         // Naked CALL or PUT
         const strike = strikes[0];
         const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
-        const leg: OptionLeg = {
-          type: 'option',
-          symbol,
-          expiry,
-          optionType: optType,
-          strike,
-          side,
-          quantity: 1,
-        };
-        return { legs: [leg] };
+        return { legs: [buildNakedLeg(symbol, expiry, optType, strike, side)] };
       }
     }
 
@@ -316,16 +310,7 @@ export async function resolveOpenPath(
         return { legs };
       } else {
         const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
-        const leg: OptionLeg = {
-          type: 'option',
-          symbol,
-          expiry,
-          optionType: optType,
-          strike: atmStrike,
-          side,
-          quantity: 1,
-        };
-        return { legs: [leg] };
+        return { legs: [buildNakedLeg(symbol, expiry, optType, atmStrike, side)] };
       }
     }
 
@@ -356,16 +341,7 @@ export async function resolveOpenPath(
       }
 
       const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
-      const leg: OptionLeg = {
-        type: 'option',
-        symbol,
-        expiry,
-        optionType: optType,
-        strike: bestStrike,
-        side,
-        quantity: 1,
-      };
-      return { legs: [leg] };
+      return { legs: [buildNakedLeg(symbol, expiry, optType, bestStrike, side)] };
     }
 
     if (strikeSelection.method === 'premium_match') {
@@ -420,16 +396,7 @@ export async function resolveOpenPath(
         }
 
         const side = direction === 'LONG' ? 'BUY' as const : 'SELL' as const;
-        const leg: OptionLeg = {
-          type: 'option',
-          symbol,
-          expiry,
-          optionType: optType,
-          strike: bestStrike,
-          side,
-          quantity: 1,
-        };
-        return { legs: [leg], limitPrice: statedPremium };
+        return { legs: [buildNakedLeg(symbol, expiry, optType, bestStrike, side)], limitPrice: statedPremium };
       }
     }
 

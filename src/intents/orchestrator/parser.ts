@@ -619,7 +619,7 @@ function detectStrategy(
  * downstream resolution.
  */
 export function parseMessage(ctx: OrchestratorContext): ParseResult {
-  const { cleanText, badges, symbols } = ctx;
+  const { cleanText, badges, symbols } = ctx.message;
 
   const hasExitBadge = badges.includes('Exit');
   const hasLongBadge = badges.includes('Long');

@@ -316,3 +316,20 @@ body::before {
   transform: translateY(-1px);
   box-shadow: 0 4px 16px oklch(0.45 0.06 60 / 12%);
 }
+
+/* ═══════════════════════════════════════════════
+   Backtest banner — offset sidebar & wrapper
+   ═══════════════════════════════════════════════ */
+.has-banner [data-slot="sidebar-wrapper"] {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.has-banner [data-slot="sidebar-container"] {
+  top: var(--banner-h);
+  height: calc(100svh - var(--banner-h));
+}
+
+.has-banner [data-slot="sidebar-inset"] {
+  max-height: calc(100svh - var(--banner-h));
+}

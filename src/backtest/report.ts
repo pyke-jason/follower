@@ -136,7 +136,7 @@ export function computeCoreStats<T extends {
   openedAt: string | null; closedAt: string | null;
 }>(trades: T[], mtmSnapshots?: MtmSnapshot[], commissionSchedule?: CommissionSchedule) {
   const closed = trades.filter((t) => t.status === 'CLOSED');
-  const open = trades.filter((t) => t.status !== 'CLOSED');
+  const open = trades.filter((t) => t.status === 'OPEN');
 
   // Per-trade net PnL (gross minus round-trip commission)
   const netPnlOf = (t: T) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);

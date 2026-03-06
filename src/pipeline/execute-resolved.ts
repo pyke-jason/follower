@@ -15,7 +15,7 @@ import type { PositionSize } from '../position-sizing/index.js';
 import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
 import type { ResolvedSignal, OrchestratorResult, Leg, TradePosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
-import type { Message, TradeMetadata } from '../db/schema.js';
+import type { Message, TradeFlag, TradeMetadata } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 import { isSpread, getOptionLegs } from '../lib/trade.js';
@@ -34,6 +34,7 @@ const log = createLogger('ExecuteResolved');
 
 export type ResolvedPendingContext = {
   symbol: string;
+  trader: string;
   direction: Direction;
   strategy: Strategy;
   quantity: number;
@@ -42,7 +43,7 @@ export type ResolvedPendingContext = {
   taskId?: string;
   tradeId?: string;
   signalIndex?: number;
-  recordFill: (filledPrice: number, filledAt?: Date, fillMetadata?: TradeMetadata) => Promise<RecordTradeResult | null>;
+  recordFill: (fill: { filledPrice: number; filledAt: Date; adjustmentCount: number }) => Promise<RecordTradeResult | null>;
 };
 
 export type ResolvedPipelineDeps = {
@@ -53,7 +54,7 @@ export type ResolvedPipelineDeps = {
     symbol: string;
     entryPrice: number;
     strategy: string;
-    spreadMaxRisk?: number;
+    legs: Leg[];
   }) => Promise<PositionSize>;
   checkRiskLimits: (input: {
     symbol: string;
@@ -258,7 +259,9 @@ function buildOrderParams(
   let cancelAfterSec: number | undefined;
 
   if (limitPrice) {
-    const isBuy = !isCredit;
+    // For options, credit/debit determines chase direction (credit=SELL, debit=BUY).
+    // For stocks, there's no credit/debit — use direction directly.
+    const isBuy = strategy === 'STOCK' ? direction === 'LONG' : !isCredit;
     const profile = selectChaseProfile(strategy, isPositionReducing, isBuy);
     const chase = resolveChaseParams(profile, limitPrice, isBuy);
     adjustmentRules = [{
@@ -297,35 +300,16 @@ async function placeOrder(
   const result = OrderResultSchema.parse(raw);
 
   if (result.status !== 'REJECTED') {
-    await emitter.emit('ORDER_PLACED', {
-      orderId: result.orderId,
-      status: result.status,
-      orderType: params.orderType,
-      limitPrice: params.limitPrice,
-      symbol: params.symbol,
-      strategy: params.strategy,
-      direction: params.direction,
-      isClosing: params.isClosing,
-      legs: params.legs,
-      adjustmentRules: params.adjustmentRules,
-      cancelAfterSec: params.cancelAfterSec,
-    }, { signalIndex: signalIndex ?? null });
+    await emitter.emit('ORDER_PLACED', { signalIndex }, { ...result, params });
   }
 
   if (result.status === 'FILLED') {
-    await emitter.emit('ORDER_FILLED', {
-      orderId: result.orderId,
-      filledPrice: result.filledPrice,
-      fillTimestamp: result.fillTimestamp,
-      filledQuantity: result.filledQuantity,
-      commission: result.commission,
-      legFills: result.legFills,
-      immediatelyFilled: true,
-    }, { signalIndex: signalIndex ?? null });
-    await pending.recordFill(
-      result.filledPrice!,
-      new Date(result.fillTimestamp!),
-    );
+    await emitter.emit('ORDER_FILLED', { signalIndex }, { ...result, immediatelyFilled: true });
+    await pending.recordFill({
+      filledPrice: result.filledPrice!,
+      filledAt: new Date(result.fillTimestamp!),
+      adjustmentCount: 0,
+    });
   } else if (result.status === 'OPEN' && result.orderId) {
     deps.onPending(result.orderId, pending);
   }
@@ -365,25 +349,19 @@ async function executeResolvedSignal(
   if (!isPositionReducing) {
     // 1. Size
     const entryPrice = await getMidpoint(deps.broker, legsToOrderLegs(signal.legs, 1));
+
     const size = await deps.calculatePositionSize({
       trader,
       symbol,
       entryPrice,
       strategy,
+      legs: signal.legs,
     });
     if (size.quantity <= 0) {
       return { signal, executed: false, reason: `Position sizer returned qty=${size.quantity}` };
     }
 
-    await emitter.emit('SIZED', {
-      symbol,
-      strategy,
-      direction,
-      entryPrice,
-      quantity: size.quantity,
-      riskPerTrade: size.riskPerTrade,
-      reasoning: size.reasoning,
-    }, { signalIndex: signalIndex ?? null });
+    await emitter.emit('SIZED', { signalIndex }, { ...size, symbol, strategy, direction, entryPrice });
 
     // 2. Risk check
     const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction, direction });
@@ -406,26 +384,42 @@ async function executeResolvedSignal(
     let tradeId: string | undefined;
     const result = await placeOrder(deps, params, {
       symbol,
+      trader,
       direction,
       strategy,
       quantity: size.quantity,
       legs: orderLegs,
       messageId,
       signalIndex,
-      recordFill: async (fp, fa, fillMetadata) => {
+      recordFill: async (fill) => {
+        // Build chase metadata from fill (moved from caller)
+        const chaseFlags: TradeFlag[] = [];
+        if (fill.adjustmentCount >= 10) chaseFlags.push('chaseDanger');
+        else if (fill.adjustmentCount >= 5) chaseFlags.push('chaseWarn');
+        // Chase slippage: how much worse the fill was vs initial limit.
+        // BUY (debit): slippage = paid more. SELL (credit): slippage = received less.
+        const isBuy = strategy === 'STOCK' ? direction === 'LONG' : !isCredit;
+        const entrySlippage = isBuy
+          ? roundCents(fill.filledPrice - limitPrice)
+          : roundCents(limitPrice - fill.filledPrice);
+        const fillMetadata: TradeMetadata = {
+          ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
+          ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
+          entrySlippage,
+        };
         const recorded = await deps.recordTrade({
           action: signalAction,
           symbol,
           trader,
           direction,
           strategy,
-          entryPrice: fp,
+          entryPrice: fill.filledPrice,
           quantity: size.quantity,
           legs: orderLegs,
-          openedAt: fa?.toISOString(),
+          openedAt: fill.filledAt.toISOString(),
           sourceMessageId: messageId,
           ...(signal.tradeId && { tradeId: signal.tradeId }),
-          ...(fillMetadata && { metadata: fillMetadata }),
+          metadata: fillMetadata,
         });
         if (recorded) tradeId = recorded.tradeId;
         return recorded;
@@ -456,6 +450,7 @@ async function executeResolvedSignal(
   const quantity = orderLegs[0]?.quantity ?? 1;
   const result = await placeOrder(deps, params, {
     symbol,
+    trader,
     direction,
     strategy,
     quantity,
@@ -463,7 +458,20 @@ async function executeResolvedSignal(
     messageId,
     tradeId: signal.tradeId,
     signalIndex,
-    recordFill: async (fp, fa, fillMetadata) => {
+    recordFill: async (fill) => {
+      const chaseFlags: TradeFlag[] = [];
+      if (fill.adjustmentCount >= 10) chaseFlags.push('chaseDanger');
+      else if (fill.adjustmentCount >= 5) chaseFlags.push('chaseWarn');
+      // Chase slippage on exit: same sign convention as entry (positive = worse).
+      const closeBuy = strategy === 'STOCK' ? direction !== 'LONG' : !closeIsCredit;
+      const exitSlippage = closeBuy
+        ? roundCents(fill.filledPrice - closeMid)
+        : roundCents(closeMid - fill.filledPrice);
+      const fillMetadata: TradeMetadata = {
+        ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
+        ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
+        exitSlippage,
+      };
       const action = signal.exitPercent != null && signal.exitPercent < 1
         ? 'TRIM' as const
         : 'CLOSE' as const;
@@ -474,16 +482,16 @@ async function executeResolvedSignal(
         trader,
         direction,
         strategy,
-        exitPrice: fp,
+        exitPrice: fill.filledPrice,
         quantity,
         ...(signal.exitPercent != null && signal.exitPercent < 1 && {
           closeQuantity: quantity,
           exitPercent: signal.exitPercent,
         }),
         legs: orderLegs,
-        closedAt: fa?.toISOString(),
+        closedAt: fill.filledAt.toISOString(),
         closeMessageId: messageId,
-        ...(fillMetadata && { metadata: fillMetadata }),
+        metadata: fillMetadata,
       });
       if (recorded) tradeId = recorded.tradeId;
       return recorded;
@@ -526,14 +534,10 @@ export async function executeResolvedSignals(ctx: {
 
       // Emit SETTLED for this signal
       const outcome = result.executed ? 'EXECUTE' : (result.reason ? 'FAIL' : 'PENDING');
-      await emitter.emit('SETTLED', { outcome, signal }, {
-        signalIndex: i,
-        outcome,
-        reasoning: result.reason ?? null,
-        tradeId: result.tradeId ?? null,
-        inputTokens: resolved.usage?.inputTokens ?? null,
-        outputTokens: resolved.usage?.outputTokens ?? null,
-      });
+      await emitter.emit('SETTLED',
+        { outcome, signalIndex: i, reasoning: result.reason, tradeId: result.tradeId, inputTokens: resolved.usage?.inputTokens, outputTokens: resolved.usage?.outputTokens },
+        { signal, result, resolved },
+      );
     } catch (err) {
       if (err instanceof QuoteResolutionError) {
         // Record the original failure
@@ -544,21 +548,14 @@ export async function executeResolvedSignals(ctx: {
         };
         results.push(failResult);
 
-        await emitter.emit('QUOTE_FAILED', {
-          occSymbol: err.occSymbol,
-          error: err.originalMessage,
-          signal,
-        }, { signalIndex: i });
+        await emitter.emit('QUOTE_FAILED', { signalIndex: i }, { occSymbol: err.occSymbol, error: err.originalMessage, signal });
         if (signal.tradeId) {
           await addTradeFlags(signal.tradeId, 'marketDataFail');
         }
 
         // Attempt retry via LLM re-parse
         log.info(`Quote resolution failed — retrying via LLM: ${err.originalMessage.slice(0, 120)}`);
-        await emitter.emit('RETRY_LLM', {
-          reason: 'invalid strike',
-          originalError: err.originalMessage,
-        }, { signalIndex: i });
+        await emitter.emit('RETRY_LLM', { signalIndex: i }, { reason: 'invalid strike', originalError: err.originalMessage });
 
         const retryResolved = await resolveOrchestrator(message, {
           getPositions: env.getPositions,
@@ -587,11 +584,10 @@ export async function executeResolvedSignals(ctx: {
                 reason: `Quote resolution retry returned same invalid symbol ${err.occSymbol}`,
               };
               results.push(sameSymbolResult);
-              await emitter.emit('SETTLED', { outcome: 'FAIL', signal: retrySignal, retryContext: { originalError: err.originalMessage } }, {
-                signalIndex: resolved.signals.length + ri,
-                outcome: 'FAIL',
-                reasoning: sameSymbolResult.reason!,
-              });
+              await emitter.emit('SETTLED',
+                { outcome: 'FAIL', signalIndex: resolved.signals.length + ri, reasoning: sameSymbolResult.reason! },
+                { signal: retrySignal, result: sameSymbolResult, retryContext: { originalError: err.originalMessage } },
+              );
               continue;
             }
           }
@@ -600,14 +596,10 @@ export async function executeResolvedSignals(ctx: {
             const retryResult = await executeResolvedSignal(retrySignal, trader, deps, emitter, message.id, resolved.signals.length + ri);
             results.push(retryResult);
             const outcome = retryResult.executed ? 'EXECUTE' : 'FAIL';
-            await emitter.emit('SETTLED', { outcome, signal: retrySignal, retryContext: { originalError: err.originalMessage } }, {
-              signalIndex: resolved.signals.length + ri,
-              outcome,
-              reasoning: retryResult.reason ?? null,
-              tradeId: retryResult.tradeId ?? null,
-              inputTokens: retryResolved.usage?.inputTokens ?? null,
-              outputTokens: retryResolved.usage?.outputTokens ?? null,
-            });
+            await emitter.emit('SETTLED',
+              { outcome, signalIndex: resolved.signals.length + ri, reasoning: retryResult.reason, tradeId: retryResult.tradeId, inputTokens: retryResolved.usage?.inputTokens, outputTokens: retryResolved.usage?.outputTokens },
+              { signal: retrySignal, result: retryResult, retryResolved, retryContext: { originalError: err.originalMessage } },
+            );
           } catch (retryErr) {
             const errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
             const retryFailResult: ResolvedPipelineResult = {
@@ -616,11 +608,10 @@ export async function executeResolvedSignals(ctx: {
               reason: `Quote resolution retry failed: ${errMsg}`,
             };
             results.push(retryFailResult);
-            await emitter.emit('SETTLED', { outcome: 'FAIL', signal: retrySignal, retryContext: { originalError: err.originalMessage }, error: errMsg }, {
-              signalIndex: resolved.signals.length + ri,
-              outcome: 'FAIL',
-              reasoning: retryFailResult.reason!,
-            });
+            await emitter.emit('SETTLED',
+              { outcome: 'FAIL', signalIndex: resolved.signals.length + ri, reasoning: retryFailResult.reason! },
+              { signal: retrySignal, result: retryFailResult, retryContext: { originalError: err.originalMessage }, error: errMsg },
+            );
           }
         }
       } else {

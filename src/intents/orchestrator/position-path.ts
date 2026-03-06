@@ -32,7 +32,7 @@ function reverseSide(side: LegAction): LegAction {
  * Convert a position leg into a Leg (OptionLeg or StockLeg) with sides reversed
  * for closing and the given quantity.
  */
-function buildReversalLeg(
+export function buildReversalLeg(
   positionLeg: TradeLeg,
   underlyingSymbol: string,
   quantity: number,

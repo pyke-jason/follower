@@ -1,5 +1,3 @@
-'use client';
-
 import {
   useState,
   useOptimistic,
@@ -8,8 +6,9 @@ import {
   useCallback,
   memo,
 } from 'react';
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { Search, X, Plus, ListPlus, Trash2 } from 'lucide-react';
+import { useScopedHref } from '@/hooks/use-scoped-href';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -37,17 +36,38 @@ import {
 } from '@/components/ui/command';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import type { TrackedTrader } from '@src/db/schema';
-import {
-  quickAdd,
-  removeTrader,
-  toggleEnabled,
-  setStrategies,
-  setNotes,
-  setRiskPercent,
-  bulkAdd,
-  bulkRemove,
-  bulkToggleStrategy,
-} from './actions';
+import { api } from '@/lib/api';
+
+const quickAdd = (name: string) =>
+  api('/traders', { method: 'POST', body: JSON.stringify({ name }) });
+const removeTrader = (name: string) =>
+  api(`/traders/${encodeURIComponent(name)}`, { method: 'DELETE' });
+const toggleEnabled = (name: string, currentlyEnabled: boolean) =>
+  api(`/traders/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ field: 'enabled', value: !currentlyEnabled }),
+  });
+const setStrategies = (name: string, strategies: string[]) =>
+  api(`/traders/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ field: 'strategies', value: strategies }),
+  });
+const setNotes = (name: string, notes: string | null) =>
+  api(`/traders/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ field: 'notes', value: notes }),
+  });
+const setRiskPercent = (name: string, riskPercent: number | null) =>
+  api(`/traders/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ field: 'riskPercent', value: riskPercent }),
+  });
+const bulkAdd = (names: string[]) =>
+  api('/traders/bulk', { method: 'POST', body: JSON.stringify({ action: 'add', names }) });
+const bulkRemove = (names: string[]) =>
+  api('/traders/bulk', { method: 'POST', body: JSON.stringify({ action: 'remove', names }) });
+const bulkToggleStrategy = (names: string[], strategy: string, enable: boolean) =>
+  api('/traders/bulk', { method: 'POST', body: JSON.stringify({ action: 'toggleStrategy', names, strategy, enable }) });
 
 const ALL_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'] as const;
 
@@ -156,7 +176,7 @@ export function TraderRoster({
                     ? {
                         strategy: 'atr' as const,
                         riskPercent: action.riskPercent,
-                        atrMultiplier: t.positionSizingConfig?.atrMultiplier ?? 2.0,
+                        atrMultiplier: (t.positionSizingConfig?.strategy === 'atr' ? t.positionSizingConfig.atrMultiplier : 2.0),
                       }
                     : null,
                 }
@@ -519,6 +539,7 @@ const TraderRow = memo(function TraderRow({
   onStrategiesChange: (name: string, strategies: string[]) => void;
   onRiskPercentChange: (name: string, riskPercent: number | null) => void;
 }) {
+  const href = useScopedHref();
   const strategies = trader.strategies;
 
   return (
@@ -543,7 +564,7 @@ const TraderRow = memo(function TraderRow({
             )}
           />
           <Link
-            href={`/traders/${encodeURIComponent(trader.name)}`}
+            to={href(`/traders/${encodeURIComponent(trader.name)}`)}
             className="text-foreground hover:underline underline-offset-2 decoration-primary/40"
           >
             {trader.name}
@@ -584,7 +605,7 @@ const TraderRow = memo(function TraderRow({
       <TableCell>
         <RiskPercentCell
           name={trader.name}
-          riskPercent={trader.positionSizingConfig?.riskPercent ?? null}
+          riskPercent={trader.positionSizingConfig?.strategy === 'atr' ? trader.positionSizingConfig.riskPercent : null}
           onChange={onRiskPercentChange}
         />
       </TableCell>
@@ -683,7 +704,7 @@ function NotesCell({
   function save() {
     const trimmed = value.trim();
     if (trimmed !== (notes ?? '')) {
-      startTransition(() => setNotes(name, trimmed || null));
+      startTransition(() => { setNotes(name, trimmed || null); });
     }
   }
 

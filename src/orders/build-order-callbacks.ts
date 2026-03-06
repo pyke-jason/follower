@@ -14,7 +14,7 @@ import type { OrderManagerConfig } from './order-manager.js';
 import type { ResolvedPendingContext } from '../pipeline/execute-resolved.js';
 import type { SignalEventEmitter } from '../decisions/emitter.js';
 import type { FilledWorkingOrder, WorkingOrder } from '../broker/types.js';
-import type { TradeFlag, TradeMetadata } from '../db/schema.js';
+import type { RecordCancelledOpenInput } from '../trades/record-trade.js';
 import { db, schema } from '../db/client.js';
 import { createLogger } from '../lib/logger.js';
 import { addTradeFlags } from '../trades/trade-flags.js';
@@ -23,10 +23,13 @@ const log = createLogger('OrderCallbacks');
 
 export type CallbackDeps = {
   pendingIntents: Map<string, ResolvedPendingContext>;
-  createScopedEmitter: (messageId: string, taskId?: string) => SignalEventEmitter;
+  createScopedEmitter: (messageId?: string, taskId?: string) => SignalEventEmitter;
+
   clock: () => Date;
   /** Scoping fields written to orphan_fills for attribution. */
   scope: { taskId?: string; channelId?: string };
+  /** Record a cancelled OPEN attempt in the trades table. Pre-bound with channelId + agentModel by the factory. */
+  recordCancelledOpen: (input: Omit<RecordCancelledOpenInput, 'channelId' | 'agentModel'>) => Promise<unknown>;
   /** Optional operational alerting (live sends Pushover/Discord, backtest omits). */
   sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' }) => Promise<void>;
 };
@@ -63,28 +66,12 @@ export function buildOrderCallbacks(
         return;
       }
       pendingIntents.delete(order.orderId);
-      const emitter = createScopedEmitter(pending.messageId ?? '', pending.taskId);
-      await emitter.emit('ORDER_FILLED', {
-        orderId: order.orderId,
-        symbol: order.params.symbol,
-        strategy: order.params.strategy,
-        direction: order.params.direction,
-        filledPrice: order.filledPrice,
-        filledAt: order.filledAt.toISOString(),
-        filledQuantity: order.filledQuantity,
-        commission: order.commission,
-        legFills: order.legFills,
-        adjustmentCount: order.adjustmentCount,
-        originalLimitPrice: order.params.limitPrice,
-        immediatelyFilled: false,
-      }, { signalIndex: pending.signalIndex ?? null });
-      const chaseFlags: TradeFlag[] = [];
-      if (order.adjustmentCount >= 10) chaseFlags.push('chaseDanger');
-      else if (order.adjustmentCount >= 5) chaseFlags.push('chaseWarn');
-      const fillMetadata: TradeMetadata | undefined = order.adjustmentCount > 0
-        ? { chaseSteps: order.adjustmentCount, flags: chaseFlags.length > 0 ? chaseFlags : undefined }
-        : undefined;
-      await pending.recordFill(order.filledPrice, order.filledAt, fillMetadata);
+      const emitter = createScopedEmitter(pending.messageId, pending.taskId);
+      await emitter.emit('ORDER_FILLED',
+        { signalIndex: pending.signalIndex },
+        { ...order, pending, immediatelyFilled: false },
+      );
+      await pending.recordFill(order);
     },
 
     onCancel: async (order) => {
@@ -98,20 +85,18 @@ export function buildOrderCallbacks(
         });
         return;
       }
-      const emitter = createScopedEmitter(pending.messageId ?? '', pending.taskId);
-      await emitter.emit('ORDER_CANCELLED', {
-        orderId: order.orderId,
-        symbol: order.params.symbol,
-        strategy: order.params.strategy,
-        direction: order.params.direction,
-        originalLimitPrice: order.params.limitPrice,
-        finalLimitPrice: order.currentLimitPrice,
-        adjustmentCount: order.adjustmentCount,
-        reason: order.status,
-        placedAt: order.placedAt.toISOString(),
-      }, { signalIndex: pending.signalIndex ?? null, tradeId: pending.tradeId ?? null });
+      const emitter = createScopedEmitter(pending.messageId, pending.taskId);
+      await emitter.emit('ORDER_CANCELLED',
+        { signalIndex: pending.signalIndex, tradeId: pending.tradeId },
+        { order, pending },
+      );
+      
       if (pending.tradeId) {
+        // Position-reducing cancel — trade already exists, flag it
         await addTradeFlags(pending.tradeId, 'closeFailed');
+      } else {
+        // OPEN cancel — record the attempt as a CANCELLED trade
+        await deps.recordCancelledOpen({ pending, order });
       }
       pendingIntents.delete(order.orderId);
     },
@@ -122,10 +107,11 @@ export function buildOrderCallbacks(
         log.warn(`onAdjust: no pendingIntent for orderId=${order.orderId} — adjustment untracked`);
         return;
       }
-      const emitter = createScopedEmitter(pending.messageId ?? '', pending.taskId);
-      await emitter.emit('ORDER_ADJUSTED', {
-        orderId: order.orderId, fromPrice, toPrice, step,
-      }, { signalIndex: pending.signalIndex ?? null });
+      const emitter = createScopedEmitter(pending.messageId, pending.taskId);
+      await emitter.emit('ORDER_ADJUSTED',
+        { signalIndex: pending.signalIndex },
+        { ...order, pending, fromPrice, toPrice, step },
+      );
     },
   };
 }

@@ -125,14 +125,10 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     const skipCategory = env.classifySkip?.(result)
       ?? (resolved.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
 
-    await emitter.emit('SETTLED', { outcome: mappedOutcome }, {
-      outcome: mappedOutcome,
-      phase: 'orchestrator',
-      reasoning: resolved.reason,
-      skipCategory,
-      inputTokens: resolved.usage?.inputTokens ?? null,
-      outputTokens: resolved.usage?.outputTokens ?? null,
-    });
+    await emitter.emit('SETTLED',
+      { outcome: mappedOutcome, phase: 'orchestrator', reasoning: resolved.reason, skipCategory, inputTokens: resolved.usage?.inputTokens, outputTokens: resolved.usage?.outputTokens },
+      { resolved },
+    );
 
     // Stamp hasUpdate on open trades — no execution happened so open trades are unchanged
     if (symbols.length > 0 && context.author) {

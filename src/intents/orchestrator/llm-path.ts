@@ -144,7 +144,7 @@ export async function resolveLLMPath(
   }
 
   log.debug(
-    `LLM path: ${taskResult.signals.length} signal(s) for message ${ctx.messageId}`,
+    `LLM path: ${taskResult.signals.length} signal(s) for message ${ctx.message.id}`,
   );
 
   // Route each signal through the appropriate resolution path
@@ -155,16 +155,16 @@ export async function resolveLLMPath(
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): string {
-  const messageText = htmlToLLMText(ctx.rawHtml);
-  const dateStr = formatTimestampForLLM(ctx.timestamp);
+  const messageText = htmlToLLMText(ctx.message.rawHtml);
+  const dateStr = formatTimestampForLLM(ctx.message.timestamp);
 
   const lines: string[] = [
     `Classify this trading message.`,
     ``,
     `Date/Time: ${dateStr}`,
-    `Author: ${ctx.author}`,
+    `Author: ${ctx.message.author}`,
     `Text: ${messageText}`,
-    `Symbols detected: ${JSON.stringify(ctx.symbols)}`,
+    `Symbols detected: ${JSON.stringify(ctx.message.symbols)}`,
   ];
 
   // Include what the parser already determined — LLM doesn't need to re-derive these.

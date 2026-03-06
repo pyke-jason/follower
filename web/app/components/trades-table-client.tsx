@@ -1,7 +1,5 @@
-'use client';
-
 import { useCallback, useEffect, useLayoutEffect, useRef, Fragment } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParam } from '@/hooks/use-search-param';
 import { Card } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -19,9 +17,7 @@ export function TradesTableClient() {
   const prevFirstIdRef = useRef<string | null>(null);
   const savedAnchorRef = useRef<{ id: string; scrollTop: number; offsetTop: number } | null>(null);
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const urlTradeId = searchParams.get('trade');
+  const [urlTradeId, setUrlTradeId] = useSearchParam('trade');
 
   // Sync URL → store
   useEffect(() => {
@@ -31,12 +27,9 @@ export function TradesTableClient() {
   const setSelectedId = useCallback(
     (id: string | null) => {
       selectTrade(id);
-      const params = new URLSearchParams(searchParams.toString());
-      if (id) params.set('trade', id);
-      else params.delete('trade');
-      router.replace(`?${params.toString()}`, { scroll: false });
+      setUrlTradeId(id);
     },
-    [router, searchParams, selectTrade],
+    [selectTrade, setUrlTradeId],
   );
 
   // Scroll anchoring: capture pre-render position during render phase,
@@ -93,23 +86,17 @@ export function TradesTableClient() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-6" />
-                <TableHead>Symbol</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="hidden md:table-cell">Contract</TableHead>
+                <TableHead>Trade</TableHead>
                 <TableHead>Trader</TableHead>
-                <TableHead>Direction</TableHead>
-                <TableHead>Strategy</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">Qty</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
                 <TableHead className="text-right">Entry / Exit</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">Notional</TableHead>
                 <TableHead className="text-right">P&amp;L</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">R. P&amp;L</TableHead>
                 <TableHead>Opened</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {trades.map((t) => {
-                const events = eventsByTradeId.get(t.id) ?? [];
+                const events = eventsByTradeId[t.id] ?? [];
                 return (
                   <Fragment key={t.id}>
                     <TradeRow

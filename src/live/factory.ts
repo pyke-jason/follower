@@ -1,12 +1,15 @@
 import { db, schema } from '../db/client.js';
 import { isTrackedTrader } from '../config/traders.js';
-import type { Message, TaskContext } from '../db/schema.js';
+import type { Message, Task, TaskContext } from '../db/schema.js';
 
 import { safeParseFloat } from '../lib/numbers.js';
 
 const CONFIDENCE_THRESHOLD = 0.7;
 
-export async function createTaskFromMessage(message: Message): Promise<string | null> {
+export async function createTaskFromMessage(
+  message: Message,
+  channelId: string,
+): Promise<Task | null> {
   // Only create tasks for tracked traders
   if (!await isTrackedTrader(message.author)) {
     return null;
@@ -45,14 +48,23 @@ export async function createTaskFromMessage(message: Message): Promise<string | 
     taskType,
     status: 'PENDING',
     assignee: 'agent',
+    channelId,
     context,
   }).onConflictDoNothing().returning();
 
   if (!task) {
-    console.log(`[Factory] Duplicate task skipped for message ${message.id}`);
+    console.log(`[Factory] Duplicate task skipped for message ${message.id} (${channelId})`);
     return null;
   }
 
-  console.log(`[Factory] Created ${taskType} task ${task.id} for ${message.author} (confidence: ${confidence})`);
-  return task.id;
+  console.log(`[Factory] Created ${taskType} task ${task.id} for ${message.author} (${channelId}, confidence: ${confidence})`);
+  return task;
+}
+
+export async function createTasksFromMessage(
+  message: Message,
+  channelIds: string[],
+): Promise<Task[]> {
+  const created = await Promise.all(channelIds.map((channelId) => createTaskFromMessage(message, channelId)));
+  return created.filter((task): task is Task => task != null);
 }

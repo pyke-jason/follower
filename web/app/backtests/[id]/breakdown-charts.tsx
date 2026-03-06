@@ -1,6 +1,4 @@
-'use client';
-
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { formatCurrency } from '@/lib/format';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
@@ -47,7 +45,7 @@ function BreakdownTable({
             <div className="w-[90px] truncate shrink-0">
               {linkBuilder ? (
                 <Link
-                  href={linkBuilder(row.name)}
+                  to={linkBuilder(row.name)}
                   className="text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-dashed"
                 >
                   {row.name}
@@ -85,11 +83,11 @@ function BreakdownTable({
 export function BreakdownCharts({
   byTrader,
   byStrategy,
-  runId,
+  channelId,
 }: {
   byTrader: Record<string, BreakdownEntry> | null;
   byStrategy: Record<string, BreakdownEntry> | null;
-  runId?: string;
+  channelId?: string;
 }) {
   const traderRows: RowData[] = byTrader
     ? Object.entries(byTrader)
@@ -117,7 +115,7 @@ export function BreakdownCharts({
             rows={traderRows}
             maxAbsPnl={maxAbsPnl}
             linkBuilder={(name) =>
-              `/trades?trader=${encodeURIComponent(name)}${runId ? `&run=${runId}` : ''}`
+              `/trades?trader=${encodeURIComponent(name)}${channelId ? `&channel=${channelId}` : ''}`
             }
           />
         </CardContent>
@@ -131,7 +129,7 @@ export function BreakdownCharts({
             rows={strategyRows}
             maxAbsPnl={maxAbsPnl}
             linkBuilder={(name) =>
-              `/trades?strategy=${encodeURIComponent(name)}${runId ? `&run=${runId}` : ''}`
+              `/trades?strategy=${encodeURIComponent(name)}${channelId ? `&channel=${channelId}` : ''}`
             }
           />
         </CardContent>

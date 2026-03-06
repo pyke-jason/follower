@@ -48,12 +48,12 @@ The orchestrator emits `PARSED` (always) and `SIGNAL_RESOLVED` (per signal, for 
 
 ## Direction Semantics
 
-The `direction` field (LONG/SHORT) means whether the trader is BUYING or SELLING the instrument. It does NOT represent their bullish/bearish stock view. Key mappings:
+The parser's `direction` field (LONG/SHORT) means whether the trader is BUYING or SELLING the instrument. It does NOT represent their bullish/bearish stock view.
 
+**For STOCK, CALL, PUT** — direction is meaningful and used by open-path:
 - "Short [ticker] puts/calls" = bearish/bullish VIEW, but BUYING options → direction: LONG.
-- "Sold [ticker] puts" = SELLING puts for premium (bullish) → direction: SHORT. "Sold" is authoritative.
-- "Long [ticker] pcs 68/67 for credit" = bullish VIEW, SELLING a put credit spread → direction: SHORT, strategy: PDS.
-- Debit strategies (CDS, PDS bought, naked long options) = always direction: LONG.
-- Credit strategies (PCS, sold/written options) = always direction: SHORT.
+- "Sold [ticker] puts" = SELLING puts for premium → direction: SHORT. "Sold" is authoritative.
 - "Lotto"/"Yolo" = speculative BUY, always direction: LONG, never sell-to-open.
 - "Bought"/"Sold" in the message are authoritative — they override any Long/Short prefix badge.
+
+**For spreads (CDS, PDS, PCS, CCS)** — direction is derived from leg structure, not the direction field. `buildSpreadOptionLegs()` maps strategy → leg sides deterministically. `isCreditStrategy()` handles credit/debit pricing. The parser sets `directionFromStrategy` for CDS/PDS (LONG) but leaves it null for PCS — this is safe because spread execution never consults the direction field.

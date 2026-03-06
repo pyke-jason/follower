@@ -10,6 +10,7 @@ import type { Strategy } from '../lib/enums.js';
 
 export const isOpen = eq(trades.status, 'OPEN');
 export const isClosed = eq(trades.status, 'CLOSED');
+export const isCancelled = eq(trades.status, 'CANCELLED');
 
 export const forChannel = (channelId: string) => eq(trades.channelId, channelId);
 export const forSymbol = (sym: string) => eq(trades.symbol, sym);

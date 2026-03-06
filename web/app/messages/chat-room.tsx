@@ -1,5 +1,3 @@
-'use client';
-
 import { useMemo, useEffect } from 'react';
 import { ChatFilters } from './chat-filters';
 import { ChatFeed } from './chat-feed';
@@ -28,7 +26,9 @@ export function ChatRoom() {
   // Sync filters to URL search params (skip when in constrained mode)
   useEffect(() => {
     if (constraints) return;
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(window.location.search);
+    // Clear filter keys, preserve everything else (e.g. channel)
+    for (const key of ['authors', 'start', 'end', 'signals', 'label']) params.delete(key);
     if (filters.authors?.length) params.set('authors', filters.authors.join(','));
     if (filters.startDate) params.set('start', filters.startDate);
     if (filters.endDate) params.set('end', filters.endDate);
@@ -48,9 +48,8 @@ export function ChatRoom() {
           <ChatFeed
             messages={messages}
             labels={labels}
-            enrichment={Object.keys(enrichment).length > 0 ? enrichment : undefined}
+            enrichment={enrichment}
             lastProcessedTs={constraints?.lastProcessedTs ?? undefined}
-            runId={constraints?.runId}
             firstItemIndex={firstItemIndex}
             onLoadOlder={loadOlderMessages}
             isLoadingOlder={isLoadingOlder}

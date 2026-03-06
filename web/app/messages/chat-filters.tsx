@@ -1,5 +1,3 @@
-'use client';
-
 import { useState, useMemo } from 'react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Switch } from '@/components/ui/switch';
@@ -10,7 +8,7 @@ import { getAuthorBgColor, getAuthorTextColor } from '@/lib/author-colors';
 import { Users, X, Check } from 'lucide-react';
 import { isoToDateKey } from '@/lib/format';
 import { useChatStore } from '@/stores/chat-store';
-import type { MessageFilters, LabelFilter } from './actions';
+import type { MessageFilters, LabelFilter } from '@/stores/chat-store';
 
 type TimePeriod = 'today' | '7d' | '30d' | 'all';
 
@@ -44,7 +42,8 @@ export function ChatFilters() {
 
   const decisionSummary = useMemo<DecisionSummary | null>(() => {
     if (stableDecisionCounts) return stableDecisionCounts;
-    if (!constraints?.runId) return null;
+    if (!constraints?.channelId) return null;
+    if (!enrichment) return null;
     const entries = Object.values(enrichment);
     if (entries.length === 0) return null;
     let executed = 0;
@@ -54,12 +53,12 @@ export function ChatFilters() {
       else if (e.decision?.outcome === 'SKIP') skipped++;
     }
     return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
-  }, [stableDecisionCounts, constraints?.runId, enrichment]);
+  }, [stableDecisionCounts, constraints?.channelId, enrichment]);
   const [search, setSearch] = useState('');
 
   const hasDateConstraint = !!(constraints?.startDate && constraints?.endDate);
   const hasAuthorConstraint = !!(constraints?.authors && constraints.authors.length > 0);
-  const hasRunId = !!constraints?.runId;
+  const hasChannelId = !!constraints?.channelId;
 
   const selectedAuthors = filters.authors ?? [];
 
@@ -248,7 +247,7 @@ export function ChatFilters() {
       <div className="w-px h-5 bg-border" />
 
       {/* Decision filters (only when run-scoped) */}
-      {hasRunId && (
+      {hasChannelId && (
         <>
           <ToggleGroup
             type="single"

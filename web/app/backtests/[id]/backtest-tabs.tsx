@@ -1,8 +1,6 @@
-'use client';
-
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, type ReactNode } from 'react';
+import { useSearchParam } from '@/hooks/use-search-param';
+import type { ReactNode } from 'react';
 
 const VALID_TABS = ['trades', 'messages', 'performance'] as const;
 type TabValue = (typeof VALID_TABS)[number];
@@ -20,29 +18,13 @@ export function BacktestTabs({
   hasMessages: boolean;
   tabBarTrailing?: ReactNode;
 }) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const rawTab = searchParams.get('tab');
+  const [rawTab, setTab] = useSearchParam('tab', 'trades');
   const activeTab: TabValue = VALID_TABS.includes(rawTab as TabValue)
     ? (rawTab as TabValue)
     : 'trades';
 
-  const handleTabChange = useCallback(
-    (value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (value === 'trades') {
-        params.delete('tab');
-      } else {
-        params.set('tab', value);
-      }
-      const qs = params.toString();
-      router.replace(`?${qs}`, { scroll: false });
-    },
-    [router, searchParams],
-  );
-
   return (
-    <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col flex-1 min-h-0">
+    <Tabs value={activeTab} onValueChange={setTab} className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center gap-2">
         <TabsList variant="line">
           <TabsTrigger value="trades">Trades</TabsTrigger>

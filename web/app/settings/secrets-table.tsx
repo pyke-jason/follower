@@ -1,20 +1,25 @@
-'use client';
-
-import { useActionState, useState } from 'react';
+import { useState } from 'react';
+import { useApiMutation } from '@/hooks/use-api-mutation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { setSecret, deleteSecret } from './actions';
-import type { SecretEntry } from './actions';
+
+export type SecretEntry = { key: string; isSet: boolean };
 
 function SecretRow({ entry }: { entry: SecretEntry }) {
   const [editing, setEditing] = useState(false);
-  const [setResult, setDispatch, setPending] = useActionState(setSecret, null);
-  const [delResult, delDispatch, delPending] = useActionState(deleteSecret, null);
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const setMut = useApiMutation<{ key: string; value: string }>('POST', '/settings/secrets', {
+    invalidate: [['settings-secrets']],
+    onSuccess: () => { setEditing(false); setValue(''); setError(null); },
+    onError: (err) => setError(err.message),
+  });
 
-  // Reset editing after successful save
-  if (setResult?.ok && editing) {
-    setEditing(false);
-  }
+  const delMut = useApiMutation<string>('DELETE', (key) => `/settings/secrets/${encodeURIComponent(key)}`, {
+    invalidate: [['settings-secrets']],
+    onSuccess: () => setError(null),
+    onError: (err) => setError(err.message),
+  });
 
   return (
     <tr className="border-b border-border">
@@ -28,24 +33,30 @@ function SecretRow({ entry }: { entry: SecretEntry }) {
       </td>
       <td className="py-2">
         {editing ? (
-          <form action={setDispatch} className="flex items-center gap-2">
-            <input type="hidden" name="key" value={entry.key} />
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (value.trim()) {
+                setMut.mutate({ key: entry.key, value: value.trim() });
+              }
+            }}
+          >
             <Input
-              name="value"
               type="password"
               placeholder="Enter value..."
               className="h-7 text-xs w-64"
               autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
             />
-            <Button type="submit" size="xs" disabled={setPending}>
-              {setPending ? 'Saving...' : 'Save'}
+            <Button type="submit" size="xs" disabled={setMut.isPending}>
+              {setMut.isPending ? 'Saving...' : 'Save'}
             </Button>
-            <Button type="button" size="xs" variant="ghost" onClick={() => setEditing(false)}>
+            <Button type="button" size="xs" variant="ghost" onClick={() => { setEditing(false); setValue(''); setError(null); }}>
               Cancel
             </Button>
-            {setResult && !setResult.ok && (
-              <span className="text-xs text-destructive">{setResult.error}</span>
-            )}
+            {error && <span className="text-xs text-destructive">{error}</span>}
           </form>
         ) : (
           <div className="flex items-center gap-2">
@@ -53,16 +64,17 @@ function SecretRow({ entry }: { entry: SecretEntry }) {
               Edit
             </Button>
             {entry.isSet && (
-              <form action={delDispatch}>
-                <input type="hidden" name="key" value={entry.key} />
-                <Button type="submit" size="xs" variant="ghost" className="text-destructive hover:text-destructive/80" disabled={delPending}>
-                  {delPending ? 'Removing...' : 'Remove'}
-                </Button>
-              </form>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="text-destructive hover:text-destructive/80"
+                disabled={delMut.isPending}
+                onClick={() => delMut.mutate(entry.key)}
+              >
+                {delMut.isPending ? 'Removing...' : 'Remove'}
+              </Button>
             )}
-            {delResult && !delResult.ok && (
-              <span className="text-xs text-destructive">{delResult.error}</span>
-            )}
+            {error && <span className="text-xs text-destructive">{error}</span>}
           </div>
         )}
       </td>

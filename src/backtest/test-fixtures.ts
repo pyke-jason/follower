@@ -283,7 +283,7 @@ export const CREATE_TRADES_SQL = sql`
     opened_at TEXT,
     closed_at TEXT,
     close_message_id TEXT,
-    channel_id TEXT NOT NULL DEFAULT 'live:12345',
+    channel_id TEXT NOT NULL DEFAULT 'ibkr:live:12345',
     metadata TEXT DEFAULT '{}',
     avg_entry_price TEXT,
     realized_pnl TEXT,
@@ -328,7 +328,8 @@ export const CREATE_MESSAGES_SQL = sql`
     detected_strategies TEXT DEFAULT '[]',
     is_paper_trade INTEGER DEFAULT 0,
     confidence TEXT,
-    ingested_at TEXT
+    ingested_at TEXT,
+    content_hash TEXT
   )
 `;
 
@@ -349,14 +350,14 @@ export const CREATE_TASKS_SQL = sql`
     error TEXT,
     model_provider TEXT,
     model_name TEXT,
-    channel_id TEXT
+    channel_id TEXT NOT NULL DEFAULT 'test:channel'
   )
 `;
 
-/** Unique index on tasks.message_id (mirrors schema.ts). */
+/** Unique index on tasks.message_id + channel_id (mirrors schema.ts). */
 export const CREATE_TASKS_UNIQUE_IDX = sql`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_message_unique
-  ON tasks(message_id) WHERE message_id IS NOT NULL
+  ON tasks(message_id, channel_id) WHERE message_id IS NOT NULL
 `;
 
 export type InsertOpenTradeParams = {

@@ -1,5 +1,3 @@
-'use client';
-
 import {
   ScatterChart as RechartsScatterChart,
   Scatter,

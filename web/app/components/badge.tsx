@@ -51,6 +51,7 @@ const COLORS: Record<string, string> = {
   FAILED: CLAY,
   RUNNING: DUSTY_BLUE,
   SKIPPED: FADED,
+  EXPIRED: FADED,
   CANCELLED: FADED,
 
   // Reconciliation

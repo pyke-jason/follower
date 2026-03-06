@@ -1,6 +1,7 @@
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { Badge } from './badge';
 import { formatCurrency, pnlColor } from '@/lib/format';
+import { useScopedHref } from '@/hooks/use-scoped-href';
 import { safeParseFloat } from '@src/lib/numbers';
 import { tradeQty } from '@src/lib/trade';
 import { ArrowRight } from 'lucide-react';
@@ -8,11 +9,10 @@ import type { TradeOutcome } from '@src/lib/enriched-message';
 
 export function TradeOutcomeStrip({
   trade,
-  runId,
 }: {
   trade: TradeOutcome;
-  runId?: string;
 }) {
+  const href = useScopedHref();
   const hasPnl = trade.pnl != null;
   const pnl = safeParseFloat(trade.pnl);
 
@@ -51,7 +51,7 @@ export function TradeOutcomeStrip({
       )}
 
       <Link
-        href={`/trades/${trade.id}${runId ? `?run=${runId}` : ''}`}
+        to={href(`/trades/${trade.id}`)}
         className="ml-auto text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowRight className="h-3 w-3" />

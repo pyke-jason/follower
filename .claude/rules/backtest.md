@@ -4,9 +4,9 @@ paths: src/backtest/**
 
 # Backtest Code
 
-## Timestamps Are Mandatory
+## Timestamps
 
-`recordTrade()` throws if backtest trades are missing explicit timestamps. Always pass ISO timestamps from the simulation clock — never omit `openedAt` (OPEN/ADD actions) or `closedAt` (CLOSE/TRIM/LEG_OFF actions).
+Always pass explicit ISO timestamps from the simulation clock to `recordTrade()` — never omit `openedAt` (OPEN/ADD actions) or `closedAt` (CLOSE/TRIM/LEG_OFF actions). If `requireExplicitTimestamps` is set in the pipeline config, `recordTrade()` will throw on missing timestamps; otherwise they silently default to wall-clock time (wrong for backtests).
 
 ## Fill Models
 

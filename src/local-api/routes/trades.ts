@@ -1,13 +1,16 @@
 import { Hono } from 'hono';
 import type { Direction, LegAction } from '../../lib/enums.js';
 import type { BrokerService } from '../../broker/interface.js';
+import { db, schema } from '../../db/client.js';
+import { eq } from 'drizzle-orm';
 import { recordTrade } from '../../trades/record-trade.js';
 
-export function createTradesRouter(broker: BrokerService, channelId: string) {
+export function createTradesRouter(channelBrokers: Map<string, BrokerService>) {
   const app = new Hono();
 
   app.post('/force-exit', async (c) => {
     const body = await c.req.json<{
+      channelId: string;
       tradeId: string;
       symbol: string;
       trader: string;
@@ -22,6 +25,28 @@ export function createTradesRouter(broker: BrokerService, channelId: string) {
         strike: number;
       }>;
     }>();
+
+    const broker = channelBrokers.get(body.channelId);
+    if (!broker) {
+      return c.json({ error: `Unknown channelId "${body.channelId}"` }, 400);
+    }
+
+    const [trade] = await db
+      .select({ channelId: schema.trades.channelId })
+      .from(schema.trades)
+      .where(eq(schema.trades.id, body.tradeId))
+      .limit(1);
+    if (!trade) {
+      return c.json({ error: `Trade ${body.tradeId} not found` }, 404);
+    }
+    if (trade.channelId !== body.channelId) {
+      return c.json(
+        {
+          error: `Trade ${body.tradeId} belongs to ${trade.channelId}, not ${body.channelId}`,
+        },
+        400,
+      );
+    }
 
     const orderResult = await broker.placeOrder({
       symbol: body.symbol,
@@ -39,7 +64,7 @@ export function createTradesRouter(broker: BrokerService, channelId: string) {
       trader: body.trader,
       exitPrice: orderResult.filledPrice ?? 0,
       closedAt: new Date().toISOString(),
-      channelId,
+      channelId: body.channelId,
       metadata: {
         forceExit: true,
         forceExitOrderId: orderResult.orderId,

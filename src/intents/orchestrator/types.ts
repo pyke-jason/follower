@@ -13,7 +13,7 @@ import type { Quote, OptionsChain } from '../../broker/types.js';
 import type { LLMProvider } from '../../agent/providers.js';
 import type { BrokerService } from '../../broker/interface.js';
 import type { SignalEventEmitter } from '../../decisions/emitter.js';
-import type { TradeLeg } from '../../db/schema.js';
+import type { Message, TradeLeg } from '../../db/schema.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -128,13 +128,7 @@ export type OrchestratorEnv = {
 
 /** Everything the orchestrator might need, injected at the call site. */
 export type OrchestratorContext = {
-  messageId: string;
-  rawHtml: string;
-  cleanText: string;
-  badges: string[];
-  symbols: string[];
-  timestamp: string;               // ISO 8601 message timestamp
-  author: string;
+  message: Message;
   marketData: OrchestratorMarketDataProvider;
   positions: PositionProvider;
   chatHistory: ChatHistoryProvider;

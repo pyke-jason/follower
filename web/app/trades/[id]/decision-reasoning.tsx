@@ -6,21 +6,14 @@ import {
 } from '@/components/ui/accordion';
 import { formatCurrency, pnlColor, formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
-
-type Decision = {
-  outcome: string;
-  reasoning: string | null;
-  phase: string | null;
-  durationMs: number | null;
-  pnl: string | null;
-};
+import type { RunDecision } from '@src/db/schema';
 
 export function DecisionReasoning({
   decision,
   taskStartedAt,
   taskCompletedAt,
 }: {
-  decision: Decision | null;
+  decision: RunDecision | null;
   taskStartedAt?: string | null;
   taskCompletedAt?: string | null;
 }) {
@@ -33,7 +26,7 @@ export function DecisionReasoning({
           <AccordionTrigger className="px-4">Signal Decision</AccordionTrigger>
           <AccordionContent className="px-4">
             <div className="flex items-center gap-3 mb-3">
-              <Badge label={decision.outcome} />
+              <Badge label={decision.outcome ?? ''} />
               {decision.phase ? <InfoChip label={decision.phase} /> : <InfoChip label="agent" />}
               {decision.pnl != null && (
                 <span className={cn('font-medium tabular-nums', pnlColor(decision.pnl))}>

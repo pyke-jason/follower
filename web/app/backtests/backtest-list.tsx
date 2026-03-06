@@ -1,19 +1,17 @@
-'use client';
-
-import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { useApiMutation } from '@/hooks/use-api-mutation';
 import { Badge } from '../components/badge';
 import { Sparkline } from '../components/sparkline';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate, isoToDateKey } from '@/lib/format';
-import Link from 'next/link';
 import { Star, GitCompareArrows, Trash2 } from 'lucide-react';
 import { pctDisplay, PROFIT_FACTOR_INF } from '@src/lib/numbers';
 import type { BacktestRunConfig, BacktestRunSummary } from '@src/db/schema';
 import type { EquityPoint } from '@src/backtest/types';
-import { togglePin, bulkDeleteBacktestRuns } from './actions';
 
 function formatDuration(ms: number | null): string {
   if (ms == null) return '--';
@@ -43,10 +41,18 @@ export function BacktestList({
   runs: Run[];
   experimentTags: string[];
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [deleting, startDelete] = useTransition();
+
+  const pinMut = useApiMutation('POST', (runId: string) => `/backtests/${runId}/toggle-pin`, {
+    invalidate: [['backtests']],
+  });
+
+  const bulkDeleteMut = useApiMutation<{ ids: string[] }>('POST', '/backtests/bulk-delete', {
+    invalidate: [['backtests']],
+    onSuccess: () => setSelected(new Set()),
+  });
 
   const filteredRuns = tagFilter
     ? runs.filter((r) => r.experimentTag === tagFilter)
@@ -83,17 +89,13 @@ export function BacktestList({
 
   function handleCompare() {
     const ids = Array.from(selected).slice(0, 3).join(',');
-    router.push(`/backtests/compare?ids=${ids}`);
+    navigate(`/backtests/compare?ids=${ids}`);
   }
 
   function handleBulkDelete() {
     const count = selected.size;
     if (!confirm(`Delete ${count} backtest run${count === 1 ? '' : 's'}? This cannot be undone.`)) return;
-    const ids = Array.from(selected);
-    startDelete(async () => {
-      await bulkDeleteBacktestRuns(ids);
-      setSelected(new Set());
-    });
+    bulkDeleteMut.mutate({ ids: Array.from(selected) });
   }
 
   return (
@@ -128,7 +130,7 @@ export function BacktestList({
             size="sm"
             variant="destructive"
             onClick={handleBulkDelete}
-            disabled={deleting}
+            disabled={bulkDeleteMut.isPending}
             className="gap-1.5"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -142,7 +144,7 @@ export function BacktestList({
           </Button>
         )}
         <Button size="sm" asChild>
-          <Link href="/backtests/new">New Backtest</Link>
+          <Link to="/backtests/new">New Backtest</Link>
         </Button>
       </div>
 
@@ -204,20 +206,20 @@ export function BacktestList({
                       />
                     </TableCell>
                     <TableCell className="px-0">
-                      <form action={togglePin}>
-                        <input type="hidden" name="runId" value={run.id} />
-                        <button type="submit" className="p-0.5 hover:text-warning transition-colors">
-                          <Star className={`h-3.5 w-3.5 ${run.pinned ? 'fill-warning text-warning' : 'text-muted-foreground/40'}`} />
-                        </button>
-                      </form>
+                      <button
+                        onClick={() => pinMut.mutate(run.id)}
+                        className="p-0.5 hover:text-warning transition-colors"
+                      >
+                        <Star className={`h-3.5 w-3.5 ${run.pinned ? 'fill-warning text-warning' : 'text-muted-foreground/40'}`} />
+                      </button>
                     </TableCell>
                     <TableCell>
-                      <Link href={`/backtests/${run.id}`} className="inline-block">
+                      <Link to={`/backtests/${run.id}`} className="inline-block">
                         <Badge label={run.status} />
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-[180px]">
-                      <Link href={`/backtests/${run.id}`} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40 truncate block" title={run.name ?? config.traders.join(', ')}>
+                      <Link to={`/backtests/${run.id}`} className="text-foreground font-medium hover:underline underline-offset-2 decoration-muted-foreground/40 truncate block" title={run.name ?? config.traders.join(', ')}>
                         {run.name ?? config.traders.join(', ')}
                       </Link>
                       {run.experimentTag && (

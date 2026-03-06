@@ -1,117 +1,43 @@
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
+import { useChannelId } from '@/hooks/use-channel-id';
+import { useScopedHref } from '@/hooks/use-scoped-href';
+import { useQuery } from '@tanstack/react-query';
+import { fetchDashboardPageData } from '@/lib/page-adapters';
 import { Badge } from './components/badge';
-import { MetricStrip, type Metric } from './components/metric-strip';
+import { MetricStrip } from './components/metric-strip';
 import { Card, CardHeader, CardTitle, CardAction, CardContent } from '@/components/ui/card';
-import {
-  getStats,
-  getOpenTrades,
-  getPendingReviews,
-  getDailyBalances,
-  getTraderPnlSummary,
-  getRecentSignals,
-  getTradeHistorySummary,
-  getBacktestRunById,
-  getRiskSnapshot,
-} from '@/lib/queries';
 import { formatCurrency, pnlColor, relativeTime, signalBorderColor, positionBorderColor } from '@/lib/format';
-import { buildHref } from '@/lib/run-scope';
 import { OverviewEquityCurve } from './components/overview-equity-curve';
 import { TraderLeaderboard } from './components/trader-leaderboard';
 import { RiskPanel } from './components/risk-panel';
 import { ArrowRight, CheckCircle2, Clock, XCircle, AlertTriangle } from 'lucide-react';
-import { AutoRefresh } from './components/auto-refresh';
 
-export const dynamic = 'force-dynamic';
+const Spinner = () => (
+  <div className="flex items-center justify-center py-20">
+    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
+  </div>
+);
 
-export default async function OverviewPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ run?: string }>;
-}) {
-  const { run: runId } = await searchParams;
+export default function OverviewPage() {
+  const channelId = useChannelId();
+  const href = useScopedHref();
 
-  const [stats, openTrades, dailyBalances, signals, traderPnl, pendingReviews, summary, backtestRun, riskSnapshot] =
-    await Promise.all([
-      getStats(runId),
-      getOpenTrades(6, runId),
-      getDailyBalances(30),
-      getRecentSignals(8, runId),
-      getTraderPnlSummary(runId),
-      getPendingReviews(5, runId),
-      getTradeHistorySummary({ runId }),
-      runId ? getBacktestRunById(runId) : Promise.resolve(null),
-      !runId ? getRiskSnapshot() : Promise.resolve(null),
-    ]);
+  const { data } = useQuery({
+    queryKey: ['dashboard', channelId],
+    queryFn: () => fetchDashboardPageData(channelId),
+    refetchInterval: 5000,
+  });
 
-  // Build equity curve data
-  let equityData: { date: string; equity: number }[] = [];
+  if (!data) return <Spinner />;
 
-  if (runId && backtestRun?.equityCurve) {
-    // Backtest mode: use the run's equity curve
-    const curve = backtestRun.equityCurve;
-    equityData = curve.map((pt) => ({
-      date: pt.date,
-      equity: pt.cumPnl ?? pt.equity ?? 0,
-    }));
-  } else if (dailyBalances.length > 0) {
-    // Live mode: use daily balance snapshots
-    equityData = dailyBalances
-      .slice()
-      .reverse()
-      .map((b) => ({
-        date: b.date,
-        equity: parseFloat(b.equity ?? '0'),
-      }));
-  }
-
-  const equitySparkline = equityData.map((d) => d.equity);
-
-  // Build trader leaderboard data
-  const traderData = traderPnl.map((t) => ({
-    trader: t.trader,
-    pnl: parseFloat(t.totalPnl),
-    trades: t.tradeCount,
-    winRate: t.tradeCount > 0 ? Math.round((t.wins / t.tradeCount) * 100) : 0,
-  }));
-
-  // Build metric strip
-  const metrics: Metric[] = [
-    {
-      label: runId ? 'Total P&L' : "Today's P&L",
-      value: stats.todayPnl,
-      format: 'currency',
-      colorBySign: true,
-      sparklineData: equitySparkline.length > 2 ? equitySparkline : undefined,
-    },
-    {
-      label: 'Win Rate',
-      value: summary.winRate,
-      format: 'percent',
-    },
-    {
-      label: 'Open',
-      value: stats.openTrades,
-      format: 'integer',
-    },
-    {
-      label: 'Trades',
-      value: summary.totalTrades,
-      format: 'integer',
-    },
-    {
-      label: 'Pending',
-      value: stats.pendingTasks,
-      format: 'integer',
-    },
-  ];
+  const { stats, openTrades, equityData, traderData, metrics, signals, pendingReviews, riskSnapshot } = data;
 
   return (
     <div className="space-y-4">
-      <AutoRefresh />
-      {/* Attention Bar — Pending Reviews (top, so you can't miss it) */}
+      {/* Attention Bar -- Pending Reviews (top, so you can't miss it) */}
       {pendingReviews.length > 0 && (
         <Link
-          href={buildHref('/tasks?status=PENDING', runId)}
+          to={href('/tasks?status=PENDING')}
           className="animate-in-up flex items-center gap-3 rounded-lg border border-warning/20 bg-warning/5 px-4 py-2.5 hover:bg-warning/10 transition-colors"
         >
           <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
@@ -125,14 +51,14 @@ export default async function OverviewPage({
       {/* KPI Metrics */}
       <MetricStrip metrics={metrics} />
 
-      {/* Account Health — live mode only */}
+      {/* Account Health -- live mode only */}
       {riskSnapshot && (
         <div className="animate-in-up stagger-1">
           <RiskPanel data={riskSnapshot} />
         </div>
       )}
 
-      {/* Equity Curve — the heartbeat */}
+      {/* Equity Curve -- the heartbeat */}
       {equityData.length > 1 && (
         <div className="animate-in-up stagger-1">
           <Card className="py-0 gap-0 overflow-hidden">
@@ -159,7 +85,7 @@ export default async function OverviewPage({
               </CardTitle>
               <CardAction>
                 <Link
-                  href={buildHref('/trades/open', runId)}
+                  to={href('/trades')}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   All <ArrowRight className="h-3 w-3" />
@@ -178,7 +104,7 @@ export default async function OverviewPage({
                   {openTrades.map((t) => (
                     <Link
                       key={t.id}
-                      href={buildHref(`/trades/${t.id}`, runId)}
+                      to={href(`/trades/${t.id}`)}
                       className={`flex items-center gap-3 px-4 py-2.5 border-l-2 hover:bg-accent/40 transition-colors ${positionBorderColor(t.direction)}`}
                     >
                       <div className="flex-1 min-w-0">
@@ -213,7 +139,7 @@ export default async function OverviewPage({
               </CardTitle>
               <CardAction>
                 <Link
-                  href="/messages"
+                  to={href('/messages')}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   All <ArrowRight className="h-3 w-3" />
@@ -286,7 +212,7 @@ export default async function OverviewPage({
               </CardTitle>
               <CardAction>
                 <Link
-                  href="/traders"
+                  to={href('/traders')}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Manage <ArrowRight className="h-3 w-3" />
