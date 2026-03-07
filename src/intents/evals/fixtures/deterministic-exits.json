@@ -13,7 +13,7 @@
             "symbol": "TSLA",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "TSLA  251219C00350000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 350, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "TSLA  251219C00350000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 350, "type": "CALL" }],
             "quantity": 5
           }
         ]
@@ -45,7 +45,7 @@
             "symbol": "SPY",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "SPY   251212C00600000", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 600, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "SPY   251212C00600000", "action": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 600, "type": "CALL" }],
             "quantity": 10
           }
         ]
@@ -78,8 +78,8 @@
             "strategy": "PCS",
             "direction": "SHORT",
             "legs": [
-              { "symbol": "NFLX  251219P00900000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 900, "type": "option", "optionType": "PUT" },
-              { "symbol": "NFLX  251219P00895000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 895, "type": "option", "optionType": "PUT" }
+              { "symbol": "NFLX  251219P00900000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 900, "type": "PUT" },
+              { "symbol": "NFLX  251219P00895000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 895, "type": "PUT" }
             ],
             "quantity": 3
           }
@@ -115,7 +115,7 @@
             "symbol": "FRPT",
             "strategy": "PUT",
             "direction": "LONG",
-            "legs": [{ "symbol": "FRPT  251219P00025000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 25, "type": "option", "optionType": "PUT" }],
+            "legs": [{ "symbol": "FRPT  251219P00025000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 25, "type": "PUT" }],
             "quantity": 5
           }
         ]
@@ -147,7 +147,7 @@
             "symbol": "SPY",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "SPY   251212C00605000", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 605, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "SPY   251212C00605000", "action": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 605, "type": "CALL" }],
             "quantity": 10
           }
         ]
@@ -180,7 +180,7 @@
             "symbol": "AAPL",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "AAPL  250912C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-09-12", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "AAPL  250912C00230000", "action": "BUY", "quantity": 1, "expiry": "2025-09-12", "strike": 230, "type": "CALL" }],
             "quantity": 20
           }
         ]
@@ -212,7 +212,7 @@
             "symbol": "TXN",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "TXN   251219C00200000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 200, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "TXN   251219C00200000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 200, "type": "CALL" }],
             "quantity": 3
           }
         ]
@@ -237,7 +237,7 @@
             "symbol": "AAPL",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "AAPL  251219C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "AAPL  251219C00230000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 230, "type": "CALL" }],
             "quantity": 5
           }
         ]
@@ -278,7 +278,7 @@
             "symbol": "AAPL",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "AAPL  251219C00230000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 230, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "AAPL  251219C00230000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 230, "type": "CALL" }],
             "quantity": 5
           }
         ]
@@ -310,7 +310,7 @@
             "symbol": "CENX",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "CENX  251219C00030000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 30, "type": "option", "optionType": "CALL" }],
+            "legs": [{ "symbol": "CENX  251219C00030000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 30, "type": "CALL" }],
             "quantity": 10
           }
         ]
@@ -343,8 +343,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "META  251219C00600000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 600, "type": "option", "optionType": "CALL" },
-              { "symbol": "META  251219C00610000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 610, "type": "option", "optionType": "CALL" }
+              { "symbol": "META  251219C00600000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 600, "type": "CALL" },
+              { "symbol": "META  251219C00610000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 610, "type": "CALL" }
             ],
             "quantity": 5
           }

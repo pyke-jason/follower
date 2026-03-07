@@ -44,6 +44,51 @@
       "mustMatch": ["outcome"],
       "tags": ["false-positive-exit", "into-the-close"],
       "notes": "EXIT_VERB_RE matched 'close' but 'into the close' means market close (end of trading day). MSFT symbol present caused false CLOSE action. Real backtest hit: msg 467976 in run b2de6318."
+    },
+    {
+      "id": "fp-exit-004",
+      "description": "Pete offering language — 'Offering balance of IREN' is a limit sell order, not a confirmed exit",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Offering balance of <a href=\"/option-stalker/chart/IREN\" target=\"os\" data-symbol=\"IREN\" data-criteria=\"Bull\"><b>IREN</b></a> at $49.40. I am expecting at least one more push higher and I will take gains into it.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-24T14:27:19.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["false-positive-exit", "offering", "intent-language"],
+      "notes": "LLM classified 'Offering balance' as CLOSE. 'Offering' means placing a limit sell order (not yet filled). Trader explicitly says 'I am expecting at least one more push higher' — forward-looking, not a confirmed exit. Real backtest hit: trade 70ac33f4 in bt:minimum-hippopotamus, premature close cost ~$6.50."
+    },
+    {
+      "id": "fp-exit-005",
+      "description": "Pete conditional language — 'I am trying to sell' is aspirational, not a confirmed exit",
+      "input": {
+        "rawHtml": "<html><head></head><body><div><a href=\"/option-stalker/chart/BE\" target=\"os\" data-symbol=\"BE\"><b>BE</b></a> I am trying to sell for a $1 gain.&nbsp;</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-09T15:52:10.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["false-positive-exit", "trying-to", "intent-language"],
+      "notes": "LLM classified 'trying to sell' as CLOSE. 'Trying to' is conditional/aspirational — the sell has not been confirmed. The real exit came 11 minutes later with an Exit badge (msg 465178). Real backtest hit: trade f6f0dacb in bt:minimum-hippopotamus, premature close orphaned the real exit."
+    },
+    {
+      "id": "fp-exit-006",
+      "description": "Pete offering half of a stock position — partial limit sell order, not a confirmed exit",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Offering half of <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\" data-criteria=\"Bull\"><b>MSTR</b></a> at $380. Want to lock in some gains on this move.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-10-15T16:30:00.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["false-positive-exit", "offering", "intent-language"],
+      "notes": "'Offering half' means placing a limit sell on half the position. 'Want to lock in some gains' is aspirational intent. No badge, no confirmation of fill. Similar pattern to fp-exit-004 but with fractional quantity language that could trick TRIM detection."
     }
   ]
 }

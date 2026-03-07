@@ -24,7 +24,8 @@ export function MetricStrip({ metrics, className }: MetricStripProps) {
         'grid gap-3 animate-in-up',
         metrics.length <= 3 && 'grid-cols-3',
         metrics.length === 4 && 'grid-cols-2 md:grid-cols-4',
-        metrics.length >= 5 && 'grid-cols-2 md:grid-cols-3 lg:grid-cols-5',
+        metrics.length === 5 && 'grid-cols-2 md:grid-cols-3 lg:grid-cols-5',
+        metrics.length >= 6 && 'grid-cols-2 md:grid-cols-3 lg:grid-cols-6',
         className
       )}
     >

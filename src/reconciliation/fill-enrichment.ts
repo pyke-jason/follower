@@ -27,20 +27,23 @@ export function enrichTradeWithFill(
 
     const metadata = trade.metadata ?? {};
 
-    // Compute slippage if we have both entry and fill prices
+    // Compute slippage (direction-aware: positive = adverse, negative = improvement)
     let slippage: number | undefined;
     if (trade.entryPrice && fillData.filledPrice != null) {
       const entry = safeParseFloat(trade.entryPrice);
-      slippage = roundCents(fillData.filledPrice - entry);
+      const raw = trade.direction === 'LONG'
+        ? fillData.filledPrice - entry   // LONG: paying more is adverse
+        : entry - fillData.filledPrice;  // SHORT: receiving less is adverse
+      slippage = roundCents(raw);
     }
 
-    // Flag significant slippage: >10% of entry price or >$0.20 absolute
+    // Flag significant adverse slippage: >10% of entry price or >$0.20
     const slippageFlags: TradeFlag[] = [];
     const effectiveSlippage = slippage ?? metadata.slippage;
-    if (effectiveSlippage != null) {
+    if (effectiveSlippage != null && effectiveSlippage > 0) {
       const entry = safeParseFloat(trade.entryPrice);
-      const pct = entry ? Math.abs(effectiveSlippage / entry) : 0;
-      if (pct >= 0.10 || Math.abs(effectiveSlippage) >= 0.20) {
+      const pct = entry ? effectiveSlippage / entry : 0;
+      if (pct >= 0.10 || effectiveSlippage >= 0.20) {
         slippageFlags.push('slippage');
       }
     }

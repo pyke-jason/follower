@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import { ChevronRight, ArrowUp, ArrowDown, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore, Zap } from 'lucide-react';
+import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore, Zap } from 'lucide-react';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate } from '@/lib/format';
+import { fmtMs } from './decision-shared';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
@@ -43,16 +44,6 @@ function FlagIcon({ flag, tooltip }: { flag: string; tooltip?: string }) {
     </Tooltip>
   );
 }
-
-const STRATEGY_LABEL: Record<string, string> = {
-  CDS: 'Call Debit Spread',
-  PDS: 'Put Debit Spread',
-  CCS: 'Call Credit Spread',
-  PCS: 'Put Credit Spread',
-  CALL: 'Call',
-  PUT: 'Put',
-  STOCK: 'Stock',
-};
 
 export function TradeRow({
   tradeId,
@@ -99,13 +90,22 @@ export function TradeRow({
   const exitSlippage = typeof meta?.exitSlippage === 'number' ? meta.exitSlippage : null;
   const totalSlippage = (entrySlippage ?? 0) + (exitSlippage ?? 0);
   const hasSlippage = entrySlippage != null || exitSlippage != null;
+  const slippagePct = entry && totalSlippage !== 0 ? Math.abs(totalSlippage / entry) * 100 : null;
+  // 0→5% maps to 0→1 for color, 5→15% maps to 0→1 for glow/emphasis
+  const slippageIntensity = slippagePct != null ? Math.min(slippagePct / 5, 1) : 0;
+  const slippageEmphasis = slippagePct != null ? Math.min(Math.max((slippagePct - 5) / 10, 0), 1) : 0;
 
-  // Slippage tooltip (flag-based — from fill enrichment)
+  // Slippage tooltip (flag-based — from fill enrichment, direction-aware)
   const brokerFill = trade.brokerFillPrice != null ? safeParseFloat(trade.brokerFillPrice) : null;
-  const oldSlippage = entry && brokerFill ? brokerFill - entry : null;
-  const oldSlippagePct = entry && oldSlippage ? Math.abs(oldSlippage / entry) : null;
-  const slippageTooltip = oldSlippage != null
-    ? `Slippage: ${oldSlippage > 0 ? '+' : ''}${formatCurrency(oldSlippage)} (${(oldSlippagePct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`
+  const isLong = trade.direction === 'LONG';
+  const fillDelta = entry && brokerFill
+    ? (isLong ? brokerFill - entry : entry - brokerFill)
+    : null;
+  const fillDeltaPct = entry && fillDelta ? Math.abs(fillDelta / entry) : null;
+  const slippageTooltip = fillDelta != null
+    ? fillDelta > 0
+      ? `Slippage: +${formatCurrency(fillDelta)} (${(fillDeltaPct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`
+      : `Price improvement: ${formatCurrency(Math.abs(fillDelta))} (${(fillDeltaPct! * 100).toFixed(1)}%) — entry est. ${formatCurrency(entry)} vs fill ${formatCurrency(brokerFill)}`
     : undefined;
 
   // Chase steps
@@ -121,7 +121,7 @@ export function TradeRow({
   return (
     <TableRow
       data-trade-id={tradeId}
-      className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-accent/20' : ''} ${rowBorder}`}
+      className={`hover:bg-accent/40 transition-colors ${onExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-background' : ''} ${rowBorder}`}
       onClick={onExpand}
     >
       {/* Expand chevron */}
@@ -131,39 +131,20 @@ export function TradeRow({
         ) : null}
       </TableCell>
 
-      {/* Trade: symbol + direction + contract + flags — all inline */}
+      {/* Trade: LONG AAPL 230C 9/12 */}
       <TableCell>
-        <span className="inline-flex items-center gap-1.5">
-          {/* Direction arrow */}
-          {trade.direction === 'LONG' ? (
-            <ArrowUp className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-          ) : (
-            <ArrowDown className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-          )}
-
+        <span className="inline-flex items-center gap-3">
           <Link
             to={href(`/trades/${trade.id}`)}
             className="text-foreground font-medium text-sm hover:underline underline-offset-2 decoration-muted-foreground/30"
             onClick={(e) => e.stopPropagation()}
           >
-            {trade.symbol}
+            {trade.direction} {trade.symbol}{legsSummary ? ` ${legsSummary}` : isOption ? ` ${trade.strategy}` : ''}
           </Link>
-
-          {/* Legs summary inline — "145P 3/15" or "190/195PDS 10/24" */}
-          {legsSummary && (
-            <span className="text-[11px] text-muted-foreground/50 tabular-nums">{legsSummary}</span>
-          )}
-
-          {/* Strategy label — only for single-leg options without legs data */}
-          {isOption && !legsSummary && (
-            <span className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider">
-              {trade.strategy}
-            </span>
-          )}
 
           {/* Flag icons */}
           {activeFlags.length > 0 && (
-            <span className="inline-flex items-center gap-0.5 ml-0.5">
+            <span className="inline-flex items-center gap-1">
               {activeFlags.map((f) => (
                 <FlagIcon key={f} flag={f} tooltip={f === 'slippage' ? slippageTooltip : undefined} />
               ))}
@@ -174,10 +155,30 @@ export function TradeRow({
           {(chaseSteps > 0 || hasSlippage) && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className={`inline-flex items-center gap-0.5 transition-colors ${SEVERITY_COLOR[hasSlippage && totalSlippage > 0 ? (chaseSeverity === 'muted' ? 'warn' : chaseSeverity) : chaseSeverity]}`}>
+                <span
+                  className={`inline-flex items-center gap-0.5 transition-colors ${slippageEmphasis > 0 ? 'rounded-sm px-1' : ''}`}
+                  style={hasSlippage && slippageIntensity > 0
+                    ? {
+                        color: `color-mix(in oklab, rgb(239 68 68) ${Math.round(slippageIntensity * 100)}%, rgb(161 161 170))`,
+                        ...(slippageEmphasis > 0 ? {
+                          fontWeight: Math.round(400 + slippageEmphasis * 500),
+                          backgroundColor: `rgb(239 68 68 / ${(slippageEmphasis * 0.25).toFixed(2)})`,
+                          boxShadow: `0 0 ${Math.round(slippageEmphasis * 16)}px rgb(239 68 68 / ${(slippageEmphasis * 0.5).toFixed(2)}), 0 0 ${Math.round(slippageEmphasis * 40)}px rgb(239 68 68 / ${(slippageEmphasis * 0.2).toFixed(2)})`,
+                          textShadow: `0 0 ${Math.round(slippageEmphasis * 10)}px rgb(239 68 68 / ${(slippageEmphasis * 0.9).toFixed(2)}), 0 0 ${Math.round(slippageEmphasis * 30)}px rgb(239 68 68 / ${(slippageEmphasis * 0.5).toFixed(2)})`,
+                          outline: slippageEmphasis > 0.3 ? `1px solid rgb(239 68 68 / ${(slippageEmphasis * 0.5).toFixed(2)})` : undefined,
+                        } : {}),
+                      }
+                    : undefined
+                  }
+                >
                   <Zap className="h-3 w-3" />
                   {hasSlippage && totalSlippage !== 0 && (
-                    <span className="text-[10px] tabular-nums">{formatCurrency(totalSlippage)}</span>
+                    <span className="text-[10px] tabular-nums">
+                      {formatCurrency(Math.abs(totalSlippage))}
+                      {slippagePct != null && (
+                        <span className="ml-0.5">({slippagePct.toFixed(1)}%)</span>
+                      )}
+                    </span>
                   )}
                 </span>
               </TooltipTrigger>
@@ -186,10 +187,10 @@ export function TradeRow({
                   <div>{chaseSteps} chase step{chaseSteps > 1 ? 's' : ''}</div>
                 )}
                 {entrySlippage != null && (
-                  <div>Entry slippage: {entrySlippage > 0 ? '+' : ''}{formatCurrency(entrySlippage)}</div>
+                  <div>Entry slippage: {formatCurrency(Math.abs(entrySlippage))}</div>
                 )}
                 {exitSlippage != null && (
-                  <div>Exit slippage: {exitSlippage > 0 ? '+' : ''}{formatCurrency(exitSlippage)}</div>
+                  <div>Exit slippage: {formatCurrency(Math.abs(exitSlippage))}</div>
                 )}
               </TooltipContent>
             </Tooltip>
@@ -247,6 +248,11 @@ export function TradeRow({
       {/* Opened */}
       <TableCell className="text-muted-foreground/60 text-xs">
         {formatDate(trade.openedAt)}
+      </TableCell>
+
+      {/* Execution time */}
+      <TableCell className="text-right tabular-nums text-[10px] text-muted-foreground/50">
+        {typeof meta?.executionMs === 'number' ? fmtMs(meta.executionMs) : null}
       </TableCell>
     </TableRow>
   );

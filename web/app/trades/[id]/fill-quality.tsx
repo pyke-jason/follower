@@ -11,7 +11,11 @@ export function FillQuality({ trade }: { trade: Trade }) {
 
   if (!brokerPrice && !commission && !trade.brokerFillTime) return null;
 
-  const slippage = expectedPrice && brokerPrice ? brokerPrice - expectedPrice : null;
+  // Direction-aware: positive = adverse slippage, negative = price improvement
+  const isLong = trade.direction === 'LONG';
+  const slippage = expectedPrice && brokerPrice
+    ? (isLong ? brokerPrice - expectedPrice : expectedPrice - brokerPrice)
+    : null;
   const slippagePct = expectedPrice && slippage ? (slippage / expectedPrice) * 100 : null;
 
   // Time to fill
@@ -44,9 +48,9 @@ export function FillQuality({ trade }: { trade: Trade }) {
             </StatItem>
           )}
           {slippage !== null && (
-            <StatItem label="Slippage">
+            <StatItem label={slippage < 0 ? 'Price Improvement' : 'Slippage'}>
               <p className={`font-medium tabular-nums ${slippage > 0 ? 'text-loss' : slippage < 0 ? 'text-profit' : 'text-foreground'}`}>
-                {formatCurrency(slippage)}
+                {formatCurrency(Math.abs(slippage))}
                 {slippagePct !== null && (
                   <span className="text-xs text-muted-foreground ml-1">({slippagePct.toFixed(2)}%)</span>
                 )}

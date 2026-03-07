@@ -10,6 +10,11 @@ export function roundCents(val: number): number {
   return Math.round(val * 100) / 100;
 }
 
+/** Math.floor(val * 100) / 100 — always rounds down to the nearest cent. */
+export function floorCents(val: number): number {
+  return Math.floor(val * 100) / 100;
+}
+
 /** General round to N decimal places. */
 export function round(val: number, decimals: number): number {
   const f = 10 ** decimals;

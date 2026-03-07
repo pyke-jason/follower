@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { db, schema } from '../../db/client.js';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import type { Trade, TradeFlag, CommissionSchedule } from '../../db/schema.js';
+import type { Trade, TradeFlag, TradeLeg, CommissionSchedule } from '../../db/schema.js';
+import type { BrokerPosition } from '../../broker/types.js';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '../../lib/enriched-message.js';
 import type { Strategy } from '../../lib/enums.js';
 import { btChannel } from '../../lib/channel.js';
@@ -277,6 +278,71 @@ app.get('/trades/by-task/:taskId', async (c) => {
     .from(schema.trades)
     .where(eq(schema.trades.taskId, taskId));
   return c.json(trade ?? null);
+});
+
+// ── GET /open-pnl ────────────────────────────────────
+// Returns unrealized P&L per open trade by matching broker positions to trade legs.
+
+function positionUnderlying(p: BrokerPosition): string {
+  if (!p.optionType) return p.symbol;
+  return p.symbol.split(/\s+/)[0];
+}
+
+app.get('/open-pnl', async (c) => {
+  const channelId = resolveChannelId(c.req.query('channel') || undefined);
+
+  const broker = getRuntimeBrokerMap().get(channelId);
+  if (!broker) return c.json({});
+
+  let positions: BrokerPosition[];
+  try {
+    positions = await broker.getPositions();
+  } catch {
+    return c.json({});
+  }
+
+  const openTrades = await db
+    .select()
+    .from(schema.trades)
+    .where(and(isOpen, tradeScope(channelId)));
+
+  const result: Record<string, number> = {};
+
+  for (const trade of openTrades) {
+    const legs = trade.legs as TradeLeg[];
+    let totalPnl = 0;
+    let matched = false;
+
+    if (trade.strategy === 'STOCK') {
+      const pos = positions.find(
+        (p) => !p.optionType && p.symbol === trade.symbol,
+      );
+      if (pos?.unrealizedPnl != null) {
+        totalPnl = pos.unrealizedPnl;
+        matched = true;
+      }
+    } else {
+      for (const leg of legs) {
+        const pos = positions.find(
+          (p) =>
+            p.optionType === leg.type &&
+            p.strikePrice === leg.strike &&
+            p.expiry === leg.expiry &&
+            positionUnderlying(p) === trade.symbol,
+        );
+        if (pos?.unrealizedPnl != null) {
+          totalPnl += pos.unrealizedPnl;
+          matched = true;
+        }
+      }
+    }
+
+    if (matched) {
+      result[trade.id] = roundCents(totalPnl);
+    }
+  }
+
+  return c.json(result);
 });
 
 // ── GET /tasks ───────────────────────────────────────
@@ -1135,6 +1201,12 @@ async function getTradeHistorySummaryInternal(opts: {
       wins: sql<number>`SUM(CASE WHEN CAST(${schema.trades.pnl} AS REAL) > 0 THEN 1 ELSE 0 END)`,
       bestTrade: sql<string>`MAX(CAST(${schema.trades.pnl} AS REAL))`,
       worstTrade: sql<string>`MIN(CAST(${schema.trades.pnl} AS REAL))`,
+      totalSlippage: sql<string>`COALESCE(SUM(
+        (COALESCE(json_extract(${schema.trades.metadata}, '$.entrySlippage'), 0)
+         + COALESCE(json_extract(${schema.trades.metadata}, '$.exitSlippage'), 0))
+        * COALESCE(${schema.trades.quantity}, 1)
+        * CASE WHEN ${schema.trades.strategy} != 'STOCK' THEN 100 ELSE 1 END
+      ), 0)`,
     })
     .from(schema.trades)
     .where(and(...conditions));
@@ -1146,6 +1218,7 @@ async function getTradeHistorySummaryInternal(opts: {
     winRate: result?.totalTrades ? ((result.wins ?? 0) / result.totalTrades) * 100 : 0,
     bestTrade: safeParseFloat(result?.bestTrade),
     worstTrade: safeParseFloat(result?.worstTrade),
+    totalSlippage: safeParseFloat(result?.totalSlippage),
   };
 }
 

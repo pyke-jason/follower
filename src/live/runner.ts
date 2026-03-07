@@ -5,6 +5,7 @@ import type { Task } from '../db/schema.js';
 import { createProvider, getDefaultTradeModel } from '../agent/providers.js';
 import type { LLMProvider } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
+import { createTrace } from '../lib/trace.js';
 import {
   getRuntimeChannelServices,
   type RuntimeChannelService,
@@ -121,6 +122,7 @@ async function claimAndProcess(state: ChannelRunnerState, task: Task): Promise<v
 
 async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> {
   console.log(`[Runner ${state.service.channelId}] Processing task ${task.id} (${task.taskType})`);
+  const trace = createTrace();
   try {
     await processTaskShared(task, {
       getOpenPositions: state.bundle.getOpenPositions,
@@ -128,6 +130,7 @@ async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> 
       pipeline: state.bundle.pipelineDeps,
       scope: state.service.channelId,
       agentIdentity: getDefaultTradeModel(),
+      trace,
       onResult: async (result, _emitter) => {
         await completeTask(task.id, { outcome: result.outcome });
         console.log(`[Runner ${state.service.channelId}] Task ${task.id} completed: ${result.outcome}`);

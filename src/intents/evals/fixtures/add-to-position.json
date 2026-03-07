@@ -16,12 +16,11 @@
             "legs": [
               {
                 "symbol": "SOFI  251220C00015000",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "2025-12-20",
                 "strike": 15,
-                "type": "option",
-                "optionType": "CALL"
+                "type": "CALL",
+                "action": "BUY"
               }
             ],
             "quantity": 30
@@ -35,13 +34,25 @@
             "orderType": "SINGLE",
             "symbol": "SOFI",
             "legs": [
-              { "optionType": "CALL", "side": "BUY" }
+              {
+                "optionType": "CALL",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
-      "tags": ["add", "call", "options"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "call",
+        "options"
+      ],
       "notes": "Unambiguous ADD — 'Added to ... Calls'. No badge to misinterpret. Avg price ($2.10) and running total (50 contracts) confirm this is adding to an existing position, not a fresh open. Must match existing SOFI CALL LONG position."
     },
     {
@@ -60,11 +71,11 @@
             "legs": [
               {
                 "symbol": "MSTR",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "0000-00-00",
                 "strike": 0,
-                "type": "stock"
+                "type": "STOCK",
+                "action": "BUY"
               }
             ],
             "quantity": 1000
@@ -77,11 +88,11 @@
             "legs": [
               {
                 "symbol": "NVDA",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "0000-00-00",
                 "strike": 0,
-                "type": "stock"
+                "type": "STOCK",
+                "action": "BUY"
               }
             ],
             "quantity": 1000
@@ -95,20 +106,37 @@
             "orderType": "STOCK",
             "symbol": "MSTR",
             "legs": [
-              { "side": "SELL" }
+              {
+                "side": "SELL"
+              }
             ]
           },
           {
             "orderType": "STOCK",
             "symbol": "NVDA",
             "legs": [
-              { "side": "BUY" }
+              {
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[1].symbol", "signals[1].orderType", "signals[1].legs[0].side"],
-      "tags": ["add", "stock", "multi-signal", "mixed-action"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].symbol",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[1].symbol",
+        "signals[1].orderType",
+        "signals[1].legs[0].side"
+      ],
+      "tags": [
+        "add",
+        "stock",
+        "multi-signal",
+        "mixed-action"
+      ],
       "notes": "Exit badge triggers CLOSE on MSTR; 'added to NVDA' triggers ADD on NVDA — both in one message. The avg price ($177.87) and '2,000 Shares' confirm the NVDA signal is adding to an existing position, not a new open. Both signals must resolve to matching positions. Critical case for mixed-action parsing."
     },
     {
@@ -127,11 +155,11 @@
             "legs": [
               {
                 "symbol": "AMD",
-                "side": "SELL",
                 "quantity": 1,
                 "expiry": "0000-00-00",
                 "strike": 0,
-                "type": "stock"
+                "type": "STOCK",
+                "action": "SELL"
               }
             ],
             "quantity": 1000
@@ -145,13 +173,23 @@
             "orderType": "STOCK",
             "symbol": "AMD",
             "legs": [
-              { "side": "SELL" }
+              {
+                "side": "SELL"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
-      "tags": ["add", "stock", "short"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "add",
+        "stock",
+        "short"
+      ],
       "notes": "The word 'short' in 'AMD short' identifies this as adding to a SHORT stock position (SELL shares). The avg price ($230.84) and running total (2,000 shares) are the confirming ADD signals. Position matching must look for the SHORT AMD STOCK position, not a LONG one."
     },
     {
@@ -170,21 +208,19 @@
             "legs": [
               {
                 "symbol": "MSFT  251121P00410000",
-                "side": "SELL",
                 "quantity": 1,
                 "expiry": "2025-11-21",
                 "strike": 410,
-                "type": "option",
-                "optionType": "PUT"
+                "type": "PUT",
+                "action": "SELL"
               },
               {
                 "symbol": "MSFT  251121P00405000",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "2025-11-21",
                 "strike": 405,
-                "type": "option",
-                "optionType": "PUT"
+                "type": "PUT",
+                "action": "BUY"
               }
             ],
             "quantity": 3
@@ -198,14 +234,30 @@
             "orderType": "SPREAD",
             "symbol": "MSFT",
             "legs": [
-              { "optionType": "PUT", "side": "SELL" },
-              { "optionType": "PUT", "side": "BUY" }
+              {
+                "optionType": "PUT",
+                "side": "SELL"
+              },
+              {
+                "optionType": "PUT",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
-      "tags": ["add", "pcs", "spread", "badge-override"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "pcs",
+        "spread",
+        "badge-override"
+      ],
       "notes": "Long badge = Dave W's bullish stock VIEW on MSFT, NOT the trade direction. PCS (put credit spread) is always direction SHORT regardless of any badge. The LLM must not let the Long badge flip PCS to LONG direction. 'My pcs' implies an existing position. See also add-007 (sister message 477909) for the same pattern with a credit stated."
     },
     {
@@ -224,12 +276,11 @@
             "legs": [
               {
                 "symbol": "MSTR  251122P00480000",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "2025-11-22",
                 "strike": 480,
-                "type": "option",
-                "optionType": "PUT"
+                "type": "PUT",
+                "action": "BUY"
               }
             ],
             "quantity": 10
@@ -243,13 +294,25 @@
             "orderType": "SINGLE",
             "symbol": "MSTR",
             "legs": [
-              { "optionType": "PUT", "side": "BUY" }
+              {
+                "optionType": "PUT",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
-      "tags": ["add", "lotto", "options"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "lotto",
+        "options"
+      ],
       "notes": "Lotto = speculative BUY, always direction LONG regardless of underlying direction. The '(just having fun here)' parenthetical is commentary noise. Avg price ($0.67) and total (20 contracts) confirm ADD. No badge to confuse direction. Must match existing MSTR lotto (PUT LONG) position."
     },
     {
@@ -268,12 +331,11 @@
             "legs": [
               {
                 "symbol": "GOOGL 251219C00195000",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "2025-12-19",
                 "strike": 195,
-                "type": "option",
-                "optionType": "CALL"
+                "type": "CALL",
+                "action": "BUY"
               }
             ],
             "quantity": 5
@@ -287,13 +349,26 @@
             "orderType": "SINGLE",
             "symbol": "GOOGL",
             "legs": [
-              { "optionType": "CALL", "side": "BUY" }
+              {
+                "optionType": "CALL",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
-      "tags": ["add", "call", "options", "swing"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "call",
+        "options",
+        "swing"
+      ],
       "notes": "Long badge and CALL direction coincidentally agree here (bullish view + buying calls), but the direction must be derived from the CALL strategy, not the badge. 'Swing calls' is Dave W's standard swing-trade options terminology. 'Added to' with no strike/expiry = ADD to existing GOOGL CALL position."
     },
     {
@@ -312,21 +387,19 @@
             "legs": [
               {
                 "symbol": "MSFT  251121P00415000",
-                "side": "SELL",
                 "quantity": 1,
                 "expiry": "2025-11-21",
                 "strike": 415,
-                "type": "option",
-                "optionType": "PUT"
+                "type": "PUT",
+                "action": "SELL"
               },
               {
                 "symbol": "MSFT  251121P00410000",
-                "side": "BUY",
                 "quantity": 1,
                 "expiry": "2025-11-21",
                 "strike": 410,
-                "type": "option",
-                "optionType": "PUT"
+                "type": "PUT",
+                "action": "BUY"
               }
             ],
             "quantity": 2
@@ -340,15 +413,189 @@
             "orderType": "SPREAD",
             "symbol": "MSFT",
             "legs": [
-              { "optionType": "PUT", "side": "SELL" },
-              { "optionType": "PUT", "side": "BUY" }
+              {
+                "optionType": "PUT",
+                "side": "SELL"
+              },
+              {
+                "optionType": "PUT",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
-      "tags": ["add", "pcs", "spread", "badge-override"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "pcs",
+        "spread",
+        "badge-override"
+      ],
       "notes": "Companion to add-004 (message 478375, one day earlier). Long badge = bullish stock view, irrelevant for direction. '1.25 credit' confirms this is a credit spread (PCS = SHORT). 'added to pcs' without the possessive 'my' is slightly more ambiguous than add-004 but still an ADD — no strike/expiry given, and price is a credit value consistent with adding to an existing spread at the same strikes."
+    },
+    {
+      "id": "add-008",
+      "description": "Hariseldon 'Added 500 more shares to OSCR' — no badge, direction inferred from multiple STOCK LONG positions (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Added 500 more shares to <a href=\"/option-stalker/chart/OSCR\" target=\"os\" data-symbol=\"OSCR\" data-criteria=\"Bull\"><b>OSCR</b></a> - 7,500 total - $20.21 avg</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-15T19:41:02.000Z",
+        "positions": [
+          {
+            "id": "pos-oscr-stock-1",
+            "symbol": "OSCR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "OSCR", "action": "BUY", "quantity": 1, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 240,
+            "openedAt": "2025-09-09T18:43:17.000Z"
+          },
+          {
+            "id": "pos-oscr-stock-2",
+            "symbol": "OSCR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "OSCR", "action": "BUY", "quantity": 1, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 259,
+            "openedAt": "2025-09-12T13:49:22.000Z"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "legs": [
+              {
+                "side": "BUY"
+              }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "add",
+        "stock",
+        "direction-inference",
+        "minimum-hippopotamus"
+      ],
+      "notes": "Bug from bt:minimum-hippopotamus msg 466729: 'Added 500 more shares to OSCR' was SKIP'd because parser had no badge to set direction, and resolveAddPath couldn't single-match (2 OSCR STOCK LONG positions). Fix: when all matching positions share the same direction, infer it. Both positions are LONG → direction=LONG → side=BUY."
+    },
+    {
+      "id": "add-009",
+      "description": "Hariseldon 'Adding to my TSLA short with a PDS' — PDS must NOT merge into existing STOCK SHORT (cross-type)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Adding to my <a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\" data-criteria=\"Bear\"><b>TSLA</b></a> short with a PDS $347.5/$342/5 for $1.94 - 25 Contracts</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-08T15:37:00.000Z",
+        "positions": [
+          {
+            "id": "pos-tsla-stock-short-1",
+            "symbol": "TSLA",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "TSLA", "action": "SELL", "quantity": 14, "expiry": "0000-00-00", "strike": 0, "type": "STOCK" }],
+            "quantity": 14,
+            "openedAt": "2025-09-04T17:28:00.000Z"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "symbol": "TSLA",
+            "legs": [
+              {
+                "optionType": "PUT",
+                "side": "BUY"
+              },
+              {
+                "optionType": "PUT",
+                "side": "SELL"
+              }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "pds",
+        "spread",
+        "cross-type",
+        "ministerial-magpie"
+      ],
+      "notes": "Bug from bt:ministerial-magpie trade 4881ce5f: trader says 'Adding to my TSLA short with a PDS' meaning they're supplementing their bearish TSLA thesis with a put debit spread. The PDS is a different instrument class from the existing STOCK SHORT — resolveAddPath must detect this STOCK↔non-STOCK cross-type mismatch and treat the PDS as a new OPEN, not merge it into the stock trade. Merging corrupts the stock's avg entry price and blocks the PDS exit."
+    },
+    {
+      "id": "add-010",
+      "description": "PCS 'added to pcs $340/$335' with only STOCK position — cross-type, must not merge",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\" data-criteria=\"Bull\"><b>TSLA</b></a> added to pcs $340/$335 for $1.50 credit&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-10T15:30:00.000Z",
+        "positions": [
+          {
+            "id": "pos-tsla-stock-long-1",
+            "symbol": "TSLA",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "TSLA", "action": "BUY", "quantity": 100, "expiry": "0000-00-00", "strike": 0, "type": "STOCK" }],
+            "quantity": 100,
+            "openedAt": "2025-09-01T14:00:00.000Z"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              {
+                "optionType": "PUT",
+                "side": "SELL"
+              },
+              {
+                "optionType": "PUT",
+                "side": "BUY"
+              }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "add",
+        "pcs",
+        "spread",
+        "cross-type"
+      ],
+      "notes": "Companion to add-009. PCS (put credit spread) ADD with explicit strikes when only a STOCK position exists. The PCS is a fundamentally different instrument — must be treated as a new OPEN, not merged into the stock trade."
     }
   ]
 }

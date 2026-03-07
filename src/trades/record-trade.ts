@@ -21,6 +21,12 @@ import { buildFlags } from './trade-flags.js';
 
 const log = createLogger('RecordTrade');
 
+/** Sum chase steps across events. Returns undefined when total is 0 (omit from metadata). */
+const sumChase = (a?: number, b?: number): number | undefined => {
+  const sum = (a ?? 0) + (b ?? 0);
+  return sum > 0 ? sum : undefined;
+};
+
 /** Transaction handle — same API surface as `db` but scoped to a transaction. */
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -296,15 +302,31 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           : keptLeg.type === 'PUT' ? 'PUT' as Strategy
           : 'STOCK' as Strategy;
 
+        // Derive direction from kept leg: BUY leg = LONG, SELL leg = SHORT
+        const newDirection: Direction = keptLeg.action === 'SELL' ? 'SHORT' : 'LONG';
+
         const exit = exitPrice ?? 0;
         const entry = safeParseFloat(existing.entryPrice);
-        const newEntryPrice = roundCents(entry + exit);
+        // BUY (kept long) → accumulate debit: entry + buyback cost
+        // SELL (kept short) → net credit: original credit - buyback cost
+        const newEntryPrice = keptLeg.action === 'SELL'
+          ? roundCents(entry - exit)
+          : roundCents(entry + exit);
         const ts = closedAt ?? now;
+
+        // Compute realized PnL on the closed leg (if individual fill price is known)
+        const legOffPnl = closedLeg.fillPrice != null
+          ? computeTradePnl({
+              entryPrice: closedLeg.fillPrice, exitPrice: exit,
+              direction: closedLeg.action === 'BUY' ? 'LONG' : 'SHORT',
+              strategy: closedLeg.type, quantity: tradeQty(existing.quantity),
+            })
+          : undefined;
 
         const trade = runTx((tx) => {
           emitEvent(tx, existing, {
             action: 'LEG_OFF', price: exit, quantity: tradeQty(existing.quantity),
-            messageId: closeMessageId, metadata: { targetStrategy, closedLeg, keptLeg }, timestamp: ts,
+            messageId: closeMessageId, metadata: { targetStrategy, closedLeg, keptLeg, legOffPnl }, timestamp: ts,
           });
 
           const openLegCount = existingLegs.length;
@@ -314,7 +336,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
               strategy: targetStrategy,
               legs: [keptLeg],
               entryPrice: String(newEntryPrice),
-              metadata: { ...existingMeta, openLegCount, flags: buildFlags(existingMeta.flags, 'legOff') },
+              direction: newDirection,
+              metadata: { ...existingMeta, chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps), openLegCount, flags: buildFlags(existingMeta.flags, 'legOff') },
             })
             .where(eq(schema.trades.id, existing.id))
             .run();
@@ -323,7 +346,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           return row;
         });
 
-        log.debug(`LEG_OFF (auto): ${existing.strategy}->${targetStrategy} ${symbol} buyback=$${exit} newBasis=$${newEntryPrice} [${existing.id.slice(0, 8)}]`);
+        log.debug(`LEG_OFF (auto): ${existing.strategy}->${targetStrategy} ${symbol} dir=${newDirection} buyback=$${exit} newBasis=$${newEntryPrice}${legOffPnl != null ? ` legPnl=$${legOffPnl}` : ''} [${existing.id.slice(0, 8)}]`);
         return { tradeId: existing.id, action: 'LEG_OFF', trade };
       }
       // Detection failed -- fall through to normal CLOSE
@@ -348,6 +371,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const mergedMeta: TradeMetadata = {
       ...existingMeta,
       ...metadata,
+      chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps),
       flags: buildFlags(existingMeta.flags, ...metadata?.flags ?? [], ...closeFlags),
     };
 
@@ -451,6 +475,11 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
         timestamp: ts,
       });
 
+      const trimMeta: TradeMetadata = {
+        ...existingMeta,
+        chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps),
+        flags: trimFlags,
+      };
       if (remainingQty <= 0) {
         // 100% trim = effectively a close
         tx.update(schema.trades)
@@ -462,7 +491,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
             exitPrice: String(exit),
             closedAt: ts,
             closeMessageId: closeMessageId ?? null,
-            metadata: { ...existingMeta, flags: trimFlags },
+            metadata: trimMeta,
           })
           .where(eq(schema.trades.id, existing.id))
           .run();
@@ -471,7 +500,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           .set({
             quantity: remainingQty,
             realizedPnl: String(newRealized),
-            metadata: { ...existingMeta, flags: trimFlags },
+            metadata: trimMeta,
           })
           .where(eq(schema.trades.id, existing.id))
           .run();
@@ -522,16 +551,32 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       return null;
     }
 
-    const newEntryPrice = roundCents(entry + exit);
+    // Derive direction from kept leg: BUY leg = LONG, SELL leg = SHORT
+    const newDirection: Direction = keptLeg.action === 'SELL' ? 'SHORT' : 'LONG';
+
+    // BUY (kept long) → accumulate debit: entry + buyback cost
+    // SELL (kept short) → net credit: original credit - buyback cost
+    const newEntryPrice = keptLeg.action === 'SELL'
+      ? roundCents(entry - exit)
+      : roundCents(entry + exit);
     const ts = closedAt ?? now;
 
     const openLegCount = Array.isArray(existing.legs) ? existing.legs.length : 1;
     const existingMeta = existing.metadata;
 
+    // Compute realized PnL on the closed leg (if individual fill price is known)
+    const legOffPnl = closedLeg?.fillPrice != null
+      ? computeTradePnl({
+          entryPrice: closedLeg.fillPrice, exitPrice: exit,
+          direction: closedLeg.action === 'BUY' ? 'LONG' : 'SHORT',
+          strategy: closedLeg.type, quantity: tradeQty(existing.quantity),
+        })
+      : undefined;
+
     const trade = runTx((tx) => {
       emitEvent(tx, existing, {
         action: 'LEG_OFF', price: exit, quantity: tradeQty(existing.quantity),
-        messageId: closeMessageId, metadata: { targetStrategy, closedLeg, keptLeg }, timestamp: ts,
+        messageId: closeMessageId, metadata: { targetStrategy, closedLeg, keptLeg, legOffPnl }, timestamp: ts,
       });
 
       tx.update(schema.trades)
@@ -539,7 +584,8 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           strategy: targetStrategy,
           legs: [keptLeg],
           entryPrice: String(newEntryPrice),
-          metadata: { ...existingMeta, openLegCount, flags: buildFlags(existingMeta.flags, 'legOff') },
+          direction: newDirection,
+          metadata: { ...existingMeta, chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps), openLegCount, flags: buildFlags(existingMeta.flags, 'legOff') },
         })
         .where(eq(schema.trades.id, existing.id))
         .run();
@@ -548,7 +594,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       return row;
     });
 
-    log.debug(`LEG_OFF: ${existing.strategy}->${targetStrategy} ${symbol} buyback=$${exit} newBasis=$${newEntryPrice} [${existing.id.slice(0, 8)}]`);
+    log.debug(`LEG_OFF: ${existing.strategy}->${targetStrategy} ${symbol} dir=${newDirection} buyback=$${exit} newBasis=$${newEntryPrice}${legOffPnl != null ? ` legPnl=$${legOffPnl}` : ''} [${existing.id.slice(0, 8)}]`);
     return { tradeId: existing.id, action: 'LEG_OFF', trade };
   }
 

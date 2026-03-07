@@ -14,6 +14,7 @@ import type { LLMProvider } from '../../agent/providers.js';
 import type { BrokerService } from '../../broker/interface.js';
 import type { SignalEventEmitter } from '../../decisions/emitter.js';
 import type { Message, TradeLeg } from '../../db/schema.js';
+import type { TraceContext } from '../../lib/trace.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -102,6 +103,7 @@ export type TradePosition = {
   direction: Direction;
   legs: TradeLeg[];
   quantity: number | null;
+  openedAt: string | null;
 };
 
 export interface PositionProvider {
@@ -124,6 +126,7 @@ export type OrchestratorEnv = {
   llm: LLMProvider;
   broker: BrokerService;
   emitter: SignalEventEmitter;
+  trace?: TraceContext;
 };
 
 /** Everything the orchestrator might need, injected at the call site. */

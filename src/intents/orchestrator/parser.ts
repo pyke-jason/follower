@@ -37,9 +37,11 @@ const STRANGLE_RE = /\bstrangle\b|\bstraddle\b/i;
 const SPREAD_KW_RE = /\bcds\b|\bpcs\b|\bpds\b|call debit spread|put credit spread|put debit spread|\bspread\b/i;
 const CALLS_RE = /\bcalls?\b/i;
 const PUTS_RE = /\bputs?\b/i;
+const PUT_VERB_RE = /\bput\s+(?:myself|me|us|him|her|them|it)\s+back\b/i;
 const STOCK_RE = /\bstocks?\b|\bshares?\b/i;
 const CONTRACT_RE = /\bcontracts?\b/i;
 const STOCK_QTY_RE = /\b\d{1,3}(,\d{3})+\b/;
+const PER_SHARE_RE = /\bper\s+share\b/i;
 
 // ── Direction-override verb patterns ─────────────────────────────────────────
 
@@ -58,7 +60,17 @@ const STRIKE_NEAR_OPTION_RE = /\$?(\d{2,5}(?:\.\d+)?)\s*(?:calls?|puts?|[cp]\b)/
 
 // ── Monitoring / observation patterns ────────────────────────────────────────
 
-const MONITORING_RE = /\b(watching|monitoring|I\s+have|I\s+am\s+holding)\b/i;
+const MONITORING_RE = /\b(watching|monitoring|I\s+have|I\s+am\s+holding|I\s+am\s+expecting)\b/i;
+
+// ── Hypothetical / conditional patterns ─────────────────────────────────────
+// "If I were looking to…" is subjunctive mood — explicitly not a real trade.
+const HYPOTHETICAL_RE = /^if\s+I\s+(?:were|was)\b/i;
+
+// "Offering" as a standalone pattern — limit sell intent, not a confirmed trade.
+// Separate from MONITORING_RE because MONITORING_RE also guards the spread-OPEN
+// rule (line 879). "Offering a LOW PCS" IS a real trade; "Offering IREN at $49" is not.
+// Only checked in the final hard-skip gate where action is already null.
+const OFFERING_RE = /\boffering\b/i;
 
 // ── Premium constants ─────────────────────────────────────────────────────────
 
@@ -82,6 +94,11 @@ const EXIT_VERB_FALSE_POSITIVE_RE =
 const EXIT_VERB_CONDITIONAL_RE =
   /\b(?:would|could|might|may|should|looking\s+to|consider(?:ing)?|need\s+to|plan(?:ning)?\s+to|hoping\s+to|in\s+order\s+to)\s+(?:\w+\s+){0,3}(?:exit|close|cover|sell)\b/i;
 
+// Prospective intent: "trying to sell", "going to buy" — the trader hasn't
+// executed yet. Without a badge this is commentary, not a confirmed fill.
+const PROSPECTIVE_INTENT_RE =
+  /\b(?:trying|attempting|looking|hoping|wanting|going|plan(?:ning)?)\s+to\s+(?:sell|buy|exit|close|cover|trim)\b/i;
+
 // ── LEG_OFF target patterns ───────────────────────────────────────────────────
 
 const LEGOFF_RE = /\bleg\s+off\b|\bhold\s+straight\b|\bkeep\s+the\b/i;
@@ -90,7 +107,7 @@ const KEEP_PUTS_RE = /\b(hold\s+straight\s+puts?|keep\s+the\s+puts?)\b/i;
 
 // ── Relational patterns ───────────────────────────────────────────────────────
 
-const RELATIONAL_RE = /\b(following|same as|from yesterday|ty\s+\w+|thanks?\s+\w+|via\s+\w+|and also|adding to)\b/i;
+const RELATIONAL_RE = /\b(following|same as|from yesterday|ty\s+\w+|thanks?\s+\w+|via\s+\w+|and also)\b/i;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -189,11 +206,30 @@ function extractTradeFields(
     m => [parseFloat(m[1])],
   );
 
-  // Slash pairs: 68/67, 227.50/225
+  // Slash pairs: 68/67, 227.50/225, $68/$67 (optional $ before second number)
   const slashPairTokens = collectTokens(
-    /(\d{1,5}(?:\.\d+)?)\s*\/\s*(\d{1,5}(?:\.\d+)?)/g, 'slash_pair', text,
+    /(\d{1,5}(?:\.\d+)?)\s*\/\s*\$?(\d{1,5}(?:\.\d+)?)/g, 'slash_pair', text,
     m => [parseFloat(m[1]), parseFloat(m[2])],
   );
+
+  // Typo recovery: $347.5/$342/5 → [347.5, 342.5] (slash typed instead of dot)
+  // Pattern: first number has a decimal, second is whole, third is single digit
+  const typoSlashPairTokens: Token[] = [];
+  {
+    const re = /\$?(\d{1,5}\.\d+)\s*\/\s*\$?(\d{1,5})\/(\d)(?!\d)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const a = parseFloat(m[1]);
+      const bc = parseFloat(m[2] + '.' + m[3]);
+      typoSlashPairTokens.push({
+        type: 'slash_pair',
+        start: m.index,
+        end: m.index + m[0].length,
+        value: m[0],
+        parsed: [a, bc],
+      });
+    }
+  }
 
   // Option keywords: puts, calls, put, call
   const optionKwTokens = collectTokens(
@@ -287,8 +323,9 @@ function extractTradeFields(
   }
 
   // Combine all tokens and deduplicate overlaps (longer span wins)
-  // Slash pairs take priority over dollar amounts and slash dates
+  // Typo slash pairs first (longest span), then regular slash pairs
   let allTokens = dedupeTokens([
+    ...typoSlashPairTokens,
     ...slashPairTokens,
     ...dollarTokens,
     ...slashDateTokens,
@@ -563,7 +600,7 @@ function detectStrategy(
   } else if (CALLS_RE.test(text) && !SPREAD_KW_RE.test(text)) {
     strategy = 'CALL';
     directionFromStrategy = 'LONG';
-  } else if (PUTS_RE.test(text) && !SPREAD_KW_RE.test(text)) {
+  } else if (PUTS_RE.test(text) && !SPREAD_KW_RE.test(text) && !PUT_VERB_RE.test(fullText)) {
     strategy = 'PUT';
     directionFromStrategy = 'LONG';
   } else if (STOCK_RE.test(text)) {
@@ -639,6 +676,11 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   if (EXPIRED_WORTHLESS_RE.test(cleanText)) {
     return hardSkip('expired worthless — informational, no broker action needed', complexityFlags);
+  }
+
+  // Hypothetical/subjunctive without badge → no trade action
+  if (badges.length === 0 && HYPOTHETICAL_RE.test(cleanText)) {
+    return hardSkip('hypothetical/conditional', complexityFlags);
   }
 
   // Long+Short badges without strangle keyword → calendar/time spread
@@ -721,6 +763,16 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
     }
   }
 
+  // Exit-message STOCK override: "per share" is unambiguously stock language — no
+  // option or spread exit is described "per share". When present in an exit message,
+  // override any non-STOCK strategy picked up from commentary. E.g.:
+  //   "Exit NVDA with .86 profit per share (1,000) - that takes some of the sting out of the PDS"
+  //   Parser detects PDS from commentary, but "per share" clearly means STOCK exit.
+  if (hasExitBadge && strategy !== null && strategy !== 'STOCK' && PER_SHARE_RE.test(cleanText)) {
+    strategy = 'STOCK';
+    directionFromStrategy = null;
+  }
+
   // Badge-implied STOCK fallback: Long/Short badge + no option strategy detected.
   // Guard: "contracts" keyword suggests an unlabeled options trade → leave for LLM.
   if (strategy === null && (hasLongBadge || hasShortBadge) && !hasExitBadge && !CONTRACT_RE.test(cleanText)) {
@@ -741,12 +793,10 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
 
   let direction: Direction | null = directionFromStrategy;
 
-  if (isLotto && !hasShortBadge) {
-    // Lotto defaults to LONG (buying cheap options), but an explicit Short badge overrides.
-    // "Short ABNB Lotto $123 Puts" = selling puts for premium, not buying.
+  if (isLotto) {
+    // Lotto/yolo = speculative BUY, always LONG. "Short" in "Short TICKER lotto puts"
+    // is the trader's stock VIEW (bearish), not a sell-to-open instruction.
     direction = 'LONG';
-  } else if (isLotto && hasShortBadge) {
-    direction = 'SHORT';
   } else if (strategy === 'STOCK') {
     if (hasLongBadge && !hasShortBadge) {
       direction = 'LONG';
@@ -796,8 +846,12 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
       }
     }
   } else if (hasLongBadge || hasShortBadge) {
-    // Non-exit badge present → opening
-    action = 'OPEN';
+    // Non-exit badge present → opening or adding to existing
+    if (/\b(adding|added)\b/i.test(cleanText)) {
+      action = 'ADD';
+    } else {
+      action = 'OPEN';
+    }
   } else {
     // No badge — soft detection from verbs.
     // Exit verbs without the Exit badge are NEVER deterministic. The badge is
@@ -822,8 +876,8 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
         targetStrategy = 'PUT';
       } else {
         action = 'CLOSE';
+        complexityFlags.add('no_badge_exit');
       }
-      complexityFlags.add('no_badge_exit');
     } else if (/\b(adding|added)\b/i.test(cleanText)) {
       action = 'ADD';
     } else if (BOUGHT_BUYING_RE.test(cleanText) || /\bopened\b/i.test(cleanText)) {
@@ -874,8 +928,13 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   }
 
   // Monitoring-verb skip: position description without action intent
-  if (action === null && badges.length === 0 && MONITORING_RE.test(cleanText)) {
+  if (action === null && badges.length === 0 && (MONITORING_RE.test(cleanText) || OFFERING_RE.test(cleanText))) {
     return hardSkip('monitoring/observation', complexityFlags);
+  }
+
+  // Prospective intent skip: "trying to sell", "going to buy" etc. without badge
+  if (action === null && badges.length === 0 && PROSPECTIVE_INTENT_RE.test(cleanText)) {
+    return hardSkip('prospective intent — not a confirmed fill', complexityFlags);
   }
 
   // Hard-skip: no symbol and no action → pure commentary

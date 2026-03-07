@@ -5,8 +5,10 @@ import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from './badge';
 import { formatDate } from '@/lib/format';
 import { X } from 'lucide-react';
+import { REACTION_EMOJI } from './decision-shared';
 import type { Message, RunDecision } from '@src/db/schema';
 import { formatLegsSummary } from '@src/lib/trade';
+import { ExecutionFlamegraph, extractFlamegraphData } from './execution-flamegraph';
 
 function NearbyMessages({
   messages,
@@ -74,6 +76,20 @@ function NearbyMessages({
   );
 }
 
+function ReactionBadges({ reactions }: { reactions: { Type: string; Count: number }[] }) {
+  if (!reactions || reactions.length === 0) return null;
+  return (
+    <span className="inline-flex gap-1 shrink-0">
+      {reactions.map((r) => (
+        <span key={r.Type} className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/70 bg-muted/50 rounded px-1 py-px">
+          <span>{REACTION_EMOJI[r.Type] ?? r.Type}</span>
+          {r.Count > 1 && <span className="tabular-nums">{r.Count}</span>}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function MessageRow({ message: m, isAssociated }: { message: Message; isAssociated: boolean }) {
   return (
     <div
@@ -85,6 +101,7 @@ function MessageRow({ message: m, isAssociated }: { message: Message; isAssociat
       <span className={`truncate ${isAssociated ? 'text-foreground' : 'text-muted-foreground/70'}`}>
         {m.cleanText}
       </span>
+      {m.reactions.length > 0 && <ReactionBadges reactions={m.reactions} />}
     </div>
   );
 }
@@ -164,6 +181,18 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
                 </div>
               </section>
             )}
+
+            {/* Execution Flamegraph */}
+            {story.decisions.length > 0 && (() => {
+              const fg = extractFlamegraphData(story.decisions);
+              if (!fg) return null;
+              return (
+                <section>
+                  <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Execution Trace</h4>
+                  <ExecutionFlamegraph {...fg} compact />
+                </section>
+              );
+            })()}
 
             {/* Execution Timeline */}
             {(story.events.length > 0 || story.decisions.length > 0) && (

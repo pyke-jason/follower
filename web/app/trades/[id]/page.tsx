@@ -14,6 +14,7 @@ import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
+import { ExecutionFlamegraph, extractFlamegraphData } from '../../components/execution-flamegraph';
 import type { Trade, Message, TradeEvent, Task, RunDecision } from '@src/db/schema';
 
 type TradeStoryResponse = {
@@ -136,6 +137,22 @@ export default function TradeDetailPage() {
 
           {/* Fill Quality */}
           <FillQuality trade={trade} />
+
+          {/* Execution Trace */}
+          {data.decisions.length > 0 && (() => {
+            const fg = extractFlamegraphData(data.decisions);
+            if (!fg) return null;
+            return (
+              <Card className="py-0 gap-0">
+                <CardHeader className="border-b py-3 px-4">
+                  <CardTitle className="text-sm font-medium">Execution Trace</CardTitle>
+                </CardHeader>
+                <CardContent className="p-4">
+                  <ExecutionFlamegraph {...fg} />
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Event Timeline */}
           {tradeEvents.length > 0 && (

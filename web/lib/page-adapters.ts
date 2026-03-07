@@ -32,6 +32,7 @@ type DashboardHistorySummary = {
   winRate: number;
   bestTrade: number;
   worstTrade: number;
+  totalSlippage: number;
 };
 
 type DashboardTraderPnlRow = {
@@ -106,6 +107,7 @@ export async function fetchDashboardPageData(channelId?: string): Promise<Dashbo
     { label: 'Pending Tasks', value: dashboard.stats.pendingTasks, format: 'integer' },
     { label: 'Trades', value: dashboard.historySummary.totalTrades, format: 'integer' },
     { label: 'Win Rate', value: dashboard.historySummary.winRate, format: 'percent' },
+    { label: 'Slippage', value: Math.abs(dashboard.historySummary.totalSlippage), format: 'currency' },
   ];
 
   return {

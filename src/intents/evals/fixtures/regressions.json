@@ -14,13 +14,23 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "side": "SELL", "optionType": "PUT", "strike": 36 }
+              {
+                "side": "SELL",
+                "optionType": "PUT",
+                "strike": 36
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].legs[0].side", "signals[0].orderType"],
-      "tags": ["regressions", "sold-authoritative"],
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "sold-authoritative"
+      ],
       "notes": "Bug: old system treated Long badge as direction=LONG. Fix: 'sold' verb is authoritative and overrides badge → direction SHORT, leg side SELL."
     },
     {
@@ -37,13 +47,22 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "side": "BUY", "optionType": "PUT", "strike": 160 }
+              {
+                "side": "BUY",
+                "optionType": "PUT",
+                "strike": 160
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].legs[0].side"],
-      "tags": ["regressions", "badge-override"],
+      "mustMatch": [
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "regressions",
+        "badge-override"
+      ],
       "notes": "Bug: old system used Short badge for direction. Fix: 'Bought' verb is authoritative — badge is stock view, not trade direction."
     },
     {
@@ -60,13 +79,22 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "side": "SELL", "optionType": "PUT", "strike": 180 }
+              {
+                "side": "SELL",
+                "optionType": "PUT",
+                "strike": 180
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].legs[0].side"],
-      "tags": ["regressions", "no-badge"],
+      "mustMatch": [
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "regressions",
+        "no-badge"
+      ],
       "notes": "Bug: no-badge sell-to-open was classified as commentary. Fix: 'Sold' verb + symbol = OPEN action."
     },
     {
@@ -83,13 +111,22 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "optionType": "CALL", "side": "BUY" }
+              {
+                "optionType": "CALL",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
-      "tags": ["regressions", "leap"],
+      "mustMatch": [
+        "signals[0].orderType",
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "regressions",
+        "leap"
+      ],
       "notes": "Bug: old system defaulted to nextFriday(). Fix: LEAP keyword detected → long-dated expiry."
     },
     {
@@ -106,13 +143,24 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "optionType": "CALL", "side": "BUY", "strike": 600 }
+              {
+                "optionType": "CALL",
+                "side": "BUY",
+                "strike": 600
+              }
             ]
           }
         ]
-      }, 
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
-      "tags": ["regressions", "leap", "badge-override"],
+      },
+      "mustMatch": [
+        "signals[0].orderType",
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "regressions",
+        "leap",
+        "badge-override"
+      ],
       "notes": "Bug: v10 classified as SHORT STOCK. Fix: 'Short' badge is bearish VIEW. 'added another 10 the leaps' = LONG CALL. '3/26' = March 2026 expiry, '$600' = strike."
     },
     {
@@ -129,14 +177,28 @@
           {
             "orderType": "SPREAD",
             "legs": [
-              { "side": "SELL", "strike": 68, "optionType": "PUT" },
-              { "side": "BUY", "strike": 67, "optionType": "PUT" }
+              {
+                "side": "SELL",
+                "strike": 68,
+                "optionType": "PUT"
+              },
+              {
+                "side": "BUY",
+                "strike": 67,
+                "optionType": "PUT"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].legs[0].side", "signals[0].orderType"],
-      "tags": ["regressions", "pcs-direction"],
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "pcs-direction"
+      ],
       "notes": "Bug: PCS treated as direction=LONG. Fix: PCS = credit spread = legs are SELL higher/BUY lower PUT. 'Long' is stock view not trade direction."
     },
     {
@@ -153,14 +215,25 @@
           {
             "orderType": "SPREAD",
             "legs": [
-              { "optionType": "CALL", "side": "BUY" },
-              { "optionType": "CALL", "side": "SELL" }
+              {
+                "optionType": "CALL",
+                "side": "BUY"
+              },
+              {
+                "optionType": "CALL",
+                "side": "SELL"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType"],
-      "tags": ["regressions", "expiry-hint"],
+      "mustMatch": [
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "expiry-hint"
+      ],
       "notes": "Bug: LLM omitted legs entirely → system defaulted to nextFriday(2025-09-19) = same-day expiry. Fix: orchestrator resolves 'next week' expiry from market data. CDS = call debit spread: BUY lower, SELL higher."
     },
     {
@@ -177,13 +250,24 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "side": "BUY", "strike": 95.5, "optionType": "PUT" }
+              {
+                "side": "BUY",
+                "strike": 95.5,
+                "optionType": "PUT"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].legs[0].side", "signals[0].orderType"],
-      "tags": ["regressions", "lotto", "expiry-hint"],
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "lotto",
+        "expiry-hint"
+      ],
       "notes": "Bug: LLM emitted expiry 'weekly' which crashed normalizeExpiry. Lotto = LONG (buy) regardless of Short badge. $95.50 strike."
     },
     {
@@ -199,7 +283,16 @@
             "symbol": "MSTR",
             "strategy": "PUT",
             "direction": "LONG",
-            "legs": [{ "symbol": "MSTR  251212P00177500", "side": "BUY", "quantity": 1, "expiry": "2025-12-12", "strike": 177.5, "type": "option", "optionType": "PUT" }],
+            "legs": [
+              {
+                "symbol": "MSTR  251212P00177500",
+                "quantity": 1,
+                "expiry": "2025-12-12",
+                "strike": 177.5,
+                "type": "PUT",
+                "action": "BUY"
+              }
+            ],
             "quantity": 25
           }
         ]
@@ -210,13 +303,23 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "side": "SELL", "optionType": "PUT" }
+              {
+                "side": "SELL",
+                "optionType": "PUT"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType"],
-      "tags": ["regressions", "exits"],
+      "mustMatch": [
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType"
+      ],
+      "tags": [
+        "regressions",
+        "exits"
+      ],
       "notes": "Bug: '.11 loss per contract' was not recognised as a CLOSE and auto-closed at expiry. Fix: Exit badge + symbol + loss context = CLOSE action."
     },
     {
@@ -233,13 +336,21 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "optionType": "CALL", "side": "BUY" }
+              {
+                "optionType": "CALL",
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType"],
-      "tags": ["regressions", "expiry-hint"],
+      "mustMatch": [
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "expiry-hint"
+      ],
       "notes": "Bug: LLM omitted legs → system defaulted to nextFriday(2025-09-19) = same-day expiry. 'oct 3' = October 3rd expiry, orchestrator resolves concrete date."
     },
     {
@@ -255,7 +366,16 @@
             "symbol": "TXN",
             "strategy": "STOCK",
             "direction": "LONG",
-            "legs": [{ "symbol": "TXN", "side": "BUY", "quantity": 1000, "type": "stock" }],
+            "legs": [
+              {
+                "symbol": "TXN",
+                "quantity": 1000,
+                "type": "STOCK",
+                "action": "BUY",
+                "strike": 0,
+                "expiry": ""
+              }
+            ],
             "quantity": 1000
           }
         ]
@@ -266,19 +386,32 @@
           {
             "orderType": "STOCK",
             "legs": [
-              { "side": "SELL" }
+              {
+                "side": "SELL"
+              }
             ]
           },
           {
             "orderType": "STOCK",
             "legs": [
-              { "side": "SELL" }
+              {
+                "side": "SELL"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[1].orderType", "signals[1].legs[0].side"],
-      "tags": ["regressions", "reversal", "multi-signal"],
+      "mustMatch": [
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[1].orderType",
+        "signals[1].legs[0].side"
+      ],
+      "tags": [
+        "regressions",
+        "reversal",
+        "multi-signal"
+      ],
       "notes": "Misclassification risk: treating as single CLOSE (missing the short open) or single OPEN (missing the close). 'taking the loss on TXN long' = CLOSE existing long. 'shorting it at $199.06' = OPEN SHORT STOCK. Must produce 2 signals."
     },
     {
@@ -294,7 +427,16 @@
             "symbol": "TXN",
             "strategy": "STOCK",
             "direction": "SHORT",
-            "legs": [{ "symbol": "TXN", "side": "SELL", "quantity": 1000, "type": "stock" }],
+            "legs": [
+              {
+                "symbol": "TXN",
+                "quantity": 1000,
+                "type": "STOCK",
+                "action": "SELL",
+                "strike": 0,
+                "expiry": ""
+              }
+            ],
             "quantity": 1000
           }
         ]
@@ -305,13 +447,22 @@
           {
             "orderType": "STOCK",
             "legs": [
-              { "side": "BUY" }
+              {
+                "side": "BUY"
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side"],
-      "tags": ["regressions", "exits", "short-stock"],
+      "mustMatch": [
+        "signals[0].orderType",
+        "signals[0].legs[0].side"
+      ],
+      "tags": [
+        "regressions",
+        "exits",
+        "short-stock"
+      ],
       "notes": "Misclassification risk: 'mitigation against the Long loss' could confuse LLM into thinking this references the long position. Exit badge + TXN symbol = CLOSE the current SHORT position."
     },
     {
@@ -328,14 +479,445 @@
           {
             "orderType": "SINGLE",
             "legs": [
-              { "side": "SELL", "optionType": "PUT", "strike": 9.5 }
+              {
+                "side": "SELL",
+                "optionType": "PUT",
+                "strike": 9.5
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["signals[0].legs[0].side", "signals[0].legs[0].strike", "signals[0].orderType"],
-      "tags": ["regressions", "coordinated-extraction", "selling-verb"],
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].strike",
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "coordinated-extraction",
+        "selling-verb"
+      ],
       "notes": "Bug: old system had 4 cascading failures: (1) strike regex skipped $9. and captured '50' → strike=50, (2) premium regex captured $9.50 first → premium=9.5, (3) 'selling' not matched by SOLD_RE, (4) 'Sept' not matched by month regex. Fix: coordinated token extraction assigns $9.50+puts=strike, $.50+@=premium, Sept+(19)=expiry. 'selling' added to SOLD_RE."
+    },
+    {
+      "id": "regression-014",
+      "description": "Short badge + lotto puts = BUY, not SELL: 'Short C $96 lotto puts @ $.54 and $.57' (real trade bt:competent-guanaco)",
+      "input": {
+        "rawHtml": "<span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/C\" target=\"os\" data-symbol=\"C\"><b>C</b></a> $96 lotto puts @ $.54 and $.57",
+        "author": "Pete",
+        "timestamp": "2025-09-05T14:02:17.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              {
+                "side": "BUY",
+                "optionType": "PUT",
+                "strike": 96
+              }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "lotto",
+        "badge-override"
+      ],
+      "notes": "Bug: isLotto && hasShortBadge branch set direction=SHORT → SELL leg (naked short put). Fix: lotto is always LONG/BUY. 'Short' badge = bearish stock view, not sell-to-open. Real trade 2f812742 in bt:competent-guanaco lost $160 from this bug."
+    },
+    {
+      "id": "regression-015",
+      "description": "Short badge + lotto puts = BUY: 'Short ABNB Lotto $123 Puts for .21' (real trade bt:competent-guanaco)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/ABNB\" target=\"os\" data-symbol=\"ABNB\"><b>ABNB</b></a> Lotto $123 Puts for .21 - 40 Contracts&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-05T17:51:42.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "legs": [
+              {
+                "side": "BUY",
+                "optionType": "PUT",
+                "strike": 123
+              }
+            ]
+          }
+        ]
+      },
+      "mustMatch": [
+        "signals[0].legs[0].side",
+        "signals[0].orderType"
+      ],
+      "tags": [
+        "regressions",
+        "lotto",
+        "badge-override"
+      ],
+      "notes": "Bug: same as regression-014. Short badge + lotto incorrectly set direction=SHORT. Real trade 8b832158 in bt:competent-guanaco."
+    },
+    {
+      "id": "regression-016",
+      "description": "'put myself back in the AMD position' — English verb 'put' must NOT be classified as PUT option (bt:inland-bandicoot regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Actually, put myself back in the <a href=\"/option-stalker/chart/AMD\" target=\"os\" data-symbol=\"AMD\"><b>AMD</b></a> position... back in at $163.09&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-24T13:41:00.000Z",
+        "chatContext": "Recent context: Hariseldon had a SHORT STOCK position on AMD at $154.48, exited premarket for a $7/share loss. Now re-entering the short."
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "verb-confusion", "inland-bandicoot"],
+      "notes": "Bug from bt:inland-bandicoot trade 0dccd5a7 and bt:minimum-hippopotamus trade 9a693233: LLM classified 'put myself back in' as OPEN PUT AMD, then pipeline rejected nonsensical PUT parameters (strike=163.09). Parser correctly guards with PUT_VERB_RE (preventing PUT strategy detection), but LLM ignores this and classifies as PUT. The English verb 'put' (meaning 'place') must not trigger PUT option strategy detection. Fix: LLM prompt now explicitly warns about 'put' as English verb. Without badge or position context, direction cannot be determined — MANUAL_REVIEW is correct."
+    },
+    {
+      "id": "regression-017",
+      "description": "PDS open with no expiry hint — 'Adding to TSLA short with PDS $347.5/$342.5' must not SKIP (bt:inland-bandicoot regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> Adding to my TSLA short with a PDS $347.5/$342.5 for $1.94 - 25 Contracts&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-08T15:37:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 347.5 },
+              { "optionType": "PUT", "side": "SELL", "strike": 342.5 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].strike", "signals[0].legs[1].side", "signals[0].legs[1].strike"],
+      "tags": ["regressions", "missing-expiry", "spreads", "inland-bandicoot"],
+      "notes": "Bug from bt:inland-bandicoot: Parser set expiryHint='-' (no expiry in text), causing open-path to SKIP with 'Could not interpret expiryHint'. This cascaded into closing a STOCK position with the PDS exit signal (trades 02754afe, 46109a5f). Fix: infer nearest weekly expiry from option chain when no hint is provided."
+    },
+    {
+      "id": "regression-018",
+      "description": "PDS exit must NOT close a STOCK position — strategy mismatch guard (bt:inland-bandicoot regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> PDS with .50 profit per contract (25)&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-08T17:59:00.000Z",
+        "positions": [
+          {
+            "id": "pos-tsla-stock-short",
+            "symbol": "TSLA",
+            "strategy": "STOCK",
+            "direction": "SHORT",
+            "legs": [{ "symbol": "TSLA", "action": "SELL", "quantity": 14, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 14
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "MANUAL_REVIEW"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "strategy-mismatch", "inland-bandicoot"],
+      "notes": "Bug from bt:inland-bandicoot trade 02754afe: PDS exit signal matched a STOCK SHORT position via fuzzy fallback (only 1 position for TSLA). System closed the stock with a strategyMismatch flag instead of blocking. Fix: STOCK<->spread strategy mismatches must return MANUAL_REVIEW. The PDS was never opened (SKIP'd due to missing expiry — see regression-017)."
+    },
+    {
+      "id": "regression-019",
+      "description": "'Exit NVDA with .86 profit per share (1,000)' — 'per share' must disambiguate STOCK when multiple positions open (bt:inland-bandicoot regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<a href=\"/option-stalker/chart/NVDA\" target=\"os\" data-symbol=\"NVDA\"><b>NVDA</b></a> with .86 profit per share (1,000)&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-18T14:32:00.000Z",
+        "positions": [
+          {
+            "id": "pos-nvda-stock-long",
+            "symbol": "NVDA",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "NVDA", "action": "BUY", "quantity": 28, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 28
+          },
+          {
+            "id": "pos-nvda-put-long",
+            "symbol": "NVDA",
+            "strategy": "PUT",
+            "direction": "LONG",
+            "legs": [{ "symbol": "NVDA  250919P00170000", "action": "BUY", "quantity": 1, "expiry": "2025-09-19", "strike": 170, "type": "PUT" }],
+            "quantity": 20
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "STOCK", "legs": [{ "side": "SELL" }] }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["regressions", "disambiguation", "inland-bandicoot"],
+      "notes": "Bug from bt:inland-bandicoot trade 6ce30763: When two NVDA positions existed (STOCK long + PUT from post-LEG_OFF PDS), matchPosition returned 'multiple positions found' and SKIPPED. 'per share (1,000)' unambiguously means STOCK. Fix: use 'per share'/'shares' text as a strategy hint to narrow to STOCK positions."
+    },
+    {
+      "id": "regression-020",
+      "description": "'Offering balance of IREN at $49.40' — 'offering' is a conditional limit sell intent, NOT an executed close (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Offering balance of <a href=\"/option-stalker/chart/IREN\" target=\"os\" data-symbol=\"IREN\" data-criteria=\"Bull\"><b>IREN</b></a> at $49.40. I am expecting at least one more push higher and I will take gains into it.</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-24T14:27:19.000Z",
+        "positions": [
+          {
+            "id": "pos-iren-stock-1",
+            "symbol": "IREN",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "IREN", "action": "BUY", "quantity": 50, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 50
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "offering", "minimum-hippopotamus"],
+      "notes": "Bug from bt:minimum-hippopotamus trade 70ac33f4: 'Offering balance of IREN at $49.40' was LLM-classified as CLOSE, causing premature exit. Real exit at $49.10 (msg 468984) was orphaned. 'Offering' in trading context means 'I have a limit sell placed at this price' — conditional future intent, not an executed trade. Fix: add 'offering' to parser MONITORING_RE for deterministic hard skip."
+    },
+    {
+      "id": "regression-021",
+      "description": "'Offering COF $165.85. If I hit my target I will make $1.10' — limit sell intention, must SKIP",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Offering <a href=\"/option-stalker/chart/COF\" target=\"os\" data-symbol=\"COF\"><b>COF</b></a> $165.85. If I hit my target I will make $1.10 and that will pay for my spread</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-05T14:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-cof-stock-1",
+            "symbol": "COF",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "COF", "action": "BUY", "quantity": 100, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 100
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "offering"],
+      "notes": "'Offering COF $165.85' = limit sell placed at that price, not an executed trade. Must be SKIP, not CLOSE."
+    },
+    {
+      "id": "regression-022",
+      "description": "'I am offering MSTR $.30 above my entry price $312.81' — personal limit sell intention, must SKIP",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>I am offering <a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> $.30 above my entry price $312.81</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-05T14:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-mstr-stock-1",
+            "symbol": "MSTR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "MSTR", "action": "BUY", "quantity": 100, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 100
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "offering"],
+      "notes": "'I am offering MSTR' = limit sell placed, conditional. Must SKIP."
+    },
+    {
+      "id": "regression-023",
+      "description": "'BE I am trying to sell for a $1 gain' — future intent, not executed exit (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div><a href=\"/option-stalker/chart/BE\" target=\"os\" data-symbol=\"BE\"><b>BE</b></a> I am trying to sell for a $1 gain.&nbsp;</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-09T15:52:10.000Z",
+        "positions": [
+          {
+            "id": "pos-be-stock-1",
+            "symbol": "BE",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "BE", "action": "BUY", "quantity": 92, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 92
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "intent-sell", "minimum-hippopotamus"],
+      "notes": "Bug from bt:minimum-hippopotamus trade f6f0dacb: 'I am trying to sell' was LLM-classified as CLOSE. Real exit (msg 465178 'Exit Long BE $55.20') was orphaned 11 minutes later. 'trying to sell' = future intent, not confirmed exit. Fix: PROSPECTIVE_INTENT_RE catches 'trying to sell/exit/close' for deterministic hard skip."
+    },
+    {
+      "id": "regression-024",
+      "description": "'looking to sell AAPL here for a quick profit' — prospective intent, must SKIP",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>looking to sell <a data-symbol=\"AAPL\"><b>AAPL</b></a> here for a quick profit</div></body></html>",
+        "author": "Pete",
+        "timestamp": "2025-09-05T14:00:00.000Z",
+        "positions": [
+          {
+            "id": "pos-aapl-stock-long",
+            "symbol": "AAPL",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "AAPL", "action": "BUY", "quantity": 100, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 100
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "prospective-intent"],
+      "notes": "'Looking to sell' = conditional intent, not a fill. Must SKIP."
+    },
+    {
+      "id": "regression-025",
+      "description": "'Long OSCR added 2,000 more shares' with Long badge + multi-ticker TSLA — must ADD to existing position, not OPEN new one (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/OSCR\" target=\"os\" data-symbol=\"OSCR\"><b>OSCR</b></a> added 2,000 more shares ($20.30 avg - 7,000)<div>Took the hit on <a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> pre-market will probably re-enter at some point for longer term fundamental short</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-12T13:38:55.000Z",
+        "positions": [
+          {
+            "id": "pos-oscr-stock-long",
+            "symbol": "OSCR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "OSCR", "action": "BUY", "quantity": 71, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 71
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "legs": [{ "side": "BUY" }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["regressions", "add-with-badge", "minimum-hippopotamus"],
+      "notes": "Bug from bt:minimum-hippopotamus trade b0b0f1bf: 'added 2,000 more shares' with Long badge was classified as OPEN (not ADD) because (1) parser always set OPEN for Long/Short badges, ignoring 'added' verb, and (2) NLU prompt didn't document ADD action. LLM output action=OPEN creating a duplicate OSCR position. Fix: parser checks for 'added/adding' inside badge block → ADD. NLU prompt now includes ADD. Safety net: OPEN→ADD reroute in LLM signal routing."
+    },
+    {
+      "id": "regression-026",
+      "description": "'Added 500 more shares to OSCR' with no badge — must ADD to existing position (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Added 500 more shares to <a href=\"/option-stalker/chart/OSCR\" target=\"os\" data-symbol=\"OSCR\"><b>OSCR</b></a> - 7,500 total - $20.21 avg&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-15T19:41:02.000Z",
+        "positions": [
+          {
+            "id": "pos-oscr-stock-long",
+            "symbol": "OSCR",
+            "strategy": "STOCK",
+            "direction": "LONG",
+            "legs": [{ "symbol": "OSCR", "action": "BUY", "quantity": 71, "expiry": "", "strike": 0, "type": "STOCK" }],
+            "quantity": 71
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "STOCK",
+            "legs": [{ "side": "BUY" }]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side"],
+      "tags": ["regressions", "add-no-badge", "minimum-hippopotamus"],
+      "notes": "Bug from bt:minimum-hippopotamus: 'Added 500 more shares' (no badge) correctly detected as ADD by parser, but failed with 'OPEN signal missing direction for strategy STOCK' because two OSCR positions existed (the duplicate from regression-025). With regression-025 fixed (single position), ADD path enriches direction from matched position and resolves."
+    },
+    {
+      "id": "regression-027",
+      "description": "'PDS $347.5/$342/5 for $1.94' — slash-for-dot typo: $342/5 must parse as strike 342.5, not [342, 5] (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a href=\"/option-stalker/chart/TSLA\" target=\"os\" data-symbol=\"TSLA\"><b>TSLA</b></a> Adding to my TSLA short with a PDS $347.5/$342/5 for $1.94 - 25 Contracts&nbsp;</body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-08T15:37:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "optionType": "PUT", "side": "BUY", "strike": 347.5 },
+              { "optionType": "PUT", "side": "SELL", "strike": 342.5 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].strike", "signals[0].legs[1].strike"],
+      "tags": ["regressions", "strike-typo", "minimum-hippopotamus"],
+      "notes": "Bug from bt:minimum-hippopotamus trade 6ea8df12: '$347.5/$342/5' was tokenized as slash_pair [342, 5] because the $ between / and 342 blocked the intended slash_pair match. Caused QUOTE_FAILED on OCC symbol TSLA 250912P00342000, then marketDataFail flag falsely propagated to the parent STOCK trade. LLM retry eventually corrected to [347.5, 342.5] but wasted tokens and added latency. Fix: (1) slash pair regex accepts optional $ before second number, (2) typo recovery regex detects $A/$B/D pattern where first number has decimal → interprets as $A/$B.D."
+    },
+    {
+      "id": "regression-028",
+      "description": "'PDS $68/$67' — dollar-prefixed slash pair must parse as strikes [68, 67], not fall through to elimination",
+      "input": {
+        "rawHtml": "<html><head></head><body>Long <a data-symbol=\"GLW\"><b>GLW</b></a> pcs $68/$67 for .63 credit</body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-05T14:00:00.000Z"
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SPREAD",
+            "legs": [
+              { "side": "SELL", "strike": 68, "optionType": "PUT" },
+              { "side": "BUY", "strike": 67, "optionType": "PUT" }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["signals[0].legs[0].strike", "signals[0].legs[1].strike"],
+      "tags": ["regressions", "dollar-slash-pair"],
+      "notes": "Pre-fix the $68/$67 pattern relied on dollar token fallback (rule 12) to assign strikes. With the slash pair regex accepting optional $ before the second number, these are now captured as a proper slash_pair token, which is more robust."
+    },
+    {
+      "id": "regression-029",
+      "description": "'If I were looking to put a starter position on for IREN' — subjunctive/hypothetical, must SKIP (bt:minimum-hippopotamus regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>If I were looking to put a starter position on for <a href=\"/option-stalker/chart/IREN\" target=\"os\" data-symbol=\"IREN\" data-criteria=\"Bull\"><b>IREN</b></a> I would sell the Oct (3) $43 put for $1.75. That give me an entry around the EMA 8 if assigned. If not I am going to generate some income. If I am assigned I enter at a good price and I expect to see a bounce off of that level.</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-25T20:16:07.000Z"
+      },
+      "expected": {
+        "outcome": "SKIP"
+      },
+      "mustMatch": ["outcome"],
+      "tags": ["regressions", "hypothetical", "minimum-hippopotamus"],
+      "notes": "Bug from bt:minimum-hippopotamus trade 44be2b59: 'If I were looking to' is subjunctive mood — explicitly hypothetical, educational commentary about strategy. Parser extracted strategy=PUT, strikes=[43], expiryHint='oct 3', premiumHint=1.75, but action=null → LLM classified as EXECUTE. The message opens with 'If I were' which is never a real trade. Fix: HYPOTHETICAL_RE detects ^if I were/was and hard-skips when no badge is present."
     }
   ]
 }

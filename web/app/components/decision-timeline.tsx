@@ -11,18 +11,7 @@ import {
   ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,
   OrderCancelledView, SettledView, ErrorView, FallbackJson,
 } from './snapshot-detail';
-
-// ─── Utilities ───────────────────────────────────────
-
-function fmtMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`; }
-
-// ─── Visual constants ────────────────────────────────
-
-const EVENT_LABEL: Record<string, string> = {
-  PARSED: 'PARSED', SIGNAL_RESOLVED: 'SIGNAL', SIZED: 'SIZED',
-  ORDER_PLACED: 'ORDER', ORDER_ADJUSTED: 'CHASE', ORDER_FILLED: 'FILLED',
-  ORDER_CANCELLED: 'CANCELLED', QUOTE_FAILED: 'QUOTE FAIL', RETRY_LLM: 'RETRY', SETTLED: 'RESULT',
-};
+import { fmtMs, EVENT_LABEL, DOT, getInlineSummary, REACTION_EMOJI } from './decision-shared';
 
 const ACTION_LABEL: Record<string, string> = {
   OPEN: 'Opened', CLOSE: 'Closed', TRIM: 'Trimmed', ADD: 'Added', LEG_OFF: 'Leg Off',
@@ -32,78 +21,6 @@ const PATH_LABEL: Record<string, string> = {
   orchestrator: 'Agent', deterministic: 'Deterministic',
   skipped: 'Hard Skip', pipeline_failure: 'Pipeline Fail',
 };
-
-const DOT: Record<string, string> = {
-  PARSED: 'bg-[oklch(0.62_0.05_248)]', SIGNAL_RESOLVED: 'bg-[oklch(0.58_0.07_328)]',
-  SIZED: 'bg-[oklch(0.58_0.06_178)]', ORDER_PLACED: 'bg-[oklch(0.55_0.08_148)]',
-  ORDER_ADJUSTED: 'bg-[oklch(0.60_0.08_75)]', ORDER_FILLED: 'bg-[oklch(0.52_0.10_148)]',
-  ORDER_CANCELLED: 'bg-[oklch(0.55_0.15_25)]', QUOTE_FAILED: 'bg-[oklch(0.52_0.12_30)]', RETRY_LLM: 'bg-[oklch(0.60_0.08_75)]',
-  SETTLED: 'bg-[oklch(0.50_0.02_65)]',
-  OPEN: 'bg-[oklch(0.48_0.14_148)]', CLOSE: 'bg-[oklch(0.48_0.12_248)]',
-  ADD: 'bg-[oklch(0.48_0.10_178)]', TRIM: 'bg-[oklch(0.55_0.12_75)]',
-  LEG_OFF: 'bg-[oklch(0.50_0.10_328)]',
-};
-
-// ─── Inline summary extraction ──────────────────────
-
-function getInlineSummary(d: RunDecision): string | null {
-  const snap = d.snapshot as Record<string, unknown> | null;
-  if (!snap) return null;
-  const event = d.event ?? 'SETTLED';
-
-  switch (event) {
-    case 'PARSED': {
-      const parts = [snap.action, snap.symbol, snap.strategy].filter(Boolean).map(String);
-      return parts.length > 0 ? parts.join(' ') : null;
-    }
-    case 'SIGNAL_RESOLVED': {
-      const legs = Array.isArray(snap.legs) ? snap.legs as { symbol?: string }[] : [];
-      const symbol = legs[0]?.symbol ?? snap.symbol;
-      const type = legs.length === 1 ? 'SINGLE' : legs.length === 2 ? 'SPREAD' : `${legs.length}-LEG`;
-      return symbol ? `${type} ${symbol}` : type;
-    }
-    case 'SIZED': {
-      if (snap.quantity != null && snap.entryPrice != null) return `${snap.quantity} @ $${snap.entryPrice}`;
-      if (snap.quantity != null) return `qty ${snap.quantity}`;
-      return null;
-    }
-    case 'ORDER_PLACED': {
-      const params = snap.params as Record<string, unknown> | undefined;
-      const parts: string[] = [];
-      if (snap.orderId) parts.push(`#${snap.orderId}`);
-      if (params?.limitPrice != null) parts.push(`limit $${params.limitPrice}`);
-      return parts.length > 0 ? parts.join(' ') : null;
-    }
-    case 'ORDER_ADJUSTED': {
-      if (snap.fromPrice != null && snap.toPrice != null) return `$${snap.fromPrice} \u2192 $${snap.toPrice}`;
-      return null;
-    }
-    case 'ORDER_FILLED': {
-      const parts: string[] = [];
-      if (snap.filledPrice != null) parts.push(`$${snap.filledPrice}`);
-      if (snap.adjustmentCount != null && Number(snap.adjustmentCount) > 0) parts.push(`(${snap.adjustmentCount} chases)`);
-      return parts.length > 0 ? parts.join(' ') : null;
-    }
-    case 'QUOTE_FAILED':
-      return snap.occSymbol ? String(snap.occSymbol) : null;
-    case 'RETRY_LLM':
-      return snap.reason ? String(snap.reason) : null;
-    case 'ORDER_CANCELLED': {
-      const params = snap.params as Record<string, unknown> | undefined;
-      const parts: string[] = [];
-      if (params?.symbol) parts.push(String(params.symbol));
-      if (params?.limitPrice != null && snap.currentLimitPrice != null &&
-          params.limitPrice !== snap.currentLimitPrice) {
-        parts.push(`$${params.limitPrice} → $${snap.currentLimitPrice}`);
-      } else if (snap.currentLimitPrice != null) {
-        parts.push(`$${snap.currentLimitPrice}`);
-      }
-      return parts.length > 0 ? parts.join(' ') : null;
-    }
-    default:
-      return null;
-  }
-}
 
 // ─── Redundant SETTLED filter ───────────────────────
 
@@ -138,7 +55,7 @@ function filterRedundantSettled(decisions: RunDecision[]): RunDecision[] {
 
 // ─── Snapshot Dispatch ───────────────────────────────
 
-function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snapshot: Record<string, unknown>; reasoning?: string | null }) {
+export function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snapshot: Record<string, unknown>; reasoning?: string | null }) {
   switch (event) {
     case 'PARSED':
       return <ParseResultView data={snapshot} />;
@@ -152,21 +69,56 @@ function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snaps
       return <OrderFilledView data={snapshot} />;
     case 'ORDER_CANCELLED':
       return <OrderCancelledView data={snapshot} />;
-    case 'ORDER_ADJUSTED':
+    case 'ORDER_ADJUSTED': {
+      const params = (snapshot.pending as Record<string, unknown>)?.params as Record<string, unknown> | undefined ??
+                     (snapshot.params as Record<string, unknown> | undefined);
+      const rules = Array.isArray(params?.adjustmentRules) ? params.adjustmentRules as Record<string, unknown>[] : [];
+      const rule = rules[0];
+      const initialLimit = params?.limitPrice != null ? Number(params.limitPrice) : null;
+      const chaseLimit = rule?.chaseLimit != null ? Number(rule.chaseLimit) : null;
+      const stepAmount = rule?.stepAmount != null ? Number(rule.stepAmount) : null;
+      const maxSteps = initialLimit != null && chaseLimit != null && stepAmount != null && stepAmount > 0
+        ? Math.floor(Math.abs(initialLimit - chaseLimit) / stepAmount)
+        : null;
+      const step = snapshot.step != null ? Number(snapshot.step) : null;
+
       return (
-        <div className="flex items-center gap-2 text-xs">
-          {snapshot.fromPrice != null && snapshot.toPrice != null ? (
-            <span className="text-foreground tabular-nums">
-              ${String(snapshot.fromPrice)} &rarr; ${String(snapshot.toPrice)}
-              {snapshot.step != null && (
-                <span className="text-muted-foreground ml-1">(step {String(snapshot.step)})</span>
+        <div className="space-y-2 text-xs">
+          {/* Price move */}
+          {snapshot.fromPrice != null && snapshot.toPrice != null && (
+            <div className="flex items-center gap-2">
+              <span className="text-foreground tabular-nums font-medium">
+                ${String(snapshot.fromPrice)} &rarr; ${String(snapshot.toPrice)}
+              </span>
+              {step != null && maxSteps != null && (
+                <span className="text-muted-foreground">step {step}/{maxSteps}</span>
               )}
-            </span>
-          ) : (
-            <FallbackJson data={snapshot} />
+              {step != null && maxSteps == null && (
+                <span className="text-muted-foreground">step {step}</span>
+              )}
+            </div>
           )}
+          {/* Chase range */}
+          {initialLimit != null && chaseLimit != null && (
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span>Range: ${initialLimit} → ${chaseLimit}</span>
+              {stepAmount != null && <span>${stepAmount}/step</span>}
+            </div>
+          )}
+          {/* Progress bar */}
+          {initialLimit != null && chaseLimit != null && snapshot.toPrice != null && (
+            <div className="w-full bg-muted/40 rounded-full h-1.5">
+              <div
+                className="bg-[oklch(0.60_0.08_75)] h-1.5 rounded-full transition-all"
+                style={{ width: `${Math.min(100, Math.abs(Number(snapshot.toPrice) - initialLimit) / Math.abs(chaseLimit - initialLimit) * 100)}%` }}
+              />
+            </div>
+          )}
+          {/* Fallback */}
+          {snapshot.fromPrice == null && <FallbackJson data={snapshot} />}
         </div>
       );
+    }
     case 'QUOTE_FAILED':
     case 'RETRY_LLM':
       return <ErrorView data={snapshot} />;
@@ -179,7 +131,7 @@ function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snaps
 
 // ─── Decision Popover ────────────────────────────────
 
-function DecisionPopover({ d }: { d: RunDecision }) {
+export function DecisionPopover({ d }: { d: RunDecision }) {
   const event = d.event ?? 'SETTLED';
   const snapshot = d.snapshot as Record<string, unknown> | null;
   const hasContent = d.outcome || d.reasoning || d.skipCategory || d.phase || snapshot;
@@ -194,6 +146,9 @@ function DecisionPopover({ d }: { d: RunDecision }) {
         {d.phase && <Badge label={PATH_LABEL[d.phase] ?? d.phase} />}
         {d.skipCategory && (
           <span className="text-[10px] text-muted-foreground">{d.skipCategory}</span>
+        )}
+        {event === 'PARSED' && snapshot?.route != null && (
+          <Badge label={String(snapshot.route) === 'orchestrator' ? 'Agent' : String(snapshot.route) === 'deterministic' ? 'Deterministic' : String(snapshot.route)} />
         )}
         <div className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
           {d.durationMs != null && d.durationMs > 10 && <span>{fmtMs(d.durationMs)}</span>}
@@ -236,84 +191,218 @@ function DecisionPopover({ d }: { d: RunDecision }) {
 
 // ─── Trade event popover ─────────────────────────────
 
-function TradeEventPopover({ ev, fillInfo, tradePnl }: {
+function TradeEventPopover({ ev, fillInfo, tradePnl, trade }: {
   ev: TradeEvent;
-  fillInfo?: { orderId?: string; orderType?: string; limitPrice?: number; filledPrice?: number; adjustmentCount?: number; commission?: number; originalLimitPrice?: number; immediatelyFilled?: boolean };
+  fillInfo?: { orderId?: string; orderType?: string; limitPrice?: number; filledPrice?: number; adjustmentCount?: number; commission?: number; originalLimitPrice?: number; immediatelyFilled?: boolean; signalLimitPrice?: number };
   tradePnl?: string | null;
+  trade?: { entryPrice?: string | null; openedAt?: string | null; quantity?: number | null; strategy?: string | null; direction?: string | null };
 }) {
   const price = safeParseFloat(ev.price);
   const meta = ev.metadata as Record<string, unknown> | null;
-  const limitPrice = fillInfo?.originalLimitPrice ?? fillInfo?.limitPrice;
-  const slippage = limitPrice != null && price != null ? price - limitPrice : null;
+  const multiplier = ev.strategy === 'STOCK' ? 1 : 100;
 
   return (
     <PopoverContent align="start" side="right" className="w-80 p-0">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
         <Badge label={ev.action} />
-        {fillInfo?.orderType && <Badge label={fillInfo.orderType} />}
+        {ev.strategy && <Badge label={ev.strategy} />}
         {fillInfo?.orderId && (
           <span className="text-[10px] text-muted-foreground font-mono">#{fillInfo.orderId}</span>
         )}
       </div>
-      <div className="px-3 py-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        {price != null && (
-          <StatItem label="Fill Price">
-            <span className="text-foreground tabular-nums font-medium">{formatCurrency(price)}</span>
-          </StatItem>
-        )}
-        {limitPrice != null && (
-          <StatItem label="Limit Price">
-            <span className="text-foreground tabular-nums">{formatCurrency(limitPrice)}</span>
-          </StatItem>
-        )}
-        {slippage != null && slippage !== 0 && (
-          <StatItem label="Slippage">
-            <span className={cn('tabular-nums', slippage > 0 ? 'text-loss' : 'text-profit')}>
-              {slippage > 0 ? '+' : ''}{formatCurrency(slippage)}
-            </span>
-          </StatItem>
-        )}
-        {fillInfo?.adjustmentCount != null && fillInfo.adjustmentCount > 0 && (
-          <StatItem label="Chases">
-            <span className="text-foreground tabular-nums">{fillInfo.adjustmentCount}</span>
-          </StatItem>
-        )}
-        {fillInfo?.immediatelyFilled && (
-          <StatItem label="Fill">
-            <span className="text-profit text-[10px]">Immediate</span>
-          </StatItem>
-        )}
-        {fillInfo?.commission != null && fillInfo.commission > 0 && (
-          <StatItem label="Commission">
-            <span className="text-foreground tabular-nums">{formatCurrency(fillInfo.commission)}</span>
-          </StatItem>
-        )}
-        {ev.quantity != null && (
-          <StatItem label="Quantity">
-            <span className="text-foreground tabular-nums">{ev.quantity}</span>
-          </StatItem>
-        )}
-        {ev.action === 'CLOSE' && tradePnl != null && parseFloat(tradePnl) !== 0 && (
-          <StatItem label="P&L">
-            <span className={cn('tabular-nums font-medium', pnlColor(tradePnl))}>{formatCurrency(tradePnl)}</span>
-          </StatItem>
-        )}
-        {ev.action === 'TRIM' && meta?.trimPnl != null && (
-          <StatItem label="Trim P&L">
-            <span className={cn('tabular-nums font-medium', pnlColor(meta.trimPnl as number))}>{formatCurrency(meta.trimPnl as number)}</span>
-          </StatItem>
-        )}
-        {ev.action === 'TRIM' && meta?.exitPercent != null && (
-          <StatItem label="Exit %">
-            <span className="text-foreground tabular-nums">{(Number(meta.exitPercent) * 100).toFixed(0)}%</span>
-          </StatItem>
-        )}
+      <div className="px-3 py-2 space-y-2 text-xs">
+        {/* OPEN: Position snapshot */}
+        {ev.action === 'OPEN' && (() => {
+          const notional = price != null && ev.quantity != null ? price * ev.quantity * multiplier : null;
+          return (
+            <>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <StatItem label="Cost Basis">
+                  <span className="text-foreground tabular-nums font-medium">{formatCurrency(price)}/ct</span>
+                </StatItem>
+                <StatItem label="Contracts">
+                  <span className="text-foreground tabular-nums font-medium">{ev.quantity}</span>
+                </StatItem>
+                {notional != null && (
+                  <StatItem label="Notional">
+                    <span className="text-foreground tabular-nums">{formatCurrency(notional)}</span>
+                  </StatItem>
+                )}
+              </div>
+            </>
+          );
+        })()}
+
+        {/* CLOSE: Trade outcome */}
+        {ev.action === 'CLOSE' && (() => {
+          const entryPrice = trade?.entryPrice != null ? safeParseFloat(trade.entryPrice) : null;
+          const pnl = tradePnl != null ? parseFloat(tradePnl) : null;
+          const entryNotional = entryPrice != null && ev.quantity != null ? entryPrice * ev.quantity * multiplier : null;
+          const returnPct = pnl != null && entryNotional != null && entryNotional !== 0 ? (pnl / entryNotional) * 100 : null;
+          const openedAt = trade?.openedAt;
+          let holdDuration: string | null = null;
+          if (openedAt) {
+            const ms = new Date(ev.timestamp).getTime() - new Date(openedAt).getTime();
+            if (ms > 0) {
+              const hours = Math.floor(ms / 3600000);
+              const mins = Math.floor((ms % 3600000) / 60000);
+              if (hours >= 24) {
+                const days = Math.floor(hours / 24);
+                holdDuration = `${days}d ${hours % 24}h`;
+              } else {
+                holdDuration = `${hours}h ${mins}m`;
+              }
+            }
+          }
+          return (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {entryPrice != null && (
+                <StatItem label="Entry">
+                  <span className="text-foreground tabular-nums">{formatCurrency(entryPrice)}</span>
+                </StatItem>
+              )}
+              <StatItem label="Exit">
+                <span className="text-foreground tabular-nums">{formatCurrency(price)}</span>
+              </StatItem>
+              {pnl != null && pnl !== 0 && (
+                <StatItem label="P&L">
+                  <span className={cn('tabular-nums font-medium', pnlColor(tradePnl!))}>
+                    {formatCurrency(pnl)}{returnPct != null ? ` (${returnPct > 0 ? '+' : ''}${returnPct.toFixed(0)}%)` : ''}
+                  </span>
+                </StatItem>
+              )}
+              {holdDuration && (
+                <StatItem label="Duration">
+                  <span className="text-foreground tabular-nums">{holdDuration}</span>
+                </StatItem>
+              )}
+              {fillInfo?.commission != null && fillInfo.commission > 0 && (
+                <StatItem label="Commission">
+                  <span className="text-foreground tabular-nums">{formatCurrency(fillInfo.commission)}</span>
+                </StatItem>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* TRIM: Position transition */}
+        {ev.action === 'TRIM' && (() => {
+          const trimPnl = meta?.trimPnl as number | undefined;
+          const exitPct = meta?.exitPercent as number | undefined;
+          return (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <StatItem label="Trimmed">
+                <span className="text-foreground tabular-nums">-{ev.quantity}{exitPct != null ? ` (${Math.round(exitPct * 100)}%)` : ''}</span>
+              </StatItem>
+              <StatItem label="Exit Price">
+                <span className="text-foreground tabular-nums">{formatCurrency(price)}</span>
+              </StatItem>
+              {trimPnl != null && (
+                <StatItem label="Trim P&L">
+                  <span className={cn('tabular-nums font-medium', trimPnl > 0 ? 'text-profit' : 'text-loss')}>{formatCurrency(trimPnl)}</span>
+                </StatItem>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ADD: Scaling */}
+        {ev.action === 'ADD' && (() => {
+          return (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <StatItem label="Added">
+                <span className="text-foreground tabular-nums">+{ev.quantity}</span>
+              </StatItem>
+              <StatItem label="Add Price">
+                <span className="text-foreground tabular-nums">{formatCurrency(price)}</span>
+              </StatItem>
+              {trade?.entryPrice != null && (
+                <StatItem label="Avg Basis">
+                  <span className="text-foreground tabular-nums">{formatCurrency(safeParseFloat(trade.entryPrice))}</span>
+                </StatItem>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* LEG_OFF: Structural change */}
+        {ev.action === 'LEG_OFF' && (() => {
+          const targetStrategy = meta?.targetStrategy as string | undefined;
+          const closedLeg = meta?.closedLeg as { type?: string; strike?: number; action?: string; fillPrice?: number } | undefined;
+          const legPnl = computeLegOffPnl(meta, price, ev.quantity, ev.strategy);
+          const cost = computeLegOffCost(price, ev.quantity, ev.strategy);
+          const legDesc = closedLeg ? `${closedLeg.action === 'SELL' ? 'Short' : 'Long'} ${closedLeg.strike}${closedLeg.type === 'CALL' ? 'C' : closedLeg.type === 'PUT' ? 'P' : ''}` : null;
+          return (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {legDesc && (
+                <StatItem label="Closed Leg">
+                  <span className="text-foreground text-xs">{legDesc}</span>
+                </StatItem>
+              )}
+              {closedLeg?.fillPrice != null && (
+                <StatItem label={`${closedLeg.action === 'SELL' ? 'Sold' : 'Bought'} At`}>
+                  <span className="text-foreground tabular-nums">{formatCurrency(closedLeg.fillPrice)}</span>
+                </StatItem>
+              )}
+              <StatItem label="Buyback">
+                <span className="text-foreground tabular-nums">{formatCurrency(price)}/ct</span>
+              </StatItem>
+              {cost != null && (
+                <StatItem label="Cost">
+                  <span className="text-foreground tabular-nums">{formatCurrency(cost)}</span>
+                </StatItem>
+              )}
+              {legPnl != null && (
+                <StatItem label="Leg P&L">
+                  <span className={cn('tabular-nums font-medium', legPnl > 0 ? 'text-profit' : 'text-loss')}>{formatCurrency(legPnl)}</span>
+                </StatItem>
+              )}
+              {targetStrategy && (
+                <StatItem label="New Strategy">
+                  <Badge label={targetStrategy} />
+                </StatItem>
+              )}
+            </div>
+          );
+        })()}
       </div>
       <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground/60 tabular-nums">
         {formatDate(ev.timestamp)}
       </div>
     </PopoverContent>
   );
+}
+
+// ─── Leg-off PnL helper ──────────────────────────────
+
+/** Compute realized PnL on the closed leg. Uses pre-computed value from metadata
+ *  if available, otherwise derives from closedLeg.fillPrice + buyback price. */
+function computeLegOffPnl(
+  meta: Record<string, unknown> | null,
+  buybackPrice: number | null,
+  quantity: number | null,
+  strategy: string | null,
+): number | undefined {
+  if (meta?.legOffPnl != null) return meta.legOffPnl as number;
+  if (buybackPrice == null) return undefined;
+  const closedLeg = meta?.closedLeg as { action?: string; fillPrice?: number; type?: string } | undefined;
+  if (closedLeg?.fillPrice == null) return undefined;
+  const qty = quantity ?? 1;
+  const mult = (strategy === 'STOCK' || closedLeg.type === 'STOCK') ? 1 : 100;
+  const dir = closedLeg.action === 'BUY' ? 1 : -1; // BUY=LONG, SELL=SHORT
+  return Math.round((buybackPrice - closedLeg.fillPrice) * dir * qty * mult * 100) / 100 || 0;
+}
+
+/** Cost of the leg-off as a dollar amount (debit paid for buyback). */
+function computeLegOffCost(
+  buybackPrice: number | null,
+  quantity: number | null,
+  strategy: string | null,
+): number | null {
+  if (buybackPrice == null) return null;
+  const qty = quantity ?? 1;
+  const mult = strategy === 'STOCK' ? 1 : 100;
+  return Math.round(buybackPrice * qty * mult * 100) / 100;
 }
 
 // ─── Unified timeline ────────────────────────────────
@@ -338,7 +427,7 @@ export function UnifiedTimeline() {
     orderId?: string; orderType?: string; limitPrice?: number;
     filledPrice?: number; adjustmentCount?: number; commission?: number;
     originalLimitPrice?: number; immediatelyFilled?: boolean;
-    filledQuantity?: number;
+    filledQuantity?: number; signalLimitPrice?: number;
   }>();
   for (const d of decisions) {
     const snap = d.snapshot as Record<string, unknown> | null;
@@ -359,6 +448,10 @@ export function UnifiedTimeline() {
       existing.originalLimitPrice = params?.limitPrice != null ? Number(params.limitPrice) : existing.originalLimitPrice;
       existing.immediatelyFilled = snap.immediatelyFilled === true;
       existing.filledQuantity = snap.filledQuantity != null ? Number(snap.filledQuantity) : existing.filledQuantity;
+    }
+    if (d.event === 'SIGNAL_RESOLVED') {
+      const sigLimit = snap.limitPrice;
+      if (sigLimit != null) existing.signalLimitPrice = Math.abs(Number(sigLimit));
     }
     fillInfoByMsg.set(d.messageId, existing);
   }
@@ -437,6 +530,8 @@ export function UnifiedTimeline() {
               const price = safeParseFloat(ev.price);
               const meta = ev.metadata as Record<string, unknown> | null;
               const trimPnl = meta?.trimPnl as number | undefined;
+              const legOffPnl = computeLegOffPnl(meta, price, ev.quantity, ev.strategy);
+              const legOffCost = legOffPnl == null ? computeLegOffCost(price, ev.quantity, ev.strategy) : null;
               const info = ev.messageId ? fillInfoByMsg.get(ev.messageId) : undefined;
               const evLegs = ev.legs;
               const evStrategy = ev.strategy ?? '';
@@ -473,13 +568,23 @@ export function UnifiedTimeline() {
                             {formatCurrency(trimPnl)}
                           </span>
                         )}
+                        {legOffPnl != null && (
+                          <span className={cn('text-xs font-semibold tabular-nums', legOffPnl > 0 ? 'text-profit' : 'text-loss')}>
+                            {formatCurrency(legOffPnl)}
+                          </span>
+                        )}
+                        {legOffCost != null && (
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {formatCurrency(-legOffCost)} debit
+                          </span>
+                        )}
                         <span className="text-[11px] text-muted-foreground/60 tabular-nums ml-auto shrink-0">
                           {formatDate(ev.timestamp)}
                         </span>
                       </button>
                     </PopoverTrigger>
                   </div>
-                  <TradeEventPopover ev={ev} fillInfo={info} tradePnl={tradePnl} />
+                  <TradeEventPopover ev={ev} fillInfo={info} tradePnl={tradePnl} trade={trade} />
                 </Popover>
               );
             }
@@ -496,8 +601,9 @@ export function UnifiedTimeline() {
             // ─── Promoted ORDER_CANCELLED — trade-event weight ───
             if (event === 'ORDER_CANCELLED') {
               const snap = d.snapshot as Record<string, unknown> | null;
-              const params = (snap?.params as Record<string, unknown> | undefined);
-              const symbol = params?.symbol ? String(params.symbol) : null;
+              const cancelOrder = snap?.order as Record<string, unknown> | undefined;
+              const cancelParams = cancelOrder?.params as Record<string, unknown> | undefined;
+              const symbol = cancelParams?.symbol ? String(cancelParams.symbol) : null;
               const parsedDecision = filtered.find(
                 o => o.event === 'PARSED' && o.messageId === d.messageId && o.signalIndex === d.signalIndex,
               );
@@ -598,9 +704,21 @@ export function UnifiedTimeline() {
                   {(event === 'PARSED' || (event === 'SETTLED' && isFail)) && d.messageId && msgMap.has(d.messageId) && (() => {
                     const msg = msgMap.get(d.messageId)!;
                     return (
-                      <p className="mt-1.5 text-[11px] text-foreground/50 italic line-clamp-2 border-l-2 border-foreground/20 pl-2 break-words">
-                        {msg.cleanText}
-                      </p>
+                      <div className="mt-1.5 border-l-2 border-foreground/20 pl-2">
+                        <p className="text-[11px] text-foreground/50 italic line-clamp-2 break-words">
+                          {msg.cleanText}
+                        </p>
+                        {msg.reactions.length > 0 && (
+                          <span className="inline-flex gap-1 mt-1">
+                            {msg.reactions.map((r) => (
+                              <span key={r.Type} className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 bg-muted/40 rounded px-1 py-px">
+                                <span>{REACTION_EMOJI[r.Type] ?? r.Type}</span>
+                                {r.Count > 1 && <span className="tabular-nums">{r.Count}</span>}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </div>
                     );
                   })()}
                 </div>

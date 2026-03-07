@@ -33,6 +33,7 @@ export const messages = sqliteTable('messages', {
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
   contentHash:        text('content_hash'),        // sha256 of normalized clean_text for dedup
+  reactions:          text('reactions', { mode: 'json' }).$type<MessageReaction[]>().notNull().default([]),
 }, (table) => [
   index('idx_messages_author').on(table.author),
   index('idx_messages_timestamp').on(table.timestamp),
@@ -320,8 +321,9 @@ export const historicalFetchChunks = sqliteTable('historical_fetch_chunks', {
 export const messageIntents = sqliteTable('message_intents', {
   id:           text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:    text('message_id').references(() => messages.id).notNull(),
-  model:        text('model').notNull(),              // e.g. "grok-4-1-fast-non-reasoning"
-  version:      integer('version').notNull().default(1), // bump when classification prompt changes
+  model:        text('model').notNull(),              // e.g. "grok-4-1-fast-non-reasoning" or "deterministic"
+  version:      integer('version').notNull().default(1), // bump when prompts/parser change
+  route:        text('route').notNull(),               // hard-skip | deterministic | llm
   decision:     text('decision').notNull(),            // EXECUTE | SKIP | MANUAL_REVIEW
   reasoning:    text('reasoning'),
   signals:      text('signals', { mode: 'json' }).$type<Signal[]>(),
@@ -400,6 +402,13 @@ export type BacktestRunSummary = {
 export const TRADE_FLAGS = ['autoClose','legOff','trim','add','slippage','closeFailed','hasUpdate','marketDataFail','chaseWarn','chaseDanger','strategyMismatch'] as const;
 export type TradeFlag = (typeof TRADE_FLAGS)[number];
 
+// ─── Message Reactions ───────────────────────────────
+
+export type MessageReaction = {
+  Type: string;   // votes | loves | appreciations | cheers | salutes
+  Count: number;
+};
+
 // ─── Supporting Types ────────────────────────────────
 
 export const DetectedStrategySchema = z.object({
@@ -471,14 +480,20 @@ export type TradeMetadata = {
   forceExitOrderId?: string;
   /** Broker order status from a force-exit. */
   forceExitStatus?: string;
-  /** Number of price chase steps on the most recent fill. Per-event source of truth is in trade_events metadata. */
+  /** Total price chase steps summed across all fills (OPEN + CLOSE/TRIM/LEG_OFF). Per-event breakdown is in trade_events metadata. */
   chaseSteps?: number;
   /** Chase slippage on entry: fillPrice vs initial limit. Positive = worse (paid more / received less). */
   entrySlippage?: number;
+  /** Chase slippage on entry as % of limit price. */
+  entrySlippagePct?: number;
   /** Chase slippage on exit: fillPrice vs initial limit. Positive = worse (paid more / received less). */
   exitSlippage?: number;
+  /** Chase slippage on exit as % of limit price. */
+  exitSlippagePct?: number;
   /** Materialized trade flags — set at write time by recordTrade and async updaters. */
   flags?: TradeFlag[];
+  /** Total pipeline execution time (ms) from trace spans — message ingestion to final event. */
+  executionMs?: number;
   /** Catch-all for genuinely unknown future fields. */
   extra?: Record<string, unknown>;
 };

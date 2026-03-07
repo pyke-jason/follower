@@ -25,22 +25,25 @@ export type CreditDebitResult = {
   warning?: string;
 };
 
-// ─── Midpoint ────────────────────────────────────────
+// ─── Quote Mark ──────────────────────────────────────
 
 /**
- * Always-positive midpoint price for any leg combination.
+ * Always-positive price at a given fraction between natural bid and ask
+ * for any leg combination.
  *
- * Stock: (bid + ask) / 2 for the underlying.
- * Options / spreads: nets BUY legs (buy at ask, sell at bid) against
- * SELL legs (sell at bid, buy at ask), returns abs of the result.
+ * fraction=0.5 → midpoint. fraction=0.75 → 75% from bid toward ask.
+ *
+ * Stock: bid + fraction × (ask − bid) for the underlying.
+ * Options / spreads: nets BUY legs against SELL legs, then interpolates.
  */
-export async function getMidpoint(
+export async function getQuoteMark(
   broker: BrokerService,
   legs: OrderLeg[],
+  fraction: number,
 ): Promise<number> {
   if (legs.every(l => l.type === 'STOCK')) {
     const quote = await broker.getQuote(legs[0].symbol);
-    return roundCents((quote.bid + quote.ask) / 2);
+    return roundCents(quote.bid + fraction * (quote.ask - quote.bid));
   }
 
   let netBid = 0;
@@ -58,7 +61,18 @@ export async function getMidpoint(
     }
   }
 
-  return Math.abs(roundCents((netBid + netAsk) / 2));
+  return Math.abs(roundCents(netBid + fraction * (netAsk - netBid)));
+}
+
+/**
+ * Always-positive midpoint price for any leg combination.
+ * Convenience wrapper around getQuoteMark with fraction=0.5.
+ */
+export async function getMidpoint(
+  broker: BrokerService,
+  legs: OrderLeg[],
+): Promise<number> {
+  return getQuoteMark(broker, legs, 0.5);
 }
 
 // ─── Structural Credit/Debit ─────────────────────────

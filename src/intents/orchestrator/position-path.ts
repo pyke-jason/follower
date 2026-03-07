@@ -99,6 +99,18 @@ function matchPosition(
         );
         candidates = bySymbol;
         strategyMismatch = true;
+
+        // Block STOCK <-> non-STOCK cross-type mismatches — these are never benign.
+        // OPTION <-> SPREAD mismatches ARE benign (e.g., "exit my calls" on a CDS
+        // after LEG_OFF, or "exit puts" on a PDS).
+        const posIsStock = bySymbol[0].strategy === 'STOCK';
+        const parseIsStock = parse.strategy === 'STOCK';
+        if (posIsStock !== parseIsStock) {
+          return {
+            flagReason: `strategy mismatch: parse=${parse.strategy}, ` +
+              `position=${bySymbol[0].strategy} — refusing STOCK/non-STOCK cross-type close`,
+          };
+        }
       } else {
         // Multiple positions with no strategy match — ambiguous
         return {
@@ -121,6 +133,18 @@ function matchPosition(
     if (byDirection.length === 1) {
       return { position: byDirection[0], strategyMismatch };
     }
+  }
+
+  // Fallback: close the most recently opened position (LIFO heuristic).
+  // Traders typically reference their most recent entry when posting exits.
+  const withTimestamp = candidates.filter(p => p.openedAt != null);
+  if (withTimestamp.length > 0) {
+    withTimestamp.sort((a, b) => b.openedAt!.localeCompare(a.openedAt!));
+    log.warn(
+      `multiple positions for ${symbol} — using most-recent heuristic: ` +
+      `${withTimestamp[0].id.slice(0, 8)} (${withTimestamp.length} candidates)`,
+    );
+    return { position: withTimestamp[0], strategyMismatch };
   }
 
   return {
@@ -180,6 +204,20 @@ function buildLegOffLegs(
 
   if (legs.length < 2) {
     return { flagReason: `LEG_OFF requires a spread position but found ${legs.length} leg(s)` };
+  }
+
+  // Vertical spread fast path: when all option legs share the same type
+  // (both PUT for PDS/PCS, both CALL for CDS/CCS), always close the SELL leg.
+  // This is deterministic and bypasses any targetStrategy errors.
+  const optionLegs = legs.filter(l => l.type !== 'STOCK');
+  if (optionLegs.length >= 2 && optionLegs.every(l => l.type === optionLegs[0].type)) {
+    const sellLeg = legs.find(l => l.action === 'SELL');
+    if (sellLeg) {
+      log.debug(
+        `LEG_OFF: vertical spread (all ${optionLegs[0].type}), closing SELL leg for ${underlyingSymbol}`,
+      );
+      return [buildReversalLeg(sellLeg, underlyingSymbol, qty)];
+    }
   }
 
   // Determine the option type we want to KEEP based on targetStrategy

@@ -66,6 +66,7 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
     confidence: '0.85',
     ingestedAt: '2026-01-15T14:30:05Z',
     contentHash: null,
+    reactions: [],
     ...overrides,
   };
 }

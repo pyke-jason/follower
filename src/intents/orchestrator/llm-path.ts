@@ -29,6 +29,8 @@ import type {
 } from './types.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath } from './position-path.js';
+import { lookupIntent, writeIntent, INTENT_VERSION } from './intent-cache.js';
+import type { IntentStep } from '../../db/schema.js';
 
 const log = createLogger('Orchestrator:LLM');
 
@@ -52,7 +54,8 @@ The message has already been pre-parsed for structured fields (strategy keywords
 
 **IGNORE** — not a trade:
 - Market commentary: "NVDA having a great day"
-- Position updates without action: "holding 20 contracts of SPY"
+- Position updates without action: "holding 20 contracts of SPY", "offering balance at $49.40"
+- Future intent or conditional language: "I will take gains", "looking to exit", "plan to close", "trying to sell", "hoping to exit" — these describe what the trader WILL do or is ATTEMPTING, not a confirmed fill
 - Questions: "what do you think about AAPL?"
 
 ## Signal fields to provide:
@@ -64,6 +67,13 @@ For OPEN signals:
 - direction: "LONG" | "SHORT" (if not deterministic from strategy)
 - statedPremium: dollar amount if mentioned (e.g. 2.10)
 - Do NOT include legs, expiry dates, or exact strikes — those are resolved by market data
+
+For ADD signals (adding to an existing position):
+- action: "ADD"
+- symbol: ticker (required)
+- strategy: same as existing position (e.g. "STOCK")
+- direction: same as existing position
+- "added more shares", "adding to position", "added 2,000 more" → ADD, not OPEN
 
 For CLOSE / TRIM / LEG_OFF signals:
 - action: "CLOSE" | "TRIM" | "LEG_OFF"
@@ -78,8 +88,10 @@ For CLOSE / TRIM / LEG_OFF signals:
 - "Lotto"/"Yolo" = always LONG (buying), never SHORT
 - "Wrote"/"Writing" = always SHORT (selling to open)
 - For follow-trades: call get_recent_chat to find the trade, then mirror it exactly
-- When in doubt about a casual exit, use CLOSE
+- Only classify as CLOSE/TRIM when the exit has clearly ALREADY HAPPENED ("took profits", "closed", "stopped out") or IS HAPPENING NOW ("closing now", "selling here"). Future intent ("I will take gains into it", "looking to exit") is NOT an exit — it's commentary. When in doubt, IGNORE rather than false-positive a CLOSE.
 - Paper trades, futures (ES/NQ/RTY/YM) → IGNORE
+- The English verb "put" (e.g. "put myself back in", "put on a position") is NOT the PUT option strategy. These describe re-entering or initiating a stock position.
+- Hypothetical or educational statements ("If I were looking to…", "I would buy…") are NOT trades — classify as IGNORE even if they contain specific strikes, premiums, or expiries.
 
 Call submit_decision or flag_for_review when ready.`;
 
@@ -96,6 +108,19 @@ export async function resolveLLMPath(
   ctx: OrchestratorContext,
   provider: LLMProvider,
 ): Promise<OrchestratorResult> {
+  const model = provider.identity.model;
+
+  // ── Cache check (skip for 422 retries — failureContext alters the prompt) ──
+  if (!ctx.failureContext) {
+    const cached = lookupIntent(ctx.message.id, model);
+    if (cached) {
+      log.debug(`LLM cache hit for message ${ctx.message.id} (v${INTENT_VERSION})`);
+      return resolveFromCached(cached.decision, cached.reasoning, cached.signals, parse, ctx);
+    }
+  }
+
+  log.debug(`LLM cache miss for message ${ctx.message.id}, calling LLM`);
+
   const userPrompt = buildNLUPrompt(parse, ctx);
 
   const tools = createIntentTools(async (author, limit) => {
@@ -127,6 +152,21 @@ export async function resolveLLMPath(
     : undefined;
   const taskResult = loopResult.result as TaskResult | null;
 
+  // ── Write to cache (fire-and-forget, INSERT OR IGNORE) ──
+  writeIntent({
+    messageId: ctx.message.id,
+    model,
+    route: 'llm',
+    decision: taskResult?.decision ?? 'MANUAL_REVIEW',
+    reasoning: taskResult?.reasoning ?? 'LLM did not call a decision tool',
+    signals: taskResult?.signals ?? null,
+    durationMs: loopResult.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
+    inputTokens: loopResult.usage.inputTokens,
+    outputTokens: loopResult.usage.outputTokens,
+    turns: loopResult.steps.filter(s => s.tool).length,
+    steps: loopResult.steps as IntentStep[],
+  });
+
   if (!taskResult) {
     return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool', usage };
   }
@@ -152,6 +192,30 @@ export async function resolveLLMPath(
   return { ...result, usage };
 }
 
+/** Reconstruct an OrchestratorResult from a cached intent (zero token usage). */
+async function resolveFromCached(
+  decision: string,
+  reasoning: string | null,
+  signals: Signal[] | null,
+  parse: ParseResult,
+  ctx: OrchestratorContext,
+): Promise<OrchestratorResult> {
+  const usage = { inputTokens: 0, outputTokens: 0 };
+
+  if (decision === 'SKIP') {
+    return { outcome: 'SKIP', reason: reasoning ?? 'cached skip', usage };
+  }
+  if (decision === 'MANUAL_REVIEW') {
+    return { outcome: 'MANUAL_REVIEW', reason: reasoning ?? 'cached manual review', usage };
+  }
+  if (!signals || signals.length === 0) {
+    return { outcome: 'MANUAL_REVIEW', reason: 'cached EXECUTE with no signals', usage };
+  }
+
+  const result = await routeLLMSignals(signals, parse, ctx);
+  return { ...result, usage };
+}
+
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): string {
@@ -163,6 +227,7 @@ function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): string {
     ``,
     `Date/Time: ${dateStr}`,
     `Author: ${ctx.message.author}`,
+    `Badges: ${JSON.stringify(ctx.message.badges)}`,
     `Text: ${messageText}`,
     `Symbols detected: ${JSON.stringify(ctx.message.symbols)}`,
   ];
@@ -219,6 +284,16 @@ async function routeLLMSignals(
   for (const signal of llmSignals) {
     const signalParse = signalToParseResult(signal, originalParse);
     let result: OrchestratorResult;
+
+    // Safety net: reroute STOCK OPEN→ADD when a matching position already exists.
+    // The LLM may output OPEN for "added more shares" if it doesn't use ADD.
+    if (signalParse.action === 'OPEN' && signalParse.strategy === 'STOCK' && signalParse.symbol) {
+      const existing = await ctx.positions.getPositions(signalParse.symbol);
+      const dup = existing.find(p => p.strategy === 'STOCK' && p.direction === signalParse.direction);
+      if (dup) {
+        signalParse.action = 'ADD';
+      }
+    }
 
     if (signalParse.action === 'ADD') {
       result = await resolveAddPath(signalParse, ctx);
@@ -281,8 +356,8 @@ function signalToParseResult(signal: Signal, originalParse: ParseResult): ParseR
     expiryHint: llmExpiryHint ?? originalParse.expiryHint,
     premiumHint: signal.statedPremium ?? originalParse.premiumHint,
     exitPercent: signal.exitPercent ?? originalParse.exitPercent,
-    targetStrategy: (signal.targetStrategy as ParseResult['targetStrategy']) ??
-      originalParse.targetStrategy,
+    targetStrategy: originalParse.targetStrategy ??
+      (signal.targetStrategy as ParseResult['targetStrategy']),
     isLotto: originalParse.isLotto,
     isStrangle: false,
     isHardSkip: false,

@@ -3,8 +3,9 @@ import { eq, and, inArray } from 'drizzle-orm';
 import { fetchJson } from './resilient-fetcher.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
-import type { SignalRMessage } from './signalr.js';
+import { compactReactions, type SignalRMessage } from './signalr.js';
 import { isoToDateKey } from '../lib/et-date.js';
+import { normalizeForDedup, computeContentHash } from './dedup.js';
 
 const SEARCH_URL = 'https://app.oneoption.com/chat/search-messages';
 const CHUNK_DELAY_MS = 500;
@@ -18,7 +19,12 @@ const ApiMessageSchema = z.object({
   Message: z.string(),
   Tag: z.coerce.string().optional().default(''),
   Votes: z.number().optional().default(0),
-  Reactions: z.array(z.unknown()).optional().default([]),
+  Reactions: z.array(z.object({
+    Type: z.string(),
+    Count: z.number(),
+    Users: z.array(z.string()).optional(),
+    ByRoles: z.record(z.string(), z.number()).optional(),
+  })).optional().default([]),
 });
 
 const ApiResponseSchema = z.object({
@@ -203,6 +209,9 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
   for (const apiMsg of messages) {
     const msg = mapToSignalRFormat(apiMsg);
     const classification = classifyMessage(msg.MessageText);
+    const normalizedText = normalizeForDedup(classification.cleanText);
+    const contentHash = computeContentHash(normalizedText);
+    const reactions = compactReactions(msg.Reactions);
 
     const result = await db.insert(schema.messages).values({
       id: msg.Id,
@@ -217,6 +226,8 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
       detectedStrategies: classification.detectedStrategies,
       isPaperTrade: classification.isPaperTrade,
       confidence: classification.confidence != null ? String(classification.confidence) : null,
+      contentHash,
+      reactions,
     }).onConflictDoNothing();
 
     if (result.changes > 0) saved++;

@@ -23,6 +23,7 @@ type HistorySummary = {
   winRate: number;
   bestTrade: number;
   worstTrade: number;
+  totalSlippage: number;
 };
 
 type StrategyRow = {
@@ -67,6 +68,7 @@ function buildMetrics(summary: HistorySummary): Metric[] {
     { label: 'Win Rate', value: summary.winRate, format: 'percent' },
     { label: 'Best', value: summary.bestTrade, format: 'currency', colorBySign: true },
     { label: 'Worst', value: summary.worstTrade, format: 'currency', colorBySign: true },
+    { label: 'Slippage', value: Math.abs(summary.totalSlippage), format: 'currency' },
   ];
 }
 

@@ -13,12 +13,21 @@
         "signals": [
           {
             "orderType": "SINGLE",
-            "legs": [{ "optionType": "CALL", "strike": 155 }]
+            "legs": [
+              {
+                "optionType": "CALL",
+                "strike": 155
+              }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome"],
-      "tags": ["time-spread"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "time-spread"
+      ],
       "notes": "Canonical Dave W time spread open. Long+Short badges = bullish+bearish STOCK VIEW, not direction. 'time spread' keyword disambiguates from strangle: this is a CALL-only position (buy longer-dated, sell shorter-dated), not two separate CALL+PUT legs. Strike 155 is explicit. System must not decompose into a strangle."
     },
     {
@@ -34,12 +43,21 @@
         "signals": [
           {
             "orderType": "SINGLE",
-            "legs": [{ "optionType": "CALL", "strike": 67 }]
+            "legs": [
+              {
+                "optionType": "CALL",
+                "strike": 67
+              }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome"],
-      "tags": ["time-spread"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "time-spread"
+      ],
       "notes": "Time spread open with stated entry price (.28) and explicit strike ($67). Long+Short badges are stock-view badges, not an instruction to BUY both a CALL and a PUT. 'calls for .28' confirms single CALL option type. Must emit EXECUTE (not SKIP), capture strike=67."
     },
     {
@@ -55,12 +73,21 @@
         "signals": [
           {
             "orderType": "SINGLE",
-            "legs": [{ "optionType": "CALL", "strike": 47 }]
+            "legs": [
+              {
+                "optionType": "CALL",
+                "strike": 47
+              }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome"],
-      "tags": ["time-spread"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "time-spread"
+      ],
       "notes": "Hariseldon uses explicit leg language: 'Sold $47 Calls for this week, bought $47 Calls for next week'. No badges. This is a net debit calendar spread (long dated > short dated). 40 contracts. Strike 47 is explicit. The 'sold'/'bought' verbs describe the individual legs of the spread, not an instruction to go SHORT — overall position is LONG a time spread."
     },
     {
@@ -76,7 +103,16 @@
             "symbol": "RH",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "RH    251226C00155000", "side": "BUY", "quantity": 1, "expiry": "2025-12-26", "strike": 155, "type": "option", "optionType": "CALL" }],
+            "legs": [
+              {
+                "symbol": "RH    251226C00155000",
+                "quantity": 1,
+                "expiry": "2025-12-26",
+                "strike": 155,
+                "type": "CALL",
+                "action": "BUY"
+              }
+            ],
             "quantity": 10
           }
         ]
@@ -87,12 +123,27 @@
           {
             "orderType": "SINGLE",
             "symbol": "RH",
-            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 155 }]
+            "legs": [
+              {
+                "optionType": "CALL",
+                "side": "SELL",
+                "strike": 155
+              }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
-      "tags": ["time-spread", "exits"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": [
+        "time-spread",
+        "exits"
+      ],
       "notes": "Exit badge + Short+Long badges together = time spread close. Matching the RH open from timespread-001 (message 486703 the day before). No strike in this exit message — must match by symbol. Position is modeled as a CALL LONG since a time spread is net-long the far-dated call. Position match should find the RH CALL position."
     },
     {
@@ -108,7 +159,16 @@
             "symbol": "HPQ",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "HPQ   251205C00030000", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 30, "type": "option", "optionType": "CALL" }],
+            "legs": [
+              {
+                "symbol": "HPQ   251205C00030000",
+                "quantity": 1,
+                "expiry": "2025-12-05",
+                "strike": 30,
+                "type": "CALL",
+                "action": "BUY"
+              }
+            ],
             "quantity": 10
           }
         ]
@@ -119,12 +179,27 @@
           {
             "orderType": "SINGLE",
             "symbol": "HPQ",
-            "legs": [{ "optionType": "CALL", "side": "SELL", "strike": 30 }]
+            "legs": [
+              {
+                "optionType": "CALL",
+                "side": "SELL",
+                "strike": 30
+              }
+            ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
-      "tags": ["time-spread", "exits"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": [
+        "time-spread",
+        "exits"
+      ],
       "notes": "Verbose exit narrative explains the mechanics: short-dated calls expired worthless, now selling the longer-dated calls for .24 (double the .12 entry). Exit+Long+Short badges with 'time spread' keyword. The 'sold this weeks calls' phrase describes the exit leg action, not a new SHORT signal. extra_text complexity flag expected. Must emit EXECUTE + match the HPQ CALL position."
     }
   ]

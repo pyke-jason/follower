@@ -20,10 +20,13 @@
 import type { Message } from '../../db/schema.js';
 
 import { createLogger } from '../../lib/logger.js';
+import { traced } from '../../lib/trace.js';
 import { parseMessage } from './parser.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath, buildReversalLeg } from './position-path.js';
 import { resolveLLMPath } from './llm-path.js';
+import { writeIntent } from './intent-cache.js';
+import type { IntentRoute } from './intent-cache.js';
 import { getRecentChatMessages, formatChatContext } from '../trader-context.js';
 import type {
   OrchestratorContext,
@@ -38,6 +41,7 @@ import type {
 export type { OrchestratorEnv, OrchestratorResult, ResolvedSignal };
 export type { Leg, OptionLeg, StockLeg } from './types.js';
 export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, TradePosition, SignalEventEmitter } from './types.js';
+export { INTENT_VERSION } from './intent-cache.js';
 
 const log = createLogger('Orchestrator');
 
@@ -60,7 +64,7 @@ export async function resolveOrchestrator(
 ): Promise<OrchestratorResult> {
   // Build internal context from message + env
   const ctx = await buildContext(message, env, opts?.failureContext);
-  const parse = parseMessage(ctx);
+  let parse = traced(env.trace, 'parse', 'sync', () => parseMessage(ctx));
 
   log.debug(
     `[${ctx.message.id}] parse: action=${parse.action} symbol=${parse.symbol} ` +
@@ -79,7 +83,7 @@ export async function resolveOrchestrator(
       parseResult: serializedParse,
     };
     logResult(ctx, parse, result);
-    await emitOrchestratorEvents(env, result, serializedParse, 'hard-skip');
+    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'hard-skip'));
     return result;
   }
 
@@ -87,20 +91,20 @@ export async function resolveOrchestrator(
   // Strangle/straddle EXIT: close all matching positions for symbol
   if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
     log.debug(`[${ctx.message.id}] strangle exit → per-position close`);
-    const r = await resolveStrangleExit(parse, ctx);
+    const r = await traced(env.trace, 'strangleExit', 'db', () => resolveStrangleExit(parse, ctx));
     const result = { ...r, parseResult: serializedParse };
     logResult(ctx, parse, result);
-    await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
     return result;
   }
 
   // Strangle/straddle OPEN: decompose into CALL + PUT signals
   if (parse.isStrangle) {
     log.debug(`[${ctx.message.id}] strangle → forking into CALL + PUT`);
-    const r = await resolveStrangle(parse, ctx);
+    const r = await traced(env.trace, 'strangle', 'market_data', () => resolveStrangle(parse, ctx));
     const result = { ...r, parseResult: serializedParse };
     logResult(ctx, parse, result);
-    await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
     return result;
   }
 
@@ -108,25 +112,38 @@ export async function resolveOrchestrator(
   // Only take the fast path when there are no complexity flags and the action
   // was unambiguously determined. A failureContext means execution already tried
   // the deterministic result and got a 422 — force LLM to correct the strike.
+  // Reroute STOCK OPEN→ADD when a same-symbol/strategy/direction position already exists.
+  // The parser is zero-I/O so can't check, but the orchestrator can.
+  if (parse.action === 'OPEN' && parse.strategy === 'STOCK' && parse.symbol) {
+    const existing = await ctx.positions.getPositions(parse.symbol);
+    const duplicate = existing.find(
+      (p) => p.strategy === 'STOCK' && p.direction === parse.direction,
+    );
+    if (duplicate) {
+      log.debug(`[${ctx.message.id}] rerouting STOCK OPEN→ADD for ${parse.symbol} (existing position ${duplicate.id.slice(0, 8)})`);
+      parse = { ...parse, action: 'ADD' };
+    }
+  }
+
   const needsLLM = parse.complexityFlags.size > 0 || parse.action === null || ctx.failureContext != null;
 
   if (!needsLLM) {
     if (parse.action === 'ADD') {
       log.debug(`[${ctx.message.id}] → add path`);
-      const r = await resolveAddPath(parse, ctx);
+      const r = await traced(env.trace, 'addPath', 'market_data', () => resolveAddPath(parse, ctx));
       const result = { ...r, parseResult: serializedParse };
       logResult(ctx, parse, result);
-      await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+      await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
       return result;
     }
 
     if (parse.action === 'OPEN') {
       log.debug(`[${ctx.message.id}] → open path`);
-      const r = await resolveOpenPath(parse, ctx);
+      const r = await traced(env.trace, 'openPath', 'market_data', () => resolveOpenPath(parse, ctx));
       if (r.outcome !== 'MANUAL_REVIEW') {
         const result = { ...r, parseResult: serializedParse };
         logResult(ctx, parse, result);
-        await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+        await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
         return result;
       }
       // Open path couldn't resolve — fall through to LLM for disambiguation
@@ -139,11 +156,11 @@ export async function resolveOrchestrator(
       parse.action === 'LEG_OFF'
     ) {
       log.debug(`[${ctx.message.id}] → position path (${parse.action})`);
-      const r = await resolvePositionPath(parse, ctx);
+      const r = await traced(env.trace, 'positionPath', 'db', () => resolvePositionPath(parse, ctx));
       if (r.outcome !== 'MANUAL_REVIEW') {
         const result = { ...r, parseResult: serializedParse };
         logResult(ctx, parse, result);
-        await emitOrchestratorEvents(env, result, serializedParse, 'deterministic');
+        await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
         return result;
       }
       // Ambiguous position match — fall through to LLM for disambiguation
@@ -171,14 +188,14 @@ export async function resolveOrchestrator(
       parseResult: serializedParse,
     };
     logResult(ctx, parse, result);
-    await emitOrchestratorEvents(env, result, serializedParse, 'llm');
+    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'llm'));
     return result;
   }
 
-  const r = await resolveLLMPath(parse, ctx, env.llm);
+  const r = await traced(env.trace, 'llmPath', 'llm', () => resolveLLMPath(parse, ctx, env.llm));
   const result = { ...r, parseResult: serializedParse };
   logResult(ctx, parse, result);
-  await emitOrchestratorEvents(env, result, serializedParse, 'llm');
+  await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'llm'));
   return result;
 }
 
@@ -213,6 +230,7 @@ async function buildContext(
 
 async function emitOrchestratorEvents(
   env: OrchestratorEnv,
+  message: Message,
   result: OrchestratorResult,
   serializedParse: SerializedParseResult,
   route: 'deterministic' | 'llm' | 'hard-skip',
@@ -232,6 +250,19 @@ async function emitOrchestratorEvents(
         outputTokens: result.usage?.outputTokens,
       }, { ...signal });
     }
+  }
+
+  // Record decision for tracking (LLM path records its own with richer detail)
+  if (route !== 'llm') {
+    const reason = result.outcome === 'SKIP' || result.outcome === 'MANUAL_REVIEW'
+      ? result.reason : null;
+    writeIntent({
+      messageId: message.id,
+      model: env.llm?.identity.model ?? 'deterministic',
+      route: route as IntentRoute,
+      decision: result.outcome,
+      reasoning: reason,
+    });
   }
 }
 

@@ -15,13 +15,25 @@
             "orderType": "SINGLE",
             "symbol": "MSTR",
             "legs": [
-              { "side": "SELL", "optionType": "CALL", "strike": 210 }
+              {
+                "side": "SELL",
+                "optionType": "CALL",
+                "strike": 210
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
-      "tags": ["covered-call", "sell-to-open"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": [
+        "covered-call",
+        "sell-to-open"
+      ],
       "notes": "'Sold' verb is authoritative: direction SHORT, leg side=SELL. '(covered calls)' suffix confirms sell-to-open against stock position. No badge present. Strike $210, 10 contracts, premium $1.76."
     },
     {
@@ -39,13 +51,25 @@
             "orderType": "SINGLE",
             "symbol": "AAPL",
             "legs": [
-              { "side": "SELL", "optionType": "CALL", "strike": 255 }
+              {
+                "side": "SELL",
+                "optionType": "CALL",
+                "strike": 255
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
-      "tags": ["covered-call", "sell-to-open"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": [
+        "covered-call",
+        "sell-to-open"
+      ],
       "notes": "'Sold' verb + 'Covered Calls' noun phrase = sell-to-open CALL, direction SHORT, leg side=SELL. The word 'Covered' describes strategy context, not a spread. Strike $255, 10 contracts, premium $1.03."
     },
     {
@@ -63,13 +87,25 @@
             "orderType": "SINGLE",
             "symbol": "OSCR",
             "legs": [
-              { "side": "SELL", "optionType": "CALL", "strike": 22 }
+              {
+                "side": "SELL",
+                "optionType": "CALL",
+                "strike": 22
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
-      "tags": ["covered-call", "sell-to-open"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": [
+        "covered-call",
+        "sell-to-open"
+      ],
       "notes": "'Sold' verb is authoritative: direction SHORT, leg side=SELL. 'to cover my shares' = selling calls against stock, but not required to parse correctly — 'Sold' alone determines SHORT. 35 contracts, strike $22, $0.32 premium."
     },
     {
@@ -88,12 +124,11 @@
             "legs": [
               {
                 "symbol": "AAPL  251010C00260000",
-                "side": "SELL",
                 "quantity": 1,
                 "expiry": "2025-10-10",
                 "strike": 260,
-                "type": "option",
-                "optionType": "CALL"
+                "type": "CALL",
+                "action": "SELL"
               }
             ],
             "quantity": 10
@@ -107,13 +142,26 @@
             "orderType": "SINGLE",
             "symbol": "AAPL",
             "legs": [
-              { "side": "BUY", "optionType": "CALL", "strike": 260 }
+              {
+                "side": "BUY",
+                "optionType": "CALL",
+                "strike": 260
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
-      "tags": ["covered-call", "close"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike"
+      ],
+      "tags": [
+        "covered-call",
+        "close"
+      ],
       "notes": "'Bought back' = closing a previously sold (SHORT) CALL position. Must match the open SHORT CALL position by symbol. CLOSE reverses leg side: SELL→BUY. Strike $260, optionType CALL from position."
     },
     {
@@ -132,12 +180,11 @@
             "legs": [
               {
                 "symbol": "MSTR  251122C00210000",
-                "side": "SELL",
                 "quantity": 1,
                 "expiry": "2025-11-22",
                 "strike": 210,
-                "type": "option",
-                "optionType": "CALL"
+                "type": "CALL",
+                "action": "SELL"
               }
             ],
             "quantity": 10
@@ -151,20 +198,41 @@
             "orderType": "SINGLE",
             "symbol": "MSTR",
             "legs": [
-              { "side": "BUY", "optionType": "CALL", "strike": 210 }
+              {
+                "side": "BUY",
+                "optionType": "CALL",
+                "strike": 210
+              }
             ]
           },
           {
             "orderType": "SINGLE",
             "symbol": "MSTR",
             "legs": [
-              { "side": "SELL", "optionType": "CALL", "strike": 200 }
+              {
+                "side": "SELL",
+                "optionType": "CALL",
+                "strike": 200
+              }
             ]
           }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike", "signals[1].legs[0].side", "signals[1].legs[0].optionType", "signals[1].legs[0].strike"],
-      "tags": ["covered-call", "roll", "multi-signal"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].legs[0].side",
+        "signals[0].legs[0].optionType",
+        "signals[0].legs[0].strike",
+        "signals[1].legs[0].side",
+        "signals[1].legs[0].optionType",
+        "signals[1].legs[0].strike"
+      ],
+      "tags": [
+        "covered-call",
+        "roll",
+        "multi-signal"
+      ],
       "notes": "Roll = two actions in one message. Signal 0: close existing $210 SHORT CALL (reversed leg: BUY CALL $210). Signal 1: new sell-to-open $200 CALL (side=SELL). 'Bought back' = close; 'sold' = new open. Both on MSTR. The $200 strike is lower than $210, a classic downward roll when stock is falling."
     }
   ]

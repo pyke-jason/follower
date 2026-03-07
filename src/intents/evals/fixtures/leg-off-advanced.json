@@ -14,8 +14,8 @@
             "strategy": "PDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "TSLA  251219P00445000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 445, "type": "option", "optionType": "PUT" },
-              { "symbol": "TSLA  251219P00440000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 440, "type": "option", "optionType": "PUT" }
+              { "symbol": "TSLA  251219P00445000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 445, "type": "PUT" },
+              { "symbol": "TSLA  251219P00440000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 440, "type": "PUT" }
             ],
             "quantity": 30
           },
@@ -25,8 +25,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "COST  251219C00905000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 905, "type": "option", "optionType": "CALL" },
-              { "symbol": "COST  251219C00910000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 910, "type": "option", "optionType": "CALL" }
+              { "symbol": "COST  251219C00905000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 905, "type": "CALL" },
+              { "symbol": "COST  251219C00910000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 910, "type": "CALL" }
             ],
             "quantity": 20
           },
@@ -36,8 +36,8 @@
             "strategy": "PDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "COST  251219P00855000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 855, "type": "option", "optionType": "PUT" },
-              { "symbol": "COST  251219P00850000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 850, "type": "option", "optionType": "PUT" }
+              { "symbol": "COST  251219P00855000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 855, "type": "PUT" },
+              { "symbol": "COST  251219P00850000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 850, "type": "PUT" }
             ],
             "quantity": 20
           }
@@ -69,8 +69,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "MSTR  251219C00380000", "side": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 380, "type": "option", "optionType": "CALL" },
-              { "symbol": "MSTR  251219C00400000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 400, "type": "option", "optionType": "CALL" }
+              { "symbol": "MSTR  251219C00380000", "action": "BUY", "quantity": 1, "expiry": "2025-12-19", "strike": 380, "type": "CALL" },
+              { "symbol": "MSTR  251219C00400000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 400, "type": "CALL" }
             ],
             "quantity": 15
           }
@@ -100,8 +100,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "MSTR  251205C00210000", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 210, "type": "option", "optionType": "CALL" },
-              { "symbol": "MSTR  251205C00220000", "side": "SELL", "quantity": 1, "expiry": "2025-12-05", "strike": 220, "type": "option", "optionType": "CALL" }
+              { "symbol": "MSTR  251205C00210000", "action": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 210, "type": "CALL" },
+              { "symbol": "MSTR  251205C00220000", "action": "SELL", "quantity": 1, "expiry": "2025-12-05", "strike": 220, "type": "CALL" }
             ],
             "quantity": 15
           }
@@ -131,8 +131,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "META  251121C00570000", "side": "BUY", "quantity": 1, "expiry": "2025-11-21", "strike": 570, "type": "option", "optionType": "CALL" },
-              { "symbol": "META  251121C00580000", "side": "SELL", "quantity": 1, "expiry": "2025-11-21", "strike": 580, "type": "option", "optionType": "CALL" }
+              { "symbol": "META  251121C00570000", "action": "BUY", "quantity": 1, "expiry": "2025-11-21", "strike": 570, "type": "CALL" },
+              { "symbol": "META  251121C00580000", "action": "SELL", "quantity": 1, "expiry": "2025-11-21", "strike": 580, "type": "CALL" }
             ],
             "quantity": 10
           }
@@ -162,8 +162,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "NFLX  251025C01130000", "side": "BUY", "quantity": 1, "expiry": "2025-10-25", "strike": 1130, "type": "option", "optionType": "CALL" },
-              { "symbol": "NFLX  251025C01140000", "side": "SELL", "quantity": 1, "expiry": "2025-10-25", "strike": 1140, "type": "option", "optionType": "CALL" }
+              { "symbol": "NFLX  251025C01130000", "action": "BUY", "quantity": 1, "expiry": "2025-10-25", "strike": 1130, "type": "CALL" },
+              { "symbol": "NFLX  251025C01140000", "action": "SELL", "quantity": 1, "expiry": "2025-10-25", "strike": 1140, "type": "CALL" }
             ],
             "quantity": 20
           }
@@ -193,8 +193,8 @@
             "strategy": "PDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "TSM   251031P00185000", "side": "BUY", "quantity": 1, "expiry": "2025-10-31", "strike": 185, "type": "option", "optionType": "PUT" },
-              { "symbol": "TSM   251031P00180000", "side": "SELL", "quantity": 1, "expiry": "2025-10-31", "strike": 180, "type": "option", "optionType": "PUT" }
+              { "symbol": "TSM   251031P00185000", "action": "BUY", "quantity": 1, "expiry": "2025-10-31", "strike": 185, "type": "PUT" },
+              { "symbol": "TSM   251031P00180000", "action": "SELL", "quantity": 1, "expiry": "2025-10-31", "strike": 180, "type": "PUT" }
             ],
             "quantity": 10
           }
@@ -224,7 +224,7 @@
             "strategy": "PUT",
             "direction": "SHORT",
             "legs": [
-              { "symbol": "NVDA  251219P00125000", "side": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 125, "type": "option", "optionType": "PUT" }
+              { "symbol": "NVDA  251219P00125000", "action": "SELL", "quantity": 1, "expiry": "2025-12-19", "strike": 125, "type": "PUT" }
             ],
             "quantity": 20
           }
@@ -278,8 +278,8 @@
             "strategy": "CDS",
             "direction": "LONG",
             "legs": [
-              { "symbol": "META  250905C00755000", "side": "BUY", "quantity": 1, "expiry": "2025-09-05", "strike": 755, "type": "option", "optionType": "CALL" },
-              { "symbol": "META  250905C00765000", "side": "SELL", "quantity": 1, "expiry": "2025-09-05", "strike": 765, "type": "option", "optionType": "CALL" }
+              { "symbol": "META  250905C00755000", "action": "BUY", "quantity": 1, "expiry": "2025-09-05", "strike": 755, "type": "CALL" },
+              { "symbol": "META  250905C00765000", "action": "SELL", "quantity": 1, "expiry": "2025-09-05", "strike": 765, "type": "CALL" }
             ],
             "quantity": 10
           }
@@ -309,7 +309,7 @@
             "strategy": "CALL",
             "direction": "LONG",
             "legs": [
-              { "symbol": "META  250905C00755000", "side": "BUY", "quantity": 1, "expiry": "2025-09-05", "strike": 755, "type": "option", "optionType": "CALL" }
+              { "symbol": "META  250905C00755000", "action": "BUY", "quantity": 1, "expiry": "2025-09-05", "strike": 755, "type": "CALL" }
             ],
             "quantity": 10
           }
@@ -324,6 +324,68 @@
       "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
       "tags": ["leg-off", "cds", "exit-after-legoff", "sequence"],
       "notes": "Part 3 of 3 (open → leg-off → exit). After legoff-adv-009 bought back the short $765 calls, the position converted from CDS to naked CALL (targetStrategy=CALL) with only the long $755 calls remaining. Trader still says 'Exit META CDS' using the original strategy name — system must fuzzy-match to the CALL position by symbol."
+    },
+    {
+      "id": "legoff-adv-011",
+      "description": "'Bought back the short Puts on MSFT' — PDS leg-off WITHOUT 'PDS' keyword, must close SELL PUT leg (bt:inland-bandicoot regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the short Puts on <a href=\"/option-stalker/chart/MSFT\" target=\"os\" data-symbol=\"MSFT\"><b>MSFT</b></a></div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-19T14:02:00.000Z",
+        "positions": [
+          {
+            "id": "pos-msft-pds",
+            "symbol": "MSFT",
+            "strategy": "PDS",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "MSFT  250919P00507500", "action": "BUY", "quantity": 1, "expiry": "2025-09-19", "strike": 507.5, "type": "PUT" },
+              { "symbol": "MSFT  250919P00500000", "action": "SELL", "quantity": 1, "expiry": "2025-09-19", "strike": 500, "type": "PUT" }
+            ],
+            "quantity": 20
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "SINGLE", "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 500 }] }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["leg-off", "pds", "regression", "inland-bandicoot"],
+      "notes": "Bug from bt:inland-bandicoot trade 4377ca77: LLM hallucinated targetStrategy='CALL' on PDS (both legs are PUTs), causing wrong leg (507.5P BUY) to be closed instead of 500P SELL. Unlike legoff-adv-006 (TSM PDS), this message does NOT contain the keyword 'PDS'. The system must detect the PDS position structure (both legs same option type) and deterministically close the SELL leg."
+    },
+    {
+      "id": "legoff-adv-012",
+      "description": "'Bought back the Short Puts on COST PDS - that is no-brainer' — PDS leg-off, close SELL PUT leg (bt:inland-bandicoot regression)",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>Bought back the Short Puts on <a href=\"/option-stalker/chart/COST\" target=\"os\" data-symbol=\"COST\"><b>COST</b></a> PDS - that is no-brainer on this PDS&nbsp;</div></body></html>",
+        "author": "Hariseldon",
+        "timestamp": "2025-09-30T19:56:00.000Z",
+        "positions": [
+          {
+            "id": "pos-cost-pds",
+            "symbol": "COST",
+            "strategy": "PDS",
+            "direction": "LONG",
+            "legs": [
+              { "symbol": "COST  251003P00905000", "action": "BUY", "quantity": 1, "expiry": "2025-10-03", "strike": 905, "type": "PUT" },
+              { "symbol": "COST  251003P00900000", "action": "SELL", "quantity": 1, "expiry": "2025-10-03", "strike": 900, "type": "PUT" }
+            ],
+            "quantity": 20
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          { "orderType": "SINGLE", "legs": [{ "optionType": "PUT", "side": "BUY", "strike": 900 }] }
+        ]
+      },
+      "mustMatch": ["signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["leg-off", "pds", "regression", "inland-bandicoot"],
+      "notes": "Bug from bt:inland-bandicoot trade 969895cc: Same wrong-leg LEG_OFF as legoff-adv-011. Despite the message explicitly mentioning 'PDS', the LLM still set targetStrategy='CALL'. Both legs are PUT. Fix: deterministic routing for vertical spreads bypasses LLM entirely."
     }
   ]
 }

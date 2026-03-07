@@ -13,7 +13,7 @@
             "symbol": "AMD",
             "strategy": "STOCK",
             "direction": "SHORT",
-            "legs": [{ "symbol": "AMD", "side": "SELL", "quantity": 469, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "AMD", "action": "SELL", "quantity": 469, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 469
           },
           {
@@ -21,7 +21,7 @@
             "symbol": "GOOGL",
             "strategy": "STOCK",
             "direction": "LONG",
-            "legs": [{ "symbol": "GOOGL", "side": "BUY", "quantity": 6888, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "GOOGL", "action": "BUY", "quantity": 6888, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 6888
           }
         ]
@@ -51,8 +51,8 @@
             "strategy": "PDS",
             "direction": "SHORT",
             "legs": [
-              { "symbol": "TSLA  251017P00430000", "side": "BUY", "quantity": 20, "expiry": "2025-10-17", "strike": 430, "type": "option", "optionType": "PUT" },
-              { "symbol": "TSLA  251017P00420000", "side": "SELL", "quantity": 20, "expiry": "2025-10-17", "strike": 420, "type": "option", "optionType": "PUT" }
+              { "symbol": "TSLA  251017P00430000", "action": "BUY", "quantity": 20, "expiry": "2025-10-17", "strike": 430, "type": "PUT" },
+              { "symbol": "TSLA  251017P00420000", "action": "SELL", "quantity": 20, "expiry": "2025-10-17", "strike": 420, "type": "PUT" }
             ],
             "quantity": 20
           }
@@ -96,7 +96,7 @@
             "symbol": "BABA",
             "strategy": "STOCK",
             "direction": "SHORT",
-            "legs": [{ "symbol": "BABA", "side": "SELL", "quantity": 464, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "BABA", "action": "SELL", "quantity": 464, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 464
           }
         ]
@@ -125,7 +125,7 @@
             "symbol": "PDD",
             "strategy": "STOCK",
             "direction": "SHORT",
-            "legs": [{ "symbol": "PDD", "side": "SELL", "quantity": 464, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "PDD", "action": "SELL", "quantity": 464, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 464
           }
         ]
@@ -154,7 +154,7 @@
             "symbol": "CRM",
             "strategy": "STOCK",
             "direction": "LONG",
-            "legs": [{ "symbol": "CRM", "side": "BUY", "quantity": 223, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "CRM", "action": "BUY", "quantity": 223, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 223
           },
           {
@@ -162,7 +162,7 @@
             "symbol": "ULTA",
             "strategy": "STOCK",
             "direction": "LONG",
-            "legs": [{ "symbol": "ULTA", "side": "BUY", "quantity": 78, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "ULTA", "action": "BUY", "quantity": 78, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 78
           }
         ]
@@ -191,7 +191,7 @@
             "symbol": "MSTR",
             "strategy": "STOCK",
             "direction": "LONG",
-            "legs": [{ "symbol": "MSTR", "side": "BUY", "quantity": 122, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "MSTR", "action": "BUY", "quantity": 122, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 122
           },
           {
@@ -199,7 +199,7 @@
             "symbol": "NVDA",
             "strategy": "STOCK",
             "direction": "LONG",
-            "legs": [{ "symbol": "NVDA", "side": "BUY", "quantity": 225, "expiry": "", "strike": 0, "type": "stock" }],
+            "legs": [{ "symbol": "NVDA", "action": "BUY", "quantity": 225, "expiry": "", "strike": 0, "type": "STOCK" }],
             "quantity": 225
           }
         ]

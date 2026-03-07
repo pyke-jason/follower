@@ -1,7 +1,8 @@
 import { Badge } from './badge';
 import { StatItem } from './stat-item';
 import { InfoChip } from './info-chip';
-import { formatDate } from '@/lib/format';
+import { formatCurrency, formatDate } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 export type LegRow = {
   symbol?: string;
@@ -13,66 +14,95 @@ export type LegRow = {
   quantity?: number;
 };
 
+// ─── ParseResultView — "What the system heard" ─────
+
+const ROUTE_LABEL: Record<string, string> = {
+  deterministic: 'Deterministic',
+  orchestrator: 'Agent',
+  hard_skip: 'Hard Skip',
+};
+
 export function ParseResultView({ data }: { data: Record<string, unknown> }) {
+  const route = data.route != null ? String(data.route) : null;
+  const routeLabel = route ? (ROUTE_LABEL[route] ?? route) : null;
+  const isLotto = data.isLotto === true;
+  const isStrangle = data.isStrangle === true;
+
+  const strikes = Array.isArray(data.strikes) ? (data.strikes as number[]) : null;
+  const expiryHint = data.expiryHint ?? data.expiry;
+  const premiumHint = data.premiumHint ?? data.price;
+  const exitPercent = data.exitPercent;
+  const complexityFlags = Array.isArray(data.complexityFlags) ? (data.complexityFlags as string[]) : null;
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-      {data.action != null ? (
-        <StatItem label="Action">
-          <Badge label={String(data.action)} />
-        </StatItem>
-      ) : null}
-      {data.symbol != null ? (
-        <StatItem label="Symbol">
-          <InfoChip label={String(data.symbol)} />
-        </StatItem>
-      ) : null}
-      {data.strategy != null ? (
-        <StatItem label="Strategy">
-          <Badge label={String(data.strategy)} />
-        </StatItem>
-      ) : null}
-      {data.direction != null ? (
-        <StatItem label="Direction">
-          <Badge label={String(data.direction)} />
-        </StatItem>
-      ) : null}
-      {Array.isArray(data.strikes) ? (
-        <StatItem label="Strikes">
-          <span className="text-foreground tabular-nums font-medium">
-            {(data.strikes as number[]).join(' / ')}
-          </span>
-        </StatItem>
-      ) : null}
-      {data.expiry != null ? (
-        <StatItem label="Expiry">
-          <span className="text-foreground tabular-nums">{String(data.expiry)}</span>
-        </StatItem>
-      ) : null}
-      {data.price != null ? (
-        <StatItem label="Price">
-          <span className="text-foreground tabular-nums">${String(data.price)}</span>
-        </StatItem>
-      ) : null}
-      {data.quantity != null ? (
-        <StatItem label="Quantity">
-          <span className="text-foreground tabular-nums">{String(data.quantity)}</span>
-        </StatItem>
-      ) : null}
-      {data.limitPrice != null ? (
-        <StatItem label="Limit Price">
-          <span className="text-foreground tabular-nums">${String(data.limitPrice)}</span>
-        </StatItem>
-      ) : null}
-      {typeof data.confidence === 'number' ? (
-        <StatItem label="Confidence">
-          <span className="text-foreground tabular-nums">
-            {`${(data.confidence * 100).toFixed(0)}%`}
-          </span>
-        </StatItem>
-      ) : null}
+    <div className="space-y-2 text-sm">
+      {/* Route + flags */}
+      {(routeLabel || isLotto || isStrangle) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {routeLabel && <Badge label={routeLabel} />}
+          {isLotto && <span className="text-[10px] text-amber-500 font-medium">LOTTO</span>}
+          {isStrangle && <span className="text-[10px] text-violet-400 font-medium">STRANGLE</span>}
+        </div>
+      )}
+
+      {/* Identity row — compact inline badges */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {data.action != null && <Badge label={String(data.action)} />}
+        {data.symbol != null && <InfoChip label={String(data.symbol)} />}
+        {data.strategy != null && <Badge label={String(data.strategy)} />}
+        {data.direction != null && <Badge label={String(data.direction)} />}
+      </div>
+
+      {/* Extracted fields — only what exists */}
+      {(strikes || expiryHint != null || premiumHint != null || exitPercent != null) && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {strikes && strikes.length > 0 && (
+            <StatItem label="Strikes">
+              <span className="text-foreground tabular-nums font-medium">
+                {strikes.join(' / ')}
+              </span>
+            </StatItem>
+          )}
+          {expiryHint != null && (
+            <StatItem label="Expiry Hint">
+              <span className="text-foreground tabular-nums">{String(expiryHint)}</span>
+            </StatItem>
+          )}
+          {premiumHint != null && (
+            <StatItem label="Premium Hint">
+              <span className="text-foreground tabular-nums">${String(premiumHint)}</span>
+            </StatItem>
+          )}
+          {exitPercent != null && (
+            <StatItem label="Exit %">
+              <span className="text-foreground tabular-nums">
+                {typeof exitPercent === 'number'
+                  ? `${(exitPercent * 100).toFixed(0)}%`
+                  : `${String(exitPercent)}%`}
+              </span>
+            </StatItem>
+          )}
+        </div>
+      )}
+
+      {/* Complexity flags */}
+      {complexityFlags && complexityFlags.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {complexityFlags.map((flag) => (
+            <span
+              key={flag}
+              className="text-[10px] text-muted-foreground/60 border border-dashed border-muted-foreground/20 rounded px-1.5 py-0.5"
+            >
+              {flag}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
+
+// ─── SignalView — "What we're trading" (legs table) ─
 
 export function SignalView({ data }: { data: Record<string, unknown> }) {
   const legs = Array.isArray(data.legs) ? (data.legs as LegRow[]) : [];
@@ -118,261 +148,269 @@ export function SignalView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// ─── SizedView — "How many contracts and why" ───────
+
 export function SizedView({ data }: { data: Record<string, unknown> }) {
+  const reasoning = data.reasoning != null ? String(data.reasoning) : null;
+  const reasoningLines = reasoning ? reasoning.split('; ') : [];
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-      {data.symbol != null ? (
-        <StatItem label="Symbol">
-          <InfoChip label={String(data.symbol)} />
-        </StatItem>
-      ) : null}
-      {data.strategy != null ? (
-        <StatItem label="Strategy">
-          <Badge label={String(data.strategy)} />
-        </StatItem>
-      ) : null}
-      {data.direction != null ? (
-        <StatItem label="Direction">
-          <Badge label={String(data.direction)} />
-        </StatItem>
-      ) : null}
-      {data.entryPrice != null ? (
-        <StatItem label="Entry Price">
+    <div className="space-y-3 text-sm">
+      {/* Headline: quantity + total risk */}
+      <div className="flex items-baseline gap-4">
+        {data.quantity != null && (
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Quantity</p>
+            <p className="text-2xl font-bold text-foreground tabular-nums">{String(data.quantity)}</p>
+          </div>
+        )}
+        {data.riskPerTrade != null && (
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total Risk</p>
+            <p className="text-lg font-semibold text-foreground tabular-nums">
+              {formatCurrency(Number(data.riskPerTrade))}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Market Mid */}
+      {data.entryPrice != null && (
+        <StatItem label="Market Mid">
           <span className="text-foreground tabular-nums">${String(data.entryPrice)}</span>
+          <span className="text-[10px] text-muted-foreground/50 ml-1.5">(used for risk math)</span>
         </StatItem>
-      ) : null}
-      {data.quantity != null ? (
-        <StatItem label="Quantity">
-          <span className="text-foreground tabular-nums font-medium">{String(data.quantity)}</span>
-        </StatItem>
-      ) : null}
-      {data.riskPerTrade != null ? (
-        <StatItem label="Risk/Trade">
-          <span className="text-foreground tabular-nums">${String(data.riskPerTrade)}</span>
-        </StatItem>
-      ) : null}
-      {data.reasoning != null ? (
-        <div className="col-span-full">
-          <StatItem label="Reasoning">
-            <span className="text-foreground/80 text-xs">{String(data.reasoning)}</span>
-          </StatItem>
+      )}
+
+      {/* Reasoning — split on "; " for scannability */}
+      {reasoningLines.length > 0 && (
+        <div>
+          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Reasoning</p>
+          <div className="text-xs text-foreground/70 leading-relaxed space-y-0.5">
+            {reasoningLines.map((line, i) => (
+              <p key={i}>{line}</p>
+            ))}
+          </div>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
+
+// ─── OrderPlacedView — "What order was sent" ────────
 
 export function OrderPlacedView({ data }: { data: Record<string, unknown> }) {
   const params = data.params as Record<string, unknown> | undefined;
-  const legs = Array.isArray(params?.legs) ? (params.legs as LegRow[]) : [];
+  const sigPrice = data.sigPrice != null ? Number(data.sigPrice) : null;
+  const mid = data.mid != null ? Number(data.mid) : null;
+  const limitPrice = params?.limitPrice != null ? Number(params.limitPrice) : null;
+  const isCredit = data.isCredit;
+  const hasPriceDecision = sigPrice != null && mid != null;
+
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-        {data.orderId != null ? (
-          <StatItem label="Order ID">
-            <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
-          </StatItem>
-        ) : null}
-        {params?.orderType != null ? (
-          <StatItem label="Order Type">
-            <Badge label={String(params.orderType)} />
-          </StatItem>
-        ) : null}
-        {data.status != null ? (
-          <StatItem label="Status">
-            <Badge label={String(data.status)} />
-          </StatItem>
-        ) : null}
-        {params?.limitPrice != null ? (
-          <StatItem label="Limit Price">
-            <span className="text-foreground tabular-nums">${String(params.limitPrice)}</span>
-          </StatItem>
-        ) : null}
-        {params?.symbol != null ? (
-          <StatItem label="Symbol">
-            <InfoChip label={String(params.symbol)} />
-          </StatItem>
-        ) : null}
-        {params?.direction != null ? (
-          <StatItem label="Direction">
-            <Badge label={String(params.direction)} />
-          </StatItem>
-        ) : null}
+    <div className="space-y-3 text-sm">
+      {/* Identity row: Order ID + Order Type + Credit/Debit */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {data.orderId != null && (
+          <span className="text-foreground tabular-nums font-mono text-xs">#{String(data.orderId)}</span>
+        )}
+        {params?.orderType != null && <Badge label={String(params.orderType)} />}
+        {isCredit != null && (
+          <Badge label={isCredit === true ? 'CREDIT' : 'DEBIT'} />
+        )}
       </div>
-      {legs.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-muted-foreground text-left">
-                <th className="pr-3 py-1 font-medium">Symbol</th>
-                <th className="pr-3 py-1 font-medium">Strike</th>
-                <th className="pr-3 py-1 font-medium">Expiry</th>
-                <th className="pr-3 py-1 font-medium">Type</th>
-                <th className="pr-3 py-1 font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {legs.map((leg, i) => (
-                <tr key={i} className="border-t border-border/30">
-                  <td className="pr-3 py-1 tabular-nums">{leg.symbol ?? '--'}</td>
-                  <td className="pr-3 py-1 tabular-nums">{leg.strike ?? '--'}</td>
-                  <td className="pr-3 py-1 tabular-nums">{leg.expiry ?? '--'}</td>
-                  <td className="pr-3 py-1">{leg.type ? <Badge label={leg.type} /> : '--'}</td>
-                  <td className="pr-3 py-1">{leg.action ?? leg.side ?? '--'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+      {/* Price Decision section */}
+      {hasPriceDecision ? (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3">
+            <StatItem label="Signal Price">
+              <span className="text-foreground tabular-nums">{formatCurrency(sigPrice)}</span>
+            </StatItem>
+            <StatItem label="Market Mid">
+              <span className="text-foreground tabular-nums">{formatCurrency(mid)}</span>
+            </StatItem>
+          </div>
+          {limitPrice != null && (
+            <StatItem label="Limit Price">
+              <span className="text-foreground tabular-nums font-medium text-base">{formatCurrency(limitPrice)}</span>
+            </StatItem>
+          )}
+          <p className="text-[10px] text-muted-foreground/60">
+            {sigPrice === mid
+              ? 'signal = market mid'
+              : isCredit === true
+                ? '\u2192 used better of signal vs mid'
+                : '\u2192 used lower of signal vs mid'}
+          </p>
         </div>
+      ) : (
+        /* Fallback for older data without sigPrice/mid */
+        limitPrice != null && (
+          <StatItem label="Limit Price">
+            <span className="text-foreground tabular-nums font-medium">{formatCurrency(limitPrice)}</span>
+          </StatItem>
+        )
       )}
     </div>
   );
 }
+
+// ─── OrderFilledView — "How the fill went" ──────────
 
 export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
   const params = data.params as Record<string, unknown> | undefined;
+  const filledPrice = data.filledPrice != null ? Number(data.filledPrice) : null;
+  const originalLimit = params?.limitPrice != null ? Number(params.limitPrice) : null;
+  const adjustmentCount = data.adjustmentCount != null ? Number(data.adjustmentCount) : null;
+  const immediatelyFilled = data.immediatelyFilled === true;
+  const slippage = originalLimit != null && filledPrice != null
+    ? Math.abs(filledPrice - originalLimit)
+    : null;
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-      {data.orderId != null ? (
-        <StatItem label="Order ID">
-          <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
-        </StatItem>
-      ) : null}
-      {data.filledPrice != null ? (
-        <StatItem label="Fill Price">
-          <span className="text-foreground tabular-nums font-medium">${String(data.filledPrice)}</span>
-        </StatItem>
-      ) : null}
-      {data.fillTimestamp != null ? (
-        <StatItem label="Filled At">
-          <span className="text-foreground tabular-nums text-xs">{formatDate(String(data.fillTimestamp))}</span>
-        </StatItem>
-      ) : null}
-      {data.commission != null ? (
-        <StatItem label="Commission">
-          <span className="text-foreground tabular-nums">${String(data.commission)}</span>
-        </StatItem>
-      ) : null}
-      {data.adjustmentCount != null ? (
-        <StatItem label="Chases">
-          <span className="text-foreground tabular-nums">{String(data.adjustmentCount)}</span>
-        </StatItem>
-      ) : null}
-      {params?.limitPrice != null ? (
-        <StatItem label="Original Limit">
-          <span className="text-foreground tabular-nums">${String(params.limitPrice)}</span>
-        </StatItem>
-      ) : null}
+    <div className="space-y-3 text-sm">
+      {/* Slippage headline */}
+      <p className={cn(
+        'text-sm font-semibold',
+        immediatelyFilled
+          ? 'text-profit'
+          : slippage == null || slippage === 0
+            ? 'text-foreground'
+            : 'text-amber-500',
+      )}>
+        {immediatelyFilled
+          ? 'Filled immediately at limit'
+          : slippage == null
+            ? 'Filled'
+            : slippage === 0
+              ? 'Filled at limit'
+              : `${formatCurrency(slippage)} slippage from limit${adjustmentCount != null && adjustmentCount > 0 ? ` (${adjustmentCount} chase${adjustmentCount === 1 ? '' : 's'})` : ''}`}
+      </p>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {filledPrice != null && (
+          <StatItem label="Fill Price">
+            <span className="text-foreground tabular-nums font-medium">{formatCurrency(filledPrice)}</span>
+          </StatItem>
+        )}
+        {originalLimit != null && (
+          <StatItem label="Original Limit">
+            <span className="text-foreground tabular-nums">{formatCurrency(originalLimit)}</span>
+          </StatItem>
+        )}
+        {adjustmentCount != null && (
+          <StatItem label="Chases">
+            <span className="text-foreground tabular-nums">{adjustmentCount}</span>
+          </StatItem>
+        )}
+        {data.commission != null && (
+          <StatItem label="Commission">
+            <span className="text-foreground tabular-nums">{formatCurrency(Number(data.commission))}</span>
+          </StatItem>
+        )}
+        {data.fillTimestamp != null && (
+          <StatItem label="Fill Time">
+            <span className="text-foreground tabular-nums text-xs">{formatDate(String(data.fillTimestamp))}</span>
+          </StatItem>
+        )}
+        {data.filledAt != null && data.fillTimestamp == null && (
+          <StatItem label="Fill Time">
+            <span className="text-foreground tabular-nums text-xs">{formatDate(String(data.filledAt))}</span>
+          </StatItem>
+        )}
+      </div>
+
+      {/* Order ID footer */}
+      {data.orderId != null && (
+        <p className="text-[10px] text-muted-foreground/50 tabular-nums font-mono">
+          Order #{String(data.orderId)}
+        </p>
+      )}
     </div>
   );
 }
 
+// ─── OrderCancelledView — "Why the order failed" ────
+
 export function OrderCancelledView({ data }: { data: Record<string, unknown> }) {
-  const params = data.params as Record<string, unknown> | undefined;
+  // Snapshot shape is { order, pending } — order fields are nested
+  const order = data.order as Record<string, unknown> | undefined;
+  const params = order?.params as Record<string, unknown> | undefined;
+  const originalLimit = params?.limitPrice != null ? Number(params.limitPrice) : null;
+  const finalLimit = order?.currentLimitPrice != null ? Number(order.currentLimitPrice) : null;
+  const adjustmentCount = order?.adjustmentCount != null ? Number(order.adjustmentCount) : null;
+  const status = order?.status != null ? String(order.status) : null;
+  const limitsChanged = originalLimit != null && finalLimit != null && originalLimit !== finalLimit;
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-      {data.orderId != null ? (
-        <StatItem label="Order ID">
-          <span className="text-foreground tabular-nums font-mono text-xs">{String(data.orderId)}</span>
-        </StatItem>
-      ) : null}
-      {params?.symbol != null ? (
-        <StatItem label="Symbol">
-          <InfoChip label={String(params.symbol)} />
-        </StatItem>
-      ) : null}
-      {params?.limitPrice != null ? (
-        <StatItem label="Original Limit">
-          <span className="text-foreground tabular-nums">${String(params.limitPrice)}</span>
-        </StatItem>
-      ) : null}
-      {data.currentLimitPrice != null ? (
-        <StatItem label="Final Limit">
-          <span className="text-foreground tabular-nums">${String(data.currentLimitPrice)}</span>
-        </StatItem>
-      ) : null}
-      {data.adjustmentCount != null ? (
-        <StatItem label="Chases">
-          <span className="text-foreground tabular-nums">{String(data.adjustmentCount)}</span>
-        </StatItem>
-      ) : null}
-      {data.status != null ? (
-        <StatItem label="Reason">
-          <Badge label={String(data.status)} />
-        </StatItem>
-      ) : null}
+    <div className="space-y-2 text-sm">
+      {/* Price journey */}
+      {originalLimit != null && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-foreground tabular-nums">{formatCurrency(originalLimit)}</span>
+          {limitsChanged && (
+            <>
+              <span className="text-muted-foreground/50">
+                {adjustmentCount != null && adjustmentCount > 0
+                  ? `\u2192 ${adjustmentCount} chase${adjustmentCount === 1 ? '' : 's'} \u2192`
+                  : '\u2192'}
+              </span>
+              <span className="text-foreground tabular-nums">{formatCurrency(finalLimit)}</span>
+            </>
+          )}
+          {!limitsChanged && adjustmentCount != null && adjustmentCount > 0 && (
+            <span className="text-muted-foreground/50">({adjustmentCount} chase{adjustmentCount === 1 ? '' : 's'})</span>
+          )}
+        </div>
+      )}
+
+      {/* Reason / status */}
+      {status != null && <Badge label={status} />}
     </div>
   );
 }
+
+// ─── SettledView — "Outcome" ────────────────────────
 
 export function SettledView({ data, reasoning }: { data: Record<string, unknown>; reasoning?: string | null }) {
   const signal = data.signal as Record<string, unknown> | undefined;
-  const legs = signal && Array.isArray(signal.legs) ? (signal.legs as LegRow[]) : [];
   const isFail = data.outcome === 'FAIL';
+
+  if (isFail) {
+    return (
+      <div className="space-y-2">
+        {reasoning && (
+          <p className="text-xs text-muted-foreground bg-destructive/5 border border-destructive/20 rounded px-2 py-1.5">
+            {reasoning}
+          </p>
+        )}
+        {!reasoning && <FallbackJson data={data} />}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
-      {/* Error reason — prominent for failures */}
-      {isFail && reasoning && (
-        <p className="text-xs text-muted-foreground bg-destructive/5 border border-destructive/20 rounded px-2 py-1.5">
-          {reasoning}
-        </p>
-      )}
-
-      {/* Signal summary */}
-      {signal && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-          {signal.action != null && (
-            <StatItem label="Action">
-              <Badge label={String(signal.action)} />
-            </StatItem>
-          )}
-          {signal.orderType != null && (
-            <StatItem label="Order Type">
-              <Badge label={String(signal.orderType)} />
-            </StatItem>
-          )}
+      {signal ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          {signal.action != null && <Badge label={String(signal.action)} />}
+          {signal.orderType != null && <Badge label={String(signal.orderType)} />}
           {signal.tradeId != null && (
-            <StatItem label="Trade">
-              <span className="text-foreground tabular-nums font-mono text-xs">{String(signal.tradeId).slice(0, 8)}</span>
-            </StatItem>
+            <span className="text-foreground tabular-nums font-mono text-xs">
+              trade {String(signal.tradeId).slice(0, 8)}
+            </span>
           )}
         </div>
+      ) : (
+        <FallbackJson data={data} />
       )}
-
-      {/* Legs table */}
-      {legs.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-muted-foreground text-left">
-                <th className="pr-3 py-1 font-medium">Symbol</th>
-                <th className="pr-3 py-1 font-medium">Strike</th>
-                <th className="pr-3 py-1 font-medium">Expiry</th>
-                <th className="pr-3 py-1 font-medium">Type</th>
-                <th className="pr-3 py-1 font-medium">Side</th>
-              </tr>
-            </thead>
-            <tbody>
-              {legs.map((leg, i) => (
-                <tr key={i} className="border-t border-border/30">
-                  <td className="pr-3 py-1 tabular-nums">{leg.symbol ?? '--'}</td>
-                  <td className="pr-3 py-1 tabular-nums">{leg.strike ?? '--'}</td>
-                  <td className="pr-3 py-1 tabular-nums">{leg.expiry ?? '--'}</td>
-                  <td className="pr-3 py-1">{leg.type ? <Badge label={String(leg.type)} /> : '--'}</td>
-                  <td className="pr-3 py-1">{leg.action ?? leg.side ?? '--'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Anything else not covered above */}
-      {!signal && <FallbackJson data={data} />}
     </div>
   );
 }
+
+// ─── ErrorView — "What broke" ───────────────────────
 
 export function ErrorView({ data }: { data: Record<string, unknown> }) {
   return (
@@ -381,6 +419,8 @@ export function ErrorView({ data }: { data: Record<string, unknown> }) {
     </p>
   );
 }
+
+// ─── FallbackJson ───────────────────────────────────
 
 export function FallbackJson({ data }: { data: unknown }) {
   return (

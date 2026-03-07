@@ -11,7 +11,8 @@
  *   npx tsx scripts/dev-up.ts --no-ibkr      # skip gateway/sidecar even if configured
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -165,23 +166,6 @@ async function waitForHealth(
   return false;
 }
 
-async function isAlreadyHealthy(
-  url: string,
-  opts?: { json?: boolean; check?: (body: unknown) => boolean },
-): Promise<boolean> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(2_000) });
-    if (!res.ok) return false;
-    if (opts?.json !== false && opts?.check) {
-      const body = await res.json();
-      return opts.check(body);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ─── Channel detection ───────────────────────────────
 
 type ChannelInfo = {
@@ -306,6 +290,53 @@ async function superviseSidecar(sidecarBase: string): Promise<void> {
   });
 }
 
+// ─── Kill existing processes ─────────────────────────
+
+function killPid(pid: number, label: string): void {
+  try {
+    process.kill(pid, 0); // check alive
+    log('orch', `Killing existing ${label} (PID ${pid})`);
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // not running
+  }
+}
+
+function killOnPort(port: number, label: string): void {
+  try {
+    const out = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf-8' }).trim();
+    for (const line of out.split('\n')) {
+      const pid = parseInt(line, 10);
+      if (!isNaN(pid) && pid !== process.pid) killPid(pid, `${label} :${port}`);
+    }
+  } catch {
+    // nothing on that port
+  }
+}
+
+function killExisting(): void {
+  log('orch', 'Killing existing processes...');
+
+  // Backend via pidlock
+  const lockPath = resolve(ROOT, 'data', 'backend.lock');
+  try {
+    const pid = parseInt(readFileSync(lockPath, 'utf-8').trim(), 10);
+    if (!isNaN(pid)) {
+      killPid(pid, 'backend');
+      try { unlinkSync(lockPath); } catch {}
+    }
+  } catch {
+    // no lock file
+  }
+
+  // Kill by port
+  killOnPort(4000, 'local-api');
+  killOnPort(3000, 'web');
+
+  // Brief pause so ports are released
+  execSync('sleep 1');
+}
+
 // ─── Main ────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -314,6 +345,8 @@ async function main(): Promise<void> {
   log('orch', '  DEV STARTUP ORCHESTRATOR');
   log('orch', '='.repeat(50));
   console.log();
+
+  killExisting();
 
   const channels = await detectChannels();
 
@@ -331,27 +364,17 @@ async function main(): Promise<void> {
 
   // ── Step 1: Local API (start immediately) ──
 
-  const apiAlive = await isAlreadyHealthy('http://localhost:4000/health');
-  if (apiAlive) {
-    log('orch', 'local-api already running on :4000 — skipping');
-  } else {
-    log('orch', 'Starting local-api...');
-    spawnService('api', 'npx', ['tsx', 'watch', 'src/local-api/server.ts']);
+  log('orch', 'Starting local-api...');
+  spawnService('api', 'npx', ['tsx', 'watch', 'src/local-api/server.ts']);
 
-    await waitForHealth('local-api', 'http://localhost:4000/health', {
-      timeoutMs: 15_000,
-    });
-  }
+  await waitForHealth('local-api', 'http://localhost:4000/health', {
+    timeoutMs: 15_000,
+  });
 
   // ── Step 2: Web (Vite dev server, start immediately) ──
 
-  const webAlive = await isAlreadyHealthy('http://localhost:3000', { json: false });
-  if (webAlive) {
-    log('orch', 'web already running on :3000 — skipping');
-  } else {
-    log('orch', 'Starting web...');
-    spawnService('web', 'npm', ['run', 'dev'], { cwd: resolve(ROOT, 'web') });
-  }
+  log('orch', 'Starting web...');
+  spawnService('web', 'npm', ['run', 'dev'], { cwd: resolve(ROOT, 'web') });
 
   // ── Step 3: Backend (if not skipped) ──
 

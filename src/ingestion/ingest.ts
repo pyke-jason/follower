@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor } from './browser.js';
-import { injectSignalRListener, type SignalRMessage } from './signalr.js';
+import { injectSignalRListener, compactReactions, type SignalRMessage } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { isMarketHours } from '../lib/et-date.js';
 import { and, eq, gte } from 'drizzle-orm';
+import { normalizeForDedup, computeContentHash } from './dedup.js';
 
 // ─── Message Watchdog ────────────────────────────────
 // Detects silent SignalR death: connection alive but no messages arriving.
@@ -153,17 +153,13 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
 
 const DEDUP_WINDOW_MS = 60_000; // 60-second window for near-duplicate detection
 
-function normalizeForDedup(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function computeContentHash(normalizedText: string): string {
-  return createHash('sha256').update(normalizedText).digest('hex');
-}
-
 // ─── Message Processing ──────────────────────────────
 
 async function processMessage(msg: SignalRMessage): Promise<void> {
+  if (typeof msg.MessageText !== 'string' || !msg.MessageText) {
+    console.warn('[Ingest] Message with empty/missing text from', msg.User?.Name ?? 'unknown', '— dropped');
+    return;
+  }
   const classification = classifyMessage(msg.MessageText);
 
   const normalizedText = normalizeForDedup(classification.cleanText);
@@ -188,6 +184,8 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
     return;
   }
 
+  const reactions = compactReactions(msg.Reactions);
+
   await db.insert(schema.messages).values({
     id: msg.Id,
     author,
@@ -202,6 +200,7 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
     isPaperTrade: classification.isPaperTrade,
     confidence: classification.confidence != null ? String(classification.confidence) : null,
     contentHash,
+    reactions,
   }).onConflictDoNothing();
 
   const badge = classification.badges.length > 0 ? `[${classification.badges.join(',')}]` : '';

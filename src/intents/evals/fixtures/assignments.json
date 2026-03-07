@@ -11,11 +11,21 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "HIMS" }
+          {
+            "orderType": "STOCK",
+            "symbol": "HIMS"
+          }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
-      "tags": ["assignment", "stock"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].symbol"
+      ],
+      "tags": [
+        "assignment",
+        "stock"
+      ],
       "notes": "'via assignment' = stock acquired through put assignment. Long badge confirms bullish direction. This is a STOCK OPEN (new position), not an options trade. The put that was assigned is now closed; trader now holds shares. Price $40.75 is the effective cost basis."
     },
     {
@@ -29,11 +39,21 @@
       "expected": {
         "outcome": "EXECUTE",
         "signals": [
-          { "orderType": "STOCK", "symbol": "CLF" }
+          {
+            "orderType": "STOCK",
+            "symbol": "CLF"
+          }
         ]
       },
-      "mustMatch": ["outcome", "signals[0].orderType", "signals[0].symbol"],
-      "tags": ["assignment", "stock"],
+      "mustMatch": [
+        "outcome",
+        "signals[0].orderType",
+        "signals[0].symbol"
+      ],
+      "tags": [
+        "assignment",
+        "stock"
+      ],
       "notes": "'Long CLF $14.29 via assignment of the Nov (21) $15 calls' — Pete was short $15 calls (covered calls) on CLF. The stock was called away at $15, but because he already held shares his cost basis worked out to $14.29 net of premium. He immediately bought back in (or retained shares from assignment mechanics). Regardless of the exact mechanics, the message announces a new STOCK LONG position at $14.29. 'I am holding the stock' confirms. Signal: STOCK OPEN LONG."
     },
     {
@@ -49,7 +69,16 @@
             "symbol": "ULTA",
             "strategy": "CALL",
             "direction": "LONG",
-            "legs": [{ "symbol": "ULTA  251205C00420000", "side": "BUY", "quantity": 1, "expiry": "2025-12-05", "strike": 420, "type": "option", "optionType": "CALL" }],
+            "legs": [
+              {
+                "symbol": "ULTA  251205C00420000",
+                "quantity": 1,
+                "expiry": "2025-12-05",
+                "strike": 420,
+                "type": "CALL",
+                "action": "BUY"
+              }
+            ],
             "quantity": 5
           }
         ]
@@ -57,8 +86,14 @@
       "expected": {
         "outcome": "SKIP"
       },
-      "mustMatch": ["outcome"],
-      "tags": ["assignment", "expiry", "skip"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "assignment",
+        "expiry",
+        "skip"
+      ],
       "notes": "'lotto expired worthless' is a past-tense informational statement. The option already expired; there is nothing to execute at the broker. sweepExpired() handles end-of-day expiry cleanup automatically. Even with an Exit badge present, no broker order is possible on an already-expired option. SKIP."
     },
     {
@@ -74,7 +109,16 @@
             "symbol": "ACHR",
             "strategy": "PUT",
             "direction": "SHORT",
-            "legs": [{ "symbol": "ACHR  251101P00020000", "side": "SELL", "quantity": 1, "expiry": "2025-11-01", "strike": 20, "type": "option", "optionType": "PUT" }],
+            "legs": [
+              {
+                "symbol": "ACHR  251101P00020000",
+                "quantity": 1,
+                "expiry": "2025-11-01",
+                "strike": 20,
+                "type": "PUT",
+                "action": "SELL"
+              }
+            ],
             "quantity": 10
           }
         ]
@@ -82,8 +126,14 @@
       "expected": {
         "outcome": "SKIP"
       },
-      "mustMatch": ["outcome"],
-      "tags": ["assignment", "expiry", "skip"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "assignment",
+        "expiry",
+        "skip"
+      ],
       "notes": "'expired worthless last Fri' — past-tense, referring to last Friday's expiry. No Exit badge. The position is already gone. sweepExpired() would have handled this. No broker action is possible or needed. SKIP."
     },
     {
@@ -99,7 +149,16 @@
             "symbol": "JOBY",
             "strategy": "PUT",
             "direction": "SHORT",
-            "legs": [{ "symbol": "JOBY  251003P00015000", "side": "SELL", "quantity": 1, "expiry": "2025-10-03", "strike": 15, "type": "option", "optionType": "PUT" }],
+            "legs": [
+              {
+                "symbol": "JOBY  251003P00015000",
+                "quantity": 1,
+                "expiry": "2025-10-03",
+                "strike": 15,
+                "type": "PUT",
+                "action": "SELL"
+              }
+            ],
             "quantity": 8
           }
         ]
@@ -107,8 +166,14 @@
       "expected": {
         "outcome": "SKIP"
       },
-      "mustMatch": ["outcome"],
-      "tags": ["assignment", "expiry", "skip"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "assignment",
+        "expiry",
+        "skip"
+      ],
       "notes": "'will expire worthless today' is a forward-looking expectation, not a close order. Pete explicitly says 'The position has not expired yet' and does not instruct a close. This is an anticipatory comment. sweepExpired() will handle the position at EOD. Exit badge reflects Pete's view that the trade is effectively over, not a buy-to-close instruction. SKIP."
     },
     {
@@ -125,8 +190,22 @@
             "strategy": "PCS",
             "direction": "SHORT",
             "legs": [
-              { "symbol": "AVGO  251128P00165000", "side": "SELL", "quantity": 1, "expiry": "2025-11-28", "strike": 165, "type": "option", "optionType": "PUT" },
-              { "symbol": "AVGO  251128P00160000", "side": "BUY", "quantity": 1, "expiry": "2025-11-28", "strike": 160, "type": "option", "optionType": "PUT" }
+              {
+                "symbol": "AVGO  251128P00165000",
+                "quantity": 1,
+                "expiry": "2025-11-28",
+                "strike": 165,
+                "type": "PUT",
+                "action": "SELL"
+              },
+              {
+                "symbol": "AVGO  251128P00160000",
+                "quantity": 1,
+                "expiry": "2025-11-28",
+                "strike": 160,
+                "type": "PUT",
+                "action": "BUY"
+              }
             ],
             "quantity": 5
           }
@@ -135,8 +214,15 @@
       "expected": {
         "outcome": "SKIP"
       },
-      "mustMatch": ["outcome"],
-      "tags": ["assignment", "expiry", "skip", "spreads"],
+      "mustMatch": [
+        "outcome"
+      ],
+      "tags": [
+        "assignment",
+        "expiry",
+        "skip",
+        "spreads"
+      ],
       "notes": "'the spread expired worthless' is past tense — the Nov 28 expiry already passed (this is posted Dec 1). No broker action possible. Pete is reporting the outcome as a win. Exit badge is retrospective. sweepExpired() handles the record. SKIP."
     }
   ]

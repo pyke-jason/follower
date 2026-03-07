@@ -42,10 +42,12 @@ export function htmlToLLMText(html: string): string {
   // Remove blockquotes (quoted replies)
   $('blockquote').remove();
 
-  // Replace each badge span with a clearly-marked XML tag before extracting text
+  // Replace each badge span with a bracket marker before extracting text.
+  // Must NOT use angle brackets — Cheerio parses <EXIT BADGE /> as an HTML
+  // element and .text() strips it, losing badge info entirely.
   $('span.badge').each((_, el) => {
     const badgeText = $(el).text().trim().toUpperCase();
-    $(el).replaceWith(badgeText ? `<${badgeText} BADGE /> ` : '');
+    $(el).replaceWith(badgeText ? `[${badgeText} BADGE] ` : '');
   });
 
   let text = $('body').text() || $.text();

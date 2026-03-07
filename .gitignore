@@ -63,6 +63,8 @@ logs/
 .logs/
 *.log
 
+slideshow
+
 # temporary files
 *.tmp
 .cache/

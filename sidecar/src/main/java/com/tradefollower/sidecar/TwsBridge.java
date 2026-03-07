@@ -30,7 +30,7 @@ public class TwsBridge extends DefaultEWrapper {
     // 10167: "Displaying delayed market data" — confirms delayed ticks will follow
     private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2107, 2158, 10089, 10091, 10167);
     // Connection codes — trigger reconnect + WS event
-    private static final Set<Integer> CONNECTION_CODES = Set.of(1100, 1101, 1102, 504);
+    private static final Set<Integer> CONNECTION_CODES = Set.of(520, 1100, 1101, 1102, 504);
     // Order error codes — push WS event
     private static final Set<Integer> ORDER_ERROR_CODES = Set.of(
             110, 200, 201, 202, 203, 392, 399, 404, 412, 426, 460, 10239);
@@ -404,7 +404,7 @@ public class TwsBridge extends DefaultEWrapper {
 
         if (CONNECTION_CODES.contains(errorCode)) {
             log.warn("TWS connection [{}]: {} - {}", id, errorCode, errorMsg);
-            if (errorCode == 1100 || errorCode == 504) {
+            if (errorCode == 520 || errorCode == 1100 || errorCode == 504) {
                 connected = false;
                 wsHandler.broadcastDisconnected();
                 scheduleReconnect();

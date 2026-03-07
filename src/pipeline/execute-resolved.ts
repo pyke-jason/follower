@@ -18,13 +18,15 @@ import type { ResolvedSignal, OrchestratorResult, Leg, TradePosition, SignalEven
 import type { Message, TradeFlag, TradeMetadata } from '../db/schema.js';
 import type { LLMProvider } from '../agent/providers.js';
 import type { Direction, Strategy } from '../lib/enums.js';
+import type { TraceContext } from '../lib/trace.js';
+import { traced } from '../lib/trace.js';
 import { isSpread, getOptionLegs } from '../lib/trade.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
 import { formatOccSymbol } from '../lib/occ-symbology.js';
-import { getMidpoint, isCreditOrder, isCreditOrderStructural } from './leg-pricing.js';
+import { getMidpoint, getQuoteMark, isCreditOrder, isCreditOrderStructural } from './leg-pricing.js';
 import { QuoteResolutionError } from '../lib/errors.js';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
-import { roundCents } from '../lib/numbers.js';
+import { floorCents, round, roundCents } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
 import { addTradeFlags } from '../trades/trade-flags.js';
 
@@ -80,6 +82,7 @@ export type ExecuteEnv = {
   llm: LLMProvider;
   pipeline: ResolvedPipelineDeps;
   emitter: SignalEventEmitter;
+  trace?: TraceContext;
 };
 
 // ─── Chase profiles ─────────────────────────────────
@@ -98,7 +101,7 @@ export type ChaseProfile = {
 export const CHASE_PROFILES = {
   OPTION_OPEN_SELL:  { pctPerStep: 0.02, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.30, intervalSec: 5, cancelAfterSec: 45 },
   OPTION_OPEN_BUY:   { pctPerStep: 0.04, minStep: 0.02, maxStep: 0.25, maxSlippagePct: 0.50, intervalSec: 5, cancelAfterSec: 60 },
-  OPTION_CLOSE:      { pctPerStep: 0.05, minStep: 0.02, maxStep: 0.30, maxSlippagePct: 0.80, intervalSec: 5 },
+  OPTION_CLOSE:      { pctPerStep: 0.005, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.80, intervalSec: 5 },
   SPREAD_OPEN_SELL:  { pctPerStep: 0.02, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.30, intervalSec: 5, cancelAfterSec: 45 },
   SPREAD_OPEN_BUY:   { pctPerStep: 0.03, minStep: 0.01, maxStep: 0.15, maxSlippagePct: 0.50, intervalSec: 5, cancelAfterSec: 60 },
   SPREAD_CLOSE:      { pctPerStep: 0.04, minStep: 0.01, maxStep: 0.20, maxSlippagePct: 0.85, intervalSec: 5 },
@@ -117,7 +120,7 @@ type ResolvedChaseParams = {
 /** @internal Exported for testing. */
 export function resolveChaseParams(profile: ChaseProfile, signalPrice: number, isBuy: boolean): ResolvedChaseParams {
   const rawStep = signalPrice * profile.pctPerStep;
-  const stepAmount = roundCents(Math.min(profile.maxStep, Math.max(profile.minStep, rawStep)));
+  const stepAmount = floorCents(Math.min(profile.maxStep, Math.max(profile.minStep, rawStep)));
 
   // Buy orders chase UP (willing to pay more); sell orders chase DOWN (willing to accept less).
   const chaseLimit = isBuy
@@ -287,6 +290,14 @@ function buildOrderParams(
   };
 }
 
+// ─── Pricing context for ORDER_PLACED snapshots ─────
+
+type PricingContext = {
+  sigPrice: number;
+  mid: number;
+  isCredit: boolean;
+};
+
 // ─── Place order ────────────────────────────────────
 
 async function placeOrder(
@@ -295,12 +306,13 @@ async function placeOrder(
   pending: ResolvedPendingContext,
   emitter: SignalEventEmitter,
   signalIndex?: number,
+  pricingContext?: PricingContext,
 ): Promise<OrderResult> {
   const raw = await deps.orderManager.submitOrder(params);
   const result = OrderResultSchema.parse(raw);
 
   if (result.status !== 'REJECTED') {
-    await emitter.emit('ORDER_PLACED', { signalIndex }, { ...result, params });
+    await emitter.emit('ORDER_PLACED', { signalIndex }, { ...result, params, ...pricingContext });
   }
 
   if (result.status === 'FILLED') {
@@ -326,6 +338,7 @@ async function executeResolvedSignal(
   emitter: SignalEventEmitter,
   messageId?: string,
   signalIndex?: number,
+  trace?: TraceContext,
 ): Promise<ResolvedPipelineResult> {
   const symbol = deriveSymbol(signal.legs);
   const strategy = deriveStrategy(signal.legs);
@@ -348,15 +361,15 @@ async function executeResolvedSignal(
 
   if (!isPositionReducing) {
     // 1. Size
-    const entryPrice = await getMidpoint(deps.broker, legsToOrderLegs(signal.legs, 1));
+    const entryPrice = await traced(trace, 'getMidpoint', 'broker', () => getMidpoint(deps.broker, legsToOrderLegs(signal.legs, 1)));
 
-    const size = await deps.calculatePositionSize({
+    const size = await traced(trace, 'sizer', 'sync', () => deps.calculatePositionSize({
       trader,
       symbol,
       entryPrice,
       strategy,
       legs: signal.legs,
-    });
+    }));
     if (size.quantity <= 0) {
       return { signal, executed: false, reason: `Position sizer returned qty=${size.quantity}` };
     }
@@ -364,25 +377,25 @@ async function executeResolvedSignal(
     await emitter.emit('SIZED', { signalIndex }, { ...size, symbol, strategy, direction, entryPrice });
 
     // 2. Risk check
-    const risk = await deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction, direction });
+    const risk = await traced(trace, 'riskCheck', 'db', () => deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction, direction }));
     if (!risk.allowed) {
       return { signal, executed: false, reason: `Risk blocked: ${risk.reason}` };
     }
 
     // 3. Build order
     const orderLegs = legsToOrderLegs(signal.legs, size.quantity);
-    const mid = await getMidpoint(deps.broker, orderLegs);
-    const { isCredit } = await isCreditOrder(deps.broker, orderLegs);
+    const mid = await traced(trace, 'getMidpoint', 'broker', () => getMidpoint(deps.broker, orderLegs));
+    const { isCredit } = await traced(trace, 'creditCheck', 'broker', () => isCreditOrder(deps.broker, orderLegs));
     const sigPrice = signal.limitPrice != null ? Math.abs(signal.limitPrice) : mid;
-    // Credit: maximize what you receive. Debit/stock: minimize what you pay.
+    // Credit: maximize what you receive (vs mid). Debit/stock: minimize what you pay (vs 75% mark).
     const limitPrice = isCredit
       ? Math.max(sigPrice, mid)
-      : Math.min(sigPrice, mid);
+      : Math.min(sigPrice, await getQuoteMark(deps.broker, orderLegs, 0.75));
     const params = buildOrderParams(strategy, direction, symbol, orderLegs, limitPrice, false, isCredit);
 
     // 4. Place and record
     let tradeId: string | undefined;
-    const result = await placeOrder(deps, params, {
+    const result = await traced(trace, 'placeOrder', 'broker', () => placeOrder(deps, params, {
       symbol,
       trader,
       direction,
@@ -402,10 +415,12 @@ async function executeResolvedSignal(
         const entrySlippage = isBuy
           ? roundCents(fill.filledPrice - limitPrice)
           : roundCents(limitPrice - fill.filledPrice);
+        const entrySlippagePct = limitPrice > 0 ? round(entrySlippage / limitPrice, 4) : 0;
         const fillMetadata: TradeMetadata = {
           ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
           ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
           entrySlippage,
+          entrySlippagePct,
         };
         const recorded = await deps.recordTrade({
           action: signalAction,
@@ -424,7 +439,7 @@ async function executeResolvedSignal(
         if (recorded) tradeId = recorded.tradeId;
         return recorded;
       },
-    }, emitter, signalIndex);
+    }, emitter, signalIndex, { sigPrice, mid, isCredit }));
 
     if (result.status === 'REJECTED') {
       return { signal, executed: false, reason: result.message ?? 'Order rejected' };
@@ -438,7 +453,7 @@ async function executeResolvedSignal(
   // the correct quantities (full position for CLOSE, partial for TRIM, single
   // leg for LEG_OFF).
   const orderLegs = legsToOrderLegs(signal.legs, 1); // quantity is already in the legs
-  const closeMid = await getMidpoint(deps.broker, orderLegs);
+  const closeMid = await traced(trace, 'getMidpoint', 'broker', () => getMidpoint(deps.broker, orderLegs));
   // deriveDirection returns the ORDER direction from the signal legs' sides:
   // SELL legs → SHORT (selling), BUY legs → LONG (buying back).
   // This is already the correct direction for the broker's fill check
@@ -448,7 +463,7 @@ async function executeResolvedSignal(
 
   let tradeId: string | undefined;
   const quantity = orderLegs[0]?.quantity ?? 1;
-  const result = await placeOrder(deps, params, {
+  const result = await traced(trace, 'placeOrder', 'broker', () => placeOrder(deps, params, {
     symbol,
     trader,
     direction,
@@ -467,10 +482,12 @@ async function executeResolvedSignal(
       const exitSlippage = closeBuy
         ? roundCents(fill.filledPrice - closeMid)
         : roundCents(closeMid - fill.filledPrice);
+      const exitSlippagePct = closeMid > 0 ? round(exitSlippage / closeMid, 4) : 0;
       const fillMetadata: TradeMetadata = {
         ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
         ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
         exitSlippage,
+        exitSlippagePct,
       };
       const action = signal.exitPercent != null && signal.exitPercent < 1
         ? 'TRIM' as const
@@ -496,7 +513,7 @@ async function executeResolvedSignal(
       if (recorded) tradeId = recorded.tradeId;
       return recorded;
     },
-  }, emitter, signalIndex);
+  }, emitter, signalIndex, { sigPrice: closeMid, mid: closeMid, isCredit: closeIsCredit }));
 
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };
@@ -529,7 +546,7 @@ export async function executeResolvedSignals(ctx: {
     const signal = resolved.signals[i];
 
     try {
-      const result = await executeResolvedSignal(signal, trader, deps, emitter, message.id, i);
+      const result = await executeResolvedSignal(signal, trader, deps, emitter, message.id, i, env.trace);
       results.push(result);
 
       // Emit SETTLED for this signal
@@ -593,7 +610,7 @@ export async function executeResolvedSignals(ctx: {
           }
 
           try {
-            const retryResult = await executeResolvedSignal(retrySignal, trader, deps, emitter, message.id, resolved.signals.length + ri);
+            const retryResult = await executeResolvedSignal(retrySignal, trader, deps, emitter, message.id, resolved.signals.length + ri, env.trace);
             results.push(retryResult);
             const outcome = retryResult.executed ? 'EXECUTE' : 'FAIL';
             await emitter.emit('SETTLED',

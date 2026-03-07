@@ -23,6 +23,9 @@ export type TradesHydration = {
   channelId?: string;
 };
 
+export type SortColumn = 'pnl' | 'openedAt';
+export type SortDirection = 'desc' | 'asc';
+
 interface TradesState {
   trades: Trade[];
   eventsByTradeId: Record<string, TradeEvent[]>;
@@ -31,6 +34,10 @@ interface TradesState {
   startingEquity: number | undefined;
   channelId: string | undefined;
 
+  unrealizedPnl: Record<string, number>;
+  sortColumn: SortColumn;
+  sortDirection: SortDirection;
+
   selectedTradeId: string | null;
   story: TradeStory | null;
   isLoadingStory: boolean;
@@ -38,6 +45,8 @@ interface TradesState {
   hydrate: (data: TradesHydration) => void;
   selectTrade: (id: string | null) => void;
   loadTradeStory: (tradeId: string) => Promise<void>;
+  setUnrealizedPnl: (pnl: Record<string, number>) => void;
+  setSort: (column: SortColumn, direction?: SortDirection) => void;
 }
 
 export const useTradesStore = create<TradesState>((set, get) => ({
@@ -47,6 +56,10 @@ export const useTradesStore = create<TradesState>((set, get) => ({
   commissionSchedule: undefined,
   startingEquity: undefined,
   channelId: undefined,
+
+  unrealizedPnl: {},
+  sortColumn: 'openedAt',
+  sortDirection: 'desc',
 
   selectedTradeId: null,
   story: null,
@@ -74,6 +87,18 @@ export const useTradesStore = create<TradesState>((set, get) => ({
     const result = await api<TradeStory>(`/trades/${tradeId}/story${params}`);
     if (get().selectedTradeId === tradeId) {
       set({ story: result, isLoadingStory: false });
+    }
+  },
+
+  setUnrealizedPnl: (pnl) => set({ unrealizedPnl: pnl }),
+
+  setSort: (column, direction) => {
+    const state = get();
+    if (column === state.sortColumn && !direction) {
+      // Toggle direction
+      set({ sortDirection: state.sortDirection === 'desc' ? 'asc' : 'desc' });
+    } else {
+      set({ sortColumn: column, sortDirection: direction ?? 'desc' });
     }
   },
 }));

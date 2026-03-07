@@ -12,6 +12,7 @@ import { toDateKeyET, parseDateKey, isoToDateKey, marketCloseUTC } from '../lib/
 import type { LLMProvider } from '../agent/providers.js';
 import { createProvider, getDefaultTradeModel } from '../agent/providers.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
+import { createTrace } from '../lib/trace.js';
 import { ShadowTracker } from './shadow-tracker.js';
 import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
@@ -481,6 +482,7 @@ async function processMessage(
     pipeline: btCtx.bundle.pipelineDeps,
     scope: btChannel(btCtx.runId),
     agentIdentity: btCtx.agentIdentity,
+    trace: createTrace(),
     classifySkip: (result) => {
       const isUnfollowed = shadows.isUnfollowedExit(
         msg.author,

@@ -42,9 +42,12 @@ export async function stampHasUpdate(params: {
   trader: string;
   channelId: string;
   messageId: string;
+  excludeTradeIds?: string[];
 }): Promise<void> {
-  const { symbols, trader, channelId, messageId } = params;
+  const { symbols, trader, channelId, messageId, excludeTradeIds } = params;
   if (symbols.length === 0) return;
+
+  const excludeSet = excludeTradeIds?.length ? new Set(excludeTradeIds) : null;
 
   for (const symbol of symbols) {
     const rows = await db
@@ -59,6 +62,7 @@ export async function stampHasUpdate(params: {
       ));
 
     for (const row of rows) {
+      if (excludeSet?.has(row.id)) continue;
       const meta = row.metadata;
       if (meta.flags?.includes('hasUpdate')) continue;
       const merged = buildFlags(meta.flags, 'hasUpdate');

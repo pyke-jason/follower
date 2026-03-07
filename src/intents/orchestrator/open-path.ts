@@ -229,13 +229,27 @@ export async function resolveOpenPath(
   } else if (parse.expiryHint !== null) {
     resolvedExpiry = resolveExpiryHint(parse.expiryHint, messageDate);
     if (!resolvedExpiry) {
-      log.debug('open-path: could not parse expiryHint "%s"', parse.expiryHint);
-      return {
-        outcome: 'MANUAL_REVIEW',
-        reason: `Could not interpret expiryHint: "${parse.expiryHint}"`,
-      };
+      // Hint was unparseable — fall back to nearest available expiry
+      log.debug('open-path: could not parse expiryHint "%s", falling back to nearest expiry', parse.expiryHint);
+      if (strikeSelection.method !== 'premium_match') {
+        let fallbackExpiries = await ctx.marketData.getExpiryDates(symbol);
+        if (!fallbackExpiries.length) {
+          fallbackExpiries = generateWeeklyExpiries(messageDate, 6);
+        }
+        if (fallbackExpiries.length > 0) {
+          resolvedExpiry = fallbackExpiries[0];
+          log.debug('open-path: fell back to nearest expiry %s for %s', resolvedExpiry, symbol);
+        } else {
+          return {
+            outcome: 'MANUAL_REVIEW',
+            reason: `Could not interpret expiryHint: "${parse.expiryHint}" and no fallback expiries available`,
+          };
+        }
+      }
+      // If premium_match, resolvedExpiry stays null and the scan loop below handles it
+    } else {
+      log.debug('open-path: resolved expiry %s from hint "%s"', resolvedExpiry, parse.expiryHint);
     }
-    log.debug('open-path: resolved expiry %s from hint "%s"', resolvedExpiry, parse.expiryHint);
   } else {
     // No expiryHint — try to find nearest real expiry via market data
     if (strikeSelection.method === 'premium_match') {
@@ -573,13 +587,50 @@ export async function resolveAddPath(
   }
 
   // Find matching position — strategy-filtered if parse has a strategy hint
-  let matched: TradePosition | null = null;
-  if (positions.length === 1) {
-    matched = positions[0];
-  } else if (positions.length > 1 && parse.strategy) {
+  let candidates = positions;
+  if (parse.strategy) {
     const byStrategy = positions.filter(p => p.strategy === parse.strategy);
-    if (byStrategy.length === 1) {
-      matched = byStrategy[0];
+    if (byStrategy.length > 0) {
+      candidates = byStrategy;
+    } else {
+      // No strategy match. Block STOCK↔non-STOCK cross-type ADDs — these are
+      // never benign (e.g. PDS should not merge into a STOCK position).
+      // Treat as a new OPEN instead.
+      const parseIsStock = parse.strategy === 'STOCK';
+      const allCrossType = positions.every(p => (p.strategy === 'STOCK') !== parseIsStock);
+      if (allCrossType) {
+        log.debug(
+          'ADD: strategy cross-type (%s vs positions [%s]) — treating as new OPEN',
+          parse.strategy,
+          positions.map(p => p.strategy).join(', '),
+        );
+        const enrichedParse: ParseResult = { ...parse, action: 'OPEN', direction: parse.direction };
+        return resolveOpenPath(enrichedParse, ctx);
+      }
+    }
+  }
+
+  let matched: TradePosition | null = null;
+  if (candidates.length === 1) {
+    matched = candidates[0];
+  } else if (candidates.length > 1) {
+    // Multiple candidates — pick the most recently opened (LIFO)
+    const sorted = [...candidates]
+      .filter(p => p.openedAt != null)
+      .sort((a, b) => b.openedAt!.localeCompare(a.openedAt!));
+    if (sorted.length > 0) {
+      matched = sorted[0];
+      log.debug('ADD: multiple positions for %s — using most-recent: %s', parse.symbol, matched.id.slice(0, 8));
+    }
+  }
+
+  // Infer direction: matched position first, then unanimous agreement across all positions
+  let inferredDirection = parse.direction ?? matched?.direction ?? null;
+  if (!inferredDirection && candidates.length > 0) {
+    const dirs = new Set(candidates.map(p => p.direction));
+    if (dirs.size === 1) {
+      inferredDirection = candidates[0].direction;
+      log.debug('ADD: inferred direction %s from %d unanimous positions', inferredDirection, candidates.length);
     }
   }
 
@@ -587,7 +638,7 @@ export async function resolveAddPath(
   const enrichedParse: ParseResult = {
     ...parse,
     action: 'OPEN', // delegate to open-path as a new OPEN
-    direction: parse.direction ?? matched?.direction ?? null,
+    direction: inferredDirection,
     strategy: parse.strategy ?? matched?.strategy ?? null,
   };
 

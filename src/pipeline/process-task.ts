@@ -14,6 +14,9 @@ import type { OrchestratorResult, ResolvedSignal, SignalEventEmitter, Serialized
 import type { ResolvedPipelineDeps, ResolvedPipelineResult, ExecuteEnv } from './execute-resolved.js';
 import type { TradeScope } from './build-deps.js';
 import type { PositionFilters } from '../trades/filters.js';
+import type { TraceContext } from '../lib/trace.js';
+import type { TradeMetadata } from '../db/schema.js';
+import { traced, maxEnd } from '../lib/trace.js';
 
 import { db, schema } from '../db/client.js';
 
@@ -38,6 +41,7 @@ export type TaskEnv = {
   onResult: (result: ProcessTaskResult, emitter: SignalEventEmitter) => Promise<void>;
   /** Classify non-EXECUTE outcomes for the SETTLED event. Returns skipCategory. */
   classifySkip?: (result: Extract<ProcessTaskResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>) => string;
+  trace?: TraceContext;
 };
 
 // ─── Main ───────────────────────────────────────────
@@ -104,12 +108,15 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   };
 
   // Orchestrator emits PARSED (always) + SIGNAL_RESOLVED (for executes)
-  const resolved = await resolveOrchestrator(message, {
-    getPositions,
-    llm: env.llm,
-    broker: env.pipeline.broker,
-    emitter,
-  });
+  const resolved = await traced(env.trace, 'orchestrator', 'sync', () =>
+    resolveOrchestrator(message, {
+      getPositions,
+      llm: env.llm,
+      broker: env.pipeline.broker,
+      emitter,
+      trace: env.trace,
+    }),
+  );
 
   const symbols = message.symbols;
 
@@ -135,22 +142,52 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
       await stampHasUpdate({ symbols, trader: context.author, channelId: env.scope, messageId });
     }
 
+    if (env.trace) {
+      await emitter.emit('TRACE', {}, { spans: env.trace.getSpans() });
+    }
     await env.onResult(result, emitter);
     return;
   }
 
   // Executor emits per-signal SETTLED events via emitter
-  const results = await executeResolvedSignals({
-    resolved,
-    message,
-    env: executeEnv,
-  });
+  const results = await traced(env.trace, 'execute', 'broker', () =>
+    executeResolvedSignals({
+      resolved,
+      message,
+      env: { ...executeEnv, trace: env.trace },
+    }),
+  );
 
-  // Stamp hasUpdate AFTER execution so trades just closed/trimmed are excluded by isOpen filter
+  // Stamp hasUpdate AFTER execution so trades just closed/trimmed are excluded by isOpen filter.
+  // Also exclude trades targeted by pending close orders (not yet filled due to chase).
   if (symbols.length > 0 && context.author) {
-    await stampHasUpdate({ symbols, trader: context.author, channelId: env.scope, messageId });
+    const pendingTradeIds = resolved.signals
+      .filter(s => s.tradeId)
+      .map(s => s.tradeId!);
+    await stampHasUpdate({ symbols, trader: context.author, channelId: env.scope, messageId, excludeTradeIds: pendingTradeIds });
   }
 
+  if (env.trace) {
+    const spans = env.trace.getSpans();
+    await emitter.emit('TRACE', {}, { spans });
+
+    // Stamp executionMs on any trades produced by this task
+    const executionMs = Math.round(maxEnd(spans));
+    if (executionMs > 0) {
+      const tradeIds = results.map(r => r.tradeId).filter((id): id is string => !!id);
+      for (const tradeId of tradeIds) {
+        const [row] = await db.select({ metadata: schema.trades.metadata })
+          .from(schema.trades)
+          .where(eq(schema.trades.id, tradeId))
+          .limit(1);
+        if (row) {
+          await db.update(schema.trades)
+            .set({ metadata: { ...row.metadata, executionMs } satisfies TradeMetadata })
+            .where(eq(schema.trades.id, tradeId));
+        }
+      }
+    }
+  }
   await env.onResult({
     outcome: 'EXECUTE',
     reason: `${resolved.signals.length} signal(s)`,
