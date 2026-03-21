@@ -1472,6 +1472,7 @@ async function getEnrichedMessagesInternal(opts: {
         pnl: schema.runDecisions.pnl,
         phase: schema.runDecisions.phase,
         durationMs: schema.runDecisions.durationMs,
+        taskId: schema.runDecisions.taskId,
       },
     })
     .from(schema.messages)

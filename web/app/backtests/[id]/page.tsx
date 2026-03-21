@@ -42,6 +42,7 @@ type BacktestDecisionRow = {
     pnl: string | null;
     phase: string | null;
     durationMs: number | null;
+    taskId: string | null;
   };
   trade: { id: string | null } | null;
 };
@@ -100,6 +101,7 @@ function buildBacktestChatData({
             pnl: row.decision.pnl ?? null,
             phase: row.decision.phase ?? 'agent',
             durationMs: row.decision.durationMs ?? null,
+            taskId: row.decision.taskId ?? null,
           }
         : null;
 

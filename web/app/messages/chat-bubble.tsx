@@ -3,6 +3,7 @@ import { AuthorAvatar } from './author-avatar';
 import { MessageContent } from './message-content';
 import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
+import { REACTION_EMOJI } from '../components/decision-shared';
 import type { Message, MessageLabel } from '@src/db/schema';
 
 function getAccentBorder(message: Message): string {
@@ -63,6 +64,17 @@ export const ChatBubble = memo(function ChatBubble({ message, noBorder, label }:
             </span>
           )}
         </div>
+
+        {message.reactions.length > 0 && (
+          <div className="flex gap-1 mt-0.5">
+            {message.reactions.map((r) => (
+              <span key={r.Type} className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 bg-muted/40 rounded px-1 py-px">
+                <span>{REACTION_EMOJI[r.Type] ?? r.Type}</span>
+                {r.Count > 1 && <span className="tabular-nums">{r.Count}</span>}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

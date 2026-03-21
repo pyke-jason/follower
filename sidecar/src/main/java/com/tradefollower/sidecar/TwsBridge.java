@@ -43,7 +43,6 @@ public class TwsBridge extends DefaultEWrapper {
 
     // Temporary accumulators for multi-callback responses
     private final ConcurrentHashMap<Integer, Map<String, Object>> tickAccumulators = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Integer, Map<String, Object>> accountAccumulators = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, CopyOnWriteArrayList<Map<String, Object>>> positionAccumulators = new ConcurrentHashMap<>();
 
     // Persistent order status tracking (for GET /api/orders/:orderId)
@@ -235,7 +234,6 @@ public class TwsBridge extends DefaultEWrapper {
 
         // Safety net: sweep orphaned accumulators
         tickAccumulators.keySet().removeIf(k -> !pendingRequests.containsKey(k));
-        accountAccumulators.keySet().removeIf(k -> !pendingRequests.containsKey(k));
         positionAccumulators.keySet().removeIf(k -> !pendingRequests.containsKey(k));
 
         if (execCount > 0 || orderCount > 0) {
@@ -330,11 +328,6 @@ public class TwsBridge extends DefaultEWrapper {
     /** Initialize tick data accumulator for a market data snapshot request. */
     public void initTickAccumulator(int reqId) {
         tickAccumulators.put(reqId, new ConcurrentHashMap<>());
-    }
-
-    /** Initialize account summary accumulator. */
-    public void initAccountAccumulator(int reqId) {
-        accountAccumulators.put(reqId, new ConcurrentHashMap<>());
     }
 
     /** Initialize position list accumulator. */
@@ -541,27 +534,6 @@ public class TwsBridge extends DefaultEWrapper {
             completeRequest(entry.getKey(), entry.getValue());
             positionAccumulators.remove(entry.getKey());
         }
-    }
-
-    // --- Account summary ---
-
-    @Override
-    public void accountSummary(int reqId, String account, String tag, String value, String currency) {
-        Map<String, Object> acc = accountAccumulators.get(reqId);
-        if (acc == null) return;
-        try {
-            acc.put(tag, Double.parseDouble(value));
-        } catch (NumberFormatException e) {
-            acc.put(tag, value);
-        }
-        this.accountId = account;
-    }
-
-    @Override
-    public void accountSummaryEnd(int reqId) {
-        Map<String, Object> data = accountAccumulators.remove(reqId);
-        completeRequest(reqId, data != null ? data : Map.of());
-        client.cancelAccountSummary(reqId);
     }
 
     // --- Account subscription (reqAccountUpdates) ---

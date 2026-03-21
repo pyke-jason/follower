@@ -90,5 +90,42 @@ export async function resolveContract(occSymbol: string, sidecarUrl: string): Pr
   return resolved;
 }
 
+/**
+ * Resolve a stock symbol to an IBKR conId + minTick via the sidecar.
+ * Results are cached indefinitely (stock conIds don't change).
+ */
+export async function resolveStockContract(symbol: string, sidecarUrl: string): Promise<ResolvedContract> {
+  const cacheKey = `STK:${symbol}`;
+  const cached = contractCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const res = await fetch(`${sidecarUrl}/contracts/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol,
+      secType: 'STK',
+      exchange: 'SMART',
+      currency: 'USD',
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`IBKR sidecar ${res.status}: stock contract resolve failed for ${symbol}: ${text}`);
+  }
+
+  const data = await res.json();
+  const contract = parseSidecarResponse(
+    ContractResolveResponseSchema,
+    data,
+    `POST /api/contracts/resolve (STK:${symbol})`,
+  );
+
+  const resolved = { conId: contract.conId, minTick: contract.minTick };
+  contractCache.set(cacheKey, resolved);
+  return resolved;
+}
+
 /** Check if a symbol is an OCC option (re-export for convenience). */
 export { isOccOptionSymbol } from '../../lib/occ-symbology.js';

@@ -116,7 +116,7 @@ export async function fetchHistorical(opts: {
           })
           .where(eq(schema.historicalFetchChunks.id, chunk!.id));
 
-        console.log(`[Historical] ${date}: ${fetched} fetched, ${saved} new`);
+        console.log(`[Historical] ${date}: ${fetched} fetched, ${saved} saved`);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         await db.update(schema.historicalFetchChunks)
@@ -228,7 +228,10 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
       confidence: classification.confidence != null ? String(classification.confidence) : null,
       contentHash,
       reactions,
-    }).onConflictDoNothing();
+    }).onConflictDoUpdate({
+      target: schema.messages.id,
+      set: { reactions },
+    });
 
     if (result.changes > 0) saved++;
   }

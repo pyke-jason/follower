@@ -15,6 +15,7 @@ import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sendSystemAlert } from '../src/lib/alert.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -78,11 +79,11 @@ function spawnService(
   child.on('exit', (code, signal) => {
     if (!shuttingDown) {
       log('orch', `${name} exited (code=${code}, signal=${signal})`);
-      // If a critical service dies, tear everything down
-      if (['api', 'backend'].includes(name)) {
-        log('orch', `Critical service ${name} died — shutting down`);
+      if (name === 'api') {
+        log('orch', 'Critical service api died — shutting down');
         shutdown();
       }
+      // Backend auto-restarts (see superviseBackend)
     }
   });
 
@@ -170,6 +171,7 @@ async function waitForHealth(
 
 type ChannelInfo = {
   hasIbkr: boolean;
+  ibkrMode: 'live' | 'paper';
   sidecarUrl: string;
   channelSummary: string[];
 };
@@ -182,7 +184,7 @@ async function detectChannels(): Promise<ChannelInfo> {
   // Now read channel definitions (they read from process.env)
   const { getRuntimeChannelDefinitions } = await import('../src/lib/runtime-channels.js');
 
-  let defs: { brokerName: string; label: string; sidecarUrl?: string }[];
+  let defs: { brokerName: string; label: string; mode?: string; sidecarUrl?: string }[];
   try {
     defs = getRuntimeChannelDefinitions();
   } catch {
@@ -192,12 +194,76 @@ async function detectChannels(): Promise<ChannelInfo> {
 
   const ibkrDefs = defs.filter((d) => d.brokerName === 'ibkr');
   const sidecarUrl = ibkrDefs[0]?.sidecarUrl ?? 'http://localhost:8090/api';
+  const ibkrMode = (ibkrDefs[0]?.mode === 'paper' ? 'paper' : 'live') as 'live' | 'paper';
 
   return {
     hasIbkr: ibkrDefs.length > 0,
+    ibkrMode,
     sidecarUrl,
     channelSummary: defs.map((d) => d.label),
   };
+}
+
+// ─── Backend supervisor ─────────────────────────────
+
+const BACKEND_MAX_RESTARTS = 10;
+const BACKEND_RESTART_DELAYS = [5_000, 10_000, 20_000, 30_000, 60_000]; // cap at 60s
+
+/**
+ * Supervises the backend process with automatic restarts.
+ * OOM kills (exit 137), crashes, and unexpected exits trigger a restart.
+ * Resets the restart counter after 5 minutes of stable running.
+ */
+async function superviseBackend(): Promise<void> {
+  let restartCount = 0;
+
+  const startBackend = (): Promise<number | null> => {
+    return new Promise((resolve) => {
+      const child = spawnService('backend', 'npx', ['tsx', 'src/index.ts']);
+      child.on('exit', (code) => resolve(code));
+    });
+  };
+
+  while (!shuttingDown) {
+    const startTime = Date.now();
+    log('orch', `Starting backend (attempt ${restartCount + 1})...`);
+
+    const exitCode = await startBackend();
+    if (shuttingDown) break;
+
+    const uptime = Date.now() - startTime;
+    const uptimeStr = uptime > 60_000
+      ? `${Math.round(uptime / 60_000)}m`
+      : `${Math.round(uptime / 1_000)}s`;
+
+    // If it ran for >5 minutes, reset the restart counter (it was stable)
+    if (uptime > 5 * 60_000) {
+      restartCount = 0;
+    }
+
+    restartCount++;
+    if (restartCount > BACKEND_MAX_RESTARTS) {
+      log('orch', `Backend failed ${BACKEND_MAX_RESTARTS} times — giving up. Manual intervention required.`);
+      sendSystemAlert({
+        title: 'Backend supervisor exhausted',
+        message: `Backend crashed ${BACKEND_MAX_RESTARTS} times. Last exit code: ${exitCode}. Manual restart required.`,
+        severity: 'critical',
+      });
+      return;
+    }
+
+    const delay = BACKEND_RESTART_DELAYS[Math.min(restartCount - 1, BACKEND_RESTART_DELAYS.length - 1)];
+    const reason = exitCode === 137 ? 'OOM killed' : `exit code ${exitCode}`;
+    log('orch', `Backend died after ${uptimeStr} (${reason}) — restarting in ${delay / 1000}s (attempt ${restartCount}/${BACKEND_MAX_RESTARTS})`);
+
+    sendSystemAlert({
+      title: 'Backend restarting',
+      message: `Backend ${reason} after ${uptimeStr}. Auto-restarting (attempt ${restartCount}/${BACKEND_MAX_RESTARTS}).`,
+      severity: 'warning',
+    });
+
+    await new Promise((r) => setTimeout(r, delay));
+  }
 }
 
 // ─── Sidecar supervisor ─────────────────────────────
@@ -209,7 +275,7 @@ const SIDECAR_RESTART_DELAY_MS = 10_000;
  * Manages the IBKR gateway + sidecar lifecycle with automatic restarts.
  * Runs in the background — never blocks other services.
  */
-async function superviseSidecar(sidecarBase: string): Promise<void> {
+async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Promise<void> {
   const sidecarStatusUrl = `${sidecarBase}/status`;
   let restartCount = 0;
 
@@ -239,8 +305,11 @@ async function superviseSidecar(sidecarBase: string): Promise<void> {
     // Give gateway time to initialize
     await new Promise((r) => setTimeout(r, 5_000));
 
-    log('orch', 'Starting IBKR Sidecar...');
-    spawnService('sidecar', 'bash', [resolve(ROOT, 'sidecar/scripts/start-sidecar.sh')]);
+    const gwPort = mode === 'paper' ? '4002' : '4001';
+    log('orch', `Starting IBKR Sidecar (${mode} mode, gateway port ${gwPort})...`);
+    spawnService('sidecar', 'bash', [resolve(ROOT, 'sidecar/scripts/start-sidecar.sh')], {
+      env: { IBKR_GATEWAY_PORT: gwPort },
+    });
 
     // Wait up to 30s for sidecar to connect
     const ready = await waitForHealth('sidecar', sidecarStatusUrl, {
@@ -376,18 +445,20 @@ async function main(): Promise<void> {
   log('orch', 'Starting web...');
   spawnService('web', 'npm', ['run', 'dev'], { cwd: resolve(ROOT, 'web') });
 
-  // ── Step 3: Backend (if not skipped) ──
+  // ── Step 3: Backend (if not skipped) — supervised with auto-restart ──
 
   if (!NO_BACKEND) {
-    log('orch', 'Starting backend...');
-    spawnService('backend', 'npx', ['tsx', 'src/index.ts']);
+    // Don't await — runs in background with auto-restart on crash/OOM
+    superviseBackend().catch((err) => {
+      log('orch', `Backend supervisor failed: ${err}`);
+    });
   }
 
   // ── Step 4: IBKR Gateway + Sidecar (background, never blocks) ──
 
   if (needsIbkr) {
     // Don't await — runs entirely in the background with auto-restart
-    superviseSidecar(sidecarBase).catch((err) => {
+    superviseSidecar(sidecarBase, channels.ibkrMode).catch((err) => {
       log('orch', `Sidecar supervisor failed: ${err}`);
     });
   }

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Install launchd agents for IB Gateway and the IBKR sidecar.
+# These run independently of dev-up.ts and auto-restart on crash.
+#
+# Usage: bash scripts/install-launchd.sh [--uninstall]
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
+
+GATEWAY_LABEL="com.tradefollower.ibgateway"
+SIDECAR_LABEL="com.tradefollower.sidecar"
+LAUNCH_DIR="$HOME/Library/LaunchAgents"
+
+if [[ "${1:-}" == "--uninstall" ]]; then
+    echo "Unloading launchd agents..."
+    launchctl bootout "gui/$(id -u)/$GATEWAY_LABEL" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/$SIDECAR_LABEL" 2>/dev/null || true
+    rm -f "$LAUNCH_DIR/$GATEWAY_LABEL.plist" "$LAUNCH_DIR/$SIDECAR_LABEL.plist"
+    echo "Done. Gateway and sidecar agents removed."
+    exit 0
+fi
+
+mkdir -p "$LAUNCH_DIR" "$ROOT/data/logs"
+
+# ── IB Gateway via IBC ──────────────────────────────
+cat > "$LAUNCH_DIR/$GATEWAY_LABEL.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$GATEWAY_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$HOME/ibc/gatewaystartmacos.sh</string>
+        <string>-inline</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>$ROOT/data/logs/ibgateway.log</string>
+    <key>StandardErrorPath</key>
+    <string>$ROOT/data/logs/ibgateway.log</string>
+</dict>
+</plist>
+EOF
+
+# ── IBKR Sidecar ─────────────────────────────────────
+cat > "$LAUNCH_DIR/$SIDECAR_LABEL.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$SIDECAR_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$ROOT/sidecar/scripts/start-sidecar.sh</string>
+        <string>--paper</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>IBKR_GATEWAY_PORT</key>
+        <string>4002</string>
+        <key>JAVA_HOME</key>
+        <string>/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>$ROOT/data/logs/sidecar.log</string>
+    <key>StandardErrorPath</key>
+    <string>$ROOT/data/logs/sidecar.log</string>
+</dict>
+</plist>
+EOF
+
+echo "Installing launchd agents..."
+launchctl bootstrap "gui/$(id -u)" "$LAUNCH_DIR/$GATEWAY_LABEL.plist" 2>/dev/null || launchctl load "$LAUNCH_DIR/$GATEWAY_LABEL.plist"
+launchctl bootstrap "gui/$(id -u)" "$LAUNCH_DIR/$SIDECAR_LABEL.plist" 2>/dev/null || launchctl load "$LAUNCH_DIR/$SIDECAR_LABEL.plist"
+
+echo ""
+echo "Installed:"
+echo "  $GATEWAY_LABEL  — IB Gateway (paper mode, port 4002)"
+echo "  $SIDECAR_LABEL  — IBKR sidecar (port 8090)"
+echo ""
+echo "These auto-start on login and restart on crash."
+echo "To uninstall: bash scripts/install-launchd.sh --uninstall"
+echo "Logs: data/logs/ibgateway.log, data/logs/sidecar.log"

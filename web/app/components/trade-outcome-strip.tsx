@@ -3,21 +3,24 @@ import { Badge } from './badge';
 import { formatCurrency, pnlColor } from '@/lib/format';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { safeParseFloat } from '@src/lib/numbers';
+import { cn } from '@/lib/utils';
 import { tradeQty } from '@src/lib/trade';
 import { ArrowRight } from 'lucide-react';
 import type { TradeOutcome } from '@src/lib/enriched-message';
 
 export function TradeOutcomeStrip({
   trade,
+  className,
 }: {
   trade: TradeOutcome;
+  className?: string;
 }) {
   const href = useScopedHref();
   const hasPnl = trade.pnl != null;
   const pnl = safeParseFloat(trade.pnl);
 
   return (
-    <div className="flex items-center gap-2 py-1.5 ml-11 pr-4 text-xs border-t border-border/20">
+    <div className={cn("flex items-center gap-2 py-1.5 ml-11 pr-4 text-xs border-t border-border/20", className)}>
       <Badge label={trade.direction} />
       <Badge label={trade.strategy} />
       <span className="font-medium text-foreground">{trade.symbol}</span>

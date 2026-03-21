@@ -22,6 +22,7 @@ export type MessageDecision = {
   pnl: string | null;
   phase: string;
   durationMs: number | null;
+  taskId: string | null;
 };
 
 /** A chat message enriched with its trade outcome and agent decision. */

@@ -10,8 +10,9 @@ import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, Acco
 import type { BrokerService } from '../interface.js';
 import type { ErrorCategory } from '../../lib/resilient.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '../../lib/resilient.js';
+import { randomUUID } from 'node:crypto';
 import { QuoteUnavailableError } from '../../lib/errors.js';
-import { resolveContract, isOccOptionSymbol, occToIBKR } from './symbology.js';
+import { resolveContract, resolveStockContract, isOccOptionSymbol, occToIBKR } from './symbology.js';
 import { formatOccSymbol } from '../../lib/occ-symbology.js';
 import {
   QuoteResponseSchema,
@@ -163,7 +164,8 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
   const resolvedLegs = await Promise.all(
     params.legs.map(async (leg) => {
       if (leg.type === 'STOCK') {
-        return { leg, conId: undefined as number | undefined, minTick: 0.01 };
+        const { conId, minTick } = await resolveStockContract(params.symbol, runtime.sidecarUrl);
+        return { leg, conId, minTick };
       }
       const occSymbol = formatOccSymbol({
         underlying: params.symbol,
@@ -184,7 +186,10 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
     ? roundToTick(params.limitPrice, minTick)
     : undefined;
 
-  // NO RETRY on placeOrder — network error = unknown broker state.
+  // Idempotency: sidecar deduplicates by clientOrderRef (60s TTL), so retries
+  // after timeout/503 are safe — the sidecar returns the cached result.
+  const clientOrderRef = randomUUID();
+
   return withRetry(async (signal) => {
     let data: unknown;
 
@@ -197,6 +202,7 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
         orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
         quantity: leg.quantity,
         tif: 'GTC',
+        clientOrderRef,
       };
       if (limitPrice != null) {
         singleBody.limitPrice = limitPrice;
@@ -228,6 +234,7 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
         orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
         quantity: params.legs[0].quantity,
         tif: 'GTC',
+        clientOrderRef,
       };
       if (limitPrice != null) {
         comboBody.limitPrice = limitPrice;
@@ -252,7 +259,7 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
       filledQuantity: order.filledQuantity,
       commission: order.commission,
     };
-  }, { maxRetries: 0, timeoutMs: 15_000, classify: ibkrClassify }, 'placeOrder');
+  }, { maxRetries: 2, timeoutMs: 15_000, classify: ibkrClassify }, 'placeOrder');
 }
 
 async function modifyOrder(

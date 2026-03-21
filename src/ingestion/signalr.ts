@@ -24,11 +24,21 @@ export function compactReactions(raw: RawReaction[]): { Type: string; Count: num
     .map(r => ({ Type: r.Type, Count: r.Count }));
 }
 
+export type ReactionUpdate = {
+  messageId: string;
+  reactions: { Type: string; Count: number }[];
+};
+
 type MessageHandler = (msg: SignalRMessage) => void | Promise<void>;
+type ReactionHandler = (update: ReactionUpdate) => void | Promise<void>;
 
 let debugCount = 0;
 
-export async function injectSignalRListener(page: Page, handler: MessageHandler): Promise<void> {
+export async function injectSignalRListener(
+  page: Page,
+  handler: MessageHandler,
+  onReaction?: ReactionHandler,
+): Promise<void> {
   // Use Playwright's native serialization (single object arg).
   // This is the approach that was successfully receiving messages previously.
   await page.exposeFunction('__onSignalRMessage', (raw: unknown) => {
@@ -48,6 +58,12 @@ export async function injectSignalRListener(page: Page, handler: MessageHandler)
     return handler(msg);
   });
 
+  await page.exposeFunction('__onReactionUpdate', (id: unknown, reactions: unknown) => {
+    if (!onReaction) return;
+    const compacted = Array.isArray(reactions) ? compactReactions(reactions as RawReaction[]) : [];
+    return onReaction({ messageId: String(id), reactions: compacted });
+  });
+
   page.on('console', (consoleMsg) => {
     const text = consoleMsg.text();
     if (text.includes('[SignalR]') || text.includes('[Hook]')) {
@@ -57,11 +73,14 @@ export async function injectSignalRListener(page: Page, handler: MessageHandler)
 
   await page.evaluate(async () => {
     // OneOption uses jQuery SignalR 2.x (not @microsoft/signalr).
-    // $.hubConnection() creates a new connection.  We create our own,
-    // register a hub proxy, and start it.  This approach was previously
-    // confirmed to receive addMessage events.
+    // $.hubConnection() creates a NEW connection each call. Our 2nd connection
+    // receives addMessage (broadcast to Clients.All) but NOT updateMessageReactions
+    // (broadcast to a room group the 2nd connection never joined).
+    //
+    // Strategy: 2nd connection for addMessage, app's existing proxy for reactions.
     const win = window as any; // SAFETY: browser-injected global (jQuery SignalR)
     if (win.$ && win.$.hubConnection) {
+      // ── addMessage: new connection (works, broadcast to all clients) ──
       const connection = win.$.hubConnection();
       const hub = connection.createHubProxy('chatHub');
 
@@ -78,7 +97,18 @@ export async function injectSignalRListener(page: Page, handler: MessageHandler)
         });
       }
 
-      console.log('[SignalR] Hook injected on chatHub.addMessage');
+      // ── updateMessageReactions: app's existing proxy (joined to room group) ──
+      const existingProxy = win.$.connection?.chatHub;
+      if (existingProxy && typeof existingProxy.on === 'function') {
+        existingProxy.on('updateMessageReactions', (id: unknown, reactions: unknown) => {
+          (window as any).__onReactionUpdate(id, reactions); // SAFETY: browser-injected global via exposeFunction
+        });
+        console.log('[SignalR] Hook injected: addMessage (new conn) + updateMessageReactions (existing proxy)');
+      } else {
+        console.warn('[SignalR] No existing chatHub proxy found — reaction updates will not be received');
+        console.log('[SignalR] $.connection keys:', Object.keys(win.$.connection || {}).join(', '));
+        console.log('[SignalR] Hook injected: addMessage only (new conn)');
+      }
     } else {
       console.warn('[SignalR] jQuery SignalR not found on page');
     }

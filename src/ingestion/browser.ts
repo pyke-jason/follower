@@ -1,14 +1,17 @@
-import { chromium, type Browser, type Page } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { sendSystemAlert } from '../lib/alert.js';
 import { PATHS } from '../lib/paths.js';
 import { isoToDateKey } from '../lib/et-date.js';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated';
 
 const CHAT_URL = process.env.CHAT_URL || 'https://app.oneoption.com/chat';
-const USER_DATA_DIR = process.env.USER_DATA_DIR || PATHS.browserSession;
+const STORAGE_STATE_PATH = resolve(PATHS.data, 'browser-storage.json');
 
 let browser: Browser | null = null;
+let context: BrowserContext | null = null;
 let page: Page | null = null;
 let authState: AuthState = 'unknown';
 let authMonitorTimer: ReturnType<typeof setInterval> | null = null;
@@ -20,13 +23,13 @@ export function isPageAlive(): boolean {
 export function resetBrowser(): void {
   stopAuthMonitor();
   page = null;
+  context = null;
   browser = null;
   authState = 'unknown';
 }
 
 export async function launchBrowser(): Promise<{ page: Page; crashed: Promise<void> }> {
   if (page) {
-    // Already running — return existing page with a fresh crash promise
     const crashed = new Promise<void>(resolve => {
       page!.on('close', () => resolve());
     });
@@ -34,19 +37,26 @@ export async function launchBrowser(): Promise<{ page: Page; crashed: Promise<vo
   }
 
   console.log('[Browser] Launching...');
-  console.log(`[Browser] User data dir: ${USER_DATA_DIR}`);
 
-  const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+  browser = await chromium.launch({
     headless: process.env.HEADLESS === 'true',
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 
-  browser = context.browser();
-  page = context.pages()[0] || await context.newPage();
+  // Restore cookies from previous session if available
+  const storageState = existsSync(STORAGE_STATE_PATH) ? STORAGE_STATE_PATH : undefined;
+  if (storageState) {
+    console.log('[Browser] Restoring saved session cookies');
+  }
+
+  context = await browser.newContext({ storageState });
+  page = await context.newPage();
 
   const crashed = new Promise<void>(resolve => {
-    page!.on('close', () => resolve());
-    context.on('close', () => resolve());
+    browser!.on('disconnected', () => {
+      console.log('[Browser] disconnected event');
+      resolve();
+    });
   });
 
   console.log(`[Browser] Navigating to ${CHAT_URL}...`);
@@ -96,6 +106,16 @@ async function checkAuth(p: Page): Promise<AuthState> {
   return 'unauthenticated';
 }
 
+/** Save cookies so the next launch can restore them without re-login. */
+async function saveStorageState(): Promise<void> {
+  if (!context) return;
+  try {
+    await context.storageState({ path: STORAGE_STATE_PATH });
+  } catch {
+    // Non-fatal — worst case we re-login next time
+  }
+}
+
 export async function attemptLogin(): Promise<boolean> {
   if (!page) throw new Error('Browser not launched');
 
@@ -123,6 +143,9 @@ export async function attemptLogin(): Promise<boolean> {
     ]);
 
     authState = await checkAuth(page);
+    if (authState === 'authenticated') {
+      await saveStorageState();
+    }
     return authState === 'authenticated';
   } catch (err) {
     console.error('[Browser] Login failed:', err);
@@ -140,7 +163,10 @@ export async function waitForAuth(): Promise<void> {
     await new Promise(r => setTimeout(r, 5000));
     if (!page) throw new Error('Browser closed during auth wait');
     authState = await checkAuth(page);
-    if (authState === 'authenticated') return;
+    if (authState === 'authenticated') {
+      await saveStorageState();
+      return;
+    }
   }
 }
 
@@ -210,14 +236,20 @@ export function stopAuthMonitor(): void {
 
 export async function closeBrowser(): Promise<void> {
   stopAuthMonitor();
-  if (browser) {
+  // Save cookies before closing so next launch can restore them
+  await saveStorageState();
+  const b = browser;
+  browser = null;
+  context = null;
+  page = null;
+  authState = 'unknown';
+  if (b) {
     try {
-      await browser.close();
+      await b.close();
     } catch {
       // Browser already closed externally — that's fine
     }
-    browser = null;
-    page = null;
-    authState = 'unknown';
   }
+  // No orphan cleanup needed — chromium.launch() owns the process tree
+  // and browser.close() terminates it atomically.
 }
