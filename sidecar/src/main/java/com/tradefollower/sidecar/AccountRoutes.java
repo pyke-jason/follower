@@ -69,7 +69,9 @@ public class AccountRoutes {
             // Enrich with marketValue/unrealizedPnl from portfolio subscription
             Map<Integer, Map<String, Object>> portfolio = bridge.getPortfolioPositions();
             for (Map<String, Object> pos : positions) {
-                int conId = ((Number) pos.get("conId")).intValue();
+                Object conIdObj = pos.get("conId");
+                if (conIdObj == null) continue;
+                int conId = ((Number) conIdObj).intValue();
                 Map<String, Object> enrichment = portfolio.get(conId);
                 if (enrichment != null) {
                     pos.put("marketValue", enrichment.get("marketValue"));

@@ -2,7 +2,7 @@
 
 Source of truth for Interactive Brokers TWS API behavior. Verified against official IBKR documentation at [interactivebrokers.github.io/tws-api/](https://interactivebrokers.github.io/tws-api/).
 
-This directory documents **how IBKR works**, not how our sidecar implements it. For sidecar-specific docs, see [`../ibkr-sidecar/`](../ibkr-sidecar/).
+This directory documents **how IBKR works**, not how our sidecar implements it. Sidecar source: `sidecar/`, TS client: `src/broker/ibkr/`.
 
 ## Documents
 

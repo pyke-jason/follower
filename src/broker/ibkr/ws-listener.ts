@@ -7,8 +7,8 @@
 
 import { WebSocket } from 'ws';
 import { SidecarEventSchema } from './schemas.js';
-import { sendSystemAlert } from '../../lib/alert.js';
-import { createLogger } from '../../lib/logger.js';
+import { sendSystemAlert } from '@/lib/alert.js';
+import { createLogger } from '@/lib/logger.js';
 
 const log = createLogger('IBKR-WS');
 

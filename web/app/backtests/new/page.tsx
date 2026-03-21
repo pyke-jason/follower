@@ -3,6 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { BacktestForm } from './backtest-form';
+import type { BacktestRun, BacktestRunConfig } from '@src/db/schema';
+
+type BacktestCloneSource = {
+  run: BacktestRun;
+};
 
 const Spinner = () => (
   <div className="flex items-center justify-center py-20">
@@ -19,15 +24,15 @@ export default function NewBacktestPage() {
     queryFn: () => api('/tracked-traders'),
   });
 
-  const { data: cloneSource } = useQuery<{ config: any; run?: { config?: any } }>({
+  const { data: cloneSource } = useQuery<BacktestCloneSource>({
     queryKey: ['backtest-clone', cloneId],
-    queryFn: () => api(`/backtests/${cloneId}`),
+    queryFn: () => api<BacktestCloneSource>(`/backtests/${cloneId}`),
     enabled: !!cloneId,
   });
 
   if (!trackedTraders) return <Spinner />;
 
-  const defaultConfig = cloneSource?.config ?? cloneSource?.run?.config;
+  const defaultConfig: BacktestRunConfig | undefined = cloneSource?.run.config;
   const defaultTraders = trackedTraders.map((t) => t.name).join(', ');
 
   return (

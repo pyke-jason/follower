@@ -11,6 +11,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -32,6 +35,12 @@ public class OrderRoutes {
     private record IdempotencyEntry(int orderId, long createdAt) {}
     private final ConcurrentHashMap<String, IdempotencyEntry> recentOrders = new ConcurrentHashMap<>();
 
+    private final ScheduledExecutorService idempotencyReaper = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "idempotency-reaper");
+        t.setDaemon(true);
+        return t;
+    });
+
     private void evictStaleRefs() {
         long cutoff = System.currentTimeMillis() - IDEMPOTENCY_TTL_MS;
         recentOrders.entrySet().removeIf(e -> e.getValue().createdAt() < cutoff);
@@ -39,6 +48,8 @@ public class OrderRoutes {
 
     public OrderRoutes(TwsBridge bridge) {
         this.bridge = bridge;
+        // Background cleanup prevents unbounded growth when sidecar is idle
+        idempotencyReaper.scheduleAtFixedRate(this::evictStaleRefs, 1, 1, TimeUnit.MINUTES);
     }
 
     public void register(Javalin app) {
@@ -57,7 +68,7 @@ public class OrderRoutes {
             ctx.json(Map.of("orderId", orderId, "status", "PendingSubmit"));
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            String msg = cause.getMessage();
+            String msg = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
             if (cause instanceof TwsException twsErr) {
                 int status = twsErr.isNoSecurityDef() ? 422
                            : twsErr.isValidationError() ? 400

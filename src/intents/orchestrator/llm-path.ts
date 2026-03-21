@@ -13,14 +13,14 @@
  * normalization, and badge interpretation are already done by the parser.
  */
 
-import { htmlToLLMText } from '../../parsing/html.js';
-import { formatTimestampForLLM } from '../../lib/et-date.js';
-import { runAgentLoop } from '../../agent/agent-loop.js';
-import type { LLMProvider } from '../../agent/providers.js';
+import { htmlToLLMText } from '@/parsing/html.js';
+import { formatTimestampForLLM } from '@/lib/et-date.js';
+import { runAgentLoop } from '@/agent/agent-loop.js';
+import type { LLMProvider } from '@/agent/providers.js';
 import { createIntentTools, intentOnToolCall } from '../intent-tools.js';
-import type { Signal } from '../../agent/schemas.js';
-import type { TaskResult } from '../../agent/schemas.js';
-import { createLogger } from '../../lib/logger.js';
+import type { Signal } from '@/agent/schemas.js';
+import type { TaskResult } from '@/agent/schemas.js';
+import { createLogger } from '@/lib/logger.js';
 import type {
   OrchestratorContext,
   OrchestratorResult,
@@ -30,7 +30,7 @@ import type {
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath } from './position-path.js';
 import { lookupIntent, writeIntent, INTENT_VERSION } from './intent-cache.js';
-import type { IntentStep } from '../../db/schema.js';
+import type { IntentStep } from '@/db/schema.js';
 
 const log = createLogger('Orchestrator:LLM');
 

@@ -6,6 +6,8 @@ import org.slf4j.LoggerFactory;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -81,6 +83,10 @@ public class TwsBridge extends DefaultEWrapper {
     private volatile int serverVersion;
     private volatile boolean shuttingDown = false;
 
+    // EReader lifecycle — tracked for cleanup on reconnect
+    private volatile EReader eReader;
+    private volatile Thread dispatchThread;
+
     private static final long HEARTBEAT_INTERVAL_MS = 30_000;
     private static final long HEARTBEAT_DEAD_MS     = 40_000;
 
@@ -108,12 +114,17 @@ public class TwsBridge extends DefaultEWrapper {
 
     public void connect() {
         log.info("Connecting to IB Gateway at {}:{} (clientId={})", host, port, clientId);
+
+        // Clean up old EReader/dispatch threads before creating new ones
+        stopEReader();
+
         client.eConnect(host, port, clientId);
 
         // CRITICAL: EReader thread pattern — without this, ZERO callbacks fire
         EReader reader = new EReader(client, signal);
+        this.eReader = reader;
         reader.start();
-        new Thread(() -> {
+        Thread dispatch = new Thread(() -> {
             while (client.isConnected()) {
                 signal.waitForSignal();
                 try {
@@ -122,7 +133,20 @@ public class TwsBridge extends DefaultEWrapper {
                     log.error("EReader processMsgs error: {}", e.getMessage());
                 }
             }
-        }, "ereader-dispatch").start();
+        }, "ereader-dispatch");
+        this.dispatchThread = dispatch;
+        dispatch.start();
+    }
+
+    /** Interrupt and join old EReader + dispatch threads. */
+    private void stopEReader() {
+        Thread oldDispatch = this.dispatchThread;
+        if (oldDispatch != null && oldDispatch.isAlive()) {
+            oldDispatch.interrupt();
+            try { oldDispatch.join(2000); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        }
+        this.dispatchThread = null;
+        this.eReader = null;
     }
 
     private void startHeartbeat() {
@@ -166,7 +190,7 @@ public class TwsBridge extends DefaultEWrapper {
         }
         pendingRequests.clear();
 
-        try { client.eDisconnect(); } catch (Exception e) { /* unblock EReader */ }
+        try { client.eDisconnect(); } catch (Exception e) { log.debug("eDisconnect: {}", e.getMessage()); }
 
         scheduleReconnect();
     }
@@ -178,6 +202,7 @@ public class TwsBridge extends DefaultEWrapper {
         watchdog.shutdownNow();
         reaper.shutdownNow();
         if (client.isConnected()) client.eDisconnect();
+        stopEReader();
     }
 
     private void scheduleReconnect() {
@@ -247,8 +272,8 @@ public class TwsBridge extends DefaultEWrapper {
     public String getAccountId() { return accountId; }
     public int getServerVersion() { return serverVersion; }
     public EClientSocket getClient() { return client; }
-    public Map<String, String> getAccountValues() { return accountValues; }
-    public Map<Integer, Map<String, Object>> getPortfolioPositions() { return portfolioPositions; }
+    public Map<String, String> getAccountValues() { return Collections.unmodifiableMap(new HashMap<>(accountValues)); }
+    public Map<Integer, Map<String, Object>> getPortfolioPositions() { return Collections.unmodifiableMap(new HashMap<>(portfolioPositions)); }
     public boolean isAccountSubscriptionActive() { return accountSubscriptionActive; }
     public long getLastHeartbeatResponse() { return lastHeartbeatResponse; }
 
@@ -287,11 +312,7 @@ public class TwsBridge extends DefaultEWrapper {
     }
 
     public <T> T awaitRequest(CompletableFuture<T> future) throws Exception {
-        try {
-            return future.get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } finally {
-            pendingRequests.values().remove(future);
-        }
+        return future.get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
     /** Get last known order status (for GET polling). */
@@ -515,24 +536,29 @@ public class TwsBridge extends DefaultEWrapper {
 
     @Override
     public void position(String account, Contract contract, Decimal pos, double avgCost) {
-        // Find the active position accumulator (there should be exactly one)
-        for (var entry : positionAccumulators.entrySet()) {
-            Map<String, Object> posData = new ConcurrentHashMap<>();
-            posData.put("conId", contract.conid());
-            posData.put("symbol", contract.symbol());
-            posData.put("secType", contract.getSecType());
-            posData.put("localSymbol", contract.localSymbol() != null ? contract.localSymbol() : "");
-            posData.put("position", pos.longValue());
-            posData.put("avgCost", avgCost);
-            entry.getValue().add(posData);
+        Map<String, Object> posData = new ConcurrentHashMap<>();
+        posData.put("conId", contract.conid());
+        posData.put("symbol", contract.symbol());
+        posData.put("secType", contract.getSecType());
+        posData.put("localSymbol", contract.localSymbol() != null ? contract.localSymbol() : "");
+        posData.put("position", pos.longValue());
+        posData.put("avgCost", avgCost);
+
+        // Snapshot keys to avoid ConcurrentModificationException if positionEnd() removes entries
+        for (var key : new java.util.ArrayList<>(positionAccumulators.keySet())) {
+            positionAccumulators.computeIfPresent(key, (k, list) -> {
+                list.add(posData);
+                return list;
+            });
         }
     }
 
     @Override
     public void positionEnd() {
-        for (var entry : positionAccumulators.entrySet()) {
-            completeRequest(entry.getKey(), entry.getValue());
-            positionAccumulators.remove(entry.getKey());
+        var keys = new java.util.ArrayList<>(positionAccumulators.keySet());
+        for (var key : keys) {
+            var value = positionAccumulators.remove(key);
+            if (value != null) completeRequest(key, value);
         }
     }
 
@@ -606,7 +632,11 @@ public class TwsBridge extends DefaultEWrapper {
     public void commissionAndFeesReport(CommissionAndFeesReport report) {
         if (report.commissionAndFees() == Double.MAX_VALUE) return;
         Map<String, Object> exec = executionStore.get(report.execId());
-        int orderId = exec != null ? (int) exec.get("orderId") : -1;
+        int orderId = -1;
+        if (exec != null) {
+            Object oid = exec.get("orderId");
+            if (oid instanceof Number) orderId = ((Number) oid).intValue();
+        }
         wsHandler.broadcastCommission(report.execId(), report.commissionAndFees(), orderId);
     }
 

@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import { sendSystemAlert } from '../../lib/alert.js';
+import { sendSystemAlert } from '@/lib/alert.js';
 
 // ── Sidecar Status ──────────────────────────────────────────────────
 

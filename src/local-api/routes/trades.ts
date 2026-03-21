@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
-import type { Direction, LegAction } from '../../lib/enums.js';
-import type { BrokerService } from '../../broker/interface.js';
-import { db, schema } from '../../db/client.js';
+import type { Direction, LegAction } from '@/lib/enums.js';
+import type { BrokerService } from '@/broker/interface.js';
+import { db, schema } from '@/db/client.js';
 import { eq } from 'drizzle-orm';
-import { recordTrade } from '../../trades/record-trade.js';
+import { recordTrade } from '@/trades/record-trade.js';
 
 export function createTradesRouter(channelBrokers: Map<string, BrokerService>) {
   const app = new Hono();

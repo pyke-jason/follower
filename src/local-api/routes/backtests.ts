@@ -3,9 +3,9 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { eq } from 'drizzle-orm';
-import { PROJECT_ROOT, PATHS } from '../../lib/paths.js';
-import { db, schema } from '../../db/client.js';
-import { sendSystemAlert } from '../../lib/alert.js';
+import { PROJECT_ROOT, PATHS } from '@/lib/paths.js';
+import { db, schema } from '@/db/client.js';
+import { sendSystemAlert } from '@/lib/alert.js';
 
 function readLogTail(logPath: string, bytes = 2000): string {
   try {

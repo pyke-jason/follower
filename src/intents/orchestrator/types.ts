@@ -8,13 +8,13 @@
  * See docs/plan-orchestrator-technical.md for the full design.
  */
 
-import type { Direction, LegAction, OptionType, OrderCategory, Strategy, TradeAction } from '../../lib/enums.js';
-import type { Quote, OptionsChain } from '../../broker/types.js';
-import type { LLMProvider } from '../../agent/providers.js';
-import type { BrokerService } from '../../broker/interface.js';
-import type { SignalEventEmitter } from '../../decisions/emitter.js';
-import type { Message, TradeLeg } from '../../db/schema.js';
-import type { TraceContext } from '../../lib/trace.js';
+import type { Direction, LegAction, OptionType, OrderCategory, Strategy, TradeAction } from '@/lib/enums.js';
+import type { Quote, OptionsChain } from '@/broker/types.js';
+import type { LLMProvider } from '@/agent/providers.js';
+import type { BrokerService } from '@/broker/interface.js';
+import type { SignalEventEmitter } from '@/decisions/emitter.js';
+import type { Message, TradeLeg } from '@/db/schema.js';
+import type { TraceContext } from '@/lib/trace.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ export type ResolvedSignal = {
   exitPercent?: number;
 };
 
-export type { SignalEventEmitter } from '../../decisions/emitter.js';
+export type { SignalEventEmitter } from '@/decisions/emitter.js';
 
 export type OrchestratorResult =
   | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }

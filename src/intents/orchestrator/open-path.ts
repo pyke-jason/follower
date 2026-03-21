@@ -23,12 +23,13 @@ import type {
   Leg,
   TradePosition,
 } from './types.js';
-import type { LegAction, OptionType, Strategy } from '../../lib/enums.js';
-import { isSpread, getOptionLegs, type SpreadStrategy } from '../../lib/trade.js';
+import type { LegAction, OptionType, Strategy } from '@/lib/enums.js';
+import { isSpread, getOptionLegs, type SpreadStrategy } from '@/lib/trade.js';
 import { strikesFromParse } from './parser.js';
-import { resolveExpiryHint, generateWeeklyExpiries } from './expiry-resolver.js';
-import { createLogger } from '../../lib/logger.js';
-import { toDateKeyET } from '../../lib/et-date.js';
+import { generateWeeklyExpiries } from './expiry-resolver.js';
+import { normalizeExpiry } from '@/lib/occ-symbology.js';
+import { createLogger } from '@/lib/logger.js';
+import { toDateKeyET } from '@/lib/et-date.js';
 
 const log = createLogger('Orchestrator:OpenPath');
 
@@ -227,7 +228,11 @@ export async function resolveOpenPath(
     // Stock needs no expiry
     resolvedExpiry = null;
   } else if (parse.expiryHint !== null) {
-    resolvedExpiry = resolveExpiryHint(parse.expiryHint, messageDate);
+    try {
+      resolvedExpiry = normalizeExpiry(parse.expiryHint, messageDate);
+    } catch {
+      resolvedExpiry = null;
+    }
     if (!resolvedExpiry) {
       // Hint was unparseable — fall back to nearest available expiry
       log.debug('open-path: could not parse expiryHint "%s", falling back to nearest expiry', parse.expiryHint);

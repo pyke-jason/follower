@@ -57,3 +57,7 @@ The parser's `direction` field (LONG/SHORT) means whether the trader is BUYING o
 - "Bought"/"Sold" in the message are authoritative — they override any Long/Short prefix badge.
 
 **For spreads (CDS, PDS, PCS, CCS)** — direction is derived from leg structure, not the direction field. `buildSpreadOptionLegs()` maps strategy → leg sides deterministically. `isCreditStrategy()` handles credit/debit pricing. The parser sets `directionFromStrategy` for CDS/PDS (LONG) but leaves it null for PCS — this is safe because spread execution never consults the direction field.
+
+## Known Parser Gaps
+
+CCS (Call Credit Spread) has no detection regex in the parser — messages containing "call credit spread" or "CCS" without additional deterministic markers will fall to the LLM path.

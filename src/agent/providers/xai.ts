@@ -9,8 +9,8 @@ import type {
 } from '../providers.js';
 import type { ToolDef } from '../tool-factory.js';
 import { randomUUID } from 'node:crypto';
-import { withRetry, LLM_DEFAULTS, oaiClassify } from '../../lib/resilient.js';
-import { createLogger } from '../../lib/logger.js';
+import { withRetry, LLM_DEFAULTS, oaiClassify } from '@/lib/resilient.js';
+import { createLogger } from '@/lib/logger.js';
 
 const log = createLogger('XAI');
 

@@ -7,9 +7,8 @@ export type TradeScatterPoint = {
   strategy: string;
   direction: string;
   trader: string;
-  holdDays: number;
-  date?: string;
-  quantity?: number;
+  date: string;
+  quantity: number;
 };
 
 const CHART_COLORS = [
@@ -26,8 +25,7 @@ function colorFor(index: number): string {
   return CHART_COLORS[index % CHART_COLORS.length];
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ScatterTooltip({ active, payload }: any) {
+function ScatterTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: TradeScatterPoint }> }) {
   if (!active || !payload?.[0]) return null;
   const d = payload[0].payload as TradeScatterPoint;
   return (

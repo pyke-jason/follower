@@ -9,7 +9,7 @@
  * OCC is used by Databento; TS format is used by TradeStation API.
  */
 
-import type { OptionType } from '../../lib/enums.js';
+import type { OptionType } from '@/lib/enums.js';
 
 export function formatTsOptionSymbol(option: {
   underlying: string;

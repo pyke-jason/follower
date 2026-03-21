@@ -5,10 +5,8 @@
 </project_overview>
 
 <ibkr_docs>
-  Two doc directories:
-  - `docs/ibkr/` — Official IBKR TWS API reference (source of truth, verified against official docs). Order lifecycle, error codes, connection, risk/margin.
-  - `docs/ibkr-sidecar/` — Our Java sidecar + TS client implementation: API contract, status mapping, gaps/todos.
-  Read `docs/ibkr-sidecar/gaps-and-todos.md` for known issues before making changes to `src/broker/ibkr/` or `sidecar/`.
+  `docs/ibkr/` — Official IBKR TWS API reference (source of truth, verified against official docs). Order lifecycle, error codes, connection, risk/margin.
+  Java sidecar lives in `sidecar/`, TS client in `src/broker/ibkr/`.
 </ibkr_docs>
 
 <signal_flow>
@@ -34,11 +32,25 @@
   - WARN MEANS ACTIONABLE: `log.warn` is reserved for conditions a human should investigate. Expected behavior (dedup hits, API 206 responses, timing metrics) belongs at info or debug.
 </coding_standards>
 
-<workflows>
-  <iteration>
-    Use disposable scripts in `scratchpad/` to isolate suspects with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete script when verified. Do not read `.env` directly; rely on environment variables. You literally have ANY tools at your disposal. Web search, disposable scripts, whatever that allows you to CONCRETELY verify your additions/solutions/fixes.
-  </iteration>
+<own_the_outcome>
+  You are not done when the code compiles. You are done when the feature works.
 
+  The expectation: When you build something, you verify it works end-to-end before declaring it done. Don't write code and hand it off — iterate on it until it's right. If a page doesn't render, a button doesn't work, or a layout looks broken, that's your problem to fix, not the human's problem to discover.
+
+  How to verify your work:
+  - Playwright: Use it to open pages, click through flows, and confirm things actually render and behave correctly. This isn't a "test suite" concern — it's how you check your own work.
+  - Scratchpad (`scratchpad/`): Write throwaway scripts to test ideas, validate data transformations, check edge cases, or debug issues. This folder is your workbench — use it freely, nothing in it is precious.
+  - Dev server: Run the app, hit the routes, look at what happens. If you can't tell whether something works without a human looking at it, you haven't tried hard enough.
+
+  Iterate: If your first attempt doesn't work, debug it, fix it, and try again. The goal is a working feature, not a submitted diff.
+
+  Testing tools:
+  - Playwright for validating that pages render and flows work (e2e and as a verification tool during development)
+  - Disposable scripts in `scratchpad/` with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete script when verified.
+  - Do not read `.env` directly; rely on environment variables.
+</own_the_outcome>
+
+<workflows>
   <self_documentation>
     MANDATORY: Create a lesson file in `docs/lessons/` after every implementation session (new features, bugs, schema changes).
     Format: `YYYY-MM-DD-slug.md`. Plain text, flat, scannable.

@@ -32,26 +32,12 @@ export type ReactionUpdate = {
 type MessageHandler = (msg: SignalRMessage) => void | Promise<void>;
 type ReactionHandler = (update: ReactionUpdate) => void | Promise<void>;
 
-let debugCount = 0;
-
 export async function injectSignalRListener(
   page: Page,
   handler: MessageHandler,
   onReaction?: ReactionHandler,
 ): Promise<void> {
-  // Use Playwright's native serialization (single object arg).
-  // This is the approach that was successfully receiving messages previously.
   await page.exposeFunction('__onSignalRMessage', (raw: unknown) => {
-    // Debug: log the raw shape of the first few messages
-    if (debugCount < 5) {
-      debugCount++;
-      try {
-        console.log(`[SignalR DEBUG #${debugCount}] raw type=${typeof raw}, value=${JSON.stringify(raw).substring(0, 800)}`);
-      } catch {
-        console.log(`[SignalR DEBUG #${debugCount}] raw type=${typeof raw}, keys=${typeof raw === 'object' && raw ? Object.keys(raw as Record<string, unknown>).join(',') : 'N/A'}`);
-      }
-    }
-
     const msg = normalizeMessage(raw);
     if (!msg) return;
 

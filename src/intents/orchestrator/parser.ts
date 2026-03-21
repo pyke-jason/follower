@@ -7,8 +7,8 @@
  * selection, expiry resolution).
  */
 
-import type { Direction, Strategy, TradeAction } from '../../lib/enums.js';
-import { isSpread as isSpreadStrategy } from '../../lib/trade.js';
+import type { Direction, Strategy, TradeAction } from '@/lib/enums.js';
+import { isSpread as isSpreadStrategy } from '@/lib/trade.js';
 import type {
   OrchestratorContext,
   ParseResult,

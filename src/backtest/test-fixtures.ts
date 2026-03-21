@@ -329,7 +329,8 @@ export const CREATE_MESSAGES_SQL = sql`
     is_paper_trade INTEGER DEFAULT 0,
     confidence TEXT,
     ingested_at TEXT,
-    content_hash TEXT
+    content_hash TEXT,
+    reactions TEXT DEFAULT '[]'
   )
 `;
 

@@ -1,7 +1,7 @@
 import type { EvalCase, EvalResult, FieldScore, ExpectedSignal, ExpectedLeg } from './types.js';
 import type { OrchestratorResult, ResolvedSignal, OptionLeg, Leg } from '../orchestrator/types.js';
-import { normalizeExpiry } from '../../lib/occ-symbology.js';
-import { getOptionLegs } from '../../lib/trade.js';
+import { normalizeExpiry } from '@/lib/occ-symbology.js';
+import { getOptionLegs } from '@/lib/trade.js';
 
 export const PASS_THRESHOLD = 0.8;
 

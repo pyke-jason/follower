@@ -31,7 +31,7 @@ Filters import from `db/schema` only (not `db/client`) for web compatibility. Th
 When changing the schema:
 1. Edit `src/db/schema.ts`
 2. `npm run db:generate` — generates migration + snapshot via `drizzle-kit generate`
-3. `npm run db:migrate` — applies via `tsx src/db/migrate.ts` (libsql migrator)
+3. `npm run db:migrate` — applies via `tsx src/db/migrate.ts` (better-sqlite3 migrator)
 4. Update any affected accessors in `src/db/accessors.ts`
 5. Update any affected types/queries
 

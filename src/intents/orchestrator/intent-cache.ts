@@ -7,10 +7,10 @@
  */
 
 import { eq, and } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { messageIntents } from '../../db/schema.js';
-import type { Signal, IntentStep } from '../../db/schema.js';
-import { createLogger } from '../../lib/logger.js';
+import { db } from '@/db/client.js';
+import { messageIntents } from '@/db/schema.js';
+import type { Signal, IntentStep } from '@/db/schema.js';
+import { createLogger } from '@/lib/logger.js';
 
 const log = createLogger('IntentCache');
 

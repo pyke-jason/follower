@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { sendSystemAlert } from '../../lib/alert.js';
-import { zCoercePrice } from '../../lib/zod-financial.js';
+import { sendSystemAlert } from '@/lib/alert.js';
+import { zCoercePrice } from '@/lib/zod-financial.js';
 
 // --- TradeStation API response schemas (PascalCase, raw API shape) ---
 // NOTE: TradeStation returns ALL numeric fields as strings (e.g. "684.37").

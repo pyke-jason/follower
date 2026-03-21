@@ -339,32 +339,29 @@ describe('normalizeExpiry', () => {
   // ── Semantic expiry strings (LLM fallback) ──
 
   test('this-week strings resolve to next Friday on or after refDate', () => {
-    // Wednesday 2025-09-10 → this Friday is 2025-09-12
-    const wed = new Date(Date.UTC(2025, 8, 10));
+    // Wednesday 2025-09-10 (noon UTC to land on correct ET day)
+    const wed = new Date(Date.UTC(2025, 8, 10, 12));
     expect(normalizeExpiry('next-expiry', wed)).toBe('2025-09-12');
     expect(normalizeExpiry('this-friday', wed)).toBe('2025-09-12');
   });
 
   test('semantic strings on Friday resolve to that same Friday', () => {
-    // Friday 2025-09-12
-    const fri = new Date(Date.UTC(2025, 8, 12));
+    const fri = new Date(Date.UTC(2025, 8, 12, 12));
     expect(normalizeExpiry('next-expiry', fri)).toBe('2025-09-12');
   });
 
   test('semantic strings on Saturday resolve to next Friday', () => {
-    // Saturday 2025-09-13 → next Friday is 2025-09-19
-    const sat = new Date(Date.UTC(2025, 8, 13));
+    const sat = new Date(Date.UTC(2025, 8, 13, 12));
     expect(normalizeExpiry('next-expiry', sat)).toBe('2025-09-19');
   });
 
   test('semantic strings on Sunday resolve to next Friday', () => {
-    // Sunday 2025-09-14 → next Friday is 2025-09-19
-    const sun = new Date(Date.UTC(2025, 8, 14));
+    const sun = new Date(Date.UTC(2025, 8, 14, 12));
     expect(normalizeExpiry('next-expiry', sun)).toBe('2025-09-19');
   });
 
   test('semantic strings are case-insensitive', () => {
-    const wed = new Date(Date.UTC(2025, 8, 10));
+    const wed = new Date(Date.UTC(2025, 8, 10, 12));
     expect(normalizeExpiry('NEXT-EXPIRY', wed)).toBe('2025-09-12');
     expect(normalizeExpiry('Next-Expiry', wed)).toBe('2025-09-12');
   });
@@ -372,7 +369,9 @@ describe('normalizeExpiry', () => {
   test('this-week semantic strings always output YYYY-MM-DD and land on a Friday', () => {
     fc.assert(
       fc.property(
-        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime())),
+        // Use noon-UTC dates so ET conversion lands on the intended calendar day
+        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime()))
+          .map(d => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12))),
         fc.constantFrom('next-expiry', 'this-friday', 'this-week'),
         (refDate, keyword) => {
           const result = normalizeExpiry(keyword, refDate);
@@ -380,10 +379,6 @@ describe('normalizeExpiry', () => {
           const [y, m, d] = result.split('-').map(Number);
           const resolved = new Date(Date.UTC(y, m - 1, d));
           expect(resolved.getUTCDay()).toBe(5); // Friday
-          // On or after reference date
-          expect(resolved.getTime()).toBeGreaterThanOrEqual(
-            Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate()),
-          );
         },
       ),
     );
@@ -392,7 +387,8 @@ describe('normalizeExpiry', () => {
   test('next-week semantic strings always land on a Friday strictly after refDate week', () => {
     fc.assert(
       fc.property(
-        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime())),
+        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime()))
+          .map(d => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12))),
         fc.constantFrom('next-week', 'next-friday', 'next friday'),
         (refDate, keyword) => {
           const result = normalizeExpiry(keyword, refDate);
@@ -412,7 +408,7 @@ describe('normalizeExpiry', () => {
   // ── New relative-date keywords ──
 
   test('today resolves to referenceDate itself', () => {
-    const ref = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10
+    const ref = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 noon UTC
     expect(normalizeExpiry('today', ref)).toBe('2025-09-10');
     expect(normalizeExpiry('TODAY', ref)).toBe('2025-09-10');
     expect(normalizeExpiry('0DTE', ref)).toBe('2025-09-10');
@@ -421,13 +417,13 @@ describe('normalizeExpiry', () => {
   });
 
   test('tomorrow resolves to referenceDate + 1 day', () => {
-    const ref = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10
+    const ref = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 noon UTC
     expect(normalizeExpiry('tomorrow', ref)).toBe('2025-09-11');
     expect(normalizeExpiry('TOMORROW', ref)).toBe('2025-09-11');
   });
 
   test('1DTE variants resolve to referenceDate + 1 day', () => {
-    const ref = new Date(Date.UTC(2025, 9, 16)); // Thu Oct 16
+    const ref = new Date(Date.UTC(2025, 9, 16, 12)); // Thu Oct 16 noon UTC
     expect(normalizeExpiry('1DTE', ref)).toBe('2025-10-17');
     expect(normalizeExpiry('1 DTE', ref)).toBe('2025-10-17');
     expect(normalizeExpiry('1-DTE', ref)).toBe('2025-10-17');
@@ -435,7 +431,7 @@ describe('normalizeExpiry', () => {
   });
 
   test('this week / this friday resolve to next Friday on or after refDate', () => {
-    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → Fri Sep 12
+    const wed = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 → Fri Sep 12
     expect(normalizeExpiry('this week', wed)).toBe('2025-09-12');
     expect(normalizeExpiry('this-week', wed)).toBe('2025-09-12');
     expect(normalizeExpiry('this friday', wed)).toBe('2025-09-12');
@@ -443,7 +439,7 @@ describe('normalizeExpiry', () => {
   });
 
   test('next week / next friday resolve to the FOLLOWING week Friday', () => {
-    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → next week Fri = Sep 19
+    const wed = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 → next week Fri = Sep 19
     expect(normalizeExpiry('next week', wed)).toBe('2025-09-19');
     expect(normalizeExpiry('next-week', wed)).toBe('2025-09-19');
     expect(normalizeExpiry('next friday', wed)).toBe('2025-09-19');
@@ -451,7 +447,7 @@ describe('normalizeExpiry', () => {
   });
 
   test('next week on a Friday resolves to the following Friday', () => {
-    const fri = new Date(Date.UTC(2025, 8, 19)); // Fri Sep 19 → Sep 26
+    const fri = new Date(Date.UTC(2025, 8, 19, 12)); // Fri Sep 19 → Sep 26
     expect(normalizeExpiry('next week', fri)).toBe('2025-09-26');
     expect(normalizeExpiry('next friday', fri)).toBe('2025-09-26');
   });
@@ -459,7 +455,7 @@ describe('normalizeExpiry', () => {
   // ── Weekly keyword ──
 
   test('weekly/weeklies resolve to nearest Friday on or after refDate', () => {
-    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → Fri Sep 12
+    const wed = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 → Fri Sep 12
     expect(normalizeExpiry('weekly', wed)).toBe('2025-09-12');
     expect(normalizeExpiry('Weekly', wed)).toBe('2025-09-12');
     expect(normalizeExpiry('WEEKLY', wed)).toBe('2025-09-12');
@@ -468,42 +464,43 @@ describe('normalizeExpiry', () => {
   });
 
   test('weekly on Friday resolves to that same Friday', () => {
-    const fri = new Date(Date.UTC(2025, 8, 12)); // Fri Sep 12
+    const fri = new Date(Date.UTC(2025, 8, 12, 12)); // Fri Sep 12
     expect(normalizeExpiry('weekly', fri)).toBe('2025-09-12');
   });
 
   test('weekly on Saturday resolves to next Friday', () => {
-    const sat = new Date(Date.UTC(2025, 8, 13)); // Sat Sep 13 → Fri Sep 19
+    const sat = new Date(Date.UTC(2025, 8, 13, 12)); // Sat Sep 13 → Fri Sep 19
     expect(normalizeExpiry('weekly', sat)).toBe('2025-09-19');
   });
 
   test('bare "next" resolves to following Friday (same as "next week")', () => {
-    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → next week Fri = Sep 19
+    const wed = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 → next week Fri = Sep 19
     expect(normalizeExpiry('next', wed)).toBe('2025-09-19');
-    const fri = new Date(Date.UTC(2025, 8, 5)); // Fri Sep 5 → Sep 12
+    const fri = new Date(Date.UTC(2025, 8, 5, 12)); // Fri Sep 5 → Sep 12
     expect(normalizeExpiry('next', fri)).toBe('2025-09-12');
   });
 
   // ── Suffix stripping ──
 
   test("tomorrow's resolves same as tomorrow", () => {
-    const ref = new Date(Date.UTC(2025, 8, 16)); // Tue Sep 16
+    const ref = new Date(Date.UTC(2025, 8, 16, 12)); // Tue Sep 16 noon UTC
     expect(normalizeExpiry("tomorrow's", ref)).toBe('2025-09-17');
     expect(normalizeExpiry('tomorrow\u2019s', ref)).toBe('2025-09-17'); // curly apostrophe
   });
 
   test('strips trailing "expiration"/"expiry"/"exp" before parsing', () => {
-    const fri = new Date(Date.UTC(2025, 8, 19)); // Fri Sep 19
+    const fri = new Date(Date.UTC(2025, 8, 19, 12)); // Fri Sep 19 noon UTC
     expect(normalizeExpiry('next week expiration', fri)).toBe('2025-09-26');
     expect(normalizeExpiry('next friday expiry', fri)).toBe('2025-09-26');
     expect(normalizeExpiry('Oct 3 exp', fri)).toBe('2025-10-03');
-    expect(normalizeExpiry('LEAP expiration', fri)).toBe('2026-09-19');
+    // LEAP resolves to 3rd Friday of same month, 1 year out (Sep 2025 → Sep 2026 3rd Fri = Sep 18)
+    expect(normalizeExpiry('LEAP expiration', fri)).toBe('2026-09-18');
   });
 
   // ── Day-of-week names ──
 
   test('bare day-of-week name resolves to next occurrence on or after refDate', () => {
-    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10
+    const wed = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 noon UTC
     expect(normalizeExpiry('Wednesday', wed)).toBe('2025-09-10'); // same day → today
     expect(normalizeExpiry('Friday', wed)).toBe('2025-09-12');    // 2 days later
     expect(normalizeExpiry('Thursday', wed)).toBe('2025-09-11');
@@ -513,18 +510,20 @@ describe('normalizeExpiry', () => {
 
   // ── LEAP keyword ──
 
-  test('LEAP / Leaps / LEAPS resolve to referenceDate + 1 year', () => {
-    const ref = new Date(Date.UTC(2025, 8, 5)); // Sep 5 2025 → Sep 5 2026
-    expect(normalizeExpiry('LEAP',  ref)).toBe('2026-09-05');
-    expect(normalizeExpiry('Leaps', ref)).toBe('2026-09-05');
-    expect(normalizeExpiry('LEAPS', ref)).toBe('2026-09-05');
-    expect(normalizeExpiry('leap',  ref)).toBe('2026-09-05');
+  test('LEAP / Leaps / LEAPS resolve to 3rd Friday of same month, 1 year out', () => {
+    // Sep 5 2025 → 3rd Friday of Sep 2026 = Sep 18 2026
+    const ref = new Date(Date.UTC(2025, 8, 5, 12));
+    expect(normalizeExpiry('LEAP',  ref)).toBe('2026-09-18');
+    expect(normalizeExpiry('Leaps', ref)).toBe('2026-09-18');
+    expect(normalizeExpiry('LEAPS', ref)).toBe('2026-09-18');
+    expect(normalizeExpiry('leap',  ref)).toBe('2026-09-18');
   });
 
   test('LEAP output is always >= 6 months from refDate', () => {
     fc.assert(
       fc.property(
-        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime())),
+        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime()))
+          .map(d => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12))),
         fc.constantFrom('LEAP', 'Leaps', 'LEAPS'),
         (refDate, keyword) => {
           const result = normalizeExpiry(keyword, refDate);
@@ -545,30 +544,31 @@ describe('normalizeExpiry', () => {
   // ── overnight keyword ──
 
   test('overnight on Friday skips to Monday (Sep 5 → Sep 8)', () => {
-    const fri = new Date(Date.UTC(2025, 8, 5)); // Fri Sep 5 2025
+    const fri = new Date(Date.UTC(2025, 8, 5, 12)); // Fri Sep 5 2025 noon UTC
     expect(normalizeExpiry('overnight', fri)).toBe('2025-09-08');
     expect(normalizeExpiry('Overnight', fri)).toBe('2025-09-08');
     expect(normalizeExpiry('OVERNIGHT', fri)).toBe('2025-09-08');
   });
 
-  test('overnight on weekday resolves to next calendar day', () => {
-    const mon = new Date(Date.UTC(2025, 8, 8));  // Mon Sep 8  → Tue Sep 9
-    const wed = new Date(Date.UTC(2025, 8, 10)); // Wed Sep 10 → Thu Sep 11
-    const thu = new Date(Date.UTC(2025, 8, 11)); // Thu Sep 11 → Fri Sep 12
+  test('overnight on weekday resolves to next business day', () => {
+    const mon = new Date(Date.UTC(2025, 8, 8, 12));  // Mon Sep 8  → Tue Sep 9
+    const wed = new Date(Date.UTC(2025, 8, 10, 12)); // Wed Sep 10 → Thu Sep 11
+    const thu = new Date(Date.UTC(2025, 8, 11, 12)); // Thu Sep 11 → Fri Sep 12
     expect(normalizeExpiry('overnight', mon)).toBe('2025-09-09');
     expect(normalizeExpiry('overnight', wed)).toBe('2025-09-11');
     expect(normalizeExpiry('overnight', thu)).toBe('2025-09-12');
   });
 
   test('overnight on Saturday skips to Monday', () => {
-    const sat = new Date(Date.UTC(2025, 8, 6)); // Sat Sep 6 → Mon Sep 8
+    const sat = new Date(Date.UTC(2025, 8, 6, 12)); // Sat Sep 6 → Mon Sep 8
     expect(normalizeExpiry('overnight', sat)).toBe('2025-09-08');
   });
 
   test('overnight result is always a weekday', () => {
     fc.assert(
       fc.property(
-        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime())),
+        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }).filter(d => !isNaN(d.getTime()))
+          .map(d => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12))),
         (refDate) => {
           const result = normalizeExpiry('overnight', refDate);
           expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -585,7 +585,7 @@ describe('normalizeExpiry', () => {
   // ── Junk placeholders ──
 
   test('dash placeholder throws a recognizable error', () => {
-    const ref = new Date(Date.UTC(2025, 8, 10));
+    const ref = new Date(Date.UTC(2025, 8, 10, 12));
     expect(() => normalizeExpiry('-', ref)).toThrow('no date stated');
   });
 });

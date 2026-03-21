@@ -17,6 +17,9 @@ import { BrokerCircuitBreaker } from '../lib/circuit-breaker.js';
 import { buildPipelineDeps } from '../pipeline/build-deps.js';
 import type { PipelineBundle } from '../pipeline/build-deps.js';
 import { upsertRuntimeHealth } from './runtime-health.js';
+import { createLogger } from '../lib/logger.js';
+
+const log = createLogger('runner');
 
 type ChannelRunnerState = {
   service: RuntimeChannelService;
@@ -142,7 +145,7 @@ async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> 
       circuitOpen: false,
     });
   } catch (err) {
-    try { await handleTaskError(task.id, err); } catch { /* re-throw absorbed */ }
+    try { await handleTaskError(task.id, err); } catch (inner) { log.error({ err: inner, taskId: task.id }, 'handleTaskError failed'); }
     state.circuitBreaker.recordFailure(err);
     const errMsg = err instanceof Error ? err.message : String(err);
     upsertRuntimeHealth(state.service.channelId, {

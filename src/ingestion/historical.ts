@@ -89,6 +89,8 @@ export async function fetchHistorical(opts: {
         continue;
       }
 
+      if (!chunk) throw new Error(`Historical fetch chunk not found for run=${runId} date=${date}`);
+
       // Update run's current date
       await db.update(schema.historicalFetchRuns)
         .set({ currentDate: date })
@@ -98,10 +100,10 @@ export async function fetchHistorical(opts: {
       await db.update(schema.historicalFetchChunks)
         .set({
           status: 'in_progress',
-          attempts: (chunk?.attempts ?? 0) + 1,
+          attempts: (chunk.attempts ?? 0) + 1,
           lastAttemptAt: new Date().toISOString(),
         })
-        .where(eq(schema.historicalFetchChunks.id, chunk!.id));
+        .where(eq(schema.historicalFetchChunks.id, chunk.id));
 
       try {
         const { fetched, saved } = await fetchDay(date, controller.signal);
@@ -114,14 +116,14 @@ export async function fetchHistorical(opts: {
             fetchedCount: fetched,
             savedCount: saved,
           })
-          .where(eq(schema.historicalFetchChunks.id, chunk!.id));
+          .where(eq(schema.historicalFetchChunks.id, chunk.id));
 
         console.log(`[Historical] ${date}: ${fetched} fetched, ${saved} saved`);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         await db.update(schema.historicalFetchChunks)
           .set({ status: 'failed', error: errMsg })
-          .where(eq(schema.historicalFetchChunks.id, chunk!.id));
+          .where(eq(schema.historicalFetchChunks.id, chunk.id));
         console.error(`[Historical] ${date}: FAILED — ${errMsg}`);
         // Continue to next chunk rather than aborting the whole run
       }

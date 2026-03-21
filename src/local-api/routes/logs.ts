@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import fs from 'fs';
 import path from 'path';
-import { PATHS } from '../../lib/paths.js';
+import { PATHS } from '@/lib/paths.js';
 
 const app = new Hono();
 

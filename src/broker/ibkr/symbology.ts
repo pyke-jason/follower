@@ -6,9 +6,9 @@
  * via the sidecar's /api/contracts/resolve endpoint.
  */
 
-import { parseOccSymbol, isOccOptionSymbol } from '../../lib/occ-symbology.js';
+import { parseOccSymbol, isOccOptionSymbol } from '@/lib/occ-symbology.js';
 import { ContractResolveResponseSchema, parseSidecarResponse } from './schemas.js';
-import type { CallPutAbbrev } from '../../lib/enums.js';
+import type { CallPutAbbrev } from '@/lib/enums.js';
 
 /** Parsed OCC fields in the shape the sidecar's resolve endpoint expects. */
 export type IbkrContractParams = {
@@ -128,4 +128,4 @@ export async function resolveStockContract(symbol: string, sidecarUrl: string): 
 }
 
 /** Check if a symbol is an OCC option (re-export for convenience). */
-export { isOccOptionSymbol } from '../../lib/occ-symbology.js';
+export { isOccOptionSymbol } from '@/lib/occ-symbology.js';

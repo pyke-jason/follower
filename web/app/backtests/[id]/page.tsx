@@ -25,8 +25,36 @@ import { Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import { PROFIT_FACTOR_INF, pctDisplay } from '@src/lib/numbers';
 import { btChannel } from '@src/lib/channel';
 import type { ChatHydration } from '../../messages/chat-hydrator';
-import type { Message, Trade } from '@src/db/schema';
+import type { Message, Trade, BacktestRun, RunDecision, TradeEvent, TradeFlag, BacktestRunSummary } from '@src/db/schema';
 import type { MessageDecision, TradeOutcome } from '@src/lib/enriched-message';
+import type { TraderStats, StrategyStats, EquityPoint } from '@src/backtest/types';
+import type { TradeScatterPoint } from './trade-scatter';
+import type { RollingWinRatePoint } from './rolling-win-rate';
+
+type BacktestDecisionJoinRow = {
+  decision: RunDecision;
+  message: Message;
+  trade: { id: string; symbol: string; taskId: string | null; pnl: string | null } | null;
+};
+
+type BacktestDetailResponse = {
+  run: BacktestRun;
+  decisions: BacktestDecisionJoinRow[];
+  allTrades: Trade[];
+  eventsByTradeId: Record<string, TradeEvent[]>;
+  flagsByTradeId: Record<string, TradeFlag[]>;
+  mtmSnapshots: { date: string; unrealizedPnl: number }[];
+  summary: (BacktestRunSummary & { agentCallsUsed: number; agentTrades: number; skipped: number }) | null;
+  byTrader: Record<string, TraderStats> | null;
+  byStrategy: Record<string, StrategyStats> | null;
+  equityCurve: EquityPoint[] | null;
+  tradeScatter: TradeScatterPoint[];
+  rollingWinRate: RollingWinRatePoint[];
+  strategyEquity: Record<string, number | string>[];
+  strategies: string[];
+  llmTokens: { input: number; output: number };
+  messagesEndDate: string;
+};
 
 const Spinner = () => (
   <div className="flex items-center justify-center py-20">
@@ -34,18 +62,8 @@ const Spinner = () => (
   </div>
 );
 
-type BacktestDecisionRow = {
-  message: Message;
-  decision: {
-    outcome: string | null;
-    reasoning: string | null;
-    pnl: string | null;
-    phase: string | null;
-    durationMs: number | null;
-    taskId: string | null;
-  };
-  trade: { id: string | null } | null;
-};
+/** Narrowed view of a decision join row used by the chat builder. */
+type BacktestDecisionRow = BacktestDecisionJoinRow;
 
 function buildBacktestChatData({
   decisions,
@@ -149,9 +167,9 @@ export default function BacktestDetailPage() {
     }
   }, [expectedChannel, searchParams, navigate]);
 
-  const { data } = useQuery<any>({
+  const { data } = useQuery<BacktestDetailResponse>({
     queryKey: ['backtest', id],
-    queryFn: () => api(`/backtests/${id}`),
+    queryFn: () => api<BacktestDetailResponse>(`/backtests/${id}`),
     refetchInterval: (query) => {
       const status = query.state.data?.run?.status;
       return (status === 'RUNNING' || status === 'PENDING') ? 3000 : false;

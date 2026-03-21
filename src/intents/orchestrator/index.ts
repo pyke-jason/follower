@@ -17,10 +17,10 @@
  * See docs/plan-orchestrator-technical.md for the full design.
  */
 
-import type { Message } from '../../db/schema.js';
+import type { Message } from '@/db/schema.js';
 
-import { createLogger } from '../../lib/logger.js';
-import { traced } from '../../lib/trace.js';
+import { createLogger } from '@/lib/logger.js';
+import { traced } from '@/lib/trace.js';
 import { parseMessage } from './parser.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath, buildReversalLeg } from './position-path.js';

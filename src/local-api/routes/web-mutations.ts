@@ -1,12 +1,12 @@
 import { Hono } from 'hono';
-import { db, schema, runTx } from '../../db/client.js';
+import { db, schema, runTx } from '@/db/client.js';
 import { eq, inArray, and, gte, lte, desc, asc } from 'drizzle-orm';
-import type { CommissionSchedule, BacktestRunConfig, TradeLeg, Signal } from '../../db/schema.js';
-import { btChannel, generateRunId } from '../../lib/channel.js';
-import { generateReportFromTrades } from '../../backtest/report.js';
-import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '../../config/risk-defaults.js';
-import { getProvider, SECRET_KEYS } from '../../lib/secrets/index.js';
-import { isClosed } from '../../trades/filters.js';
+import type { CommissionSchedule, BacktestRunConfig, TradeLeg, Signal } from '@/db/schema.js';
+import { btChannel, generateRunId } from '@/lib/channel.js';
+import { generateReportFromTrades } from '@/backtest/report.js';
+import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@/config/risk-defaults.js';
+import { getProvider, SECRET_KEYS } from '@/lib/secrets/index.js';
+import { isClosed } from '@/trades/filters.js';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
 const DEFAULT_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'];
@@ -237,6 +237,9 @@ app.post('/backtests/:id/cancel', async (c) => {
         trader: t.trader,
         strategy: t.strategy,
         quantity: t.quantity,
+        // SAFETY: Drizzle infers TradeLeg[] (non-nullable) via $type<>, but
+        // generateReportFromTrades accepts unknown[] | null to stay decoupled
+        // from the TradeLeg schema. The runtime value is the same JSON array.
         legs: t.legs as unknown[] | null,
         entryPrice: t.entryPrice,
         openedAt: t.openedAt,

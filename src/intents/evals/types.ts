@@ -1,6 +1,6 @@
 // All shared types for the eval system.
 
-import type { DecisionOutcome } from '../../lib/enums.js';
+import type { DecisionOutcome } from '@/lib/enums.js';
 import type { OptionLeg, ResolvedSignal, TradePosition } from '../orchestrator/types.js';
 
 export type EvalInput = {

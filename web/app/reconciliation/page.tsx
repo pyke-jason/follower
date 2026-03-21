@@ -13,6 +13,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { ShieldAlert, CheckCircle2 } from 'lucide-react';
+import type { ReconciliationAlert } from '@src/db/schema';
+
+type ReconStats = {
+  total: number;
+  unresolved: number;
+  resolved: number;
+  byType: Record<string, number>;
+};
 
 const Spinner = () => (
   <div className="flex items-center justify-center py-20">
@@ -26,18 +34,18 @@ export default function ReconciliationPage() {
   const href = useScopedHref();
   const filter = params.get('filter') ?? undefined;
   const filterResolved = filter === 'resolved' ? true : filter === 'unresolved' ? false : undefined;
-  const { data: alerts, isLoading: loadingAlerts } = useQuery({
+  const { data: alerts, isLoading: loadingAlerts } = useQuery<ReconciliationAlert[]>({
     queryKey: ['recon-alerts', channelId, filterResolved],
     queryFn: () =>
-      api<any[]>(href('/recon-alerts', {
+      api<ReconciliationAlert[]>(href('/recon-alerts', {
         resolved: filterResolved !== undefined ? String(filterResolved) : undefined,
       })),
   });
 
-  const { data: stats, isLoading: loadingStats } = useQuery({
+  const { data: stats, isLoading: loadingStats } = useQuery<ReconStats>({
     queryKey: ['recon-stats', channelId],
     queryFn: () =>
-      api<{ total: number; unresolved: number; byType: Record<string, number> }>(
+      api<ReconStats>(
         href('/recon-alerts/stats'),
       ),
   });
@@ -95,7 +103,7 @@ export default function ReconciliationPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {alerts.map((alert: any) => (
+              {alerts.map((alert) => (
                 <AlertRow
                   key={alert.id}
                   alert={alert}
@@ -123,7 +131,7 @@ function AlertRow({
   onResolve,
   isPending,
 }: {
-  alert: any;
+  alert: ReconciliationAlert;
   onResolve: (alertId: string, reason: string) => void;
   isPending: boolean;
 }) {

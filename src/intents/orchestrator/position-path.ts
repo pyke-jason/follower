@@ -5,11 +5,11 @@
  * the reversal legs needed to close, trim, or leg off the position.
  */
 
-import type { LegAction, OptionType, OrderCategory } from '../../lib/enums.js';
-import type { TradeLeg } from '../../db/schema.js';
-import { createLogger } from '../../lib/logger.js';
-import { extractUnderlying } from '../../lib/occ-symbology.js';
-import { addTradeFlags } from '../../trades/trade-flags.js';
+import type { LegAction, OptionType, OrderCategory } from '@/lib/enums.js';
+import type { TradeLeg } from '@/db/schema.js';
+import { createLogger } from '@/lib/logger.js';
+import { extractUnderlying } from '@/lib/occ-symbology.js';
+import { addTradeFlags } from '@/trades/trade-flags.js';
 import type {
   ParseResult,
   OrchestratorContext,

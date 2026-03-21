@@ -17,13 +17,22 @@ import { computeTradeCommission } from '@src/lib/commission';
 import type { SortColumn } from '@/stores/trades-store';
 
 function getEffectivePnl(
-  trade: { id: string; pnl: string | null; entryPrice: string | null; quantity: number | null; status: string },
+  trade: {
+    id: string;
+    pnl: string | null;
+    entryPrice: string | null;
+    quantity: number | null;
+    status: string;
+    strategy: string;
+    legs: unknown[] | null;
+    metadata?: { openLegCount?: number } | null;
+  },
   unrealizedPnl: Record<string, number>,
   commissionSchedule: Parameters<typeof computeTradeCommission>[1] | undefined,
 ): number | null {
   if (trade.pnl != null) {
     const gross = safeParseFloat(trade.pnl);
-    const comm = commissionSchedule ? computeTradeCommission(trade as any, commissionSchedule) : 0;
+    const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
     return gross - comm;
   }
   if (trade.id in unrealizedPnl) {
