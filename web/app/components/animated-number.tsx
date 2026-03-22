@@ -19,7 +19,7 @@ function formatValue(value: number, format: AnimatedNumberProps['format']): stri
         maximumFractionDigits: 0,
       }).format(value);
     case 'percent':
-      return `${value.toFixed(1)}%`;
+      return `${(value * 100).toFixed(1)}%`;
     case 'integer':
       return Math.round(value).toLocaleString();
     case 'decimal':

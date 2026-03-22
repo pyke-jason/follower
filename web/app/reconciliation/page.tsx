@@ -12,7 +12,9 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useScopedHref } from '@/hooks/use-scoped-href';
+import { EmptyState } from '../components/empty-state';
 import { ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Spinner } from '../components/spinner';
 import type { ReconciliationAlert } from '@src/db/schema';
 
 type ReconStats = {
@@ -21,12 +23,6 @@ type ReconStats = {
   resolved: number;
   byType: Record<string, number>;
 };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function ReconciliationPage() {
   const [params, setParams] = useSearchParams();
@@ -114,11 +110,10 @@ export default function ReconciliationPage() {
             </TableBody>
           </Table>
           {alerts.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-              <CheckCircle2 className="h-8 w-8 mb-3 opacity-30" />
-              <p className="text-sm">No alerts{filterResolved !== undefined ? ' matching filter' : ''}</p>
-              <p className="text-xs mt-1 opacity-50">Position reconciliation alerts appear here</p>
-            </div>
+            <EmptyState
+              title={`No alerts${filterResolved !== undefined ? ' matching filter' : ''}`}
+              hint="Position reconciliation alerts appear here"
+            />
           )}
         </CardContent>
       </Card>

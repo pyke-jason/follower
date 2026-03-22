@@ -9,6 +9,7 @@ import {
   FlaskConical,
   Settings,
   ShieldAlert,
+  ClipboardCheck,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -33,6 +34,7 @@ const navLinks = [
   { href: '/tasks', label: 'Tasks', icon: ListTodo },
   { href: '/backtests', label: 'Backtests', icon: FlaskConical },
   { href: '/reconciliation', label: 'Reconciliation', icon: ShieldAlert },
+  { href: '/eval', label: 'Eval', icon: ClipboardCheck },
 ];
 
 export function AppSidebar() {

@@ -10,13 +10,9 @@ import { formatCurrency, pnlColor, relativeTime, signalBorderColor, positionBord
 import { OverviewEquityCurve } from './components/overview-equity-curve';
 import { TraderLeaderboard } from './components/trader-leaderboard';
 import { RiskPanel } from './components/risk-panel';
+import { EmptyState } from './components/empty-state';
 import { ArrowRight, CheckCircle2, Clock, XCircle, AlertTriangle } from 'lucide-react';
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
+import { Spinner } from './components/spinner';
 
 export default function OverviewPage() {
   const channelId = useChannelId();
@@ -94,11 +90,7 @@ export default function OverviewPage() {
             </CardHeader>
             <CardContent className="p-0">
               {openTrades.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                  <div className="h-8 w-8 rounded-full border-2 border-dashed border-muted-foreground/20 mb-3" />
-                  <p className="text-sm">No open positions</p>
-                  <p className="text-xs mt-1 opacity-50">Signals will open positions here</p>
-                </div>
+                <EmptyState title="No open positions" hint="Signals will open positions here" />
               ) : (
                 <div className="divide-y divide-border/50">
                   {openTrades.map((t) => (
@@ -148,11 +140,7 @@ export default function OverviewPage() {
             </CardHeader>
             <CardContent className="p-0">
               {signals.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                  <div className="h-8 w-8 rounded-full border-2 border-dashed border-muted-foreground/20 mb-3" />
-                  <p className="text-sm">No recent signals</p>
-                  <p className="text-xs mt-1 opacity-50">Trader messages will appear here</p>
-                </div>
+                <EmptyState title="No recent signals" hint="Trader messages will appear here" />
               ) : (
                 <div className="divide-y divide-border/50">
                   {signals.map(({ message: m, trade: t }) => (

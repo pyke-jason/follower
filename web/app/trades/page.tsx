@@ -4,18 +4,13 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { TradeFilterProvider, TradeFilters } from '../components/trade-filters';
 import { FilteredTradesView } from '../components/filtered-trades-view';
+import { Spinner } from '../components/spinner';
 import type { Trade, TradeFlag } from '@src/db/schema';
 
 type TradesResponse = {
   trades: Trade[];
   flags: Record<string, TradeFlag[]>;
 };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function TradesPage() {
   const channelId = useChannelId();

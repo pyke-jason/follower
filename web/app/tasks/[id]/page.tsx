@@ -15,6 +15,7 @@ import { ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ChatPreview } from '../../messages/chat-preview';
 import { ParsedContext } from '../../trades/[id]/parsed-context';
+import { Spinner } from '../../components/spinner';
 
 type TaskDetailResponse = {
   redirect?: string;
@@ -24,12 +25,6 @@ type TaskDetailResponse = {
   nearbyMessages?: Message[];
   channelId?: string;
 };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();

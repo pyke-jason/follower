@@ -1,12 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchBacktestsPageData } from '@/lib/page-adapters';
 import { BacktestList } from './backtest-list';
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
+import { Spinner } from '../components/spinner';
 
 export default function BacktestsPage() {
   const { data } = useQuery({

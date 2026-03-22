@@ -4,15 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { TestButton } from './test-button';
 import { SettingToggle } from './alert-toggle';
 import { SecretsTable } from './secrets-table';
+import { Spinner } from '../components/spinner';
 
 type SecretEntry = { key: string; isSet: boolean };
 type ToggleStates = { discord: boolean; pushover: boolean; ingestion: boolean };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function SettingsPage() {
   const { data: secrets, isLoading: loadingSecrets } = useQuery({

@@ -24,6 +24,7 @@ import { FilteredTradesView } from '../../components/filtered-trades-view';
 import { Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
 import { PROFIT_FACTOR_INF, pctDisplay } from '@src/lib/numbers';
 import { btChannel } from '@src/lib/channel';
+import { Spinner } from '../../components/spinner';
 import type { ChatHydration } from '../../messages/chat-hydrator';
 import type { Message, Trade, BacktestRun, RunDecision, TradeEvent, TradeFlag, BacktestRunSummary } from '@src/db/schema';
 import type { MessageDecision, TradeOutcome } from '@src/lib/enriched-message';
@@ -55,12 +56,6 @@ type BacktestDetailResponse = {
   llmTokens: { input: number; output: number };
   messagesEndDate: string;
 };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 /** Narrowed view of a decision join row used by the chat builder. */
 type BacktestDecisionRow = BacktestDecisionJoinRow;

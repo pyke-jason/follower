@@ -15,6 +15,7 @@ import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
 import { ExecutionFlamegraph, extractFlamegraphData } from '../../components/execution-flamegraph';
+import { Spinner } from '../../components/spinner';
 import type { Trade, Message, TradeEvent, Task, RunDecision } from '@src/db/schema';
 
 type TradeStoryResponse = {
@@ -28,12 +29,6 @@ type TradeStoryResponse = {
   decisions: RunDecision[];
   timelineMessages: Message[];
 };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function TradeDetailPage() {
   const { id } = useParams<{ id: string }>();

@@ -508,6 +508,49 @@ export const runtimeHealth = sqliteTable('runtime_health', {
   updatedAt:     text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+// ─── Discrepancy Reviews (parser audit verdicts) ─────
+
+export type DiscrepancyVerdict = 'parser_right' | 'label_right' | 'both_wrong' | 'skip';
+export type DiscrepancyCategory = 'false_positive' | 'false_negative' | 'action_mismatch' | 'strategy_mismatch' | 'direction_mismatch';
+
+export const discrepancyReviews = sqliteTable('discrepancy_reviews', {
+  id:               text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  messageId:        text('message_id').references(() => messages.id).notNull(),
+  category:         text('category').notNull().$type<DiscrepancyCategory>(),
+  // Human verdict
+  verdict:          text('verdict').$type<DiscrepancyVerdict>(),
+  reason:           text('reason'),
+  reviewed:         integer('reviewed', { mode: 'boolean' }).default(false),
+  reviewedAt:       text('reviewed_at'),
+  // Parser output (denormalized — frozen at comparison time)
+  parserAction:     text('parser_action'),
+  parserStrategy:   text('parser_strategy'),
+  parserDirection:  text('parser_direction'),
+  parserSkipReason: text('parser_skip_reason'),
+  parserFlags:      text('parser_flags', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  // Label output (denormalized)
+  labelAction:      text('label_action'),
+  labelStrategy:    text('label_strategy'),
+  labelDirection:   text('label_direction'),
+  labelNotes:       text('label_notes'),
+  // Agent verdict (from the 95 audit agents)
+  agentVerdict:     text('agent_verdict'),
+  agentReason:      text('agent_reason'),
+  // Message context (denormalized for rendering without JOIN)
+  author:           text('author').notNull(),
+  cleanText:        text('clean_text').notNull(),
+  badges:           text('badges', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  symbols:          text('symbols', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  timestamp:        text('timestamp').notNull(),
+  createdAt:        text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_disc_reviews_message').on(table.messageId),
+  index('idx_disc_reviews_verdict').on(table.verdict),
+  index('idx_disc_reviews_category').on(table.category),
+  index('idx_disc_reviews_reviewed').on(table.reviewed),
+  index('idx_disc_reviews_category_verdict').on(table.category, table.verdict),
+]);
+
 // ─── Inferred Types ──────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -528,3 +571,5 @@ export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;
 export type MessageIntent = typeof messageIntents.$inferSelect;
 export type NewMessageIntent = typeof messageIntents.$inferInsert;
 export type RuntimeHealth = typeof runtimeHealth.$inferSelect;
+export type DiscrepancyReview = typeof discrepancyReviews.$inferSelect;
+export type NewDiscrepancyReview = typeof discrepancyReviews.$inferInsert;

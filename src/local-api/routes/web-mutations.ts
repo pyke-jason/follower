@@ -206,7 +206,7 @@ app.post('/backtests/:id/cancel', async (c) => {
     .where(eq(schema.backtestRuns.id, backtestRunId));
 
   if (run.pid) {
-    await fetch(`${LOCAL_API_URL}/backtests/${backtestRunId}/cancel?pid=${run.pid}`, {
+    await fetch(`${LOCAL_API_URL}/backtests/${backtestRunId}/cancel`, {
       method: 'POST',
     });
   }
@@ -275,12 +275,22 @@ app.delete('/backtests/:id', async (c) => {
     .where(eq(schema.backtestRuns.id, backtestRunId));
 
   if (run && (run.status === 'RUNNING' || run.status === 'PENDING') && run.pid) {
-    await fetch(`${LOCAL_API_URL}/backtests/${backtestRunId}/cancel?pid=${run.pid}`, {
+    await fetch(`${LOCAL_API_URL}/backtests/${backtestRunId}/cancel`, {
       method: 'POST',
     });
   }
 
   runTx((tx) => {
+    const tradeIds = tx
+      .select({ id: schema.trades.id })
+      .from(schema.trades)
+      .where(eq(schema.trades.channelId, channelId))
+      .all()
+      .map((row) => row.id);
+    tx.delete(schema.runDecisions).where(eq(schema.runDecisions.channelId, channelId)).run();
+    if (tradeIds.length > 0) {
+      tx.delete(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds)).run();
+    }
     tx.delete(schema.trades).where(eq(schema.trades.channelId, channelId)).run();
     tx.delete(schema.tasks).where(eq(schema.tasks.channelId, channelId)).run();
     tx.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, channelId)).run();
@@ -305,7 +315,7 @@ app.post('/backtests/bulk-delete', async (c) => {
 
   for (const run of runs) {
     if ((run.status === 'RUNNING' || run.status === 'PENDING') && run.pid) {
-      await fetch(`${LOCAL_API_URL}/backtests/${run.id}/cancel?pid=${run.pid}`, {
+      await fetch(`${LOCAL_API_URL}/backtests/${run.id}/cancel`, {
         method: 'POST',
       }).catch(() => {});
     }
@@ -313,6 +323,16 @@ app.post('/backtests/bulk-delete', async (c) => {
 
   const channelIds = ids.map(btChannel);
   runTx((tx) => {
+    const tradeIds = tx
+      .select({ id: schema.trades.id })
+      .from(schema.trades)
+      .where(inArray(schema.trades.channelId, channelIds))
+      .all()
+      .map((row) => row.id);
+    tx.delete(schema.runDecisions).where(inArray(schema.runDecisions.channelId, channelIds)).run();
+    if (tradeIds.length > 0) {
+      tx.delete(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds)).run();
+    }
     tx.delete(schema.trades).where(inArray(schema.trades.channelId, channelIds)).run();
     tx.delete(schema.tasks).where(inArray(schema.tasks.channelId, channelIds)).run();
     tx.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.channelId, channelIds)).run();
@@ -737,6 +757,28 @@ app.post('/settings/test/pushover', async (c) => {
   } catch (err) {
     return c.json({ ok: false, error: String(err) });
   }
+});
+
+// ── POST /eval/review/:id — Submit human verdict ─────────────────────────
+
+app.post('/eval/review/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ verdict: string; reason?: string }>();
+
+  if (!['parser_right', 'label_right', 'both_wrong', 'skip'].includes(body.verdict)) {
+    return c.json({ error: 'Invalid verdict' }, 400);
+  }
+
+  await db.update(schema.discrepancyReviews)
+    .set({
+      verdict: body.verdict as 'parser_right' | 'label_right' | 'both_wrong' | 'skip',
+      reason: body.reason ?? null,
+      reviewed: true,
+      reviewedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.discrepancyReviews.id, id));
+
+  return c.json({ ok: true });
 });
 
 export default app;

@@ -13,7 +13,9 @@ import { OverviewEquityCurve } from '../../components/overview-equity-curve';
 import { BarChartComponent } from '../../components/charts/bar-chart';
 import { formatCurrency } from '@/lib/format';
 import { useScopedHref } from '@/hooks/use-scoped-href';
+import { EmptyState } from '../../components/empty-state';
 import { ArrowLeft, User } from 'lucide-react';
+import { Spinner } from '../../components/spinner';
 import type { Trade } from '@src/db/schema';
 
 type HistorySummary = {
@@ -71,12 +73,6 @@ function buildMetrics(summary: HistorySummary): Metric[] {
     { label: 'Slippage', value: Math.abs(summary.totalSlippage), format: 'currency' },
   ];
 }
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function TraderDetailPage() {
   const { name } = useParams<{ name: string }>();
@@ -178,11 +174,11 @@ export default function TraderDetailPage() {
       )}
 
       {historySummary.totalTrades === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-          <User className="h-10 w-10 mb-3 opacity-30" />
-          <p className="text-sm">No closed trades for {decodedName}</p>
-          <p className="text-xs mt-1 opacity-50">Trades will appear here once positions close</p>
-        </div>
+        <EmptyState
+          title={`No closed trades for ${decodedName}`}
+          hint="Trades will appear here once positions close"
+          className="py-16"
+        />
       )}
     </div>
   );

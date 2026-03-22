@@ -22,6 +22,8 @@ const NewBacktest = lazy(() => import('./backtests/new/page'));
 const BacktestDetail = lazy(() => import('./backtests/[id]/page'));
 const Reconciliation = lazy(() => import('./reconciliation/page'));
 const Settings = lazy(() => import('./settings/page'));
+const Eval = lazy(() => import('./eval/page'));
+const EvalReview = lazy(() => import('./eval/review/page'));
 
 const PageFallback = () => (
   <div className="flex items-center justify-center py-20">
@@ -77,6 +79,8 @@ export function App() {
         <Route path="backtests/new" element={<NewBacktest />} />
         <Route path="backtests/:id" element={<BacktestDetail />} />
         <Route path="reconciliation" element={<Reconciliation />} />
+        <Route path="eval" element={<Eval />} />
+        <Route path="eval/review" element={<EvalReview />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

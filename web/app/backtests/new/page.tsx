@@ -3,17 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { BacktestForm } from './backtest-form';
+import { Spinner } from '../../components/spinner';
 import type { BacktestRun, BacktestRunConfig } from '@src/db/schema';
 
 type BacktestCloneSource = {
   run: BacktestRun;
 };
-
-const Spinner = () => (
-  <div className="flex items-center justify-center py-20">
-    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground/20 border-t-foreground rounded-full" />
-  </div>
-);
 
 export default function NewBacktestPage() {
   const [params] = useSearchParams();
