@@ -12,7 +12,7 @@ import { setLogLevel, createLogger, LogLevelSchema } from '../lib/logger.js';
 import type { BacktestConfig } from './types.js';
 import { FillModelSchema } from './types.js';
 import { db, schema } from '../db/client.js';
-import { generateRunId } from '../lib/channel.js';
+import { generateRunId, assertSafeRunId } from '../lib/channel.js';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '../config/risk-defaults.js';
 
 
@@ -71,6 +71,14 @@ async function main() {
   setLogLevel(logLevel);
 
   let runId = parseArg(args, '--run-id');
+  if (runId) {
+    try {
+      assertSafeRunId(runId);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
 
   const config: BacktestConfig = {
     startDate: startDateIso,

@@ -157,20 +157,20 @@ describe('parseSignalText', () => {
     expect(result).toEqual({ action: 'LEG_OFF', symbol: 'SPY', targetStrategy: 'CALL' });
   });
 
-  test('parses statedPremium', () => {
-    const result = parseSignalText('action OPEN, symbol MSFT, statedPremium 2.05');
-    expect(result).toMatchObject({ statedPremium: 2.05 });
+  test('parses statedPrice (and legacy statedPremium)', () => {
+    const result = parseSignalText('action OPEN, symbol MSFT, statedPrice 2.05');
+    expect(result).toMatchObject({ statedPrice: 2.05 });
+    // Legacy field name still works
+    const legacy = parseSignalText('action OPEN, symbol MSFT, statedPremium 2.05');
+    expect(legacy).toMatchObject({ statedPrice: 2.05 });
   });
 
-  test('parses legs inline', () => {
+  test('converts legacy legs to strikes array', () => {
     const result = parseSignalText('action OPEN, symbol MSFT, legs [BUY 507.5P, SELL 500P]');
     expect(result).toMatchObject({
       action: 'OPEN',
       symbol: 'MSFT',
-      legs: [
-        { action: 'BUY', strike: 507.5, optionType: 'PUT' },
-        { action: 'SELL', strike: 500, optionType: 'PUT' },
-      ],
+      strikes: [507.5, 500],
     });
   });
 
@@ -187,39 +187,39 @@ describe('parseSignalText', () => {
     expect(result).toEqual({ action: 'CLOSE', symbol: 'MSFT', strategy: 'PDS' });
   });
 
-  test('propagates top-level expiry to legs without expiry', () => {
-    const result = parseSignalText('action OPEN, symbol SPY, direction LONG, strategy CALL, expiry LEAP, legs [BUY 0C]');
-    expect(result).toMatchObject({
-      action: 'OPEN',
-      symbol: 'SPY',
-      legs: [{ action: 'BUY', strike: 0, optionType: 'CALL', expiry: 'LEAP' }],
-    });
-  });
-
-  test('creates synthetic leg from top-level expiry when no legs present', () => {
+  test('sets expiry from top-level field', () => {
     const result = parseSignalText('action OPEN, symbol SPY, direction LONG, strategy CALL, expiry LEAP');
     expect(result).toMatchObject({
       action: 'OPEN',
       symbol: 'SPY',
-      legs: [{ action: 'BUY', strike: 0, optionType: 'CALL', expiry: 'LEAP' }],
+      expiry: 'LEAP',
     });
   });
 
-  test('injects LEAP expiry from context when model drops it from legs', () => {
+  test('extracts expiry from legacy legs when no top-level expiry', () => {
+    const result = parseSignalText('action OPEN, symbol SPY, direction LONG, strategy CALL, legs [BUY 0C expiry=LEAP]');
+    expect(result).toMatchObject({
+      action: 'OPEN',
+      symbol: 'SPY',
+      expiry: 'LEAP',
+    });
+  });
+
+  test('injects LEAP expiry from context when model drops it', () => {
     // Model says "action OPEN, symbol SPY, direction LONG, strategy CALL" but text contains "Leap"
     // and no expiry was parsed - should inject LEAP
     const result = parseSignalText('action OPEN, symbol SPY, direction LONG, strategy CALL, Leap calls added');
     expect(result).toMatchObject({
       action: 'OPEN',
       symbol: 'SPY',
-      legs: [{ action: 'BUY', strike: 0, optionType: 'CALL', expiry: 'LEAP' }],
+      expiry: 'LEAP',
     });
   });
 
-  test('LEAP fallback does not override existing leg expiry', () => {
+  test('LEAP fallback does not override existing expiry', () => {
     const result = parseSignalText('action OPEN, symbol SPY, direction LONG, strategy CALL, expiry LEAP, legs [BUY 0C expiry=LEAP]');
     expect(result).toMatchObject({
-      legs: [{ expiry: 'LEAP' }],
+      expiry: 'LEAP',
     });
   });
 });

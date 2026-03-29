@@ -33,6 +33,10 @@ export const SECRET_KEYS = [
   'XAI_API_KEY',
   'TRADE_MODEL_PROVIDER',
   'TRADE_MODEL',
+  'GMAIL_EMAIL',
+  'GMAIL_PASSWORD',
+  'ICLOUD_EMAIL',
+  'ICLOUD_APP_PASSWORD',
 ];
 
 function run(args: string[], timeout = TIMEOUT_MS): Promise<string> {

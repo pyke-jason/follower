@@ -1,59 +1,106 @@
-<project_overview>
-  You are an expert AI assistant working on "Trade Follower 3".
-  Stack: Monorepo with Node.js backend (src/), Vite + React SPA frontend (web/), SQLite via Drizzle ORM.
-  Schema: `src/db/schema.ts`. Web imports from `src/` use `@src/*` alias (e.g., `@src/db/schema`, `@src/lib/numbers`). Never use relative `../` paths to reach `src/`.
-</project_overview>
+# CLAUDE.md
 
-<ibkr_docs>
-  `docs/ibkr/` — Official IBKR TWS API reference (source of truth, verified against official docs). Order lifecycle, error codes, connection, risk/margin.
-  Java sidecar lives in `sidecar/`, TS client in `src/broker/ibkr/`.
-</ibkr_docs>
+## What this project is
 
-<signal_flow>
-  Chat message → parser (sync, zero I/O) → orchestrator routing → executor → broker → record trade.
-  Routes: hard skip (regex) | deterministic open/close (market data + DB) | LLM path (ambiguous).
-  Key pipeline: `intents/orchestrator/parser.ts` → `intents/orchestrator/index.ts` → `pipeline/process-task.ts` → `pipeline/execute-resolved.ts` → `trades/record-trade.ts`.
-</signal_flow>
+Trade Follower 3 -- an autonomous trade-copy system that monitors a live trading chat room, classifies messages using an AI agent, and mirrors trades via broker APIs. Includes backtesting, evaluation, and a dashboard.
 
-<coding_standards>
-  - STRICT BOUNDARY VALIDATION: Validate cross-field constraints via Zod `.refine()` at entry points (e.g., limits require `limitPrice`). Do not use ad-hoc throws deep in business logic.
-  - NARROWED CALLBACK TYPES: If a callback fires in a narrowed state, type it narrowed (e.g., `onFill` gets `FilledWorkingOrder`, not `WorkingOrder`). No `!` assertions.
-  - NO BACKWARDS COMPATIBILITY: No optional fields for old runs, no shims, no deprecated exports. If a type changes, update all consumers. Internal tool only.
-  - CLEAN AS YOU GO: Fix dead exports, duplicate logic, and leaky abstractions in the files you are already touching. Do not go on refactor safaris outside current files.
-  - DRY / ONE CONCEPT, ONE PLACE: If two modules do the same thing, delete one. Do not abstract ahead of need.
-  - NO INLINE TYPE IMPORTS: Always use top-level `import type { Type } from 'path'`.
-  - DRIZZLE JSON COLUMNS: `$type<>()` does NOT propagate through `select()`. Create a typed accessor per JSON column (e.g., `getLegs(row): TradeLeg[]`) in `db/accessors.ts`. Cast/parse happens ONCE inside the accessor; call sites never cast.
-  - NO INDEX SIGNATURES ON TYPED INTERFACES: `[key: string]: unknown` destroys typed access. For action-varying metadata, use a discriminated union. Unknown extras go in an explicit `extra?: Record<string, unknown>` field.
-  - DERIVE, DON'T DUPLICATE TYPES: Downstream types use `Pick`, `Omit`, `Extract`, or Zod `.infer` from the canonical type. If two types share 80%+ fields, one derives from the other. Inline anonymous object types are banned in cross-module signatures — name them.
-  - TWO CASTS = HELPER, THREE = BUG: If the same `as X` cast appears twice, extract an accessor. Three times means the type should flow correctly from the source. `as any` requires `// SAFETY:` comment. Prefer Zod `.parse()` over `as` at CLI/env boundaries.
-  - FIELD NAME CONSISTENCY: Same concept (e.g., BUY/SELL on a leg) uses the same field name everywhere. If DB says `action` and orchestrator says `side`, pick one or make the adapter the SINGLE named conversion point.
-  - API IS THE CONTRACT: The API response shape is the source of truth for frontend types. When the frontend needs a field, add it to the API — do not add defensive fallbacks (`?? []`, `?? {}`) in the consumer. If the API returns `authors: string[]`, the store types it as `string[]` and trusts it. Mismatches between API and frontend types are bugs to fix at the source (the API), not to paper over with defaults. Same applies to any cross-boundary data: pick one contract, make the producer conform, update all consumers to match — no silent coercion layer in between.
-  - ONE LOG LINE PER EVENT: When multiple layers handle the same event (e.g., broker fill → order manager → record-trade), only the authoritative layer logs at info level. Others use debug or stay silent. The authoritative layer is the one that owns the state change.
-  - WARN MEANS ACTIONABLE: `log.warn` is reserved for conditions a human should investigate. Expected behavior (dedup hits, API 206 responses, timing metrics) belongs at info or debug.
-</coding_standards>
+**Stack:** TypeScript (ESM) backend (`src/`), Vite + React SPA frontend (`web/src/`), SQLite via Drizzle ORM, Hono local API.
 
-<own_the_outcome>
-  You are not done when the code compiles. You are done when the feature works.
+**Pipeline:** Chat message -> parser (sync, zero I/O) -> orchestrator routing -> executor -> broker -> record trade.
 
-  The expectation: When you build something, you verify it works end-to-end before declaring it done. Don't write code and hand it off — iterate on it until it's right. If a page doesn't render, a button doesn't work, or a layout looks broken, that's your problem to fix, not the human's problem to discover.
+## The one rule
 
-  How to verify your work:
-  - Playwright: Use it to open pages, click through flows, and confirm things actually render and behave correctly. This isn't a "test suite" concern — it's how you check your own work.
-  - Scratchpad (`scratchpad/`): Write throwaway scripts to test ideas, validate data transformations, check edge cases, or debug issues. This folder is your workbench — use it freely, nothing in it is precious.
-  - Dev server: Run the app, hit the routes, look at what happens. If you can't tell whether something works without a human looking at it, you haven't tried hard enough.
+**Own the outcome.** You are not done when the code compiles. You are done when the feature works. If a page doesn't render, a button doesn't work, or a layout looks broken, that's your problem to fix, not the human's problem to discover.
 
-  Iterate: If your first attempt doesn't work, debug it, fix it, and try again. The goal is a working feature, not a submitted diff.
+## How to work
 
-  Testing tools:
-  - Playwright for validating that pages render and flows work (e2e and as a verification tool during development)
-  - Disposable scripts in `scratchpad/` with REAL data, configs, and DB records. DO NOT USE MOCKS. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete script when verified.
-  - Do not read `.env` directly; rely on environment variables.
-</own_the_outcome>
+1. **Read the docs first.** `docs/rails.md` is the authoritative coding standards reference -- read it before writing code. `.claude/rules/` has domain-specific rules loaded contextually by file path. `web/CLAUDE.md` has frontend-specific rules and the UI cookbook.
 
-<workflows>
-  <self_documentation>
-    MANDATORY: Create a lesson file in `docs/lessons/` after every implementation session (new features, bugs, schema changes).
-    Format: `YYYY-MM-DD-slug.md`. Plain text, flat, scannable.
-    Sections: Problem, Decision, Key Files, Watch Out.
-  </self_documentation>
-</workflows>
+2. **Verify your own work like a user, not a CI pipeline.** After you build something:
+   - Start the dev server (`npm run up`) and confirm pages load
+   - Open Playwright and use the feature the way the human would: click every button, fill in forms, scroll through lists, try edge cases (empty fields, long text, missing data)
+   - Create real test data through the UI, then verify the DB actually changed. Clean up when done.
+   - Run the quality gates: `npx tsc --noEmit && npm test && npm --prefix web run check`
+   - If something looks wrong or broken, fix it -- don't report it and stop
+   - A screenshot of an empty state proves nothing. The only proof is: you used it and it worked.
+
+3. **Use the scratchpad.** `scratchpad/` is your workbench for throwaway scripts with REAL data. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete when verified.
+
+4. **Iterate until it's right.** Your first attempt might not work. Debug it, fix it, try again. The goal is a working feature, not a submitted diff.
+
+## Commands
+
+```bash
+npm run up               # Start everything (backend + web + local API)
+npm run up:ui            # Start web + local API only (no backend)
+npm run dev              # Backend only (ingestion + agent + reconciliation)
+npm run web              # Vite dev server on :3000
+npm run local-api        # Hono local API on :3791
+npm run backtest         # Launch backtest (tsx src/backtest/launch.ts)
+npm run gateway          # Start IBC/IBKR gateway
+npm run db:generate      # Generate Drizzle migrations
+npm run db:migrate       # Apply migrations
+npm run secrets:import   # Import .env keys to macOS Keychain
+npm test                 # Vitest
+npm run build            # Build web frontend
+```
+
+**Quality gates (must pass before declaring done):**
+```bash
+npx tsc --noEmit && npm test && npm --prefix web run check
+```
+
+## Key references
+
+| What | Where |
+|------|-------|
+| Coding standards (authoritative) | `docs/rails.md` |
+| Frontend data patterns | `docs/rails/frontend-data.md` |
+| shadcn/ui component guide | `docs/rails/shadcn.md` |
+| UI cookbook (intent-driven) | `docs/cookbook/` |
+| Frontend rules | `web/CLAUDE.md` |
+| Schema (source of truth) | `src/db/schema.ts` |
+| Domain-specific rules | `.claude/rules/` (loaded contextually) |
+| Implementation notes | `docs/local-implementation-rails.md` |
+| IBKR TWS API reference | `docs/ibkr/` |
+| IBKR sidecar | `sidecar/` (Java) |
+| IBKR TS client | `src/broker/ibkr/` |
+
+## Path aliases
+
+- Backend `@/*` -> `src/*`. Use `@/db/schema.js`, never `../../db/schema`.
+- Frontend `@/*` -> `web/src/*`. Use `@/components/ui/button`, `@/lib/api`.
+- Cross-boundary `@src/*` -> `../src/*` in web. Use `@src/db/schema`, never relative paths.
+
+## Signal pipeline
+
+Message -> parser (sync, zero I/O) -> routing (hard skip / deterministic open-close / LLM fallback) -> execution -> broker -> record trade. Prefer deterministic paths over LLM. See `.claude/rules/orchestrator.md` for the full routing diagram.
+
+## Coding standards
+
+`docs/rails.md` is the single source of truth. Read it before writing code. The most-violated rule:
+
+- **Pipeline code is shared.** Never add `if (isBacktest)` branches in `src/pipeline/` or `src/orders/`. Differences belong in `BrokerService` implementations.
+
+Frontend rules are in `.claude/rules/shadcn-ui.md` and `.claude/rules/web-components.md` (loaded contextually). Database rules are in `.claude/rules/data-context.md` and `.claude/rules/database-trades.md`.
+
+## Database
+
+Schema: `src/db/schema.ts`. Transactions: `runTx()` from `src/db/client.ts`. Channel scoping: all data scoped by `channelId` (helpers in `src/lib/channel.ts`). See `.claude/rules/data-context.md` for operational warnings (WAL, Databento costs, foreign keys).
+
+## Environment
+
+- Do not read `.env` directly -- rely on environment variables or the secrets provider.
+- Secrets live in macOS Keychain (primary) with `.env` fallback. See `src/lib/secrets/`.
+- Required: `ANTHROPIC_API_KEY`. Optional: `DATABENTO_API_KEY`, broker credentials, alert webhooks.
+
+## Workflows
+
+### Lessons (mandatory)
+After every implementation session (new features, bugs, schema changes), create a lesson file:
+- Location: `docs/lessons/YYYY-MM-DD-slug.md`
+- Sections: Problem, Decision, Key Files, Watch Out
+- Plain text, flat, scannable
+
+### Landing the plane
+Do not make commits. The user handles all git operations.

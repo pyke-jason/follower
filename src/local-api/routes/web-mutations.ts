@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 import { db, schema, runTx } from '@/db/client.js';
 import { eq, inArray, and, gte, lte, desc, asc } from 'drizzle-orm';
-import type { CommissionSchedule, BacktestRunConfig, TradeLeg, Signal } from '@/db/schema.js';
+import type { CommissionSchedule, BacktestRunConfig, Signal } from '@/db/schema.js';
 import { btChannel, generateRunId } from '@/lib/channel.js';
 import { generateReportFromTrades } from '@/backtest/report.js';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@/config/risk-defaults.js';
 import { getProvider, SECRET_KEYS } from '@/lib/secrets/index.js';
 import { isClosed } from '@/trades/filters.js';
 
-const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:4000';
+const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:3791';
 const DEFAULT_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'];
 
 const app = new Hono();
@@ -406,7 +406,7 @@ app.post('/trades/:id/force-exit', async (c) => {
     return c.json({ error: 'Trade not open' }, 400);
   }
 
-  const legs = trade.legs as TradeLeg[];
+  const legs = trade.legs;
   const closingLegs = legs.map((leg) => ({
     ...leg,
     action: leg.action === 'BUY' ? 'SELL' : 'BUY',
@@ -775,6 +775,23 @@ app.post('/eval/review/:id', async (c) => {
       reason: body.reason ?? null,
       reviewed: true,
       reviewedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.discrepancyReviews.id, id));
+
+  return c.json({ ok: true });
+});
+
+// ── POST /eval/review/:id/undo — Clear human verdict ─────────────────────
+
+app.post('/eval/review/:id/undo', async (c) => {
+  const id = c.req.param('id');
+
+  await db.update(schema.discrepancyReviews)
+    .set({
+      verdict: null,
+      reason: null,
+      reviewed: false,
+      reviewedAt: null,
     })
     .where(eq(schema.discrepancyReviews.id, id));
 

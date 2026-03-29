@@ -14,8 +14,20 @@
 
 import { uniqueNamesGenerator, adjectives, animals } from 'unique-names-generator';
 
+const RUN_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export function generateRunId(): string {
   return uniqueNamesGenerator({ dictionaries: [adjectives, animals], separator: '-', length: 2 });
+}
+
+export function isSafeRunId(runId: string): boolean {
+  return RUN_ID_RE.test(runId);
+}
+
+export function assertSafeRunId(runId: string): void {
+  if (!isSafeRunId(runId)) {
+    throw new Error(`Invalid runId "${runId}"`);
+  }
 }
 
 export type RuntimeBroker = 'ibkr' | 'tradestation';

@@ -6,6 +6,12 @@ import { eq } from 'drizzle-orm';
 import { PROJECT_ROOT, PATHS } from '@/lib/paths.js';
 import { db, schema } from '@/db/client.js';
 import { sendSystemAlert } from '@/lib/alert.js';
+import { assertSafeRunId } from '@/lib/channel.js';
+
+function logPathForRun(runId: string): string {
+  assertSafeRunId(runId);
+  return path.join(PATHS.logs, `${runId}.log`);
+}
 
 function readLogTail(logPath: string, bytes = 2000): string {
   try {
@@ -46,6 +52,12 @@ app.post('/spawn', async (c) => {
     disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity,
     commissionSchedule } = body;
 
+  try {
+    assertSafeRunId(runId);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+
   const args = [
     startDate,
     endDate,
@@ -67,7 +79,8 @@ app.post('/spawn', async (c) => {
   ];
 
   fs.mkdirSync(PATHS.logs, { recursive: true });
-  const logFd = fs.openSync(path.join(PATHS.logs, `${runId}.log`), 'w');
+  const logPath = logPathForRun(runId);
+  const logFd = fs.openSync(logPath, 'w');
 
   const child = spawn('npx', ['tsx', 'src/backtest/launch.ts', ...args], {
     cwd: PROJECT_ROOT,
@@ -77,7 +90,6 @@ app.post('/spawn', async (c) => {
   });
 
   const pid = child.pid ?? null;
-  const logPath = path.join(PATHS.logs, `${runId}.log`);
 
   child.on('exit', async (code, signal) => {
     if (code === 0) return; // success handled by runner.ts
@@ -127,13 +139,30 @@ app.post('/spawn', async (c) => {
 });
 
 app.post('/:id/cancel', async (c) => {
-  const pid = parseInt(c.req.query('pid') ?? '');
-  if (!pid || isNaN(pid)) {
-    return c.json({ error: 'Missing or invalid pid query parameter' }, 400);
+  const runId = c.req.param('id');
+  try {
+    assertSafeRunId(runId);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+
+  const [run] = await db
+    .select({ pid: schema.backtestRuns.pid, status: schema.backtestRuns.status })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, runId));
+
+  if (!run) {
+    return c.json({ error: 'Run not found' }, 404);
+  }
+  if (run.status !== 'RUNNING' && run.status !== 'PENDING') {
+    return c.json({ error: `Run ${runId} is not active` }, 400);
+  }
+  if (!run.pid) {
+    return c.json({ killed: false, reason: 'run has no recorded pid' });
   }
 
   try {
-    process.kill(-pid, 'SIGTERM');
+    process.kill(-run.pid, 'SIGTERM');
     return c.json({ killed: true });
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ESRCH') {

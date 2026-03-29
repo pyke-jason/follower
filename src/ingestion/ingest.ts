@@ -1,4 +1,5 @@
-import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor } from './browser.js';
+import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor, shouldRotateProactively, clearProactiveRotationFlag, CHAT_URL } from './browser.js';
+import { rotateAccount } from './account-rotation.js';
 import { injectSignalRListener, compactReactions, type SignalRMessage, type ReactionUpdate } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
@@ -114,6 +115,22 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
       lastMessageReceivedAt = null;
       watchdogAlertFired = false;
 
+      // Proactive rotation: trial monitor detected expiry approaching
+      if (shouldRotateProactively()) {
+        console.log('[Ingest] Proactive rotation triggered — trial expiring soon');
+        clearProactiveRotationFlag();
+        const newEmail = await rotateAccount();
+        if (newEmail) {
+          sendSystemAlert({
+            title: 'Proactive account rotation complete',
+            message: `New OneOption account: ${newEmail} — trial was about to expire`,
+            severity: 'info',
+          });
+          continue; // restart loop with new credentials
+        }
+        console.warn('[Ingest] Proactive rotation failed — continuing with current account');
+      }
+
       const { page, crashed } = await launchBrowser();
 
       // Handle auth
@@ -121,13 +138,76 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
         console.log('[Ingest] Not authenticated, attempting login...');
         const success = await attemptLogin();
         if (!success) {
+          // Try automatic account rotation before falling back to manual
+          console.log('[Ingest] Login failed — attempting account rotation...');
+          const newEmail = await rotateAccount();
+          if (newEmail) {
+            sendSystemAlert({
+              title: 'Account rotated',
+              message: `New OneOption account: ${newEmail} — restarting browser`,
+              severity: 'info',
+            });
+            await closeBrowser();
+            continue; // restart supervision loop with new credentials
+          }
+          // Rotation failed — fall through to manual
           sendSystemAlert({
-            title: 'Auto-login failed',
-            message: 'Automatic login failed — waiting for manual login',
+            title: 'Login and rotation both failed',
+            message: 'Automatic login and account rotation both failed — waiting for manual login',
             severity: 'critical',
           });
           await waitForAuth();
         }
+      }
+
+      // Ensure we're on the chat page (login may redirect to membership/dashboard)
+      if (!page.url().includes('/chat')) {
+        // Dismiss referral/welcome modal if present (required to unlock chat access)
+        const referralModal = page.locator('#referral-prompt');
+        if (await referralModal.count() > 0 && await referralModal.isVisible()) {
+          console.log('[Ingest] Dismissing welcome modal...');
+          const select = page.locator('#referral-prompt select');
+          if (await select.count() > 0) {
+            await select.selectOption('Reddit');
+          }
+          const submit = page.locator('#referral-prompt button.btn-primary');
+          if (await submit.count() > 0) {
+            await submit.click();
+            await page.waitForTimeout(2000);
+          }
+        }
+
+        console.log('[Ingest] Not on chat page, navigating...');
+        await page.goto(CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        console.log(`[Ingest] Landed on: ${page.url()}`);
+
+        // Accept chat room policies if shown
+        const policiesCheckbox = page.locator('#understand');
+        if (await policiesCheckbox.count() > 0) {
+          console.log('[Ingest] Accepting chat room policies...');
+          await policiesCheckbox.check();
+          await page.locator('#continue').click();
+          await page.waitForLoadState('domcontentloaded');
+          console.log(`[Ingest] After policies: ${page.url()}`);
+        }
+      }
+
+      // If still not on /chat after login + onboarding, the account likely
+      // can't access chat (expired trial, locked out, etc). Try rotation.
+      if (!page.url().includes('/chat')) {
+        console.log(`[Ingest] Still not on chat page (${page.url()}) — account may be expired`);
+        const newEmail = await rotateAccount();
+        if (newEmail) {
+          sendSystemAlert({
+            title: 'Account rotated',
+            message: `New OneOption account: ${newEmail} — restarting browser`,
+            severity: 'info',
+          });
+          await closeBrowser();
+          continue;
+        }
+        // Rotation failed — continue anyway, polling fallback may partially work
+        console.warn('[Ingest] Account rotation failed — continuing with degraded access');
       }
 
       // Wire up SignalR + monitors
@@ -153,7 +233,8 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
       });
 
       startAuthMonitor();
-      startMessageWatchdog();
+
+      const onChatPage = page.url().includes('/chat');
 
       // Gap-fill: fetch any messages missed during downtime (non-blocking)
       if (!isFirstBoot) {
@@ -163,16 +244,28 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
 
       consecutiveFailures = 0;
 
-      sendSystemAlert({
-        title: 'Chat room connected',
-        message: 'Authenticated and listening for messages',
-        severity: 'info',
-      });
-
-      console.log('[Ingest] Listening for messages...');
+      if (onChatPage) {
+        startMessageWatchdog();
+        sendSystemAlert({
+          title: 'Chat room connected',
+          message: 'Authenticated and listening for messages via SignalR',
+          severity: 'info',
+        });
+        console.log('[Ingest] Listening for messages (SignalR)...');
+      } else {
+        // Fallback: poll REST API when browser can't reach the chat page
+        sendSystemAlert({
+          title: 'Chat room connected (polling mode)',
+          message: 'Browser not on chat page — polling REST API every 15s',
+          severity: 'warning',
+        });
+        console.log('[Ingest] Browser not on chat page — using REST API polling fallback');
+        startPollingFallback();
+      }
 
       // Park here until browser dies
       await crashed;
+      stopPollingFallback();
 
       console.log('[Ingest] Browser closed — will restart');
       sendSystemAlert({
@@ -196,6 +289,42 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
 
       await new Promise(r => setTimeout(r, delay));
     }
+  }
+}
+
+// ─── REST API Polling Fallback ────────────────────────
+// When the browser can't reach the chat page (SignalR unavailable),
+// poll the REST search API every 15 seconds to pick up new messages.
+
+let pollingTimer: ReturnType<typeof setInterval> | null = null;
+const POLL_INTERVAL_MS = 15_000;
+
+function startPollingFallback(): void {
+  if (pollingTimer) return;
+  console.log('[Poll] Starting REST API polling (every 15s)');
+  // Run immediately, then on interval
+  pollForMessages().catch(() => {});
+  pollingTimer = setInterval(() => {
+    pollForMessages().catch(err => {
+      console.warn('[Poll] Polling error:', err instanceof Error ? err.message : String(err));
+    });
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPollingFallback(): void {
+  if (pollingTimer) {
+    clearInterval(pollingTimer);
+    pollingTimer = null;
+    console.log('[Poll] Stopped REST API polling');
+  }
+}
+
+async function pollForMessages(): Promise<void> {
+  const today = isoToDateKey(new Date().toISOString());
+  try {
+    await fetchHistorical({ since: today, until: today });
+  } catch {
+    // Non-fatal — will retry on next interval
   }
 }
 

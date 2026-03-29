@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated';
 
-const CHAT_URL = process.env.CHAT_URL || 'https://app.oneoption.com/chat';
+export const CHAT_URL = process.env.CHAT_URL || 'https://app.oneoption.com/chat';
 const STORAGE_STATE_PATH = resolve(PATHS.data, 'browser-storage.json');
 
 let browser: Browser | null = null;
@@ -15,6 +15,8 @@ let context: BrowserContext | null = null;
 let page: Page | null = null;
 let authState: AuthState = 'unknown';
 let authMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let lastTrialCheckAt = 0;
+let trialRotationTriggered = false;
 
 export function isPageAlive(): boolean {
   return page !== null && !page.isClosed();
@@ -87,15 +89,21 @@ async function checkAuth(p: Page): Promise<AuthState> {
       return {
         isRedirect: resp.type === 'opaqueredirect' || resp.status === 302,
         isJson: text.trim().startsWith('[') || text.trim().startsWith('{'),
+        hasError: text.includes('"error"') || text.includes('not permed'),
       };
     } catch {
-      return { isRedirect: false, isJson: false };
+      return { isRedirect: false, isJson: false, hasError: false };
     }
   }, testUrl);
 
-  if (result.isJson && !result.isRedirect) {
+  if (result.isJson && !result.isRedirect && !result.hasError) {
     console.log('[Browser] Authenticated');
     return 'authenticated';
+  }
+
+  if (result.hasError) {
+    console.log('[Browser] Not authenticated (API returned error — chat not permed)');
+    return 'unauthenticated';
   }
 
   if (!result.isJson && !result.isRedirect) {
@@ -215,6 +223,11 @@ export function startAuthMonitor(intervalMs = 30_000): void {
           severity: 'info',
         });
       }
+
+      // Proactive trial expiry check (throttled to once per hour)
+      if (authState === 'authenticated') {
+        await checkTrialStatus(currentPage);
+      }
     } catch (err) {
       console.error('[Browser] Auth monitor check failed:', err);
       sendSystemAlert({
@@ -224,6 +237,75 @@ export function startAuthMonitor(intervalMs = 30_000): void {
       });
     }
   }, intervalMs);
+}
+
+// ─── Trial Status Monitor ──────────────────────────
+// Checks /account/trial-status once per hour. When daysRemaining <= 2,
+// signals the supervision loop to rotate before the trial expires.
+
+const TRIAL_CHECK_INTERVAL_MS = 60 * 60_000; // once per hour
+const TRIAL_ROTATE_THRESHOLD_DAYS = 2;
+
+export type TrialStatus = {
+  daysRemaining: number;
+  trialExpiresOn: string | null;
+  extensionOffered: boolean;
+  extensionUsed: boolean;
+  hasPaidSubscription: boolean;
+};
+
+export function shouldRotateProactively(): boolean {
+  return trialRotationTriggered;
+}
+
+export function clearProactiveRotationFlag(): void {
+  trialRotationTriggered = false;
+}
+
+async function checkTrialStatus(p: Page): Promise<void> {
+  if (Date.now() - lastTrialCheckAt < TRIAL_CHECK_INTERVAL_MS) return;
+  lastTrialCheckAt = Date.now();
+
+  try {
+    const result = await p.evaluate(async () => {
+      try {
+        const resp = await fetch('/account/trial-status');
+        if (!resp.ok) return null;
+        return await resp.json();
+      } catch { return null; }
+    });
+
+    if (!result || !result.success) return;
+
+    // Parse .NET date format: /Date(1773215940000)/
+    let expiresOn: string | null = null;
+    if (result.currentExpiryDate) {
+      const ms = parseInt(result.currentExpiryDate.replace(/\/Date\((\d+)\)\//, '$1'));
+      if (!isNaN(ms)) expiresOn = new Date(ms).toISOString().slice(0, 10);
+    }
+
+    const days: number = result.daysRemaining ?? 0;
+    const hasPaid: boolean = result.hasPaidSubscription ?? false;
+
+    console.log(`[TrialCheck] Days remaining: ${days}, expires: ${expiresOn ?? 'unknown'}, paid: ${hasPaid}`);
+
+    if (hasPaid) return; // paid subscription, no rotation needed
+
+    if (days <= TRIAL_ROTATE_THRESHOLD_DAYS && !trialRotationTriggered) {
+      trialRotationTriggered = true;
+      sendSystemAlert({
+        title: 'Trial expiring soon',
+        message: `OneOption trial has ${days} day(s) remaining (expires ${expiresOn}). Proactive rotation will trigger on next supervision loop restart.`,
+        severity: 'warning',
+      });
+      // Force browser close — the supervision loop will restart and see
+      // shouldRotateProactively() === true, triggering rotation.
+      closeBrowser().catch(() => {});
+    }
+  } catch (err) {
+    // Non-fatal — trial check is best-effort
+    console.warn('[TrialCheck] Failed:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 export function stopAuthMonitor(): void {

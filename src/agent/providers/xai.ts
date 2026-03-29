@@ -254,6 +254,7 @@ function extractReasoning(text: string): string {
  */
 function parseSignalText(text: string): Record<string, unknown> | null {
   // Extract and remove legs bracket before splitting on commas
+  // (legacy model output — convert to strikes/expiry)
   let remaining = text;
   const legsMatch = text.match(/legs\s*\[([^\]]+)\]/i);
   if (legsMatch) remaining = remaining.replace(legsMatch[0], '');
@@ -279,41 +280,35 @@ function parseSignalText(text: string): Record<string, unknown> | null {
   if (kv.strategy) signal.strategy = kv.strategy.toUpperCase();
   if (kv.targetstrategy) signal.targetStrategy = kv.targetstrategy.toUpperCase();
   if (kv.exitpercent) signal.exitPercent = parseFloat(kv.exitpercent);
-  if (kv.statedpremium) signal.statedPremium = parseFloat(kv.statedpremium);
+  // Support both old (statedpremium) and new (statedprice) field names from model output
+  if (kv.statedprice) signal.statedPrice = parseFloat(kv.statedprice);
+  else if (kv.statedpremium) signal.statedPrice = parseFloat(kv.statedpremium);
+  if (kv.quantity) signal.quantity = parseFloat(kv.quantity);
 
-  if (legsMatch) {
+  // Parse strikes from kv or from legacy legs bracket
+  if (kv.strikes) {
+    // "strikes [332.5]" or "strikes [190, 192.5]" or "strikes 332.5"
+    const strikesArr = kv.strikes.replace(/[\[\]]/g, '').split(/[,\s]+/).map(Number).filter(n => !isNaN(n) && n > 0);
+    if (strikesArr.length > 0) signal.strikes = strikesArr;
+  } else if (legsMatch) {
+    // Convert legacy legs to strikes array
     const legs = parseLegsText(legsMatch[1]);
-    if (legs.length > 0) signal.legs = legs;
+    const strikes = legs.map(l => l.strike as number).filter(s => s > 0);
+    if (strikes.length > 0) signal.strikes = strikes;
+    // Extract expiry from first leg that has one
+    const legExpiry = legs.find(l => l.expiry != null)?.expiry;
+    if (legExpiry && !kv.expiry) signal.expiry = legExpiry;
   }
 
-  // Propagate top-level expiry to legs (model sometimes emits expiry outside legs bracket)
+  // Set expiry from kv if present
   if (kv.expiry) {
-    const legs = signal.legs as Array<Record<string, unknown>> | undefined;
-    if (legs) {
-      for (const leg of legs) {
-        if (!leg.expiry) leg.expiry = kv.expiry;
-      }
-    } else {
-      const optionType = signal.strategy === 'PUT' ? 'PUT' : 'CALL';
-      signal.legs = [{ action: 'BUY', strike: 0, optionType, expiry: kv.expiry }];
-    }
+    signal.expiry = kv.expiry;
   }
 
   // LEAP context fallback: if the raw text mentions "leap" but no expiry was parsed,
   // inject expiry: "LEAP" to catch flaky model formatting under concurrency
-  if (!kv.expiry && /leap/i.test(text)) {
-    const legs = signal.legs as Array<Record<string, unknown>> | undefined;
-    const hasExpiry = legs?.some(l => l.expiry != null);
-    if (!hasExpiry) {
-      if (legs) {
-        for (const leg of legs) {
-          leg.expiry = 'LEAP';
-        }
-      } else {
-        const optionType = signal.strategy === 'PUT' ? 'PUT' : 'CALL';
-        signal.legs = [{ action: 'BUY', strike: 0, optionType, expiry: 'LEAP' }];
-      }
-    }
+  if (!signal.expiry && /leap/i.test(text)) {
+    signal.expiry = 'LEAP';
   }
 
   return signal;

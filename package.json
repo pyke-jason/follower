@@ -2,13 +2,16 @@
   "name": "trade-follower",
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "local-api": "tsx watch src/local-api/server.ts",
-    "web": "cd web && npm run dev",
+    "web": "cd web && pnpm dev",
     "backtest": "tsx src/backtest/launch.ts",
     "secrets:import": "tsx src/lib/secrets/manage.ts import",
     "secrets:set": "tsx src/lib/secrets/manage.ts set",
@@ -16,7 +19,7 @@
     "secrets:list": "tsx src/lib/secrets/manage.ts list",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "cd web && npm run build",
+    "build": "cd web && pnpm build",
     "gateway": "~/ibc/gatewaystartmacos.sh -inline",
     "up": "tsx scripts/dev-up.ts",
     "up:ui": "tsx scripts/dev-up.ts --no-backend",
@@ -30,8 +33,11 @@
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.11.9",
+    "imapflow": "^1.2.18",
     "openai": "^6.22.0",
     "playwright": "^1.58.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "unique-names-generator": "^4.7.1",
     "zod": "^4.3.6"
   },
@@ -43,5 +49,11 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

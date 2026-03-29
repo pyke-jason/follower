@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zPrice, zPct01 } from '../lib/zod-financial.js';
 import {
-  DecisionOutcomeSchema, DirectionSchema, LegActionSchema, StrategySchema,
+  DecisionOutcomeSchema, DirectionSchema, StrategySchema,
   TradeActionSchema,
 } from '../lib/enums.js';
 
@@ -12,25 +12,23 @@ export const FlagForReviewInput = z.object({
   uncertainty: z.string().optional(),
 });
 
-// --- Signal schema (classification-only agent output) ---
-
-const SignalLegSchema = z.object({
-  strike: z.number().nonnegative(),
-  expiry: z.string().min(1).optional(),
-  optionType: z.enum(['CALL', 'PUT']),
-  action: LegActionSchema,
-});
+// --- Signal schema (classification + label shared type) ---
 
 export const SignalSchema = z.object({
   action: TradeActionSchema,
   symbol: z.string().min(1),
-  direction: DirectionSchema.optional(),
-  strategy: StrategySchema.default('STOCK'),
-  /** Trader's stated premium from the message text ("for $3.72", "for .09"). Informational only — never used for order placement. */
-  statedPremium: zPrice.optional(),
-  exitPercent: zPct01.optional(),     // for TRIM: 0.5 = half
-  /** Present when trader explicitly states strikes. Absent when strikes need inferring by pipeline. */
-  legs: z.array(SignalLegSchema).max(2).optional(),
+  direction: DirectionSchema.nullable().default(null),
+  strategy: StrategySchema.nullable().default(null),
+  /** Strike prices stated in the message. Single option: [332.5]. Spread: [190, 192.5]. */
+  strikes: z.array(z.number()).nullable().default(null),
+  /** Expiry as stated in message: "Oct (17)", "next week", "5/23", "0DTE". */
+  expiry: z.string().nullable().default(null),
+  /** Stated price: option premium, credit amount, or stock entry price. */
+  statedPrice: zPrice.nullable().default(null),
+  /** Shares or contracts when stated. */
+  quantity: z.number().nullable().default(null),
+  /** For TRIM: exit fraction 0.0–1.0 (0.5 = half). */
+  exitPercent: zPct01.optional(),
   /** For LEG_OFF: the strategy the position becomes after removing a leg. */
   targetStrategy: StrategySchema.optional(),
 }).refine(
@@ -50,25 +48,6 @@ export const AgentDecisionSchema = z.object({
   d => d.decision !== 'EXECUTE' || (d.signals && d.signals.length > 0),
   { message: 'EXECUTE requires at least one signal' },
 );
-
-// --- Label agent result schema ---
-
-export const LabelResultSchema = z.object({
-  isTrade: z.boolean(),
-  action: TradeActionSchema.nullable().optional(),
-  direction: DirectionSchema.nullable().optional(),
-  strategy: StrategySchema.nullable().optional(),
-  symbol: z.string().nullable().optional(),
-  price: z.string().nullable().optional(),
-  strikes: z.array(z.number()).nullable().optional(),
-  quantity: z.string().nullable().optional(),
-  expiry: z.string().nullable().optional(),
-  exitPercent: zPct01.nullable().optional(), // 0.0–1.0 for TRIM actions
-  confidence: z.enum(['high', 'medium', 'low']).optional(),
-  notes: z.string().nullable().optional(),
-});
-
-export type LabelResult = z.infer<typeof LabelResultSchema>;
 
 export type TaskResult = z.infer<typeof AgentDecisionSchema>;
 

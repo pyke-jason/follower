@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex, customType } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
@@ -6,13 +6,24 @@ import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
 import type { DecisionOutcome, Direction, Strategy } from '../lib/enums.js';
-
 // Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
 // relative imports (its CJS bundler can't handle them).
 const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
 const LegActionSchema = z.enum(['BUY', 'SELL']);
 export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
+
+// ─── Typed JSON Column Helper ────────────────────────
+// Uses customType so the TS type is baked into the column definition and
+// propagates through select(), findFirst(), partial selects, etc.
+// When Drizzle ships $validator(), swap to json().$validator(schema).
+
+const typedJson = <T>(name: string) =>
+  customType<{ data: T; driverData: string }>({
+    dataType() { return 'text'; },
+    toDriver(value: T): string { return JSON.stringify(value); },
+    fromDriver(value: string): T { return JSON.parse(value) as T; },
+  })(name);
 
 // SQLite doesn't have native enums — use text columns with TS types for safety.
 
@@ -24,16 +35,16 @@ export const messages = sqliteTable('messages', {
   timestamp:          text('timestamp').notNull(), // ISO 8601
   rawHtml:            text('raw_html').notNull(),
   cleanText:          text('clean_text').notNull(),
-  badges:             text('badges', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  symbols:            text('symbols', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  badges:             typedJson<string[]>('badges').notNull().default([]),
+  symbols:            typedJson<string[]>('symbols').notNull().default([]),
   actionHint:         text('action_hint'),       // OPEN | CLOSE | ADJUST | null
   directionHint:      text('direction_hint'),     // LONG | SHORT | null
-  detectedStrategies: text('detected_strategies', { mode: 'json' }).$type<DetectedStrategy[]>().notNull().default([]),
+  detectedStrategies: typedJson<DetectedStrategy[]>('detected_strategies').notNull().default([]),
   isPaperTrade:       integer('is_paper_trade', { mode: 'boolean' }).default(false),
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
   contentHash:        text('content_hash'),        // sha256 of normalized clean_text for dedup
-  reactions:          text('reactions', { mode: 'json' }).$type<MessageReaction[]>().notNull().default([]),
+  reactions:          typedJson<MessageReaction[]>('reactions').notNull().default([]),
 }, (table) => [
   index('idx_messages_author').on(table.author),
   index('idx_messages_timestamp').on(table.timestamp),
@@ -45,7 +56,7 @@ export const messages = sqliteTable('messages', {
 export const messageLabels = sqliteTable('message_labels', {
   id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:  text('message_id').references(() => messages.id).notNull(),
-  signals:    text('signals', { mode: 'json' }).$type<Signal[]>().notNull().default([]),
+  signals:    typedJson<Signal[]>('signals').notNull().default([]),
   source:     text('source').notNull().default('manual'), // approved | manual
   reviewed:   integer('reviewed', { mode: 'boolean' }).default(false),
   notes:      text('notes'),
@@ -65,8 +76,8 @@ export const tasks = sqliteTable('tasks', {
   status:      text('status').notNull().default('PENDING'), // PENDING | IN_PROGRESS | COMPLETED | FAILED | SKIPPED
   assignee:    text('assignee').notNull().default('agent'),
   priority:    integer('priority').default(0),
-  context:     text('context', { mode: 'json' }).$type<TaskContext>().notNull().default({}),
-  result:      text('result', { mode: 'json' }).$type<{ outcome: string } | null>(),
+  context:     typedJson<TaskContext>('context').notNull().default({}),
+  result:      typedJson<{ outcome: string }>('result'),
   createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:   text('started_at'),
   completedAt: text('completed_at'),
@@ -91,7 +102,7 @@ export const trades = sqliteTable('trades', {
   symbol:          text('symbol').notNull(),
   direction:       text('direction').notNull().$type<Direction>(),    // LONG | SHORT
   strategy:        text('strategy').notNull().$type<Strategy>(),     // CDS, PDS, CALL, PUT, STOCK
-  legs:            text('legs', { mode: 'json' }).$type<TradeLeg[]>().notNull(),
+  legs:            typedJson<TradeLeg[]>('legs').notNull(),
   status:          text('status').notNull().default('OPEN'), // OPEN | CLOSED | CANCELLED
   entryPrice:      text('entry_price'),
   exitPrice:       text('exit_price'),
@@ -101,13 +112,13 @@ export const trades = sqliteTable('trades', {
   closedAt:        text('closed_at'),
   closeMessageId:  text('close_message_id').references(() => messages.id),
   channelId:       text('channel_id').notNull(),
-  metadata:        text('metadata', { mode: 'json' }).$type<TradeMetadata>().notNull().default({}),
+  metadata:        typedJson<TradeMetadata>('metadata').notNull().default({}),
   avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
   brokerFillQty:   integer('broker_fill_qty'),
   brokerCommission: text('broker_commission'),
   brokerFillTime:  text('broker_fill_time'),
-  brokerLegFills:  text('broker_leg_fills', { mode: 'json' }).$type<LegFill[] | null>(),
+  brokerLegFills:  typedJson<LegFill[]>('broker_leg_fills'),
   realizedPnl:     text('realized_pnl'),  // accumulated PnL from partial exits (TRIMs)
 }, (table) => [
   index('idx_trades_trader').on(table.trader),
@@ -124,11 +135,11 @@ export const tradeEvents = sqliteTable('trade_events', {
   action:     text('action').notNull(),         // OPEN | CLOSE | ADD | TRIM | LEG_OFF
   price:      text('price'),                    // fill price for this action
   quantity:   integer('quantity'),               // contracts/shares involved
-  legs:       text('legs', { mode: 'json' }).$type<TradeLeg[]>().notNull().default([]),
+  legs:       typedJson<TradeLeg[]>('legs').notNull().default([]),
   strategy:   text('strategy').$type<Strategy>(),                 // strategy at time of event
   direction:  text('direction').$type<Direction>(),                // direction at time of event
   messageId:  text('message_id'),               // source message that triggered this
-  metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
+  metadata:   typedJson<Record<string, unknown>>('metadata').notNull().default({}),
   timestamp:  text('timestamp').notNull(),       // ISO 8601 — when the action happened
   createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -143,11 +154,11 @@ export type TradeEvent = typeof tradeEvents.$inferSelect;
 export const backtestRuns = sqliteTable('backtest_runs', {
   id:              text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   status:          text('status').notNull().default('PENDING'), // PENDING | RUNNING | COMPLETED | FAILED
-  config:          text('config', { mode: 'json' }).$type<BacktestRunConfig>().notNull(),
-  summary:         text('summary', { mode: 'json' }).$type<BacktestRunSummary | null>(),
-  byTrader:        text('by_trader', { mode: 'json' }).$type<Record<string, TraderStats> | null>(),
-  byStrategy:      text('by_strategy', { mode: 'json' }).$type<Record<string, StrategyStats> | null>(),
-  equityCurve:     text('equity_curve', { mode: 'json' }).$type<EquityPoint[] | null>(),
+  config:          typedJson<BacktestRunConfig>('config').notNull(),
+  summary:         typedJson<BacktestRunSummary>('summary'),
+  byTrader:        typedJson<Record<string, TraderStats>>('by_trader'),
+  byStrategy:      typedJson<Record<string, StrategyStats>>('by_strategy'),
+  equityCurve:     typedJson<EquityPoint[]>('equity_curve'),
   createdAt:       text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:       text('started_at'),
   completedAt:     text('completed_at'),
@@ -158,8 +169,8 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   name:            text('name'),                    // human label, e.g. "sonnet baseline sept"
   experimentTag:   text('experiment_tag'),           // groups runs, e.g. "model-comparison-feb"
   pinned:          integer('pinned', { mode: 'boolean' }).default(false),
-  extendedMetrics: text('extended_metrics', { mode: 'json' }).$type<ExtendedMetrics | null>(),
-  liveMetrics:     text('live_metrics', { mode: 'json' }).$type<LiveMetrics | null>(),
+  extendedMetrics: typedJson<ExtendedMetrics>('extended_metrics'),
+  liveMetrics:     typedJson<LiveMetrics>('live_metrics'),
 }, (table) => [
   index('idx_backtest_runs_status').on(table.status),
   index('idx_backtest_runs_experiment_tag').on(table.experimentTag),
@@ -179,7 +190,7 @@ export const runDecisions = sqliteTable('run_decisions', {
   reasoning:      text('reasoning'),
   tradeId:        text('trade_id'),                // FK to resulting trade (null if SKIP)
   pnl:            text('pnl'),                     // outcome P&L, back-filled after close
-  snapshot:       text('snapshot', { mode: 'json' }).$type<Record<string, unknown> | null>(),
+  snapshot:       typedJson<Record<string, unknown>>('snapshot'),
   durationMs:     integer('duration_ms'),
   inputTokens:    integer('input_tokens'),          // LLM input tokens (null for deterministic skips)
   outputTokens:   integer('output_tokens'),         // LLM output tokens (null for deterministic skips)
@@ -213,10 +224,9 @@ export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
 export const trackedTraders = sqliteTable('tracked_traders', {
   name:            text('name').primaryKey(),
   enabled:         integer('enabled', { mode: 'boolean' }).default(true),
-  strategies:      text('strategies', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  strategies:      typedJson<string[]>('strategies').notNull().default([]),
   notes:           text('notes'),
-  positionSizingConfig: text('position_sizing_config', { mode: 'json' })
-    .$type<PositionSizingConfig>(),
+  positionSizingConfig: typedJson<PositionSizingConfig>('position_sizing_config'),
 });
 
 // ─── Daily Balances ─────────────────────────────────
@@ -248,8 +258,8 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
   type:       text('type').notNull().$type<ReconciliationAlertType>(),
   symbol:     text('symbol').notNull(),
   tradeId:    text('trade_id'),
-  expected:   text('expected', { mode: 'json' }),
-  actual:     text('actual', { mode: 'json' }),
+  expected:   typedJson<unknown>('expected'),
+  actual:     typedJson<unknown>('actual'),
   resolved:       integer('resolved', { mode: 'boolean' }).default(false),
   resolvedAt:     text('resolved_at'),
   resolvedReason: text('resolved_reason'),
@@ -326,12 +336,12 @@ export const messageIntents = sqliteTable('message_intents', {
   route:        text('route').notNull(),               // hard-skip | deterministic | llm
   decision:     text('decision').notNull(),            // EXECUTE | SKIP | MANUAL_REVIEW
   reasoning:    text('reasoning'),
-  signals:      text('signals', { mode: 'json' }).$type<Signal[]>(),
+  signals:      typedJson<Signal[]>('signals'),
   durationMs:   integer('duration_ms'),
   inputTokens:  integer('input_tokens'),
   outputTokens: integer('output_tokens'),
   turns:        integer('turns'),
-  steps:        text('steps', { mode: 'json' }).$type<IntentStep[]>(),
+  steps:        typedJson<IntentStep[]>('steps'),
   createdAt:    text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   index('idx_intents_message').on(table.messageId),
@@ -527,7 +537,7 @@ export const discrepancyReviews = sqliteTable('discrepancy_reviews', {
   parserStrategy:   text('parser_strategy'),
   parserDirection:  text('parser_direction'),
   parserSkipReason: text('parser_skip_reason'),
-  parserFlags:      text('parser_flags', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  parserFlags:      typedJson<string[]>('parser_flags').notNull().default([]),
   // Label output (denormalized)
   labelAction:      text('label_action'),
   labelStrategy:    text('label_strategy'),
@@ -539,8 +549,8 @@ export const discrepancyReviews = sqliteTable('discrepancy_reviews', {
   // Message context (denormalized for rendering without JOIN)
   author:           text('author').notNull(),
   cleanText:        text('clean_text').notNull(),
-  badges:           text('badges', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  symbols:          text('symbols', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  badges:           typedJson<string[]>('badges').notNull().default([]),
+  symbols:          typedJson<string[]>('symbols').notNull().default([]),
   timestamp:        text('timestamp').notNull(),
   createdAt:        text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -549,6 +559,40 @@ export const discrepancyReviews = sqliteTable('discrepancy_reviews', {
   index('idx_disc_reviews_category').on(table.category),
   index('idx_disc_reviews_reviewed').on(table.reviewed),
   index('idx_disc_reviews_category_verdict').on(table.category, table.verdict),
+]);
+
+// ─── Eval Labels ─────────────────────────────────────
+
+/** Eval label wrapping Signal[][] with review metadata. */
+export type EvalLabelData = {
+  reasoning: string;
+  isTrade: boolean;
+  confidence: 'HIGH' | 'LOW';
+  trades: Signal[][];  // outer = trades in message, inner = legs of one trade
+};
+
+export const evalLabels = sqliteTable('eval_labels', {
+  id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  messageId:      text('message_id').references(() => messages.id).notNull(),
+  // The label data (stored as JSON)
+  label:          typedJson<EvalLabelData>('label').notNull(),
+  // Source tracking
+  source:         text('source').notNull().default('agent'), // agent | human
+  model:          text('model'),                              // model that generated this
+  version:        integer('version').notNull().default(2),    // bump when prompt/schema changes
+  // Human review
+  humanVerified:  integer('human_verified', { mode: 'boolean' }).default(false),
+  humanLabel:     typedJson<EvalLabelData>('human_label'),  // human correction (null if agent was right)
+  reviewedAt:     text('reviewed_at'),
+  // Metadata
+  durationMs:     integer('duration_ms'),
+  inputTokens:    integer('input_tokens'),
+  outputTokens:   integer('output_tokens'),
+  createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('idx_eval_labels_message_version').on(table.messageId, table.version),
+  index('idx_eval_labels_source').on(table.source),
+  index('idx_eval_labels_human_verified').on(table.humanVerified),
 ]);
 
 // ─── Inferred Types ──────────────────────────────────
@@ -573,3 +617,4 @@ export type NewMessageIntent = typeof messageIntents.$inferInsert;
 export type RuntimeHealth = typeof runtimeHealth.$inferSelect;
 export type DiscrepancyReview = typeof discrepancyReviews.$inferSelect;
 export type NewDiscrepancyReview = typeof discrepancyReviews.$inferInsert;
+export type EvalLabelRow = typeof evalLabels.$inferSelect;

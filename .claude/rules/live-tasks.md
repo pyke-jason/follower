@@ -4,77 +4,74 @@ paths: src/live/**
 
 # Live Execution
 
-## runner.ts — Push-Based Task Queue
+## Architecture — Multi-Channel, Push-Based
 
-Tasks are pushed to the runner, not polled from the DB. The flow:
+The runner operates one independent queue per channel (broker + account). Each channel has its own `BrokerService`, `PipelineBundle`, and `BrokerCircuitBreaker`. Channels process tasks sequentially within their queue but are independent of each other.
 
-1. SignalR delivers message -> ingestion stores it -> factory creates task row + returns `Task` object
-2. Composition root (`index.ts`) calls `submitTask(task)` on the runner
-3. Runner queues the Task, drains sequentially (one at a time)
+## runner.ts — Task Flow
+
+Tasks are pushed, not polled. There is no safety-net poll loop.
+
+1. SignalR delivers a message -> ingestion stores it in the DB
+2. Composition root (`src/index.ts`) queries the stored message, calls `createTasksFromMessage()` (one task per enabled channel), then calls `submitTask(task)` for each
+3. Runner routes the task to the correct channel queue by `task.channelId`, drains sequentially (one at a time per channel)
 
 **Key exports:**
-- `initRunner()` — async, called after `loadSecrets()`. Sets up broker(s), pipeline, expires stale tasks, starts timers. Returns `{ channels: RuntimeChannelService[] }` (multi-channel).
-- `submitTask(task: Task)` — enqueues a task. Silently drops if `stopRunner()` was called.
+- `initRunner()` — called after `loadSecrets()`. Sets up per-channel broker pipelines, expires stale tasks, starts timers. Returns `{ channels: RuntimeChannelService[] }`.
+- `submitTask(task: Task)` — enqueues a task to its channel. Silently drops if `stopRunner()` was called or `channelId` is unknown.
 - `stopRunner()` — stops accepting new submissions (shutdown).
-- `awaitDrain()` — waits for queue empty + current task done.
-- `destroyOrderManager()` — clears timers, stops WS listener, destroys bundle.
+- `awaitDrain()` — resolves when all channel queues are empty and no task is in-flight.
+- `destroyOrderManager()` — clears all timers, destroys per-channel pipeline bundles, resets state.
 
-**Staleness guard:** Tasks older than 60s are EXPIRED (not processed). Alert sent per expiry.
+**Staleness guard:** Tasks older than 60s (`STALE_THRESHOLD_MS`) are EXPIRED, not processed. Alert sent per expiry.
 
-**Circuit breaker gate:** If broker is unhealthy, task is re-enqueued with 10s delay (not expired).
+**Circuit breaker gate:** If broker health check fails, the task is re-submitted with a 10s delay via `setTimeout(() => submitTask(task), 10_000)`. The task is NOT expired -- it retries once the broker recovers.
 
-**Atomic claim:** `UPDATE status=IN_PROGRESS WHERE status=PENDING` guards against web UI `skipTask()` racing.
+**Atomic claim:** `UPDATE status=IN_PROGRESS WHERE status=PENDING` guards against the web UI's `skipTask()` racing with the runner.
 
-**No poll loop.** No safety-net poll. The only path to execution is `submitTask()`.
+**No task-level requeue on errors.** Broker retries happen at the client level (`withRetry` in `src/lib/resilient.ts`). If an error survives retries and reaches the runner, the task is marked FAILED via `handleTaskError()`. The runner records the failure on the circuit breaker and continues draining.
 
-**No task-level requeue.** Broker retries happen at the client level (`withRetry` in `resilient.ts`). If an error survives retries and reaches the runner, the task is FAILED.
+## factory.ts — Task Creation
 
-## factory.ts
+Two exports, both async:
+- `createTaskFromMessage(message, channelId)` — returns `Task | null` (full object from `.returning()`). Inserts a task row with `onConflictDoNothing` for idempotency. No knowledge of the runner.
+- `createTasksFromMessage(message, channelIds)` — calls the singular form once per channel. Used by `src/index.ts` for multi-channel fan-out.
 
-`createTaskFromMessage(message)` returns `Task | null` (full object from `.returning()`). Zero knowledge of runner. The composition root wires factory output to `submitTask()`.
+Task type is determined by confidence: `>= 0.7` with badges -> `EXECUTE_TRADE`, otherwise `REVIEW_MESSAGE`. Messages without badges always go to `REVIEW_MESSAGE` regardless of confidence.
+
+## runtime-health.ts — Broker Health Tracking
+
+`upsertRuntimeHealth(channelId, fields)` — fire-and-forget DB upsert (sync `.run()`, never awaited) that records broker health, circuit breaker state, and last error per channel. Called throughout the runner after health checks, task success, and task failure. Read by the web dashboard for operational visibility.
 
 ## Startup Behavior
 
-`initRunner()` expires all stale tasks before accepting submissions:
+`initRunner()` expires stale tasks before accepting submissions:
 - PENDING tasks older than 60s -> EXPIRED ("stale: process restarted")
 - All IN_PROGRESS tasks -> EXPIRED ("stale: interrupted by restart")
-- Batch alert sent if any tasks expired.
+- Batch alert sent if any tasks were expired
 
-## Periodic Side Effects
+## Periodic Timers
 
-Independent timers (not coupled to task processing):
-- **Expiry warnings**: `setInterval` every 5 min, checks positions approaching expiration
-- **Circuit breaker health**: `setInterval` every 30s, probes broker health
+Independent of task processing:
+- **Expiry warnings**: every 5 min, checks open positions approaching option expiration
+- **Health probe**: every 30s, probes broker health per channel and updates `runtime_health` table
 
 Both cleared by `destroyOrderManager()`.
 
 ## Error Handling
 
-- `handleTaskError()` always marks FAILED and re-throws (no requeue branch)
-- Runner catches the re-throw, records on circuit breaker, continues draining
-- `BrokerTransientError` requeue was removed (dead code — never thrown)
-
-## Per-Task Pipeline Wrapping (processTask)
-
-`processTask()` wraps the pipeline to inject `taskId` -- applied to ALL tasks (live AND backtest):
-- `recordTrade(input)` -> `recordTrade({ ...input, taskId: task.id })`
-- `onPending(orderId, ctx)` -> `onPending(orderId, { ...ctx, taskId: task.id })`
-
-This ensures fill callbacks carry the taskId of the task that placed the order. The wrapping happens unconditionally in `process-task.ts`.
-
-## Positions
-
-Both live and backtest positions come from the `trades` table -- same query, different scope filter (`forChannel(channelId)`). The `buildPipelineDeps()` factory derives the filter from `env.scope`.
+- `handleTaskError()` (from `src/pipeline/task-lifecycle.ts`) marks the task FAILED and re-throws
+- Runner catches the re-throw, records on circuit breaker, updates runtime health, continues draining
+- `BrokerTransientError` (`src/lib/errors.ts`) is used by the circuit breaker for log-level classification (`recordFailure` checks `instanceof`). No broker currently throws it, but the class and its consumer are live code -- do not remove without updating the circuit breaker.
 
 ## Risk Defaults
 
-Live uses `LIVE_RISK_DEFAULTS` from `src/config/risk-defaults.ts` (stricter `maxOnSymbol` than backtest). Includes `getReconciliationAlertCount()` check (blocks trading if unresolved DB-only reconciliation alerts).
+Live uses `LIVE_RISK_DEFAULTS` from `src/config/risk-defaults.ts`. Key difference from backtest: live allows higher `maxOnSymbol` (5 vs 3) to accommodate multi-trader overlap on the same symbol. All other limits are identical.
 
-If adding a new risk check, add it to both `BACKTEST_RISK_DEFAULTS` and `LIVE_RISK_DEFAULTS`.
+Live also enforces `getReconciliationAlertCount()` -- blocks new trades if unresolved reconciliation alerts exist. Backtest skips this check.
+
+When adding a new risk parameter, add it to both `BACKTEST_RISK_DEFAULTS` and `LIVE_RISK_DEFAULTS` in `src/config/risk-defaults.ts`.
 
 ## Broker Selection
 
-`getRuntimeChannelServices()` (`src/broker/select.ts`) is the single source of truth for live broker selection. Returns a map of `channelId → BrokerService` supporting multiple accounts/brokers concurrently.
-- Both brokers implement `BrokerService` interface
-- TradeStation (`src/broker/tradestation/`) uses OAuth via `auth.ts`. Never hardcode credentials -- use environment variables.
-- IBKR (`src/broker/ibkr/`) uses sidecar + WebSocket.
+Documented in `broker-interface.md`. The runner calls `getRuntimeChannelServices()` from `src/broker/select.ts` during `initRunner()` to get the list of enabled channels with their broker instances.

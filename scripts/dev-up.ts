@@ -399,7 +399,7 @@ function killExisting(): void {
   }
 
   // Kill by port
-  killOnPort(4000, 'local-api');
+  killOnPort(3791, 'local-api');
   killOnPort(3000, 'web');
 
   // Brief pause so ports are released
@@ -436,7 +436,7 @@ async function main(): Promise<void> {
   log('orch', 'Starting local-api...');
   spawnService('api', 'npx', ['tsx', 'watch', 'src/local-api/server.ts']);
 
-  await waitForHealth('local-api', 'http://localhost:4000/health', {
+  await waitForHealth('local-api', 'http://localhost:3791/health', {
     timeoutMs: 15_000,
   });
 
@@ -470,7 +470,7 @@ async function main(): Promise<void> {
   log('orch', '  All services started');
   log('orch', '');
   log('orch', '  Web:       http://localhost:3000');
-  log('orch', '  API:       http://localhost:4000');
+  log('orch', '  API:       http://localhost:3791');
   if (needsIbkr) {
     log('orch', `  Sidecar:   ${sidecarBase} (starting in background)`);
   }

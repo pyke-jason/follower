@@ -1,0 +1,86 @@
+import type { ReactNode } from 'react';
+import type { Message, Trade, BacktestRun, RunDecision, TradeEvent, TradeFlag, BacktestRunSummary } from '@src/db/schema';
+import type { TraderStats, StrategyStats, EquityPoint } from '@src/backtest/types';
+import type { TradeScatterPoint } from '@/views/backtests/[id]/trade-scatter';
+import type { RollingWinRatePoint } from '@/views/backtests/[id]/rolling-win-rate';
+
+export type CursorResponse<T> = {
+  rows: T[];
+  nextCursor: string | null;
+  total?: number;
+};
+
+export type Column<T> = {
+  key: string;
+  label: ReactNode;
+  sortable?: boolean;
+  align?: 'left' | 'right';
+  className?: string;
+  render: (row: T) => ReactNode;
+};
+
+/* ---- Backtest detail ---- */
+
+type BacktestDecisionJoinRow = {
+  decision: RunDecision;
+  message: Message;
+  trade: { id: string; symbol: string; taskId: string | null; pnl: string | null } | null;
+};
+
+export type BacktestDetailResponse = {
+  run: BacktestRun;
+  decisions: BacktestDecisionJoinRow[];
+  allTrades: Trade[];
+  eventsByTradeId: Record<string, TradeEvent[]>;
+  flagsByTradeId: Record<string, TradeFlag[]>;
+  mtmSnapshots: { date: string; unrealizedPnl: number }[];
+  summary: (BacktestRunSummary & { agentCallsUsed: number; agentTrades: number; skipped: number }) | null;
+  byTrader: Record<string, TraderStats> | null;
+  byStrategy: Record<string, StrategyStats> | null;
+  equityCurve: EquityPoint[] | null;
+  tradeScatter: TradeScatterPoint[];
+  rollingWinRate: RollingWinRatePoint[];
+  strategyEquity: Record<string, number | string>[];
+  strategies: string[];
+  llmTokens: { input: number; output: number };
+  messagesEndDate: string;
+};
+
+/* ---- Trader detail ---- */
+
+type HistorySummary = {
+  totalPnl: number;
+  totalTrades: number;
+  wins: number;
+  winRate: number;
+  bestTrade: number;
+  worstTrade: number;
+  totalSlippage: number;
+};
+
+type StrategyRow = {
+  strategy: string;
+  trades: number;
+  totalPnl: string;
+  wins: number;
+};
+
+type EquityCurveRow = {
+  date: string;
+  pnl: number;
+  cumPnl: number;
+};
+
+type TrackedTrader = {
+  name: string;
+  enabled: boolean;
+  strategies: string[];
+};
+
+export type TraderDetailResponse = {
+  trader: TrackedTrader;
+  equityCurve: EquityCurveRow[];
+  strategyBreakdown: StrategyRow[];
+  historySummary: HistorySummary;
+  closedTrades: Trade[];
+};

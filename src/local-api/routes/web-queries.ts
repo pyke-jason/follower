@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { db, schema } from '@/db/client.js';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import type { Trade, TradeFlag, TradeLeg, CommissionSchedule } from '@/db/schema.js';
+import type { Trade, TradeFlag, CommissionSchedule } from '@/db/schema.js';
 import type { BrokerPosition } from '@/broker/types.js';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '@/lib/enriched-message.js';
 import type { Strategy } from '@/lib/enums.js';
@@ -10,7 +10,6 @@ import { btChannel } from '@/lib/channel.js';
 import { getDefaultRuntimeChannelId } from '@/lib/runtime-channels.js';
 import { safeParseFloat, roundCents } from '@/lib/numbers.js';
 import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '@/trades/filters.js';
-import { getTradeFlags } from '@/db/accessors.js';
 import { computeCoreStats } from '@/backtest/report.js';
 import { computeTradeCommission } from '@/lib/commission.js';
 import { tradeQty } from '@/lib/trade.js';
@@ -42,10 +41,39 @@ function buildFlagsByTradeId(trades: Trade[]): Record<string, TradeFlag[]> {
   if (trades.length === 0) return {};
   const result: Record<string, TradeFlag[]> = {};
   for (const t of trades) {
-    const flags = getTradeFlags(t);
+    const flags = t.metadata.flags ?? [];
     if (flags.length > 0) result[t.id] = flags;
   }
   return result;
+}
+
+// ── Cursor Pagination Helpers ─────────────────────────
+
+function encodeCursor(sortValue: string, id: string): string {
+  return Buffer.from(`${sortValue}:${id}`).toString('base64');
+}
+
+function decodeCursor(cursor: string): { sortValue: string; id: string } | null {
+  try {
+    const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+    const sepIdx = decoded.indexOf(':');
+    if (sepIdx === -1) return null;
+    return { sortValue: decoded.slice(0, sepIdx), id: decoded.slice(sepIdx + 1) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a cursor WHERE clause for keyset pagination.
+ * For desc: WHERE (sortCol < cursorVal) OR (sortCol = cursorVal AND id < cursorId)
+ * For asc:  WHERE (sortCol > cursorVal) OR (sortCol = cursorVal AND id > cursorId)
+ */
+function cursorWhere(sortColSql: string, idColSql: string, cursor: { sortValue: string; id: string }, dir: 'asc' | 'desc'): SQL {
+  const op = dir === 'desc' ? '<' : '>';
+  return sql.raw(
+    `(${sortColSql} ${op} '${cursor.sortValue.replace(/'/g, "''")}' OR (${sortColSql} = '${cursor.sortValue.replace(/'/g, "''")}' AND ${idColSql} ${op} '${cursor.id.replace(/'/g, "''")}'))`,
+  );
 }
 
 async function getBacktestRunIdByChannelId(channelId: string): Promise<string | null> {
@@ -126,29 +154,80 @@ app.get('/signals', async (c) => {
 // ── GET /backtest-runs ───────────────────────────────
 
 app.get('/backtest-runs', async (c) => {
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+  const cursor = c.req.query('cursor') || undefined;
+  const sortParam = c.req.query('sort') ?? 'createdAt';
+  const dir = (c.req.query('dir') ?? 'desc') as 'asc' | 'desc';
+  const statusFilter = c.req.query('status') || undefined;
+
+  const btSortColumns: Record<string, string> = {
+    createdAt: 'created_at',
+    completedAt: 'completed_at',
+    status: 'status',
+  };
+  const sortCol = btSortColumns[sortParam] ?? 'created_at';
+
+  const defaultStatuses = ['COMPLETED', 'RUNNING', 'CANCELLED'] as const;
+  const conditions: SQL[] = [
+    statusFilter
+      ? eq(schema.backtestRuns.status, statusFilter)
+      : inArray(schema.backtestRuns.status, [...defaultStatuses]),
+  ];
+
+  if (cursor) {
+    const parsed = decodeCursor(cursor);
+    if (parsed) {
+      conditions.push(cursorWhere(sortCol, 'id', parsed, dir));
+    }
+  }
+
+  const whereClause = and(...conditions)!;
+  const orderExpr = dir === 'desc'
+    ? sql.raw(`${sortCol} DESC, id DESC`)
+    : sql.raw(`${sortCol} ASC, id ASC`);
+
   const runs = await db
     .select()
     .from(schema.backtestRuns)
-    .where(inArray(schema.backtestRuns.status, ['COMPLETED', 'RUNNING', 'CANCELLED']))
-    .orderBy(desc(schema.backtestRuns.createdAt))
-    .limit(30);
+    .where(whereClause)
+    .orderBy(orderExpr)
+    .limit(limit + 1);
 
-  const items = runs.map((r) => {
-      const config = r.config;
-      const summary = r.summary;
-      return {
-        id: r.id,
-        name: r.name,
-        status: r.status,
-        traders: config.traders,
-        startDate: isoToDateKey(config.startDate),
-        endDate: isoToDateKey(config.endDate),
-        totalPnl: summary?.totalPnl ?? null,
-        winRate: summary?.winRate ?? null,
-      };
-    });
+  // Total count (without cursor)
+  const filterConditions: SQL[] = [
+    statusFilter
+      ? eq(schema.backtestRuns.status, statusFilter)
+      : inArray(schema.backtestRuns.status, [...defaultStatuses]),
+  ];
 
-  return c.json(items);
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.backtestRuns)
+    .where(and(...filterConditions));
+
+  const hasMore = runs.length > limit;
+  const pageRuns = hasMore ? runs.slice(0, limit) : runs;
+  const lastRow = pageRuns[pageRuns.length - 1];
+  const nextCursor = hasMore && lastRow
+    ? encodeCursor(String((lastRow as Record<string, unknown>)[sortParam] ?? ''), lastRow.id)
+    : null;
+
+  const rows = pageRuns.map((r) => {
+    const config = r.config;
+    const summary = r.summary;
+    return {
+      id: r.id,
+      name: r.name,
+      status: r.status,
+      traders: config.traders,
+      startDate: isoToDateKey(config.startDate),
+      endDate: isoToDateKey(config.endDate),
+      totalPnl: summary?.totalPnl ?? null,
+      winRate: summary?.winRate ?? null,
+    };
+  });
+
+  return c.json({ rows, nextCursor, total });
 });
 
 // ── GET /dashboard ───────────────────────────────────
@@ -176,9 +255,21 @@ app.get('/trades', async (c) => {
   const trader = c.req.query('trader') || undefined;
   const symbol = c.req.query('symbol') || undefined;
   const strategy = c.req.query('strategy') || undefined;
-  const limit = parseInt(c.req.query('limit') ?? '50', 10);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
   const channelId = c.req.query('channel') || undefined;
+  const cursor = c.req.query('cursor') || undefined;
+  const sortParam = c.req.query('sort') ?? 'openedAt';
+  const dir = (c.req.query('dir') ?? 'desc') as 'asc' | 'desc';
+
+  // Map camelCase sort param to raw SQL column name
+  const tradeSortColumns: Record<string, string> = {
+    openedAt: 'opened_at',
+    closedAt: 'closed_at',
+    symbol: 'symbol',
+    trader: 'trader',
+    pnl: 'pnl',
+  };
+  const sortCol = tradeSortColumns[sortParam] ?? 'opened_at';
 
   const conditions: SQL[] = [tradeScope(channelId)];
   if (status === 'open') conditions.push(isOpen);
@@ -187,16 +278,49 @@ app.get('/trades', async (c) => {
   if (symbol) conditions.push(forSymbol(symbol));
   if (strategy) conditions.push(forStrategy(strategy as Strategy));
 
+  // Cursor condition
+  if (cursor) {
+    const parsed = decodeCursor(cursor);
+    if (parsed) {
+      conditions.push(cursorWhere(sortCol, 'id', parsed, dir));
+    }
+  }
+
+  const whereClause = and(...conditions)!;
+  const orderExpr = dir === 'desc'
+    ? sql.raw(`${sortCol} DESC, id DESC`)
+    : sql.raw(`${sortCol} ASC, id ASC`);
+
+  // Fetch one extra to determine if there's a next page
   const trades = await db
     .select()
     .from(schema.trades)
-    .where(and(...conditions))
-    .orderBy(desc(schema.trades.openedAt))
-    .limit(limit)
-    .offset(offset);
+    .where(whereClause)
+    .orderBy(orderExpr)
+    .limit(limit + 1);
 
-  const flags = buildFlagsByTradeId(trades);
-  return c.json({ trades, flags });
+  // Total count (without cursor, with filters only)
+  const filterConditions: SQL[] = [tradeScope(channelId)];
+  if (status === 'open') filterConditions.push(isOpen);
+  else if (status === 'closed') filterConditions.push(isClosed);
+  if (trader) filterConditions.push(forTrader(trader));
+  if (symbol) filterConditions.push(forSymbol(symbol));
+  if (strategy) filterConditions.push(forStrategy(strategy as Strategy));
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.trades)
+    .where(and(...filterConditions));
+
+  const hasMore = trades.length > limit;
+  const rows = hasMore ? trades.slice(0, limit) : trades;
+  const lastRow = rows[rows.length - 1];
+  const nextCursor = hasMore && lastRow
+    ? encodeCursor(String((lastRow as Record<string, unknown>)[sortParam] ?? ''), lastRow.id)
+    : null;
+
+  const flags = buildFlagsByTradeId(rows);
+  return c.json({ rows, nextCursor, total, flags });
 });
 
 // ── GET /trades/:id ──────────────────────────────────
@@ -309,7 +433,7 @@ app.get('/open-pnl', async (c) => {
   const result: Record<string, number> = {};
 
   for (const trade of openTrades) {
-    const legs = trade.legs as TradeLeg[];
+    const legs = trade.legs;
     let totalPnl = 0;
     let matched = false;
 
@@ -349,22 +473,58 @@ app.get('/open-pnl', async (c) => {
 
 app.get('/tasks', async (c) => {
   const status = c.req.query('status') || undefined;
-  const limit = parseInt(c.req.query('limit') ?? '50', 10);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
   const channelId = c.req.query('channel') || undefined;
+  const cursor = c.req.query('cursor') || undefined;
+  const sortParam = c.req.query('sort') ?? 'createdAt';
+  const dir = (c.req.query('dir') ?? 'desc') as 'asc' | 'desc';
+
+  const taskSortColumns: Record<string, string> = {
+    createdAt: 'created_at',
+    completedAt: 'completed_at',
+    status: 'status',
+  };
+  const sortCol = taskSortColumns[sortParam] ?? 'created_at';
 
   const conditions: SQL[] = [taskScope(channelId)];
   if (status) conditions.push(eq(schema.tasks.status, status));
 
+  if (cursor) {
+    const parsed = decodeCursor(cursor);
+    if (parsed) {
+      conditions.push(cursorWhere(sortCol, 'id', parsed, dir));
+    }
+  }
+
+  const whereClause = and(...conditions)!;
+  const orderExpr = dir === 'desc'
+    ? sql.raw(`${sortCol} DESC, id DESC`)
+    : sql.raw(`${sortCol} ASC, id ASC`);
+
   const tasks = await db
     .select()
     .from(schema.tasks)
-    .where(and(...conditions))
-    .orderBy(desc(schema.tasks.createdAt))
-    .limit(limit)
-    .offset(offset);
+    .where(whereClause)
+    .orderBy(orderExpr)
+    .limit(limit + 1);
 
-  return c.json(tasks);
+  // Total count (without cursor)
+  const filterConditions: SQL[] = [taskScope(channelId)];
+  if (status) filterConditions.push(eq(schema.tasks.status, status));
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.tasks)
+    .where(and(...filterConditions));
+
+  const hasMore = tasks.length > limit;
+  const rows = hasMore ? tasks.slice(0, limit) : tasks;
+  const lastRow = rows[rows.length - 1];
+  const nextCursor = hasMore && lastRow
+    ? encodeCursor(String((lastRow as Record<string, unknown>)[sortParam] ?? ''), lastRow.id)
+    : null;
+
+  return c.json({ rows, nextCursor, total });
 });
 
 // ── GET /tasks/:id ───────────────────────────────────
@@ -831,87 +991,7 @@ app.get('/backtests/:id/brief', async (c) => {
 
 // ── GET /backtests/:id/accuracy ──────────────────────
 
-app.get('/backtests/:id/accuracy', async (c) => {
-  const id = c.req.param('id');
-  const channelId = btChannel(id);
-  const { compareLabelsVsIntents } = await import('../../lib/eval.js');
-
-  const decisionRows = await db
-    .select({
-      messageId: schema.runDecisions.messageId,
-      outcome: schema.runDecisions.outcome,
-    })
-    .from(schema.runDecisions)
-    .where(eq(schema.runDecisions.channelId, channelId));
-
-  if (decisionRows.length === 0) return c.json(null);
-
-  const messageIds = decisionRows.map((d) => d.messageId).filter((id): id is string => id != null);
-
-  const CHUNK = 500;
-  const labelRows: (typeof schema.messageLabels.$inferSelect)[] = [];
-  for (let i = 0; i < messageIds.length; i += CHUNK) {
-    const chunk = messageIds.slice(i, i + CHUNK);
-    const rows = await db
-      .select()
-      .from(schema.messageLabels)
-      .where(and(
-        inArray(schema.messageLabels.messageId, chunk),
-        eq(schema.messageLabels.reviewed, true),
-      ));
-    labelRows.push(...rows);
-  }
-
-  if (labelRows.length === 0) return c.json(null);
-
-  const labelMap = new Map(labelRows.map((l) => [l.messageId, l]));
-  const labeledMessageIds = Array.from(labelMap.keys());
-
-  const intentRows: (typeof schema.messageIntents.$inferSelect)[] = [];
-  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
-    const chunk = labeledMessageIds.slice(i, i + CHUNK);
-    const rows = await db
-      .select()
-      .from(schema.messageIntents)
-      .where(inArray(schema.messageIntents.messageId, chunk));
-    intentRows.push(...rows);
-  }
-
-  const intentMap = new Map<string, typeof schema.messageIntents.$inferSelect>();
-  for (const row of intentRows) {
-    const existing = intentMap.get(row.messageId);
-    if (!existing || row.version > existing.version) {
-      intentMap.set(row.messageId, row);
-    }
-  }
-
-  const msgRows: { id: string; cleanText: string }[] = [];
-  for (let i = 0; i < labeledMessageIds.length; i += CHUNK) {
-    const chunk = labeledMessageIds.slice(i, i + CHUNK);
-    const rows = await db
-      .select({ id: schema.messages.id, cleanText: schema.messages.cleanText })
-      .from(schema.messages)
-      .where(inArray(schema.messages.id, chunk));
-    msgRows.push(...rows);
-  }
-  const msgMap = new Map(msgRows.map((m) => [m.id, m.cleanText]));
-
-  const pairs = labeledMessageIds
-    .filter((mid) => intentMap.has(mid))
-    .map((mid) => ({
-      label: labelMap.get(mid)!,
-      intent: intentMap.get(mid)!,
-      cleanText: msgMap.get(mid) ?? '',
-    }));
-
-  if (pairs.length === 0) return c.json(null);
-
-  return c.json({
-    ...compareLabelsVsIntents(pairs),
-    totalMessages: decisionRows.length,
-    labeledMessages: labelRows.length,
-  });
-});
+// Old accuracy endpoint removed — replaced by eval system (src/eval/)
 
 // ── GET /run-decisions ───────────────────────────────
 
@@ -1798,232 +1878,5 @@ async function getRuntimeHealthInternal(channelId: string) {
     .where(eq(schema.runtimeHealth.channelId, channelId));
   return fresh ?? null;
 }
-
-// ── GET /eval/review — Discrepancy review list for keyboard-driven UI ─────
-
-app.get('/eval/review', async (c) => {
-  const category = c.req.query('category');
-  const reviewed = c.req.query('reviewed'); // 'true' | 'false' | undefined (all)
-  const limit = parseInt(c.req.query('limit') ?? '500', 10);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
-
-  const conditions: SQL[] = [];
-  if (category) conditions.push(eq(schema.discrepancyReviews.category, category as never));
-  if (reviewed === 'true') conditions.push(eq(schema.discrepancyReviews.reviewed, true));
-  if (reviewed === 'false') conditions.push(eq(schema.discrepancyReviews.reviewed, false));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const rows = await db.select().from(schema.discrepancyReviews)
-    .where(where)
-    .orderBy(asc(schema.discrepancyReviews.id))
-    .limit(limit)
-    .offset(offset);
-
-  const [{ total }] = await db.select({ total: count() })
-    .from(schema.discrepancyReviews)
-    .where(where);
-
-  // Stats
-  const [stats] = await db.select({
-    total: count(),
-    reviewed: sql<number>`SUM(CASE WHEN reviewed = 1 THEN 1 ELSE 0 END)`,
-    parserRight: sql<number>`SUM(CASE WHEN verdict = 'parser_right' AND reviewed = 1 THEN 1 ELSE 0 END)`,
-    labelRight: sql<number>`SUM(CASE WHEN verdict = 'label_right' AND reviewed = 1 THEN 1 ELSE 0 END)`,
-    bothWrong: sql<number>`SUM(CASE WHEN verdict = 'both_wrong' AND reviewed = 1 THEN 1 ELSE 0 END)`,
-    skipped: sql<number>`SUM(CASE WHEN verdict = 'skip' AND reviewed = 1 THEN 1 ELSE 0 END)`,
-  }).from(schema.discrepancyReviews);
-
-  return c.json({
-    rows,
-    total,
-    offset,
-    limit,
-    stats: {
-      total: stats.total,
-      reviewed: Number(stats.reviewed ?? 0),
-      parserRight: Number(stats.parserRight ?? 0),
-      labelRight: Number(stats.labelRight ?? 0),
-      bothWrong: Number(stats.bothWrong ?? 0),
-      skipped: Number(stats.skipped ?? 0),
-    },
-  });
-});
-
-// ── GET /eval — Parser vs ground-truth evaluation dashboard ───────────────
-
-type EvalDiscrepancy = {
-  messageId: string;
-  author: string;
-  cleanText: string;
-  badges: string[];
-  symbols: string[];
-  timestamp: string;
-  category: string;
-  parserAction: string | null;
-  parserStrategy: string | null;
-  parserDirection: string | null;
-  parserSkipReason: string | null;
-  parserFlags: string[];
-  labelAction: string | null;
-  labelStrategy: string | null;
-  labelDirection: string | null;
-  labelNotes: string | null;
-  verdict: string | null;
-  verdictReason: string | null;
-};
-
-type EvalSummary = {
-  totalMessages: number;
-  totalLabeled: number;
-  totalWithSignals: number;
-  totalSkipLabels: number;
-  confusion: {
-    parserSkip_labelSkip: number;
-    parserSkip_labelExecute: number;
-    parserExecute_labelSkip: number;
-    parserExecute_labelExecute: number;
-    parserNull_labelSkip: number;
-    parserNull_labelExecute: number;
-  };
-  metrics: {
-    precision: number;
-    recall: number;
-    f1: number;
-    falseNegatives: number;
-    falsePositives: number;
-  };
-  actionMismatches: Record<string, number>;
-  strategyMismatches: Record<string, number>;
-  directionMismatches: Record<string, number>;
-  discrepancies: EvalDiscrepancy[];
-  verdictSummary: {
-    total: number;
-    parserRight: number;
-    labelRight: number;
-    bothWrong: number;
-    unreviewed: number;
-  };
-};
-
-app.get('/eval', async (c) => {
-  const category = c.req.query('category'); // false_positive, false_negative, action_mismatch, strategy_mismatch, direction_mismatch
-  const limit = parseInt(c.req.query('limit') ?? '200', 10);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
-
-  // Load comparison results from pre-computed file
-  const { readFileSync, existsSync } = await import('fs');
-  const compPath = 'scratchpad/parser-comparison-results.json';
-  if (!existsSync(compPath)) {
-    return c.json({ error: 'Run scratchpad/compare-parser-vs-labels.ts first' }, 404);
-  }
-
-  const compData = JSON.parse(readFileSync(compPath, 'utf-8'));
-
-  // Load discrepancy batches + verdicts
-  const discBatchDir = 'scratchpad/discrepancy-batches';
-  const { readdirSync } = await import('fs');
-  let allDiscrepancies: Array<Record<string, unknown>> = [];
-  const verdictMap = new Map<string, { verdict: string; reason: string }>();
-
-  if (existsSync(discBatchDir)) {
-    const files = readdirSync(discBatchDir);
-
-    // Load all batch files
-    for (const f of files.filter(f => f.startsWith('batch-') && f.endsWith('.json'))) {
-      try {
-        const batch = JSON.parse(readFileSync(`${discBatchDir}/${f}`, 'utf-8'));
-        allDiscrepancies.push(...batch);
-      } catch { /* skip malformed */ }
-    }
-
-    // Load all verdict files
-    for (const f of files.filter(f => f.startsWith('verdict-') && f.endsWith('.json'))) {
-      try {
-        const verdicts = JSON.parse(readFileSync(`${discBatchDir}/${f}`, 'utf-8'));
-        for (const v of verdicts) {
-          if (v.id && v.verdict) {
-            verdictMap.set(v.id, { verdict: v.verdict, reason: v.reason ?? '' });
-          }
-        }
-      } catch { /* skip malformed */ }
-    }
-  }
-
-  // Build verdict summary
-  let parserRight = 0, labelRight = 0, bothWrong = 0, unreviewed = 0;
-  for (const d of allDiscrepancies) {
-    const v = verdictMap.get(d.id as string);
-    if (!v) { unreviewed++; continue; }
-    if (v.verdict === 'parser_right') parserRight++;
-    else if (v.verdict === 'label_right') labelRight++;
-    else if (v.verdict === 'both_wrong') bothWrong++;
-    else unreviewed++;
-  }
-
-  // Filter and paginate discrepancies
-  let filtered = allDiscrepancies;
-  if (category) {
-    filtered = filtered.filter(d => d.category === category);
-  }
-  const total = filtered.length;
-  const page = filtered.slice(offset, offset + limit);
-
-  // Map to response type with verdicts
-  const discrepancies: EvalDiscrepancy[] = page.map(d => {
-    const v = verdictMap.get(d.id as string);
-    return {
-      messageId: d.messageId as string,
-      author: d.author as string,
-      cleanText: d.cleanText as string,
-      badges: d.badges as string[],
-      symbols: d.symbols as string[],
-      timestamp: d.timestamp as string,
-      category: d.category as string,
-      parserAction: d.parserAction as string | null,
-      parserStrategy: d.parserStrategy as string | null,
-      parserDirection: d.parserDirection as string | null,
-      parserSkipReason: d.parserSkipReason as string | null,
-      parserFlags: d.parserFlags as string[],
-      labelAction: d.labelAction as string | null,
-      labelStrategy: d.labelStrategy as string | null,
-      labelDirection: d.labelDirection as string | null,
-      labelNotes: d.labelNotes as string | null,
-      verdict: v?.verdict ?? null,
-      verdictReason: v?.reason ?? null,
-    };
-  });
-
-  // Summary from label counts
-  const labelStats = await db.select({
-    total: count(),
-    withSignals: sql<number>`SUM(CASE WHEN signals != '[]' THEN 1 ELSE 0 END)`,
-    skipLabels: sql<number>`SUM(CASE WHEN notes LIKE 'skip:%' THEN 1 ELSE 0 END)`,
-  }).from(schema.messageLabels);
-
-  const msgCount = await db.select({ total: count() }).from(schema.messages);
-
-  const summary: EvalSummary = {
-    totalMessages: msgCount[0].total,
-    totalLabeled: labelStats[0].total,
-    totalWithSignals: Number(labelStats[0].withSignals ?? 0),
-    totalSkipLabels: Number(labelStats[0].skipLabels ?? 0),
-    confusion: compData.confusion,
-    metrics: compData.metrics,
-    actionMismatches: compData.confusion.actionMismatchDetails ?? {},
-    strategyMismatches: compData.confusion.strategyMismatchDetails ?? {},
-    directionMismatches: compData.confusion.directionMismatchDetails ?? {},
-    discrepancies,
-    verdictSummary: {
-      total: allDiscrepancies.length,
-      parserRight,
-      labelRight,
-      bothWrong,
-      unreviewed,
-    },
-  };
-
-  return c.json({ ...summary, filteredTotal: total, offset, limit });
-});
 
 export default app;

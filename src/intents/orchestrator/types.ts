@@ -8,13 +8,12 @@
  * See docs/plan-orchestrator-technical.md for the full design.
  */
 
-import type { Direction, LegAction, OptionType, OrderCategory, Strategy, TradeAction } from '@/lib/enums.js';
-import type { Quote, OptionsChain } from '@/broker/types.js';
-import type { LLMProvider } from '@/agent/providers.js';
-import type { BrokerService } from '@/broker/interface.js';
-import type { SignalEventEmitter } from '@/decisions/emitter.js';
-import type { Message, TradeLeg } from '@/db/schema.js';
-import type { TraceContext } from '@/lib/trace.js';
+import type { Direction, LegAction, OptionType, OrderCategory, Strategy, TradeAction } from '../../lib/enums.js';
+import type { Quote, OptionsChain } from '../../broker/types.js';
+import type { BrokerService } from '../../broker/interface.js';
+import type { SignalEventEmitter } from '../../decisions/emitter.js';
+import type { Message, TradeLeg } from '../../db/schema.js';
+import type { TraceContext } from '../../lib/trace.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -57,7 +56,7 @@ export type ResolvedSignal = {
   exitPercent?: number;
 };
 
-export type { SignalEventEmitter } from '@/decisions/emitter.js';
+export type { SignalEventEmitter } from '../../decisions/emitter.js';
 
 export type OrchestratorResult =
   | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
@@ -120,10 +119,57 @@ export interface ChatHistoryProvider {
   getRecentMessages(author?: string, limit?: number): Promise<string>;
 }
 
+export type OrchestratorLLMToolCall = {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+};
+
+export type OrchestratorLLMUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+};
+
+export type OrchestratorLLMTurnResult = {
+  textBlocks: string[];
+  toolCalls: OrchestratorLLMToolCall[];
+  stopReason: 'end_turn' | 'tool_use' | 'max_tokens';
+  rawAssistantMessage: unknown;
+  usage?: OrchestratorLLMUsage;
+};
+
+export interface OrchestratorLLMProvider {
+  readonly identity: {
+    provider: 'anthropic' | 'xai';
+    model: string;
+  };
+  chat(params: {
+    system?: string;
+    messages: unknown[];
+    maxTokens: number;
+    temperature?: number;
+  }): Promise<OrchestratorLLMTurnResult>;
+  chatWithTools(params: {
+    system?: string;
+    messages: unknown[];
+    maxTokens: number;
+    temperature?: number;
+    tools: unknown[];
+  }): Promise<OrchestratorLLMTurnResult>;
+  makeUserMessage(text: string): unknown;
+  formatToolResults(results: Array<{
+    toolCallId: string;
+    output: string;
+    isError?: boolean;
+  }>): unknown;
+}
+
 /** Dependencies the orchestrator needs from the caller's environment. */
 export type OrchestratorEnv = {
   getPositions: (symbol?: string) => Promise<TradePosition[]>;
-  llm: LLMProvider;
+  llm: OrchestratorLLMProvider;
   broker: BrokerService;
   emitter: SignalEventEmitter;
   trace?: TraceContext;

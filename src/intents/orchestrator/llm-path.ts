@@ -16,13 +16,13 @@
 import { htmlToLLMText } from '@/parsing/html.js';
 import { formatTimestampForLLM } from '@/lib/et-date.js';
 import { runAgentLoop } from '@/agent/agent-loop.js';
-import type { LLMProvider } from '@/agent/providers.js';
 import { createIntentTools, intentOnToolCall } from '../intent-tools.js';
 import type { Signal } from '@/agent/schemas.js';
 import type { TaskResult } from '@/agent/schemas.js';
 import { createLogger } from '@/lib/logger.js';
 import type {
   OrchestratorContext,
+  OrchestratorLLMProvider,
   OrchestratorResult,
   ParseResult,
   ResolvedSignal,
@@ -65,8 +65,10 @@ For OPEN signals:
 - symbol: ticker (required)
 - strategy: "CALL" | "PUT" | "CDS" | "PDS" | "PCS" | "CCS" | "STOCK"
 - direction: "LONG" | "SHORT" (if not deterministic from strategy)
-- statedPremium: dollar amount if mentioned (e.g. 2.10)
-- Do NOT include legs, expiry dates, or exact strikes — those are resolved by market data
+- statedPrice: dollar amount if mentioned (e.g. 2.10)
+- strikes: array of strike numbers when explicitly stated (e.g. [332.5] or [190, 192.5])
+- expiry: expiry text as stated (e.g. "Oct", "next week", "5/23")
+- Do NOT fabricate strikes or expiry — only include when explicitly stated in the message
 
 For ADD signals (adding to an existing position):
 - action: "ADD"
@@ -106,7 +108,7 @@ Call submit_decision or flag_for_review when ready.`;
 export async function resolveLLMPath(
   parse: ParseResult,
   ctx: OrchestratorContext,
-  provider: LLMProvider,
+  provider: OrchestratorLLMProvider,
 ): Promise<OrchestratorResult> {
   const model = provider.identity.model;
 
@@ -337,15 +339,13 @@ async function routeLLMSignals(
  * it could determine; LLM fills in what was null).
  */
 function signalToParseResult(signal: Signal, originalParse: ParseResult): ParseResult {
-  // Extract strikes from legs (hint-legs with strike=0 are excluded)
+  // Extract strikes from signal (filter zeros — hint values)
   const llmStrikes =
-    signal.legs
-      ?.map((l) => l.strike)
-      .filter((s) => s > 0) ?? null;
+    signal.strikes
+      ?.filter((s) => s > 0) ?? null;
 
-  // Extract expiry hint from first non-zero leg
-  const llmExpiryHint =
-    signal.legs?.find((l) => l.expiry)?.expiry ?? null;
+  // Extract expiry hint from signal
+  const llmExpiryHint = signal.expiry ?? null;
 
   return {
     action: signal.action,
@@ -354,7 +354,7 @@ function signalToParseResult(signal: Signal, originalParse: ParseResult): ParseR
     strategy: signal.strategy as ParseResult['strategy'],
     strikes: llmStrikes?.length ? llmStrikes : originalParse.strikes,
     expiryHint: llmExpiryHint ?? originalParse.expiryHint,
-    premiumHint: signal.statedPremium ?? originalParse.premiumHint,
+    premiumHint: signal.statedPrice != null ? Number(signal.statedPrice) : originalParse.premiumHint,
     exitPercent: signal.exitPercent ?? originalParse.exitPercent,
     targetStrategy: originalParse.targetStrategy ??
       (signal.targetStrategy as ParseResult['targetStrategy']),

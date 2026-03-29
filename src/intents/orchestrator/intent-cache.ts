@@ -63,8 +63,8 @@ export function lookupIntent(
   return {
     decision: row.decision,
     reasoning: row.reasoning,
-    signals: row.signals as Signal[] | null,
-    steps: row.steps as IntentStep[] | null,
+    signals: row.signals,
+    steps: row.steps,
     durationMs: row.durationMs,
   };
 }

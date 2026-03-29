@@ -11,6 +11,7 @@ import logs from './routes/logs.js';
 import { createTradesRouter } from './routes/trades.js';
 import webQueries from './routes/web-queries.js';
 import webMutations from './routes/web-mutations.js';
+import evalRoutes from './routes/eval.js';
 import { getRuntimeBrokerMap } from '../broker/select.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
@@ -22,7 +23,7 @@ if (channelBrokerMap.size === 0) {
 
 const app = new Hono();
 
-app.use('*', cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'] }));
+app.use('*', cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'https://app.oneoption.com'] }));
 
 app.route('/backtests', backtests);
 app.route('/logs', logs);
@@ -30,8 +31,56 @@ app.route('/trades', createTradesRouter(channelBrokerMap));
 
 app.route('/web', webQueries);
 app.route('/web', webMutations);
+app.route('/web', evalRoutes);
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+// ─── Temporary Backfill Endpoint ─────────────────────
+// Accepts messages from the OneOption chat API and inserts them into the DB.
+// Used by the MCP Playwright session to backfill data.
+import { classifyMessage } from '../parsing/classify.js';
+import { normalizeForDedup, computeContentHash } from '../ingestion/dedup.js';
+import { compactReactions, type SignalRMessage } from '../ingestion/signalr.js';
+
+app.post('/ingest-backfill', async (c) => {
+  const body = await c.req.json() as { messages: Array<{ Id: number | string; Author: string; TimeUtc: string; Message: string; Tag?: number | string; Votes?: number; Reactions?: Array<{ Type: string; Count: number }> }> };
+  if (!body.messages || !Array.isArray(body.messages)) {
+    return c.json({ error: 'expected { messages: [...] }' }, 400);
+  }
+
+  let saved = 0;
+  for (const apiMsg of body.messages) {
+    const id = String(apiMsg.Id);
+    const classification = classifyMessage(apiMsg.Message || '');
+    const normalizedText = normalizeForDedup(classification.cleanText);
+    const contentHash = computeContentHash(normalizedText);
+    const reactions = (apiMsg.Reactions || []).filter((r: { Type: string; Count: number }) => r.Type && r.Count > 0).map((r: { Type: string; Count: number }) => ({ Type: r.Type, Count: r.Count }));
+
+    try {
+      await db.insert(schema.messages).values({
+        id,
+        author: apiMsg.Author,
+        timestamp: apiMsg.TimeUtc || new Date().toISOString(),
+        rawHtml: apiMsg.Message || '',
+        cleanText: classification.cleanText,
+        badges: classification.badges,
+        symbols: classification.symbols,
+        actionHint: classification.actionHint ?? null,
+        directionHint: classification.directionHint ?? null,
+        detectedStrategies: classification.detectedStrategies,
+        isPaperTrade: classification.isPaperTrade,
+        confidence: String(classification.confidence),
+        contentHash,
+        reactions,
+      }).onConflictDoNothing();
+      saved++;
+    } catch {
+      // Skip duplicates / errors
+    }
+  }
+
+  return c.json({ received: body.messages.length, saved });
+});
 
 // ─── Static SPA Serving ─────────────────────────────
 
@@ -106,6 +155,6 @@ setTimeout(sweepStaleRuns, 30_000);
 
 // ─── Start Server ────────────────────────────────────
 
-const port = parseInt(process.env.LOCAL_API_PORT ?? '4000');
+const port = parseInt(process.env.LOCAL_API_PORT ?? '3791');
 console.log(`[local-api] Listening on http://localhost:${port}`);
 serve({ fetch: app.fetch, port });

@@ -2,12 +2,25 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
 import { PATHS } from '../lib/paths.js';
+import { runStartupMaintenance } from './startup-maintenance.js';
 
 const dbPath = process.env.DATABASE_URL?.replace(/^file:/, '') ?? PATHS.db;
 
 const sqlite = new Database(dbPath);
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('busy_timeout = 30000');
+sqlite.pragma('foreign_keys = ON');
+
+const foreignKeysEnabled = sqlite.pragma('foreign_keys', { simple: true });
+if (foreignKeysEnabled !== 1) {
+  throw new Error('SQLite foreign_keys pragma did not enable successfully.');
+}
+
+const maintenance = runStartupMaintenance(sqlite);
+const repairedRows = Object.values(maintenance).reduce((sum, count) => sum + count, 0);
+if (repairedRows > 0) {
+  console.warn(`[db] Startup maintenance repaired ${repairedRows} row(s)`, maintenance);
+}
 
 export const db = drizzle(sqlite, { schema });
 export { schema };
