@@ -114,6 +114,7 @@ export function shouldSkipSignal(
 ): SkipResult | null {
   if (!allowedStrategies || allowedStrategies.length === 0) return null;
   if (signal.action !== 'OPEN' && signal.action !== 'ADD') return null;
+  if (signal.strategy == null) return null;
   if (allowedStrategies.includes(signal.strategy)) return null;
   return {
     category: 'strategy not allowed',
