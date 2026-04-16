@@ -7,7 +7,7 @@ import { StickyDateBadge } from './sticky-date-badge';
 import { ScrollToBottom } from '@/components/scroll-to-bottom';
 import { EmptyState } from '@/components/empty-state';
 import { cn } from '@/lib/utils';
-import type { Message, MessageLabel } from '@src/db/schema';
+import type { Message } from '@src/db/schema';
 import type { MessageEnrichment } from '@/stores/chat-store';
 
 type FeedItem =
@@ -44,7 +44,6 @@ export function ChatFeed({
   highlightMessageId,
   selectedMessageId,
   anchorMessageId,
-  labels,
   enrichment,
   lastProcessedTs,
   renderItem,
@@ -60,7 +59,6 @@ export function ChatFeed({
   selectedMessageId?: string;
   /** When set, scroll-to-bottom button scrolls here instead of absolute bottom. */
   anchorMessageId?: string;
-  labels?: Record<string, MessageLabel>;
   enrichment?: Record<string, MessageEnrichment> | null;
   lastProcessedTs?: string;
   renderItem?: (message: Message, isHighlighted: boolean) => ReactNode;
@@ -146,10 +144,10 @@ export function ChatFeed({
         )}
         onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
       >
-        <ChatBubble message={item.message} label={labels?.[item.message.id]} />
+        <ChatBubble message={item.message} />
       </div>
     );
-  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, labels, renderItem, onMessageClick]);
+  }, [highlightMessageId, selectedMessageId, enrichment, lastProcessedTs, renderItem, onMessageClick]);
 
   if (messages.length === 0) {
     return (

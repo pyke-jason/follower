@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useChannelId } from '@/hooks/use-channel-id';
 import { useScopedHref } from '@/hooks/use-scoped-href';
@@ -28,6 +28,7 @@ export default function OverviewPage() {
 }
 
 function DashboardContent({ data, href }: { data: any; href: ReturnType<typeof useScopedHref> }) {
+  const { pathname } = useLocation();
   const { stats, openTrades, equityData, traderData, metrics, signals, pendingReviews, riskSnapshot } = data;
 
   return (
@@ -98,7 +99,7 @@ function DashboardContent({ data, href }: { data: any; href: ReturnType<typeof u
                   {openTrades.slice(0, 6).map((t: any) => (
                     <Link
                       key={t.id}
-                      to={href(`/trades/${t.id}`)}
+                      to={href(`/trades/${t.id}`, { from: pathname })}
                       className={`flex items-center gap-3 px-4 py-2.5 border-l-2 hover:bg-accent/40 transition-colors ${positionBorderColor(t.direction)}`}
                     >
                       <div className="flex-1 min-w-0">

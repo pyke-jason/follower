@@ -1,4 +1,4 @@
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useChannelId } from '@/hooks/use-channel-id';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -8,13 +8,14 @@ import { LegsTable } from './legs-table';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { useScopedHref } from '@/hooks/use-scoped-href';
+import { useBackHref } from '@/hooks/use-back-href';
 import { ArrowLeft } from 'lucide-react';
 import { ChatPreview } from '@/views/messages/chat-preview';
 import { FillQuality } from './fill-quality';
 import { EventTimeline } from './event-timeline';
 import { DecisionReasoning } from './decision-reasoning';
 import { ParsedContext } from './parsed-context';
-import { ExecutionFlamegraph, extractFlamegraphData } from './execution-flamegraph';
+import { ExecutionTrace } from './execution-trace';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
 import type { Trade, Message, TradeEvent, Task, RunDecision } from '@src/db/schema';
 
@@ -32,10 +33,9 @@ type TradeStoryResponse = {
 
 export default function TradeDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [params] = useSearchParams();
   const channelId = useChannelId();
   const href = useScopedHref();
-  const from = params.get('from') ?? undefined;
+  const backHref = useBackHref('/trades');
 
   const query = useQuery<TradeStoryResponse>({
     queryKey: ['trade', id, channelId],
@@ -44,15 +44,15 @@ export default function TradeDetailPage() {
 
   return (
     <QueryBoundary query={query} skeleton={<MetricStripSkeleton count={4} />}>
-      {(data) => <TradeDetailContent data={data} href={href} from={from} />}
+      {(data) => <TradeDetailContent data={data} href={href} backHref={backHref} />}
     </QueryBoundary>
   );
 }
 
-function TradeDetailContent({ data, href, from }: {
+function TradeDetailContent({ data, href, backHref }: {
   data: TradeStoryResponse;
   href: ReturnType<typeof useScopedHref>;
-  from: string | undefined;
+  backHref: string;
 }) {
   const { trade, events: tradeEvents, task, sourceMessage, closeMessage, nearbyMessages, decision } = data;
   const context = task?.context ?? null;
@@ -64,7 +64,7 @@ function TradeDetailContent({ data, href, from }: {
     <div className="space-y-6 animate-in-up">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link to={href(from === 'tasks' ? '/tasks' : '/trades')} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <Link to={backHref} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <h2 className="text-lg font-bold text-foreground tracking-tight">{trade.symbol}</h2>
@@ -144,20 +144,13 @@ function TradeDetailContent({ data, href, from }: {
           <FillQuality trade={trade} />
 
           {/* Execution Trace */}
-          {data.decisions.length > 0 && (() => {
-            const fg = extractFlamegraphData(data.decisions);
-            if (!fg) return null;
-            return (
-              <Card className="py-0 gap-0">
-                <CardHeader className="border-b py-3 px-4">
-                  <CardTitle className="text-sm font-medium">Execution Trace</CardTitle>
-                </CardHeader>
-                <CardContent className="p-4">
-                  <ExecutionFlamegraph {...fg} />
-                </CardContent>
-              </Card>
-            );
-          })()}
+          {data.decisions.length > 0 && (
+            <Card className="py-0 gap-0">
+              <CardContent className="p-4">
+                <ExecutionTrace decisions={data.decisions} />
+              </CardContent>
+            </Card>
+          )}
 
           {/* Event Timeline */}
           {tradeEvents.length > 0 && (

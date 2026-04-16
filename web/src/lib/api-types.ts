@@ -19,6 +19,35 @@ export type Column<T> = {
   render: (row: T) => ReactNode;
 };
 
+/* ---- Eval accuracy ---- */
+
+export type Mismatch = {
+  path: string;
+  expected: string;
+  got: string;
+};
+
+export type TradeLabel = {
+  bucket: 'tp' | 'fp' | 'unlabeled';
+  match: { mismatches: Mismatch[] } | null;
+  labelSignals: unknown[] | null;
+  labelId: string | null;
+  labelIsTrade: boolean | null;
+  labelReasoning: string | null;
+  labelConfidence: string | null;
+  humanVerified: boolean;
+  rejectionReason: string | null;
+};
+
+export type EvalSummary = {
+  labeled: number;
+  unlabeled: number;
+  confusion: { tp: number; fp: number; tn: number; fn: number };
+  metrics: { accuracy: number; precision: number; recall: number; f1: number };
+  mismatchCounts: Record<string, number> | null;
+  totalMismatches: number;
+} | null;
+
 /* ---- Backtest detail ---- */
 
 type BacktestDecisionJoinRow = {
@@ -44,6 +73,8 @@ export type BacktestDetailResponse = {
   strategies: string[];
   llmTokens: { input: number; output: number };
   messagesEndDate: string;
+  evalSummary?: EvalSummary;
+  labelsByTradeId?: Record<string, TradeLabel>;
 };
 
 /* ---- Trader detail ---- */

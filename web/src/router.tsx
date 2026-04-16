@@ -25,6 +25,7 @@ const Reconciliation = lazy(() => import('./views/reconciliation/page'));
 const Settings = lazy(() => import('./views/settings/page'));
 const EvalReview = lazy(() => import('./views/eval/review/page'));
 const Architecture = lazy(() => import('./views/architecture/page'));
+const DbBrowser = lazy(() => import('./views/db-browser/page'));
 
 const PageFallback = () => (
   <div className="flex items-center justify-center py-20">
@@ -103,6 +104,7 @@ export function App() {
         <Route path="reconciliation" element={<Reconciliation />} />
         <Route path="eval/review" element={<EvalReview />} />
         <Route path="architecture" element={<Architecture />} />
+        <Route path="db" element={<DbBrowser />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

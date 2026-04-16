@@ -51,22 +51,6 @@ export const messages = sqliteTable('messages', {
   index('idx_messages_content_hash').on(table.author, table.contentHash),
 ]);
 
-// ─── Message Labels (Eval Ground Truth) ─────────────
-
-export const messageLabels = sqliteTable('message_labels', {
-  id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  messageId:  text('message_id').references(() => messages.id).notNull(),
-  signals:    typedJson<Signal[]>('signals').notNull().default([]),
-  source:     text('source').notNull().default('manual'), // approved | manual
-  reviewed:   integer('reviewed', { mode: 'boolean' }).default(false),
-  notes:      text('notes'),
-  createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
-  updatedAt:  text('updated_at'),
-}, (table) => [
-  uniqueIndex('idx_labels_message_unique').on(table.messageId),
-  index('idx_labels_reviewed').on(table.reviewed),
-]);
-
 // ─── Tasks ───────────────────────────────────────────
 
 export const tasks = sqliteTable('tasks', {
@@ -583,6 +567,8 @@ export const evalLabels = sqliteTable('eval_labels', {
   // Human review
   humanVerified:  integer('human_verified', { mode: 'boolean' }).default(false),
   humanLabel:     typedJson<EvalLabelData>('human_label'),  // human correction (null if agent was right)
+  rejectionReason: text('rejection_reason'),                // e.g. NOT_TRADE, MISSED_TRADE, WRONG_SIGNALS, WRONG_ACTION, OTHER
+  feedback:       text('feedback'),                          // free-text human feedback
   reviewedAt:     text('reviewed_at'),
   // Metadata
   durationMs:     integer('duration_ms'),
@@ -604,8 +590,6 @@ export type NewTask = typeof tasks.$inferInsert;
 export type Trade = typeof trades.$inferSelect;
 export type BacktestRun = typeof backtestRuns.$inferSelect;
 export type TrackedTrader = typeof trackedTraders.$inferSelect;
-export type MessageLabel = typeof messageLabels.$inferSelect;
-export type NewMessageLabel = typeof messageLabels.$inferInsert;
 export type DailyBalance = typeof dailyBalances.$inferSelect;
 export type ReconciliationAlert = typeof reconciliationAlerts.$inferSelect;
 export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;

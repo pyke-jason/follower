@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useChannelId } from '@/hooks/use-channel-id';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { useChatStore } from '@/stores/chat-store';
+import { useChatFilterParams } from '@/hooks/use-chat-filter-params';
 import { ChatRoom } from './chat-room';
 import { ChatHydrator } from './chat-hydrator';
 import type { ChatHydration } from '@/stores/chat-store';
@@ -37,33 +37,41 @@ function useFullBleed() {
   return ref;
 }
 
+/** Bridge URL filter params into the Zustand chat store on mount + URL changes. */
+function useSyncFiltersToStore() {
+  const { authors, start, end, signals, label, role } = useChatFilterParams();
+  const setFilters = useChatStore((s) => s.setFilters);
+  const prevRef = useRef<string>('');
+
+  useEffect(() => {
+    // Serialize current URL filter state for change detection
+    const key = JSON.stringify({ authors, start, end, signals, label, role });
+    if (key === prevRef.current) return;
+    prevRef.current = key;
+
+    const hasAny = authors || start || end || signals || label || role;
+    if (!hasAny) {
+      // No filters active — pass empty object to clear store filters + refetch
+      setFilters({});
+      return;
+    }
+    setFilters({
+      ...(authors && { authors: authors.split(',') }),
+      ...(start && { startDate: start }),
+      ...(end && { endDate: end }),
+      ...(signals && { signalsOnly: true }),
+      ...(label && { labelFilter: label as 'labeled' | 'unlabeled' }),
+      ...(role && role !== 'all' && { roleFilter: role as 'processed' | 'executed' | 'skipped' }),
+    });
+  }, [authors, start, end, signals, label, role, setFilters]);
+}
+
 export default function MessagesPage() {
   const channelId = useChannelId();
   const href = useScopedHref();
-  const [params] = useSearchParams();
-  const setFilters = useChatStore((s) => s.setFilters);
-  const appliedUrlFilters = useRef(false);
   const fullBleedRef = useFullBleed();
 
-  // Seed store filters from URL params on first render
-  useEffect(() => {
-    if (appliedUrlFilters.current) return;
-    appliedUrlFilters.current = true;
-    const authors = params.get('authors');
-    const start = params.get('start');
-    const end = params.get('end');
-    const signals = params.get('signals');
-    const label = params.get('label');
-    if (authors || start || end || signals || label) {
-      setFilters({
-        ...(authors && { authors: authors.split(',') }),
-        ...(start && { startDate: start }),
-        ...(end && { endDate: end }),
-        ...(signals && { signalsOnly: true }),
-        ...(label && { labelFilter: label as 'labeled' | 'unlabeled' }),
-      });
-    }
-  }, [params, setFilters]);
+  useSyncFiltersToStore();
 
   const query = useQuery<ChatHydration>({
     queryKey: ['messages-initial', channelId],

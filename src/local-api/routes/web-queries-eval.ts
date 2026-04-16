@@ -250,12 +250,12 @@ app.get('/eval', async (c) => {
     };
   });
 
-  // Summary from label counts
+  // Summary from eval label counts
   const labelStats = await db.select({
     total: count(),
-    withSignals: sql<number>`SUM(CASE WHEN signals != '[]' THEN 1 ELSE 0 END)`,
-    skipLabels: sql<number>`SUM(CASE WHEN notes LIKE 'skip:%' THEN 1 ELSE 0 END)`,
-  }).from(schema.messageLabels);
+    withSignals: sql<number>`SUM(CASE WHEN json_extract(label, '$.isTrade') = 1 THEN 1 ELSE 0 END)`,
+    skipLabels: sql<number>`SUM(CASE WHEN json_extract(label, '$.isTrade') = 0 THEN 1 ELSE 0 END)`,
+  }).from(schema.evalLabels);
 
   const msgCount = await db.select({ total: count() }).from(schema.messages);
 

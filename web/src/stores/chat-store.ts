@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Message, MessageLabel } from '@src/db/schema';
+import type { Message } from '@src/db/schema';
 import type { TradeOutcome, MessageDecision } from '@src/lib/enriched-message';
 import { api } from '@/lib/api';
 
@@ -34,7 +34,6 @@ export type FilterConstraints = {
 
 export type RelatedContext = {
   messages: Message[];
-  labels: Record<string, MessageLabel>;
   sourceSymbols: string[];
 };
 
@@ -47,7 +46,6 @@ export type StableDecisionCounts = {
 export type ChatHydration = {
   messages: Message[];
   nextCursor: string | null;
-  labels: Record<string, MessageLabel>;
   enrichment: Record<string, MessageEnrichment> | null;
   authors: string[];
   constraints?: FilterConstraints;
@@ -83,7 +81,6 @@ function buildMessageParams(filters: MessageFilters): URLSearchParams {
 
 interface ChatState {
   messages: Message[];
-  labels: Record<string, MessageLabel>;
   enrichment: Record<string, MessageEnrichment> | null;
   cursor: string | null;
   firstItemIndex: number;
@@ -100,7 +97,6 @@ interface ChatState {
   hydrate: (data: ChatHydration) => void;
   mergeNewMessages: (
     msgs: Message[],
-    newLabels: Record<string, MessageLabel>,
     newEnrichment: Record<string, MessageEnrichment> | null,
   ) => void;
   setFilters: (filters: MessageFilters) => void;
@@ -110,7 +106,6 @@ interface ChatState {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
-  labels: {},
   enrichment: null,
   cursor: null,
   firstItemIndex: START_INDEX,
@@ -127,7 +122,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   hydrate: (data) =>
     set({
       messages: data.messages,
-      labels: data.labels,
       enrichment: data.enrichment,
       cursor: data.nextCursor,
       authors: data.authors,
@@ -141,7 +135,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isLoadingRelated: false,
     }),
 
-  mergeNewMessages: (newMsgs, newLabels, newEnrichment) => {
+  mergeNewMessages: (newMsgs, newEnrichment) => {
     const { filters, messages } = get();
     if (Object.keys(filters).length > 0) return;
     const existingIds = new Set(messages.map((m) => m.id));
@@ -149,7 +143,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!incoming.length) return;
     set((state) => ({
       messages: [...incoming, ...state.messages],
-      labels: { ...state.labels, ...newLabels },
       enrichment: newEnrichment ? { ...state.enrichment, ...newEnrichment } : state.enrichment,
     }));
   },
@@ -163,7 +156,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const result = await api<ChatHydration>(`/messages?${params}`);
     set({
       messages: result.messages,
-      labels: result.labels,
       enrichment: result.enrichment,
       cursor: result.nextCursor,
       isLoadingOlder: false,
@@ -188,7 +180,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       firstItemIndex: state.firstItemIndex - newItemCount,
       messages: [...state.messages, ...result.messages],
-      labels: { ...state.labels, ...result.labels },
       enrichment: result.enrichment ? { ...state.enrichment, ...result.enrichment } : state.enrichment,
       cursor: result.nextCursor,
       isLoadingOlder: false,

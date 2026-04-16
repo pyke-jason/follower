@@ -1,10 +1,10 @@
 import { memo } from 'react';
 import { AuthorAvatar } from './author-avatar';
 import { MessageContent } from './message-content';
+import { ReactionBadges } from '@/components/reaction-badges';
 import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
-import { REACTION_EMOJI } from '@/components/decision-shared';
-import type { Message, MessageLabel } from '@src/db/schema';
+import type { Message } from '@src/db/schema';
 
 function getAccentBorder(message: Message): string {
   const action = message.actionHint;
@@ -20,7 +20,7 @@ function getAccentBorder(message: Message): string {
   return 'border-l-border';
 }
 
-export const ChatBubble = memo(function ChatBubble({ message, noBorder, label }: { message: Message; noBorder?: boolean; label?: MessageLabel | null }) {
+export const ChatBubble = memo(function ChatBubble({ message, noBorder }: { message: Message; noBorder?: boolean }) {
   const badges = message.badges;
   const symbols = message.symbols;
   const isSignal =
@@ -65,16 +65,7 @@ export const ChatBubble = memo(function ChatBubble({ message, noBorder, label }:
           )}
         </div>
 
-        {message.reactions.length > 0 && (
-          <div className="flex gap-1 mt-0.5">
-            {message.reactions.map((r) => (
-              <span key={r.Type} className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 bg-muted/40 rounded px-1 py-px">
-                <span>{REACTION_EMOJI[r.Type] ?? r.Type}</span>
-                {r.Count > 1 && <span className="tabular-nums">{r.Count}</span>}
-              </span>
-            ))}
-          </div>
-        )}
+        <ReactionBadges reactions={message.reactions} />
       </div>
     </div>
   );

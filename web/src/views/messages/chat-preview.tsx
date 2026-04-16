@@ -2,7 +2,7 @@ import { lazy, Suspense, useState, useCallback, useTransition, useEffect } from 
 import { Link } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { api } from '@/lib/api';
-import type { Message, MessageLabel } from '@src/db/schema';
+import type { Message } from '@src/db/schema';
 
 const ChatFeed = lazy(
   () => import('./chat-feed').then((m) => ({ default: m.ChatFeed })),
@@ -23,7 +23,6 @@ export function ChatPreview({
   author,
   title = 'Chat Context',
   viewAllHref,
-  initialLabels,
   className,
 }: {
   messages: Message[];
@@ -31,14 +30,12 @@ export function ChatPreview({
   author?: string;
   title?: string;
   viewAllHref?: string;
-  initialLabels?: Record<string, MessageLabel>;
   /** Override height. Default: h-80 */
   className?: string;
 }) {
   // initialMessages arrive ASC (oldest first) from getNearbyMessages.
   // ChatFeed expects DESC (newest first) — it reverses internally.
   const [messages, setMessages] = useState(() => [...initialMessages].reverse());
-  const [labels, setLabels] = useState<Record<string, MessageLabel>>(initialLabels ?? {});
   const [cursor, setCursor] = useState<string | null>(() => {
     if (initialMessages.length === 0) return null;
     // oldest message timestamp = cursor for loading older
@@ -61,7 +58,7 @@ export function ChatPreview({
   const handleLoadOlder = useCallback(() => {
     if (!cursor || !author) return;
     startTransition(async () => {
-      const result = await api<{ messages: Message[]; labels: Record<string, MessageLabel>; nextCursor: string | null }>(
+      const result = await api<{ messages: Message[]; nextCursor: string | null }>(
         `/messages?authors=${encodeURIComponent(author)}&cursor=${encodeURIComponent(cursor)}`,
       );
       if (result.messages.length === 0) {
@@ -71,7 +68,6 @@ export function ChatPreview({
       const newItemCount = result.messages.length + 5;
       setFirstItemIndex((prev) => prev - newItemCount);
       setMessages((prev) => [...result.messages, ...prev]);
-      setLabels((prev) => ({ ...prev, ...result.labels }));
       setCursor(result.nextCursor);
     });
   }, [cursor, author]);
@@ -94,7 +90,6 @@ export function ChatPreview({
       <CardContent className={`p-0 flex flex-col ${className ?? 'h-80'}`}>
         <ChatFeed
           messages={messages}
-          labels={labels}
           firstItemIndex={firstItemIndex}
           focusMessageId={focusMessageId}
           highlightMessageId={focusMessageId}

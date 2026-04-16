@@ -17,7 +17,7 @@ import { api } from '@/lib/api';
 import { buildScopedPath } from '@/lib/channel-scope';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
-import type { SortColumn } from '@/stores/trades-store';
+type SortColumn = 'pnl' | 'openedAt';
 
 function getEffectivePnl(
   trade: {
@@ -112,12 +112,14 @@ const useTradeSortParams = createFilterParams({
 export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {}) {
   const trades = useTradesStore((s) => s.trades);
   const eventsByTradeId = useTradesStore((s) => s.eventsByTradeId);
+  const labelsByTradeId = useTradesStore((s) => s.labelsByTradeId);
   const selectedTradeId = useTradesStore((s) => s.selectedTradeId);
   const selectTrade = useTradesStore((s) => s.selectTrade);
   const unrealizedPnl = useTradesStore((s) => s.unrealizedPnl);
   const setUnrealizedPnl = useTradesStore((s) => s.setUnrealizedPnl);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasLabels = Object.keys(labelsByTradeId).length > 0;
 
   // Sort from URL params
   const sortParams = useTradeSortParams();
@@ -209,6 +211,7 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
                     <SortableHead column="pnl" label="P&L" sort={sort} onSort={setSort} align="right" />
                     <SortableHead column="openedAt" label="Opened" sort={sort} onSort={setSort} />
                     <TableHead className="text-right">Exec</TableHead>
+                    {hasLabels && <TableHead className="w-8 text-center">Label</TableHead>}
                   </TableRow>
                 </TableHeader>
                 {sortedTrades.map((t) => {
@@ -220,8 +223,9 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
                         onExpand={() => setSelectedId(t.id)}
                         isExpanded={selectedTradeId === t.id}
                         hideTrader={hideTrader}
+                        showLabel={hasLabels}
                       />
-                      <EventSubRows events={events} closeMessageId={t.closeMessageId} />
+                      <EventSubRows events={events} closeMessageId={t.closeMessageId} extraCells={hasLabels ? 1 : 0} />
                     </TableBody>
                   );
                 })}

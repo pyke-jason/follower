@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Badge } from './badge';
 import { formatCurrency, pnlColor } from '@/lib/format';
 import { useScopedHref } from '@/hooks/use-scoped-href';
@@ -16,6 +16,7 @@ export function TradeOutcomeStrip({
   className?: string;
 }) {
   const href = useScopedHref();
+  const { pathname } = useLocation();
   const hasPnl = trade.pnl != null;
   const pnl = safeParseFloat(trade.pnl);
 
@@ -54,7 +55,7 @@ export function TradeOutcomeStrip({
       )}
 
       <Link
-        to={href(`/trades/${trade.id}`)}
+        to={href(`/trades/${trade.id}`, { from: pathname })}
         className="ml-auto text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowRight className="h-3 w-3" />

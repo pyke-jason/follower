@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -19,6 +19,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Separator } from '@/components/ui/separator';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { formatCurrency, isoToDateKey } from '@/lib/format';
 import { CollapsibleError } from './collapsible-error';
 import { LogViewer } from './log-viewer';
@@ -117,7 +118,6 @@ function buildBacktestChatData({
 
   return {
     messages,
-    labels: {},
     enrichment,
     nextCursor: null,
     authors: traders,
@@ -199,7 +199,7 @@ function BacktestDetailContent({ data, id, navigate, cancelMut, deleteMut, inval
     run, summary, byTrader, byStrategy,
     equityCurve, tradeScatter, rollingWinRate,
     decisions, allTrades, eventsByTradeId, flagsByTradeId,
-    llmTokens, messagesEndDate,
+    llmTokens, messagesEndDate, evalSummary, labelsByTradeId,
   } = data;
   const config = run.config;
 
@@ -293,6 +293,7 @@ function BacktestDetailContent({ data, id, navigate, cancelMut, deleteMut, inval
     <FilteredTradesView
       eventsByTradeId={eventsByTradeId}
       flagsByTradeId={flagsByTradeId}
+      labelsByTradeId={labelsByTradeId}
       channelId={channelId}
       commissionSchedule={config.commissionSchedule}
       startingEquity={config.startingEquity}
@@ -355,7 +356,7 @@ function BacktestDetailContent({ data, id, navigate, cancelMut, deleteMut, inval
         <div className="rounded-lg border bg-card text-sm overflow-hidden">
           {/* Config row — compact description */}
           <div className="flex items-center gap-3 px-4 py-2 border-b border-border/40 text-xs text-muted-foreground flex-wrap">
-            <span className="text-foreground font-medium text-sm">{config.traders.join(', ')}</span>
+            <TradersList traders={config.traders} />
             <Separator orientation="vertical" className="!h-3.5" />
             <span className="font-mono tabular-nums">{isoToDateKey(config.startDate)} &ndash; {isoToDateKey(config.endDate)}</span>
             <Separator orientation="vertical" className="!h-3.5" />
@@ -430,12 +431,12 @@ function BacktestDetailContent({ data, id, navigate, cancelMut, deleteMut, inval
         )}
 
         {/* Tabs -- always in this slot when data exists */}
-        <TradeFilterProvider trades={allTrades} flagsByTradeId={flagsByTradeId}>
+        <TradeFilterProvider trades={allTrades} flagsByTradeId={flagsByTradeId} labelsByTradeId={labelsByTradeId}>
           <BacktestTabs
             performance={performanceContent}
             messages={messagesContent}
             trades={tradesContent}
-            tabBarTrailing={<TradeFilters />}
+            tabBarTrailing={<TradeFilters evalSummary={evalSummary} />}
             hasMessages={chatData.messages.length > 0}
           />
         </TradeFilterProvider>
@@ -466,5 +467,33 @@ function BacktestDetailContent({ data, id, navigate, cancelMut, deleteMut, inval
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/* ── Traders list with collapsible overflow ── */
+
+const TRADER_PREVIEW_COUNT = 8;
+
+function TradersList({ traders }: { traders: string[] }) {
+  const [open, setOpen] = useState(false);
+
+  if (traders.length <= TRADER_PREVIEW_COUNT) {
+    return <span className="text-foreground font-medium text-sm">{traders.join(', ')}</span>;
+  }
+
+  const preview = traders.slice(0, TRADER_PREVIEW_COUNT);
+  const remaining = traders.length - TRADER_PREVIEW_COUNT;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0">
+      <span className="text-foreground font-medium text-sm">
+        {open ? traders.join(', ') : `${preview.join(', ')} `}
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="xs" className="text-muted-foreground hover:text-foreground h-auto px-1 py-0 text-xs">
+            {open ? 'show less' : `+${remaining} more`}
+          </Button>
+        </CollapsibleTrigger>
+      </span>
+    </Collapsible>
   );
 }

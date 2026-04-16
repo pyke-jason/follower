@@ -3,7 +3,7 @@ import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '@src/lib/numbers';
 import type { TradeEvent } from '@src/db/schema';
 
-function EventRow({ event, closeMessageId }: { event: TradeEvent; closeMessageId?: string | null }) {
+function EventRow({ event, closeMessageId, extraCells = 0 }: { event: TradeEvent; closeMessageId?: string | null; extraCells?: number }) {
   const price = safeParseFloat(event.price);
   const meta = event.metadata as Record<string, unknown> | null;
   const trimPnl = event.action === 'TRIM' ? (meta?.trimPnl as number | undefined) : undefined;
@@ -57,6 +57,11 @@ function EventRow({ event, closeMessageId }: { event: TradeEvent; closeMessageId
       <TableCell className="text-muted-foreground/40 text-xs">
         {formatDate(event.timestamp)}
       </TableCell>
+
+      {/* Extra trailing cells for alignment (e.g. Exec, Label) */}
+      {Array.from({ length: extraCells }, (_, i) => (
+        <TableCell key={`extra-${i}`} />
+      ))}
     </TableRow>
   );
 }
@@ -64,16 +69,18 @@ function EventRow({ event, closeMessageId }: { event: TradeEvent; closeMessageId
 export function EventSubRows({
   events,
   closeMessageId,
+  extraCells = 0,
 }: {
   events: TradeEvent[];
   closeMessageId?: string | null;
+  extraCells?: number;
 }) {
   if (events.length === 0) return null;
 
   return (
     <>
       {events.map((event) => (
-        <EventRow key={event.id} event={event} closeMessageId={closeMessageId} />
+        <EventRow key={event.id} event={event} closeMessageId={closeMessageId} extraCells={extraCells} />
       ))}
     </>
   );

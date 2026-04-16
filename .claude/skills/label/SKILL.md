@@ -15,6 +15,7 @@ If unsure: When a message is genuinely ambiguous (could reasonably be trade or n
 
 - `/label` — label next batch of unlabeled messages
 - `/label <message-id>` — label or relabel a specific message
+- `/label relabel [N days]` — bulk relabel existing labels via Anthropic API (default: 30 days)
 - `/label audit` — audit existing labels for systematic errors
 - `/label stats` — show labeling progress and quality metrics
 
@@ -68,7 +69,9 @@ These are hard rules. Do not deviate.
 7. **Position updates ("still holding", "looking for a sell off") are isTrade: false.** No new action.
 
 ### Signal field rules
-8. **strategy = null when the message does not explicitly name the instrument type.** "Long TSLA $200" with just a badge and price -> `strategy: null` (could be stock, calls, or a spread). "Long TSLA 1,000 Shares" -> `strategy: "STOCK"`. "Long TSLA $330 Call" -> `strategy: "CALL"`.
+8. **A stated dollar price implies STOCK unless options language is present.** "Long TSLA $311.83" with a badge and a dollar price but no strikes, expiry, or options words (calls/puts/spread/credit/debit) -> `strategy: "STOCK"`. "Long TSLA 1,000 Shares" -> `strategy: "STOCK"`. "Long TSLA $330 Call" -> `strategy: "CALL"`. Only use `strategy: null` when there is NO price AND no instrument clues (bare "Long MP" with nothing else).
+8a. **Cent-denominated P&L confirms STOCK, never CALL.** "Exit Short ELV 276.45 (18c loss)" — "18c" = 18 cents stock P&L, "276.45" = stock price. Never classify these as CALL. Similarly "-23c loss", "$.40 gain", "$1.95 loss" with dollar prices in the hundreds = stock trades.
+8b. **Fractions near trim/exit are quantity, not dates.** "trim 3/4 of FSLY" means 75% exit (`exitPercent: 0.75`), not expiry March 4th. Use message date context as a sanity check — if "3/4" would refer to a date already past (or far in the future for non-LEAPS), it's almost certainly a quantity fraction. Fractions like 1/2, 1/3, 2/3, 3/4 adjacent to exit/trim language are always quantity.
 9. **confidence = HIGH when the isTrade classification AND action are unambiguous.** A simple `[Long] SYMBOL $PRICE` trade is HIGH even when strategy is null — the trade itself is clear, just the instrument type is not.
 10. **Multi-trade messages need multiple trades (outer array entries).** Two badges + two symbols = two entries in the outer `trades` array. Always verify badge count matches trade count.
 11. **statedPrice = option premium, credit amount, OR stock entry price.** "Long TSLA $311.83 - 1,000 Shares" -> `statedPrice: 311.83`. "Long TSLA $330 Call for .47" -> `statedPrice: 0.47`.
@@ -91,7 +94,7 @@ For every message, think through these steps in order. Write this reasoning into
 3. **Is this actually a trade?** Check for disqualifiers: no badge + no action verb, commentary, hypothetical, paper, futures, pre-market bulletin, position update.
 4. **What action?** OPEN (new position), CLOSE (exiting), ADD (adding to existing), TRIM (partial exit), LEG_OFF (removing a spread leg). Look for exit keywords, "added/adding", fraction language, or default to OPEN.
 5. **Direction?** Long badge = LONG, Short badge = SHORT, Exit badge = check for direction word after Exit.
-6. **Instrument clues?** Check for: strike prices, C/P suffix, "calls"/"puts"/"shares", strategy name (PCS/PDS/CDS), slash between strikes. No clues = `strategy: null`.
+6. **Instrument clues?** Check for: strike prices, C/P suffix, "calls"/"puts"/"shares", strategy name (PCS/PDS/CDS), slash between strikes. If a specific dollar price is stated with no options language → `strategy: "STOCK"`. Only use `strategy: null` for bare trades with no price and no instrument clues (e.g., "Long MP").
 7. **Partial?** Any fraction language, "trim", "half", "runners"? -> `action: "TRIM", exitPercent: <fraction>`.
 8. **Multiple trades?** Count badges vs symbols. More than one trade = more than one entry in outer `trades` array.
 
@@ -159,6 +162,38 @@ These show the expected classification for real message patterns. Study the reas
     "action": "OPEN", "symbol": "OKLO", "direction": "LONG",
     "strategy": "PUT", "strikes": [95], "expiry": "Oct (17)",
     "statedPrice": 4.70, "quantity": null
+  }]]
+}
+</label>
+</example>
+
+<example>
+<message>badges: ["Short"], symbols: ["GPC"], clean_text: "Short GPC 111.71"</message>
+<label>
+{
+  "reasoning": "Short badge + GPC. '$111.71' is a dollar price with no strikes, expiry, or options language. Price implies stock -> strategy: STOCK.",
+  "isTrade": true,
+  "confidence": "HIGH",
+  "trades": [[{
+    "action": "OPEN", "symbol": "GPC", "direction": "SHORT",
+    "strategy": "STOCK", "strikes": null, "expiry": null,
+    "statedPrice": 111.71, "quantity": null
+  }]]
+}
+</label>
+</example>
+
+<example>
+<message>badges: ["Exit", "Short"], symbols: ["ELV"], clean_text: "Exit Short ELV 276.45 (18c loss)"</message>
+<label>
+{
+  "reasoning": "Exit badge + Short direction + ELV. '276.45' is a stock-level dollar price. '18c loss' = 18 cents loss on stock, NOT an options premium. Cent-denominated P&L confirms this is a STOCK trade, not CALL.",
+  "isTrade": true,
+  "confidence": "HIGH",
+  "trades": [[{
+    "action": "CLOSE", "symbol": "ELV", "direction": "SHORT",
+    "strategy": "STOCK", "strikes": null, "expiry": null,
+    "statedPrice": 276.45, "quantity": null
   }]]
 }
 </label>
@@ -342,6 +377,25 @@ WHERE id = ?
 
 ### `/label <message-id>` (single message)
 Same as batch but for one message. Show the full EvalLabelData JSON to the user before writing.
+
+### `/label relabel [N days]` (bulk relabel via sub-agents)
+
+Relabels all existing eval_labels (and any unlabeled badged messages) within the given time window. Skips human-verified labels. Default window is 30 days from the latest message.
+
+1. Export all badged messages in the date window (excluding human-verified) to JSON via `sqlite3 -json`.
+2. Split into batch files of 100 messages each (e.g., `/tmp/relabel-batch-{000..N}.json`).
+3. Spawn one sub-agent per batch (using Agent tool, `run_in_background: true`, model: sonnet). Each agent:
+   - Reads its batch file
+   - Classifies every message using the full classification rules from this skill
+   - Writes results as a JSON array of `{messageId, label}` to `/tmp/relabel-results-{NNN}.json`
+4. Write an insert script (`scratchpad/insert-labels.ts`) that reads all result files and upserts into `eval_labels` with `source: 'human'`, `model: 'claude-code-agent'`, `version: 2`, `human_verified: 0`.
+5. After all agents complete, run the insert script.
+6. **Post-insert validation** (agents sometimes deviate from the schema):
+   - Fix `action` values: map BUY→OPEN, SELL→CLOSE, SHORT→OPEN
+   - Fix `confidence` values: map numeric values (0.95, 0.99) to HIGH (≥0.8) or LOW (<0.8)
+   - Verify no invalid enum values remain
+7. Report final stats: total inserted, isTrade breakdown, strategy distribution, action distribution.
+8. Clean up temp files and scratchpad script.
 
 ### `/label audit`
 Query all human_verified=1 labels and check for systematic errors:

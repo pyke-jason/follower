@@ -12,6 +12,7 @@ import { createTradesRouter } from './routes/trades.js';
 import webQueries from './routes/web-queries.js';
 import webMutations from './routes/web-mutations.js';
 import evalRoutes from './routes/eval.js';
+import dbBrowser from './routes/db-browser.js';
 import { getRuntimeBrokerMap } from '../broker/select.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
@@ -32,6 +33,7 @@ app.route('/trades', createTradesRouter(channelBrokerMap));
 app.route('/web', webQueries);
 app.route('/web', webMutations);
 app.route('/web', evalRoutes);
+app.route('/web', dbBrowser);
 
 app.get('/health', (c) => c.json({ ok: true }));
 

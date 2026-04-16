@@ -67,8 +67,38 @@ export async function launchBrowser(): Promise<{ page: Page; crashed: Promise<vo
   const landingUrl = page.url();
   console.log(`[Browser] Landed on: ${landingUrl}`);
 
+  await acceptPoliciesIfNeeded(page);
+
   authState = await checkAuth(page);
   return { page, crashed };
+}
+
+/**
+ * If the page is the chat policies agreement gate, tick the "I understand"
+ * checkbox and submit. The form POSTs to /chat/acceptpolicies and redirects
+ * back to /chat. Safe to call on any page — no-ops when not on the gate.
+ * Returns true iff the gate was present and accepted.
+ */
+async function acceptPoliciesIfNeeded(p: Page): Promise<boolean> {
+  if (!p.url().includes('/chat/policies/agreement')) return false;
+
+  console.log('[Browser] Chat policies agreement gate detected — accepting');
+  try {
+    const checkbox = p.locator('input#understand');
+    await checkbox.waitFor({ state: 'visible', timeout: 10_000 });
+    if (!(await checkbox.isChecked())) {
+      await checkbox.check();
+    }
+    await Promise.all([
+      p.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30_000 }),
+      p.click('input#continue'),
+    ]);
+    console.log(`[Browser] Policies accepted — now on: ${p.url()}`);
+    return true;
+  } catch (err) {
+    console.error('[Browser] Failed to accept policies:', err);
+    return false;
+  }
 }
 
 async function checkAuth(p: Page): Promise<AuthState> {
@@ -137,6 +167,16 @@ export async function attemptLogin(): Promise<boolean> {
   console.log('[Browser] Attempting login...');
 
   try {
+    // If we were redirected straight to the policies gate (cookies still
+    // valid, just need to re-accept), click through and re-check auth.
+    if (await acceptPoliciesIfNeeded(page)) {
+      authState = await checkAuth(page);
+      if (authState === 'authenticated') {
+        await saveStorageState();
+        return true;
+      }
+    }
+
     await page.fill('input#Email, input[name="Email"]', email);
     await page.fill('input#Password, input[name="Password"]', password);
 
@@ -170,6 +210,7 @@ export async function waitForAuth(): Promise<void> {
   while (true) {
     await new Promise(r => setTimeout(r, 5000));
     if (!page) throw new Error('Browser closed during auth wait');
+    await acceptPoliciesIfNeeded(page);
     authState = await checkAuth(page);
     if (authState === 'authenticated') {
       await saveStorageState();

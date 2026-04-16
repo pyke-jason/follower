@@ -5,9 +5,11 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronsUpDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 import { createFilterParams } from '@/hooks/use-filter-params';
 import { TRADE_FLAGS } from '@src/db/schema';
 import type { Trade, TradeFlag } from '@src/db/schema';
+import type { EvalSummary } from '@/lib/api-types';
 
 // ── Filter values ──────────────────────────────────────────────────
 
@@ -26,7 +28,9 @@ const FLAG_LABELS: Partial<Record<TradeFlag, string>> = {
   hasUpdate: 'Has update',
 };
 
-type MultiFilterKey = 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags';
+export type LabelBucket = 'tp' | 'fp' | 'unlabeled';
+
+type MultiFilterKey = 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags' | 'labelBuckets';
 
 export interface TradeFilterValues {
   traders: string[];
@@ -34,12 +38,14 @@ export interface TradeFilterValues {
   strategies: string[];
   directions: string[];
   flags: TradeFlag[];
+  labelBuckets: LabelBucket[];
 }
 
 export function applyTradeFilters(
   trades: Trade[],
   filters: TradeFilterValues,
   flagsByTradeId?: Record<string, TradeFlag[]>,
+  labelsByTradeId?: Record<string, { bucket: string }>,
 ): Trade[] {
   return trades.filter((t) => {
     if (filters.traders.length > 0 && !filters.traders.includes(t.trader)) return false;
@@ -50,6 +56,10 @@ export function applyTradeFilters(
       const tradeFlags = flagsByTradeId[t.id] ?? [];
       if (!filters.flags.some(f => tradeFlags.includes(f))) return false;
     }
+    if (filters.labelBuckets.length > 0 && labelsByTradeId) {
+      const bucket = labelsByTradeId[t.id]?.bucket ?? 'unlabeled';
+      if (!filters.labelBuckets.includes(bucket as LabelBucket)) return false;
+    }
     return true;
   });
 }
@@ -57,11 +67,12 @@ export function applyTradeFilters(
 // ── URL-synced filter params ───────────────────────────────────────
 
 const useTradeFilterParams = createFilterParams({
-  traders:    { type: 'string[]' },
-  symbols:    { type: 'string[]' },
-  strategies: { type: 'string[]' },
-  directions: { type: 'string[]' },
-  flags:      { type: 'string[]' },
+  traders:      { type: 'string[]' },
+  symbols:      { type: 'string[]' },
+  strategies:   { type: 'string[]' },
+  directions:   { type: 'string[]' },
+  flags:        { type: 'string[]' },
+  labelBuckets: { type: 'string[]' },
 });
 
 // ── Context ────────────────────────────────────────────────────────
@@ -75,6 +86,7 @@ interface TradeFilterContextValue {
   allTrades: Trade[];
   filteredTrades: Trade[];
   availableFlags: TradeFlag[];
+  labelsByTradeId?: Record<string, { bucket: string }>;
 }
 
 const TradeFilterContext = createContext<TradeFilterContextValue | null>(null);
@@ -82,10 +94,12 @@ const TradeFilterContext = createContext<TradeFilterContextValue | null>(null);
 export function TradeFilterProvider({
   trades,
   flagsByTradeId,
+  labelsByTradeId,
   children,
 }: {
   trades: Trade[];
   flagsByTradeId?: Record<string, TradeFlag[]>;
+  labelsByTradeId?: Record<string, { bucket: string }>;
   children: ReactNode;
 }) {
   const params = useTradeFilterParams();
@@ -96,7 +110,8 @@ export function TradeFilterProvider({
     strategies: params.strategies,
     directions: params.directions,
     flags: params.flags as TradeFlag[],
-  }), [params.traders, params.symbols, params.strategies, params.directions, params.flags]);
+    labelBuckets: params.labelBuckets as LabelBucket[],
+  }), [params.traders, params.symbols, params.strategies, params.directions, params.flags, params.labelBuckets]);
 
   const toggle = useCallback((key: MultiFilterKey, value: string) => {
     const arr = filters[key] as string[];
@@ -107,9 +122,10 @@ export function TradeFilterProvider({
       strategies: params.setStrategies,
       directions: params.setDirections,
       flags: params.setFlags,
+      labelBuckets: params.setLabelBuckets,
     };
     setters[key](next);
-  }, [filters, params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags]);
+  }, [filters, params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags, params.setLabelBuckets]);
 
   const clearKey = useCallback((key: MultiFilterKey) => {
     const setters: Record<MultiFilterKey, (v: string[] | null) => void> = {
@@ -118,16 +134,17 @@ export function TradeFilterProvider({
       strategies: params.setStrategies,
       directions: params.setDirections,
       flags: params.setFlags,
+      labelBuckets: params.setLabelBuckets,
     };
     setters[key](null);
-  }, [params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags]);
+  }, [params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags, params.setLabelBuckets]);
 
   const hasFilters = params.hasFilters;
   const clearFilters = params.clearFilters;
 
   const filteredTrades = useMemo(
-    () => applyTradeFilters(trades, filters, flagsByTradeId),
-    [trades, filters, flagsByTradeId],
+    () => applyTradeFilters(trades, filters, flagsByTradeId, labelsByTradeId),
+    [trades, filters, flagsByTradeId, labelsByTradeId],
   );
 
   // Only show flag toggles for flags that actually appear on at least one trade
@@ -141,8 +158,8 @@ export function TradeFilterProvider({
   }, [flagsByTradeId]);
 
   const value = useMemo(
-    () => ({ filters, toggle, clearKey, clearFilters, hasFilters, allTrades: trades, filteredTrades, availableFlags }),
-    [filters, toggle, clearKey, clearFilters, hasFilters, trades, filteredTrades, availableFlags],
+    () => ({ filters, toggle, clearKey, clearFilters, hasFilters, allTrades: trades, filteredTrades, availableFlags, labelsByTradeId }),
+    [filters, toggle, clearKey, clearFilters, hasFilters, trades, filteredTrades, availableFlags, labelsByTradeId],
   );
 
   return <TradeFilterContext value={value}>{children}</TradeFilterContext>;
@@ -248,8 +265,14 @@ function MultiSelect({
 
 // ── TradeFilters UI ────────────────────────────────────────────────
 
-export function TradeFilters({ className }: { className?: string }) {
-  const { filters, toggle, clearKey, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags } = useTradeFilters();
+const LABEL_BUCKET_LABELS: Record<string, string> = {
+  tp: 'Correct (TP)',
+  fp: 'Wrong (FP)',
+  unlabeled: 'No label',
+};
+
+export function TradeFilters({ className, evalSummary }: { className?: string; evalSummary?: EvalSummary }) {
+  const { filters, toggle, clearKey, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags, labelsByTradeId } = useTradeFilters();
 
   const options = useMemo(() => ({
     traders: [...new Set(allTrades.map((t) => t.trader))].sort(),
@@ -273,6 +296,39 @@ export function TradeFilters({ className }: { className?: string }) {
           label="Flags"
           labels={FLAG_LABELS as Record<string, string>}
         />
+      )}
+      {labelsByTradeId && Object.keys(labelsByTradeId).length > 0 && (
+        <MultiSelect
+          selected={filters.labelBuckets}
+          onToggle={(v) => toggle('labelBuckets', v)}
+          onClear={() => clearKey('labelBuckets')}
+          options={['tp', 'fp', 'unlabeled']}
+          label="Label"
+          labels={LABEL_BUCKET_LABELS}
+        />
+      )}
+      {evalSummary && (
+        <div className="flex items-center gap-2 ml-1 text-xs text-muted-foreground">
+          <span className="text-[10px] uppercase tracking-wide">Acc</span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">{(evalSummary.metrics.accuracy * 100).toFixed(0)}%</span>
+          <span className="text-border">|</span>
+          <span className="text-[10px] uppercase tracking-wide">P</span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">{(evalSummary.metrics.precision * 100).toFixed(0)}%</span>
+          <span className="text-border">|</span>
+          <span className="text-[10px] uppercase tracking-wide">R</span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">{(evalSummary.metrics.recall * 100).toFixed(0)}%</span>
+          <span className="text-border">|</span>
+          <span className="text-[10px] uppercase tracking-wide">F1</span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">{evalSummary.metrics.f1.toFixed(2)}</span>
+          {evalSummary.unlabeled > 0 && (
+            <Badge
+              variant={evalSummary.unlabeled / (evalSummary.labeled + evalSummary.unlabeled) > 0.2 ? 'destructive' : 'secondary'}
+              className={evalSummary.unlabeled / (evalSummary.labeled + evalSummary.unlabeled) <= 0.2 ? 'bg-amber-500/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 text-[10px]' : 'text-[10px]'}
+            >
+              {evalSummary.unlabeled} unlabeled
+            </Badge>
+          )}
+        </div>
       )}
       {(() => {
         const digits = String(allTrades.length).length;

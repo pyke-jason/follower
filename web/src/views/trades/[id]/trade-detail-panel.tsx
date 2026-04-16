@@ -3,12 +3,15 @@ import { useTradesStore } from '@/stores/trades-store';
 import { SignalDecisionSummary } from './signal-decision-summary';
 import { UnifiedTimeline } from './decision-timeline';
 import { Badge } from '@/components/badge';
+import { Badge as UiBadge } from '@/components/ui/badge';
 import { formatDate } from '@/lib/format';
-import { X } from 'lucide-react';
-import { REACTION_EMOJI } from '@/components/decision-shared';
-import type { Message, RunDecision } from '@src/db/schema';
+import { cn } from '@/lib/utils';
+import { X, CircleCheck, XCircle, AlertTriangle } from 'lucide-react';
+import { ReactionBadges } from '@/components/reaction-badges';
+import type { Message, RunDecision, Trade } from '@src/db/schema';
+import type { TradeLabel } from '@/lib/api-types';
 import { formatLegsSummary } from '@src/lib/trade';
-import { ExecutionFlamegraph, extractFlamegraphData } from './execution-flamegraph';
+import { ExecutionTrace } from './execution-trace';
 import { Button } from '@/components/ui/button';
 
 function NearbyMessages({
@@ -79,20 +82,6 @@ function NearbyMessages({
   );
 }
 
-function ReactionBadges({ reactions }: { reactions: { Type: string; Count: number }[] }) {
-  if (!reactions || reactions.length === 0) return null;
-  return (
-    <span className="inline-flex gap-1 shrink-0">
-      {reactions.map((r) => (
-        <span key={r.Type} className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/70 bg-muted/50 rounded px-1 py-px">
-          <span>{REACTION_EMOJI[r.Type] ?? r.Type}</span>
-          {r.Count > 1 && <span className="tabular-nums">{r.Count}</span>}
-        </span>
-      ))}
-    </span>
-  );
-}
-
 function MessageRow({ message: m, isAssociated }: { message: Message; isAssociated: boolean }) {
   return (
     <div
@@ -104,7 +93,7 @@ function MessageRow({ message: m, isAssociated }: { message: Message; isAssociat
       <span className={`truncate ${isAssociated ? 'text-foreground' : 'text-muted-foreground/70'}`}>
         {m.cleanText}
       </span>
-      {m.reactions.length > 0 && <ReactionBadges reactions={m.reactions} />}
+      <ReactionBadges reactions={m.reactions} className="inline-flex gap-1 shrink-0" />
     </div>
   );
 }
@@ -118,6 +107,10 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
   const trade = useTradesStore((s) => {
     const id = s.selectedTradeId;
     return id ? s.trades.find((t) => t.id === id) ?? null : null;
+  });
+  const label: TradeLabel | undefined = useTradesStore((s) => {
+    const id = s.selectedTradeId;
+    return id ? s.labelsByTradeId[id] : undefined;
   });
   const story = useTradesStore((s) => s.story);
   const isLoading = useTradesStore((s) => s.isLoadingStory);
@@ -172,6 +165,9 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
               />
             </section>
 
+            {/* Label comparison */}
+            <LabelSection label={label} trade={trade} systemDecision={story.decision} />
+
             {/* Close signal */}
             {story.closeMessage && (
               <section>
@@ -186,17 +182,12 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
               </section>
             )}
 
-            {/* Execution Flamegraph */}
-            {story.decisions.length > 0 && (() => {
-              const fg = extractFlamegraphData(story.decisions);
-              if (!fg) return null;
-              return (
-                <section>
-                  <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Execution Trace</h4>
-                  <ExecutionFlamegraph {...fg} compact />
-                </section>
-              );
-            })()}
+            {/* Execution Trace */}
+            {story.decisions.length > 0 && (
+              <section>
+                <ExecutionTrace decisions={story.decisions} />
+              </section>
+            )}
 
             {/* Execution Timeline */}
             {(story.events.length > 0 || story.decisions.length > 0) && (
@@ -220,6 +211,212 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
           <p className="text-sm text-muted-foreground text-center py-4">Trade data not available</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function LabelSection({ label, trade, systemDecision }: { label: TradeLabel | undefined; trade: Trade; systemDecision: RunDecision | null }) {
+  if (!label || label.bucket === 'unlabeled') {
+    return (
+      <section>
+        <div className="flex items-center gap-1.5 mb-2">
+          <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Label</h4>
+          <AlertTriangle className="h-3 w-3 text-amber-400" />
+          <span className="text-[10px] text-amber-500">No label</span>
+        </div>
+      </section>
+    );
+  }
+
+  const mismatches = label.match?.mismatches ?? [];
+  const isMatch = label.bucket === 'tp' && mismatches.length === 0;
+  const isFP = label.bucket === 'fp';
+
+  return (
+    <section>
+      <div className="flex items-center gap-1.5 mb-2">
+        <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Label</h4>
+        {isFP ? (
+          <>
+            <XCircle className="h-3 w-3 text-red-500" />
+            <span className="text-[10px] text-red-500 font-medium">False positive</span>
+          </>
+        ) : isMatch ? (
+          <>
+            <CircleCheck className="h-3 w-3 text-emerald-500" />
+            <span className="text-[10px] text-emerald-500">Match</span>
+          </>
+        ) : (
+          <>
+            <CircleCheck className="h-3 w-3 text-emerald-500" />
+            <span className="text-[10px] text-amber-500">{mismatches.length} diff{mismatches.length !== 1 ? 's' : ''}</span>
+          </>
+        )}
+        {label.labelConfidence === 'LOW' && (
+          <UiBadge variant="outline" className="text-[9px] px-1 py-0 h-3.5">LOW</UiBadge>
+        )}
+      </div>
+
+      {/* Side-by-side reasoning */}
+      {(label.labelReasoning || systemDecision?.reasoning) && (
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div>
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground block mb-0.5">Label reasoning</span>
+            <p className="text-xs text-muted-foreground leading-relaxed">{label.labelReasoning ?? '—'}</p>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground block mb-0.5">System reasoning</span>
+            <p className="text-xs text-muted-foreground leading-relaxed">{systemDecision?.reasoning ?? '—'}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Side-by-side field comparison */}
+      <LabelDiffTable label={label} trade={trade} mismatches={mismatches} />
+
+      {/* Verdict */}
+      {label.labelId && (
+        <LabelVerdict labelId={label.labelId} humanVerified={label.humanVerified} rejectionReason={label.rejectionReason} />
+      )}
+    </section>
+  );
+}
+
+function LabelVerdict({ labelId, humanVerified, rejectionReason }: { labelId: string; humanVerified: boolean; rejectionReason: string | null }) {
+  const [loading, setLoading] = useState(false);
+  const tradeId = useTradesStore((s) => s.selectedTradeId);
+  const updateLabel = useTradesStore((s) => s.updateLabel);
+
+  const currentVerdict = humanVerified ? (rejectionReason ?? 'LABEL_CORRECT') : null;
+
+  const submit = async (action: 'approve' | 'reject', reason?: string) => {
+    setLoading(true);
+    try {
+      const url = `/api/eval/labels/${labelId}/${action}`;
+      const body = action === 'reject' ? JSON.stringify({ reason }) : undefined;
+      await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      if (tradeId) {
+        updateLabel(tradeId, {
+          humanVerified: true,
+          rejectionReason: action === 'reject' ? (reason ?? null) : null,
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const undo = async () => {
+    setLoading(true);
+    try {
+      await fetch(`/api/eval/labels/${labelId}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (tradeId) {
+        updateLabel(tradeId, { humanVerified: false, rejectionReason: null });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verdictLabels: Record<string, string> = {
+    LABEL_CORRECT: 'Label correct',
+    SYSTEM_CORRECT: 'System correct',
+    BOTH_WRONG: 'Both wrong',
+  };
+
+  if (currentVerdict) {
+    return (
+      <div className="flex items-center gap-2 mt-3 pt-2 border-t">
+        <UiBadge variant="secondary" className="text-[10px]">
+          {verdictLabels[currentVerdict] ?? currentVerdict}
+        </UiBadge>
+        <Button variant="ghost" size="xs" className="text-[10px] h-5 text-muted-foreground" disabled={loading} onClick={undo}>
+          Undo
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-1.5 mt-3 pt-2 border-t">
+      <Button variant="outline" size="xs" className="text-[10px] h-6" disabled={loading} onClick={() => submit('approve')}>
+        Label correct
+      </Button>
+      <Button variant="outline" size="xs" className="text-[10px] h-6" disabled={loading} onClick={() => submit('reject', 'SYSTEM_CORRECT')}>
+        System correct
+      </Button>
+      <Button variant="outline" size="xs" className="text-[10px] h-6" disabled={loading} onClick={() => submit('reject', 'BOTH_WRONG')}>
+        Both wrong
+      </Button>
+    </div>
+  );
+}
+
+type DiffRow = { field: string; label: string; system: string; match: boolean };
+
+function LabelDiffTable({ label, trade, mismatches }: { label: TradeLabel; trade: Trade; mismatches: { path: string; expected: string; got: string }[] }) {
+  const mismatchMap = new Map(mismatches.map(m => [m.path, m]));
+  const sig = (label.labelSignals?.[0] ?? null) as Record<string, unknown> | null;
+  const hasSig = sig !== null;
+
+  // Always show full trade details on the system side
+  const legsSummary = formatLegsSummary(trade.legs, trade.strategy);
+  const tradeFields: { field: string; system: string; labelVal: string | null; match: boolean }[] = [
+    {
+      field: 'isTrade',
+      system: 'true',
+      labelVal: label.labelIsTrade != null ? String(label.labelIsTrade) : null,
+      match: label.labelIsTrade === true,
+    },
+    {
+      field: 'action',
+      system: hasSig ? (mismatchMap.get('action')?.got ?? String(sig.action ?? '—')) : (trade.status === 'CANCELLED' ? 'CANCELLED' : 'OPEN'),
+      labelVal: hasSig ? String(sig.action ?? '—') : null,
+      match: !mismatchMap.has('action'),
+    },
+    { field: 'symbol', system: trade.symbol, labelVal: hasSig ? String(sig.symbol ?? '—') : null, match: !mismatchMap.has('symbol') },
+    { field: 'direction', system: trade.direction, labelVal: hasSig ? String(sig.direction ?? 'null') : null, match: !mismatchMap.has('direction') },
+    { field: 'strategy', system: trade.strategy, labelVal: hasSig ? String(sig.strategy ?? 'null') : null, match: !mismatchMap.has('strategy') },
+  ];
+
+  // Always show strikes/expiry/price from the trade — these matter for judging correctness
+  if (legsSummary) tradeFields.push({ field: 'strikes', system: legsSummary, labelVal: hasSig && sig.strikes ? JSON.stringify(sig.strikes) : null, match: true });
+
+  // Extract expiry from legs if available
+  const tradeExpiry = trade.legs?.find((l: { expiry?: string }) => l.expiry)?.expiry;
+  if (tradeExpiry || (hasSig && sig.expiry)) {
+    tradeFields.push({ field: 'expiry', system: tradeExpiry ?? '—', labelVal: hasSig && sig.expiry ? String(sig.expiry) : null, match: true });
+  }
+
+  if (trade.entryPrice || (hasSig && sig.statedPrice != null)) {
+    tradeFields.push({ field: 'price', system: trade.entryPrice ?? '—', labelVal: hasSig && sig.statedPrice != null ? String(sig.statedPrice) : null, match: true });
+  }
+
+  if (trade.quantity || (hasSig && sig.quantity != null)) {
+    tradeFields.push({ field: 'quantity', system: String(trade.quantity ?? '—'), labelVal: hasSig && sig.quantity != null ? String(sig.quantity) : null, match: true });
+  }
+
+  return (
+    <div className="text-xs border rounded-md overflow-hidden">
+      <div className="grid grid-cols-[72px_1fr_1fr] bg-muted/50 border-b">
+        <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Field</div>
+        <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Label</div>
+        <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">System</div>
+      </div>
+      {tradeFields.map((r) => (
+        <div key={r.field} className={cn(
+          'grid grid-cols-[72px_1fr_1fr] border-b last:border-b-0',
+          !r.match && 'bg-red-500/5',
+        )}>
+          <div className="px-2 py-1 font-mono text-muted-foreground">{r.field}</div>
+          <div className={cn('px-2 py-1', r.labelVal == null ? 'text-muted-foreground/40' : 'font-medium')}>
+            {r.labelVal ?? '—'}
+          </div>
+          <div className={cn('px-2 py-1 font-medium', !r.match && 'text-destructive')}>
+            {r.system}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

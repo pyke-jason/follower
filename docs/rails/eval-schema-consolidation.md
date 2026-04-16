@@ -8,7 +8,7 @@ Three schemas describe the same concept:
 
 | Schema | Location | Used by |
 |--------|----------|---------|
-| `Signal` | `src/agent/schemas.ts` | Orchestrator, `messageLabels` table, LLM path |
+| `Signal` | `src/agent/schemas.ts` | Orchestrator, `evalLabels` table, LLM path |
 | `EvalLabel` + `EvalSignal` | `src/eval/schema.ts` | `evalLabels` table, review UI, eval comparison |
 | `LabelResult` | `src/agent/schemas.ts` | Nothing (dead code) |
 
@@ -205,7 +205,7 @@ No separate eval schema file. This type is defined inline in `src/db/schema.ts` 
 - UI should edit trades (outer array) and signals within each trade (inner array)
 
 ### `web/src/views/eval/page.tsx`
-- Reads from `web-queries-eval.ts` which uses `discrepancyReviews` and `messageLabels`, not `evalLabels`. Likely unaffected. Verify after migration.
+- Reads from `web-queries-eval.ts` which uses `discrepancyReviews` and `evalLabels`.
 
 ### `.claude/skills/label/SKILL.md`
 - Update schema section to show redesigned `Signal`
@@ -251,7 +251,7 @@ No structural DDL change — columns are still JSON text. Only the TS type annot
 
 - **`ResolvedSignal` is untouched.** It keeps its own `legs: (OptionLeg | StockLeg)[]` for execution. This is a different type with a different purpose (broker instructions vs message classification). Don't conflate them.
 - **`src/db/schema.ts` must be self-contained for drizzle-kit.** The `Signal` type import is `type`-only (erased at compile time) — safe. But `SignalSchema` (Zod runtime) cannot be imported into schema.ts. Inline validation where needed.
-- **`messageLabels` table** stores `Signal[]` (old shape). Leave alone — it's used by `web-queries-eval.ts` for the parser comparison dashboard. Separate concern.
+- **`messageLabels` table** has been removed. All label data now lives in `evalLabels`.
 - **`statedPremium` → `statedPrice` rename** touches everywhere Signal is constructed. Grep for `statedPremium` and update all sites.
 - **`strategy: null` vs `strategy: 'STOCK'`** — the orchestrator currently defaults unknown instruments to STOCK. After this change, the parser should set `strategy: null` when uncertain and let open-path resolve it. This is a behavior change that improves correctness.
 - **Orchestrator eval fixtures** compare against `ResolvedSignal`, not `Signal`. The `mustMatch` paths like `signals[0].legs[0].side` refer to `ResolvedSignal.legs`, which is unchanged. But verify no fixture references the deleted `Signal.legs`.

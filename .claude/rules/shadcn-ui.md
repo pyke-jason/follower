@@ -13,7 +13,7 @@ These are never acceptable. Violations must be fixed before the feature is consi
 - **No raw HTML primitives.** Never `<button>`, `<input>`, `<select>`, `<textarea>`, `<table>`, `<tr>`, `<td>`, `<th>`, `<kbd>`. Always use the shadcn equivalent from `web/src/components/ui/`.
 - **Never use Sheet.** Use Dialog (focused inspection) or ResizablePanelGroup (persistent split pane). Sheet was removed from codebase patterns — `signal-sheet.tsx` uses Dialog despite its legacy name.
 - **Never use `window.confirm()`.** Use AlertDialog from `@/components/ui/alert-dialog`.
-- **Prefer Tooltip over native `title` attribute.** Exception: SVG elements or cells inside virtualized tables (5000+ rows) where mounting a Tooltip per-cell is prohibitive. In those cases `title` is acceptable with a `// PERF: title used for virtualized row` comment.
+- **Prefer Tooltip over native `title` attribute.** Exception: cells inside virtualized tables (any row count) where Tooltip per-cell creates thousands of Radix component trees. Each `<Tooltip>` mounts ~10 wrapper nodes (Provider, Popper, Portal, etc.) — at 2,000 rows this produces 60K+ fibers. Use native `title` with a `// PERF: title used for virtualized row` comment. See cookbook `15-virtualized-infinite-scroll.md` §5.
 
 ## Before building UI, check the cookbook
 
@@ -35,6 +35,7 @@ The cookbook at `web/docs/cookbook/` contains intent-driven decision guides. Rea
 | Keyboard shortcuts, focus, a11y | `12-keyboard-patterns.md` |
 | Filter assembly (which component for which filter) | `13-filter-patterns.md` |
 | Component nesting recipes (assembly diagrams) | `14-component-recipes.md` |
+| Virtualization, infinite scroll, perf rules | `15-virtualized-infinite-scroll.md` |
 
 ## Component selection — by intent
 

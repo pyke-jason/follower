@@ -313,6 +313,7 @@ function MismatchCard({ title, data }: { title: string; data: Record<string, num
 
 // ── Discrepancy Table ───────────────────────────────────────────────────────
 
+// NOTE: Inline table is acceptable here (50 rows/page, expandable rows not supported by DataTable)
 function DiscrepancyTable({
   discrepancies, total, page, pageSize, onPageChange,
 }: {

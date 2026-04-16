@@ -18,7 +18,7 @@ export function ChatHydrator({ data }: { data: ChatHydration }) {
   useEffect(() => {
     if (dataRef.current === data) return;
     dataRef.current = data;
-    mergeNewMessages(data.messages, data.labels, data.enrichment);
+    mergeNewMessages(data.messages, data.enrichment);
   }, [data, mergeNewMessages]);
 
   return null;

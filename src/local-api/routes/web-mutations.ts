@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { db, schema, runTx } from '@/db/client.js';
 import { eq, inArray, and, gte, lte, desc, asc } from 'drizzle-orm';
-import type { CommissionSchedule, BacktestRunConfig, Signal } from '@/db/schema.js';
+import type { CommissionSchedule, BacktestRunConfig } from '@/db/schema.js';
 import { btChannel, generateRunId } from '@/lib/channel.js';
 import { generateReportFromTrades } from '@/backtest/report.js';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@/config/risk-defaults.js';
@@ -595,33 +595,6 @@ app.post('/traders/bulk', async (c) => {
     default:
       return c.json({ error: `Unknown action: ${action}` }, 400);
   }
-
-  return c.json({ ok: true });
-});
-
-// ─── Messages (Labels) ──────────────────────────────
-
-app.post('/messages/:id/label', async (c) => {
-  const messageId = c.req.param('id');
-  const { signals, source = 'manual' } = await c.req.json<{
-    signals: Signal[];
-    source?: string;
-  }>();
-
-  const data = {
-    signals,
-    source,
-    reviewed: true as const,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await db
-    .insert(schema.messageLabels)
-    .values({ ...data, messageId })
-    .onConflictDoUpdate({
-      target: schema.messageLabels.messageId,
-      set: data,
-    });
 
   return c.json({ ok: true });
 });

@@ -10,23 +10,13 @@ Trade Follower 3 -- an autonomous trade-copy system that monitors a live trading
 
 ## The one rule
 
-**Own the outcome.** You are not done when the code compiles. You are done when the feature works. If a page doesn't render, a button doesn't work, or a layout looks broken, that's your problem to fix, not the human's problem to discover.
+**Own the outcome.** You are not done when the code compiles. You are done when the feature works. Run `/verify` after building anything. See `.claude/skills/verify/SKILL.md` for the full protocol.
 
 ## How to work
 
 1. **Read the docs first.** `docs/rails.md` is the authoritative coding standards reference -- read it before writing code. `.claude/rules/` has domain-specific rules loaded contextually by file path. `web/CLAUDE.md` has frontend-specific rules and the UI cookbook.
-
-2. **Verify your own work like a user, not a CI pipeline.** After you build something:
-   - Start the dev server (`npm run up`) and confirm pages load
-   - Open Playwright and use the feature the way the human would: click every button, fill in forms, scroll through lists, try edge cases (empty fields, long text, missing data)
-   - Create real test data through the UI, then verify the DB actually changed. Clean up when done.
-   - Run the quality gates: `npx tsc --noEmit && npm test && npm --prefix web run check`
-   - If something looks wrong or broken, fix it -- don't report it and stop
-   - A screenshot of an empty state proves nothing. The only proof is: you used it and it worked.
-
+2. **Verify your work.** Run `/verify` after building or changing features. It starts the dev server, interacts via Playwright, runs quality gates, and fixes anything broken.
 3. **Use the scratchpad.** `scratchpad/` is your workbench for throwaway scripts with REAL data. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete when verified.
-
-4. **Iterate until it's right.** Your first attempt might not work. Debug it, fix it, try again. The goal is a working feature, not a submitted diff.
 
 ## Commands
 

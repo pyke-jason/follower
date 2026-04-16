@@ -1,8 +1,8 @@
 import { forwardRef, useCallback, useMemo } from 'react';
 import { TableVirtuoso } from 'react-virtuoso';
-import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from 'lucide-react';
 import { EmptyState } from './empty-state';
-import { useSort } from '@/hooks/use-sort';
+import { useSort, type SortState } from '@/hooks/use-sort';
 import { cn } from '@/lib/utils';
 import type { Column } from '@/lib/api-types';
 
@@ -61,6 +61,16 @@ interface DataTableProps<T> {
   className?: string;
   /** Custom empty state. Falls back to `<EmptyState title="No data" />`. */
   emptyState?: React.ReactNode;
+  // ── Infinite scroll ───────────────────────────────────
+  /** Called when the user scrolls near the bottom. Wire to `loadMore()` from `useInfiniteList`. */
+  onEndReached?: () => void;
+  /** Show a loading indicator below the last row while fetching the next page. */
+  isLoadingMore?: boolean;
+  // ── Controlled (server-side) sort ─────────────────────
+  /** Controlled sort state. When provided, internal sort is disabled and data is rendered as-is. */
+  sort?: SortState<string>;
+  /** Called when the user clicks a sortable column header. Required when `sort` is provided. */
+  onSortChange?: (column: string) => void;
 }
 
 export function DataTable<T>({
@@ -72,10 +82,23 @@ export function DataTable<T>({
   compare,
   className,
   emptyState,
+  onEndReached,
+  isLoadingMore,
+  sort: controlledSort,
+  onSortChange,
 }: DataTableProps<T>) {
-  const { sort, toggle } = useSort(defaultSort?.column ?? columns[0]?.key ?? '', defaultSort?.dir);
+  // Controlled sort: parent owns state (server-side sort for infinite scroll).
+  // Uncontrolled sort: internal state with client-side sorting (static data).
+  const internal = useSort(defaultSort?.column ?? columns[0]?.key ?? '', defaultSort?.dir);
+  const isControlled = controlledSort !== undefined;
+  const sort = isControlled ? controlledSort : internal.sort;
+  const toggle = isControlled
+    ? (col: string) => onSortChange?.(col)
+    : internal.toggle;
 
   const sorted = useMemo(() => {
+    // When sort is controlled, data is already sorted by the server.
+    if (isControlled) return data;
     const cmp = compare ?? defaultCompare;
     const arr = [...data];
     arr.sort((a, b) => {
@@ -83,7 +106,7 @@ export function DataTable<T>({
       return sort.dir === 'desc' ? -result : result;
     });
     return arr;
-  }, [data, sort, compare]);
+  }, [data, sort, compare, isControlled]);
 
   const components = useMemo(() => buildVirtuosoComponents<T>(), []);
   const context = useMemo((): TableContext<T> => ({ rowClassName }), [rowClassName]);
@@ -115,7 +138,7 @@ export function DataTable<T>({
         {columns.map((col) => {
           if (!col.sortable) {
             return (
-              <th key={col.key} className={cn(thClass, col.align === 'right' && 'text-right')}>
+              <th key={col.key} className={cn(thClass, col.align === 'right' && 'text-right', col.className)}>
                 {col.label}
               </th>
             );
@@ -129,7 +152,7 @@ export function DataTable<T>({
           return (
             <th
               key={col.key}
-              className={cn(thClass, 'cursor-pointer select-none hover:text-foreground')}
+              className={cn(thClass, 'cursor-pointer select-none hover:text-foreground', col.className)}
               onClick={() => toggle(col.key)}
             >
               <span className={cn('inline-flex items-center gap-1', col.align === 'right' && 'justify-end')}>
@@ -162,7 +185,14 @@ export function DataTable<T>({
         context={context}
         fixedHeaderContent={renderHeader}
         itemContent={renderRow}
+        endReached={onEndReached}
+        increaseViewportBy={200}
       />
+      {isLoadingMore && (
+        <div className="flex items-center justify-center py-2 border-t">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      )}
     </div>
   );
 }

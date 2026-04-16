@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,7 @@ export function TaskDetailDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const href = useScopedHref();
+  const { pathname } = useLocation();
   const { decision, trade, message } = enriched;
 
   const symbol = trade?.symbol ?? message.symbols?.[0] ?? 'Signal';
@@ -85,7 +86,7 @@ export function TaskDetailDialog({
           )}
           {trade && (
             <Link
-              to={href(`/trades/${trade.id}`)}
+              to={href(`/trades/${trade.id}`, { from: pathname })}
               className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => onOpenChange(false)}
             >

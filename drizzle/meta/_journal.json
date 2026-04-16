@@ -29,6 +29,20 @@
       "when": 1774226859286,
       "tag": "0003_bumpy_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1774794526955,
+      "tag": "0004_great_menace",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1774809811936,
+      "tag": "0005_drop_message_labels",
+      "breakpoints": true
     }
   ]
 }

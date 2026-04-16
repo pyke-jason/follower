@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { db, schema } from '@/db/client.js';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import type { Trade, TradeFlag, CommissionSchedule } from '@/db/schema.js';
+import type { Trade, TradeFlag, CommissionSchedule, EvalLabelData, EvalLabelRow } from '@/db/schema.js';
+import type { Signal } from '@/agent/schemas.js';
 import type { BrokerPosition } from '@/broker/types.js';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '@/lib/enriched-message.js';
 import type { Strategy } from '@/lib/enums.js';
@@ -45,6 +46,171 @@ function buildFlagsByTradeId(trades: Trade[]): Record<string, TradeFlag[]> {
     if (flags.length > 0) result[t.id] = flags;
   }
   return result;
+}
+
+// ── Eval Accuracy Types & Helpers ─────────────────────
+
+type Mismatch = { path: string; expected: string; got: string };
+type MatchResult = { mismatches: Mismatch[] };
+type TradeLabel = {
+  bucket: 'tp' | 'fp' | 'unlabeled';
+  match: MatchResult | null;
+  labelSignals: Signal[] | null;
+  labelId: string | null;          // eval_labels.id — for verdict mutations
+  labelIsTrade: boolean | null;    // what the label says
+  labelReasoning: string | null;   // why the label classified this way
+  labelConfidence: string | null;  // HIGH or LOW
+  humanVerified: boolean;          // has a human reviewed this label?
+  rejectionReason: string | null;  // SYSTEM_CORRECT | BOTH_WRONG | null (approved)
+};
+type EvalSummary = {
+  labeled: number;
+  unlabeled: number;
+  confusion: { tp: number; fp: number; tn: number; fn: number };
+  metrics: { accuracy: number; precision: number; recall: number; f1: number };
+  mismatchCounts: Record<string, number> | null;
+  totalMismatches: number;
+};
+
+/** Flatten EvalLabelData.trades (Signal[][]) to Signal[]. */
+function flattenLabelSignals(data: EvalLabelData): Signal[] {
+  if (!data.trades || !Array.isArray(data.trades)) return [];
+  return data.trades.flat();
+}
+
+/**
+ * Normalize action for comparison: the label uses Signal actions (OPEN/CLOSE/ADD/TRIM/LEG_OFF)
+ * while the trade status is OPEN/CLOSED. Map trade status to comparable values.
+ */
+function normalizeTradeAction(trade: { status: string }): string {
+  // A trade that exists was "opened" — map to OPEN
+  // A trade that is closed was "closed" — map to CLOSE
+  if (trade.status === 'CLOSED' || trade.status === 'CANCELLED') return 'CLOSE';
+  return 'OPEN';
+}
+
+/** Case-insensitive string compare, treating null/undefined as empty string. */
+function ciEq(a: string | null | undefined, b: string | null | undefined): boolean {
+  return (a ?? '').toUpperCase() === (b ?? '').toUpperCase();
+}
+
+/**
+ * Compare a label's signal fields against the actual trade data.
+ * Returns mismatches for: action, symbol, strategy, direction.
+ */
+function compareSignalToTrade(
+  signal: Signal,
+  trade: { symbol: string; strategy: string; direction: string; status: string },
+): MatchResult {
+  const mismatches: Mismatch[] = [];
+
+  // action: OPEN signal means a trade should exist (and be open or closed),
+  // CLOSE/TRIM means the trade should be closed
+  const expectedAction = signal.action;
+  const gotAction = normalizeTradeAction(trade);
+  if (!ciEq(expectedAction, gotAction)) {
+    mismatches.push({ path: 'action', expected: expectedAction, got: gotAction });
+  }
+
+  // symbol
+  if (!ciEq(signal.symbol, trade.symbol)) {
+    mismatches.push({ path: 'symbol', expected: signal.symbol, got: trade.symbol });
+  }
+
+  // strategy
+  if (signal.strategy != null && !ciEq(signal.strategy, trade.strategy)) {
+    mismatches.push({ path: 'strategy', expected: signal.strategy, got: trade.strategy });
+  }
+
+  // direction
+  if (signal.direction != null && !ciEq(signal.direction, trade.direction)) {
+    mismatches.push({ path: 'direction', expected: signal.direction, got: trade.direction });
+  }
+
+  return { mismatches };
+}
+
+/**
+ * For a trade with an eval label, compute the TradeLabel.
+ * If no label row exists, returns { bucket: 'unlabeled', match: null, labelSignals: null }.
+ */
+function computeTradeLabel(
+  trade: { symbol: string; strategy: string; direction: string; status: string },
+  labelRow: EvalLabelRow | null,
+): TradeLabel {
+  const base = { labelId: null as string | null, labelIsTrade: null as boolean | null, labelReasoning: null as string | null, labelConfidence: null as string | null, humanVerified: false, rejectionReason: null as string | null };
+
+  if (!labelRow) {
+    return { bucket: 'unlabeled', match: null, labelSignals: null, ...base };
+  }
+
+  const labelData = labelRow.humanLabel ?? labelRow.label;
+  const signals = flattenLabelSignals(labelData);
+  const labelMeta = {
+    labelId: labelRow.id,
+    labelIsTrade: labelData.isTrade,
+    labelReasoning: labelData.reasoning ?? null,
+    labelConfidence: labelData.confidence ?? null,
+    humanVerified: labelRow.humanVerified ?? false,
+    rejectionReason: labelRow.rejectionReason ?? null,
+  };
+
+  if (!labelData.isTrade) {
+    return { bucket: 'fp', match: null, labelSignals: signals.length > 0 ? signals : null, ...labelMeta };
+  }
+
+  const matchingSignal = signals.find(s => ciEq(s.symbol, trade.symbol)) ?? signals[0];
+  const match = matchingSignal
+    ? compareSignalToTrade(matchingSignal, trade)
+    : { mismatches: [] };
+
+  return { bucket: 'tp', match, labelSignals: signals.length > 0 ? signals : null, ...labelMeta };
+}
+
+/**
+ * Compute eval summary from trade labels and FN/TN data.
+ */
+function computeEvalSummary(
+  tradeLabels: TradeLabel[],
+  fnCount: number,
+  tnCount: number,
+): EvalSummary | null {
+  const tp = tradeLabels.filter(l => l.bucket === 'tp').length;
+  const fp = tradeLabels.filter(l => l.bucket === 'fp').length;
+  const unlabeled = tradeLabels.filter(l => l.bucket === 'unlabeled').length;
+  const labeled = tp + fp;
+
+  // If zero labels exist anywhere (including FN/TN), return null
+  if (labeled + fnCount + tnCount === 0) return null;
+
+  const fn = fnCount;
+  const tn = tnCount;
+  const total = tp + fp + fn + tn;
+  const accuracy = total > 0 ? roundCents(((tp + tn) / total)) : 0;
+  const precision = (tp + fp) > 0 ? roundCents(tp / (tp + fp)) : 0;
+  const recall = (tp + fn) > 0 ? roundCents(tp / (tp + fn)) : 0;
+  const f1 = (precision + recall) > 0 ? roundCents((2 * precision * recall) / (precision + recall)) : 0;
+
+  // Mismatch counts across all TPs
+  const mismatchMap: Record<string, number> = {};
+  let totalMismatches = 0;
+  for (const label of tradeLabels) {
+    if (label.bucket === 'tp' && label.match) {
+      for (const m of label.match.mismatches) {
+        mismatchMap[m.path] = (mismatchMap[m.path] ?? 0) + 1;
+        totalMismatches++;
+      }
+    }
+  }
+
+  return {
+    labeled: labeled + fnCount + tnCount,
+    unlabeled,
+    confusion: { tp, fp, tn, fn },
+    metrics: { accuracy, precision, recall, f1 },
+    mismatchCounts: Object.keys(mismatchMap).length > 0 ? mismatchMap : null,
+    totalMismatches,
+  };
 }
 
 // ── Cursor Pagination Helpers ─────────────────────────
@@ -619,14 +785,12 @@ app.get('/messages', async (c) => {
       enrichment[r.message.id] = { decision: r.decision, trade: r.trade };
     }
 
-    const ids = messages.map((m) => m.id);
-    const labels = await getLabelsForMessagesInternal(ids);
     const allAuthors = await db
       .selectDistinct({ author: schema.messages.author })
       .from(schema.messages)
       .orderBy(schema.messages.author);
 
-    return c.json({ messages, labels, enrichment, nextCursor: enrichedResult.nextCursor, authors: allAuthors.map((r) => r.author) });
+    return c.json({ messages, enrichment, nextCursor: enrichedResult.nextCursor, authors: allAuthors.map((r) => r.author) });
   }
 
   // Standard path
@@ -646,14 +810,12 @@ app.get('/messages', async (c) => {
   const messages = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor = hasMore ? messages[messages.length - 1].timestamp : null;
 
-  const ids = messages.map((m) => m.id);
-  const labels = await getLabelsForMessagesInternal(ids);
   const allAuthors = await db
     .selectDistinct({ author: schema.messages.author })
     .from(schema.messages)
     .orderBy(schema.messages.author);
 
-  return c.json({ messages, labels, enrichment: null, nextCursor, authors: allAuthors.map((r) => r.author) });
+  return c.json({ messages, enrichment: null, nextCursor, authors: allAuthors.map((r) => r.author) });
 });
 
 // ── GET /messages/nearby ─────────────────────────────
@@ -711,10 +873,10 @@ app.get('/messages/:id/related', async (c) => {
     .select()
     .from(schema.messages)
     .where(eq(schema.messages.id, messageId));
-  if (!source) return c.json({ messages: [], labels: {}, sourceSymbols: [] });
+  if (!source) return c.json({ messages: [], sourceSymbols: [] });
 
   const sourceSymbols: string[] = source.symbols;
-  if (sourceSymbols.length === 0) return c.json({ messages: [source], labels: {}, sourceSymbols });
+  if (sourceSymbols.length === 0) return c.json({ messages: [source], sourceSymbols });
 
   const symbolConditions = sourceSymbols.map(
     (s) => sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${s})`,
@@ -726,10 +888,7 @@ app.get('/messages/:id/related', async (c) => {
     .orderBy(desc(schema.messages.timestamp))
     .limit(200);
 
-  const ids = messages.map((m) => m.id);
-  const labels = await getLabelsForMessagesInternal(ids);
-
-  return c.json({ messages, labels, sourceSymbols });
+  return c.json({ messages, sourceSymbols });
 });
 
 // ── GET /authors ─────────────────────────────────────
@@ -947,6 +1106,64 @@ app.get('/backtests/:id', async (c) => {
 
   const flagsByTradeId = buildFlagsByTradeId(allTrades);
 
+  // ── Eval labels: LEFT JOIN onto trades via sourceMessageId ──
+  // Collect all unique sourceMessageIds from trades
+  const tradeMessageIds = allTrades
+    .map(t => t.sourceMessageId)
+    .filter((id): id is string => id != null);
+
+  // Also collect message IDs from SKIP decisions for FN/TN computation
+  const skipDecisionMessageIds = decisions
+    .filter(d => d.decision.outcome === 'SKIP' && d.decision.messageId)
+    .map(d => d.decision.messageId!)
+    .filter((id): id is string => id != null);
+
+  const allMessageIdsForLabels = [...new Set([...tradeMessageIds, ...skipDecisionMessageIds])];
+
+  // Fetch eval labels for all relevant messages (version = 2)
+  const evalLabelRows = allMessageIdsForLabels.length > 0
+    ? await db
+        .select()
+        .from(schema.evalLabels)
+        .where(and(
+          inArray(schema.evalLabels.messageId, allMessageIdsForLabels),
+          eq(schema.evalLabels.version, 2),
+        ))
+    : [];
+
+  // Build lookup: messageId → EvalLabelRow
+  const labelByMessageId = new Map<string, EvalLabelRow>();
+  for (const row of evalLabelRows) {
+    labelByMessageId.set(row.messageId, row);
+  }
+
+  // Compute TradeLabel per trade
+  const tradeLabelMap = new Map<string, TradeLabel>();
+  for (const trade of allTrades) {
+    const labelRow = trade.sourceMessageId ? labelByMessageId.get(trade.sourceMessageId) ?? null : null;
+    tradeLabelMap.set(trade.id, computeTradeLabel(trade, labelRow));
+  }
+
+  // Compute FN: SKIP decisions where label says isTrade=true
+  // Compute TN: SKIP decisions where label says isTrade=false
+  let fnCount = 0;
+  let tnCount = 0;
+  for (const d of decisions) {
+    if (d.decision.outcome !== 'SKIP' || !d.decision.messageId) continue;
+    const labelRow = labelByMessageId.get(d.decision.messageId);
+    if (!labelRow) continue;
+    const labelData = labelRow.humanLabel ?? labelRow.label;
+    if (labelData.isTrade) {
+      fnCount++;
+    } else {
+      tnCount++;
+    }
+  }
+
+  // Build eval summary
+  const tradeLabels = Array.from(tradeLabelMap.values());
+  const evalSummary = computeEvalSummary(tradeLabels, fnCount, tnCount);
+
   // Clamp closedAt dates to the backtest end date
   const backtestEnd = isoToDateKey(config.endDate);
   const clampedTrades = allTrades.map((t) => {
@@ -967,6 +1184,12 @@ app.get('/backtests/:id', async (c) => {
     { input: 0, output: 0 },
   );
 
+  // Build labelByTradeId for the response
+  const labelByTradeId: Record<string, TradeLabel> = {};
+  for (const [tradeId, label] of tradeLabelMap) {
+    labelByTradeId[tradeId] = label;
+  }
+
   return c.json({
     run,
     decisions,
@@ -977,6 +1200,8 @@ app.get('/backtests/:id', async (c) => {
     ...computeResult,
     llmTokens,
     messagesEndDate,
+    evalSummary,
+    labelsByTradeId: labelByTradeId,
   });
 });
 
@@ -1589,24 +1814,6 @@ async function getEnrichedMessagesInternal(opts: {
   };
 }
 
-async function getLabelsForMessagesInternal(messageIds: string[]) {
-  if (messageIds.length === 0) return {};
-  const CHUNK = 500;
-  const all: (typeof schema.messageLabels.$inferSelect)[] = [];
-  for (let i = 0; i < messageIds.length; i += CHUNK) {
-    const chunk = messageIds.slice(i, i + CHUNK);
-    const rows = await db
-      .select()
-      .from(schema.messageLabels)
-      .where(inArray(schema.messageLabels.messageId, chunk));
-    all.push(...rows);
-  }
-  const map: Record<string, typeof schema.messageLabels.$inferSelect> = {};
-  for (const row of all) {
-    map[row.messageId] = row;
-  }
-  return map;
-}
 
 async function getMessagesInternal(opts: {
   author?: string;
@@ -1645,13 +1852,12 @@ async function getMessagesInternal(opts: {
   }
 
   if (opts.labelFilter === 'labeled') {
-    conditions.push(isNotNull(schema.messageLabels.id));
-    conditions.push(eq(schema.messageLabels.reviewed, true));
+    conditions.push(isNotNull(schema.evalLabels.id));
 
     const query = db
       .select({ messages: schema.messages })
       .from(schema.messages)
-      .innerJoin(schema.messageLabels, eq(schema.messages.id, schema.messageLabels.messageId))
+      .innerJoin(schema.evalLabels, eq(schema.messages.id, schema.evalLabels.messageId))
       .orderBy(desc(schema.messages.timestamp))
       .limit(opts.limit ?? 50)
       .offset(opts.offset ?? 0);
@@ -1666,17 +1872,12 @@ async function getMessagesInternal(opts: {
     const query = db
       .select({ messages: schema.messages })
       .from(schema.messages)
-      .leftJoin(schema.messageLabels, eq(schema.messages.id, schema.messageLabels.messageId))
+      .leftJoin(schema.evalLabels, eq(schema.messages.id, schema.evalLabels.messageId))
       .orderBy(desc(schema.messages.timestamp))
       .limit(opts.limit ?? 50)
       .offset(opts.offset ?? 0);
 
-    conditions.push(
-      or(
-        isNull(schema.messageLabels.id),
-        eq(schema.messageLabels.reviewed, false),
-      )!,
-    );
+    conditions.push(isNull(schema.evalLabels.id));
 
     const rows = await query.where(and(...conditions));
     return rows.map((r) => r.messages);

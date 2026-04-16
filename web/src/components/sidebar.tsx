@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   ClipboardCheck,
   Network,
+  Database,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -38,6 +39,7 @@ const navLinks = [
   { href: '/reconciliation', label: 'Reconciliation', icon: ShieldAlert },
   { href: '/eval/review', label: 'Eval', icon: ClipboardCheck },
   { href: '/architecture', label: 'Architecture', icon: Network },
+  { href: '/db', label: 'Database', icon: Database },
 ];
 
 export function AppSidebar() {

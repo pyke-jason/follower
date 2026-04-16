@@ -50,7 +50,6 @@ export function RelatedMessagesPanel({
         ) : context && context.messages.length > 0 ? (
           <ChatFeed
             messages={context.messages}
-            labels={context.labels}
             highlightMessageId={sourceMessage.id}
             focusMessageId={sourceMessage.id}
           />

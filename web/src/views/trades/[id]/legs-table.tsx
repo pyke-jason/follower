@@ -3,6 +3,7 @@ import { Badge } from '@/components/badge';
 import { formatCurrency } from '@/lib/format';
 import type { TradeLeg } from '@src/db/schema';
 
+// NOTE: Inline table for 1-4 fixed rows (trade legs detail, not a data-driven list)
 export function LegsTable({
   legs,
   showFills = false,

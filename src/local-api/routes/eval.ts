@@ -34,6 +34,12 @@ app.get('/eval/labels', async (c) => {
   if (confidence) {
     conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.confidence') = ${confidence}`);
   }
+  const isTrade = c.req.query('isTrade');
+  if (isTrade === 'true') {
+    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.isTrade') = true`);
+  } else if (isTrade === 'false') {
+    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.isTrade') = false`);
+  }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const orderFn = sortDir === 'asc' ? asc : desc;
@@ -49,6 +55,8 @@ app.get('/eval/labels', async (c) => {
       version: schema.evalLabels.version,
       humanVerified: schema.evalLabels.humanVerified,
       humanLabel: schema.evalLabels.humanLabel,
+      rejectionReason: schema.evalLabels.rejectionReason,
+      feedback: schema.evalLabels.feedback,
       reviewedAt: schema.evalLabels.reviewedAt,
       createdAt: schema.evalLabels.createdAt,
       // Message fields
@@ -108,6 +116,8 @@ app.get('/eval/labels/:id', async (c) => {
       version: schema.evalLabels.version,
       humanVerified: schema.evalLabels.humanVerified,
       humanLabel: schema.evalLabels.humanLabel,
+      rejectionReason: schema.evalLabels.rejectionReason,
+      feedback: schema.evalLabels.feedback,
       reviewedAt: schema.evalLabels.reviewedAt,
       durationMs: schema.evalLabels.durationMs,
       inputTokens: schema.evalLabels.inputTokens,
@@ -197,6 +207,28 @@ app.post('/eval/labels/:id/approve', async (c) => {
     .set({
       humanVerified: true,
       humanLabel: null,
+      rejectionReason: null,
+      feedback: null,
+      reviewedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.evalLabels.id, id));
+
+  return c.json({ ok: true });
+});
+
+// ── POST /eval/labels/:id/reject — Reject with reason + optional feedback ──
+
+app.post('/eval/labels/:id/reject', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ reason: string; feedback?: string }>();
+  if (!body.reason) return c.json({ error: 'reason is required' }, 400);
+
+  await db.update(schema.evalLabels)
+    .set({
+      humanVerified: true,
+      humanLabel: null,
+      rejectionReason: body.reason,
+      feedback: body.feedback || null,
       reviewedAt: new Date().toISOString(),
     })
     .where(eq(schema.evalLabels.id, id));
@@ -213,6 +245,8 @@ app.post('/eval/labels/:id/undo', async (c) => {
     .set({
       humanVerified: false,
       humanLabel: null,
+      rejectionReason: null,
+      feedback: null,
       reviewedAt: null,
     })
     .where(eq(schema.evalLabels.id, id));

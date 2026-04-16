@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom';
-import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore, Zap } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCircle, MessageSquareMore, Zap, CircleCheck, AlertTriangle } from 'lucide-react';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
@@ -11,6 +11,7 @@ import { formatLegsSummary } from '@src/lib/trade';
 import type { TradeFlag } from '@src/db/schema';
 import { useTradesStore } from '@/stores/trades-store';
 import { getTradeMeta, getEventMeta } from '@/lib/snapshot-accessors';
+import type { TradeLabel } from '@/lib/api-types';
 import type { LucideIcon } from 'lucide-react';
 
 const FLAG_ICONS: Record<string, { icon: LucideIcon; tooltip: string; severity: 'muted' | 'warn' | 'danger' }> = {
@@ -51,17 +52,21 @@ export function TradeRow({
   onExpand,
   isExpanded,
   hideTrader,
+  showLabel,
 }: {
   tradeId: string;
   onExpand?: () => void;
   isExpanded?: boolean;
   hideTrader?: boolean;
+  showLabel?: boolean;
 }) {
   const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId));
   const events = useTradesStore((s) => s.eventsByTradeId[tradeId]) ?? [];
   const flags: TradeFlag[] = useTradesStore((s) => s.flagsByTradeId[tradeId]) ?? [];
+  const label: TradeLabel | undefined = useTradesStore((s) => s.labelsByTradeId[tradeId]);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const href = useScopedHref();
+  const { pathname } = useLocation();
 
   if (!trade) return null;
 
@@ -138,7 +143,7 @@ export function TradeRow({
       <TableCell>
         <span className="inline-flex items-center gap-3">
           <Link
-            to={href(`/trades/${trade.id}`)}
+            to={href(`/trades/${trade.id}`, { from: pathname })}
             className="text-foreground font-medium text-sm hover:underline underline-offset-2 decoration-muted-foreground/30"
             onClick={(e) => e.stopPropagation()}
           >
@@ -259,6 +264,50 @@ export function TradeRow({
       <TableCell className="text-right font-mono tabular-nums text-[10px] text-muted-foreground/50">
         {meta.executionMs != null ? fmtMs(meta.executionMs) : null}
       </TableCell>
+
+      {/* Label — eval accuracy */}
+      {showLabel && (
+        <TableCell className="text-center w-8">
+          <LabelIcon label={label} />
+        </TableCell>
+      )}
     </TableRow>
+  );
+}
+
+/** Compact icon for the eval label column. */
+// PERF: title used for virtualized row — native title, not Tooltip
+function LabelIcon({ label }: { label: TradeLabel | undefined }) {
+  if (!label || label.bucket === 'unlabeled') {
+    return (
+      <span title="No label" className="inline-flex justify-center">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+      </span>
+    );
+  }
+
+  if (label.bucket === 'fp') {
+    return (
+      <span title="Label says not a trade" className="inline-flex justify-center">
+        <XCircle className="h-3.5 w-3.5 text-red-500" />
+      </span>
+    );
+  }
+
+  // tp
+  const mismatches = label.match?.mismatches ?? [];
+  if (mismatches.length === 0) {
+    return (
+      <span title="Label match" className="inline-flex justify-center">
+        <CircleCheck className="h-3.5 w-3.5 text-emerald-500" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="relative inline-flex justify-center" title={`Trade matched, ${mismatches.length} field diff${mismatches.length !== 1 ? 's' : ''}`}>
+      <CircleCheck className="h-3.5 w-3.5 text-emerald-500" />
+      <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+    </span>
   );
 }

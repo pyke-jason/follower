@@ -5,16 +5,19 @@ import { EmptyState } from './empty-state';
 import { Button } from '@/components/ui/button';
 import { useTradesStore } from '@/stores/trades-store';
 import type { TradeEvent, TradeFlag, CommissionSchedule } from '@src/db/schema';
+import type { TradeLabel } from '@/lib/api-types';
 
 export function FilteredTradesView({
   eventsByTradeId = {},
   flagsByTradeId,
+  labelsByTradeId,
   channelId,
   commissionSchedule,
   startingEquity,
 }: {
   eventsByTradeId?: Record<string, TradeEvent[]>;
   flagsByTradeId: Record<string, TradeFlag[]>;
+  labelsByTradeId?: Record<string, TradeLabel>;
   channelId: string;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
@@ -27,6 +30,7 @@ export function FilteredTradesView({
     trades: filteredTrades,
     eventsByTradeId,
     flagsByTradeId,
+    labelsByTradeId,
     commissionSchedule,
     startingEquity,
     channelId,
@@ -39,7 +43,7 @@ export function FilteredTradesView({
 
   useEffect(() => {
     hydrate(hydrationData);
-  }, [filteredTrades, eventsByTradeId, flagsByTradeId, channelId, commissionSchedule, startingEquity, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filteredTrades, eventsByTradeId, flagsByTradeId, labelsByTradeId, channelId, commissionSchedule, startingEquity, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (filteredTrades.length === 0 && hasFilters) {
     return (

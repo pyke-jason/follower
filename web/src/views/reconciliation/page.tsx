@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Badge } from '@/components/badge';
 import { DataTable } from '@/components/data-table';
 import { MetricStrip, type Metric } from '@/components/metric-strip';
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { useReconAlerts } from '@/hooks/use-recon-alerts';
-import { useSearchParams } from 'react-router-dom';
+import { useReconParams } from '@/hooks/use-recon-params';
 import { EmptyState } from '@/components/empty-state';
 import { QueryBoundary, TableSkeleton } from '@/components/query-boundary';
 import { ShieldAlert, CheckCircle2 } from 'lucide-react';
@@ -62,6 +62,7 @@ function useAlertColumns(
   isResolving: boolean,
 ): Column<ReconciliationAlert>[] {
   const href = useScopedHref();
+  const { pathname } = useLocation();
   return [
     {
       key: 'type',
@@ -91,7 +92,7 @@ function useAlertColumns(
       label: 'Trade',
       render: (a) =>
         a.tradeId ? (
-          <Link to={href(`/trades/${a.tradeId}`)} className="text-xs text-info hover:underline">
+          <Link to={href(`/trades/${a.tradeId}`, { from: pathname })} className="text-xs text-info hover:underline">
             {a.tradeId.slice(0, 8)}...
           </Link>
         ) : (
@@ -129,9 +130,8 @@ function useAlertColumns(
 }
 
 export default function ReconciliationPage() {
-  const [params] = useSearchParams();
+  const { filter } = useReconParams();
   const href = useScopedHref();
-  const filter = params.get('filter') ?? undefined;
   const filterResolved = filter === 'resolved' ? true : filter === 'unresolved' ? false : undefined;
 
   const { alerts, stats, isLoading, resolve, isResolving, alertsQuery, statsQuery } = useReconAlerts(filterResolved);

@@ -106,6 +106,7 @@ export function ParseResultView({ data }: { data: Record<string, unknown> }) {
 
 // ─── SignalView — "What we're trading" (legs table) ─
 
+// NOTE: Inline table for 1-4 fixed rows (signal detail, not a data-driven list)
 export function SignalView({ data }: { data: Record<string, unknown> }) {
   const legs = Array.isArray(data.legs) ? (data.legs as LegRow[]) : [];
   return (
