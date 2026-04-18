@@ -112,6 +112,8 @@ async function runClassifyInner(
     byRoute: { 'hard-skip': 0, deterministic: 0, llm: 0 },
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    totalCacheReadInputTokens: 0,
+    totalCacheCreationInputTokens: 0,
     durationMs: 0,
   };
 
@@ -137,6 +139,22 @@ async function runClassifyInner(
   let lastProgressFlush = Date.now();
   let processedSinceFlush = 0;
   let cancelled = false;
+
+  // Serialize the first message so the xAI cache prefix lands before parallel workers race.
+  if (queue.length > 1 && concurrency > 1 && !cancelled) {
+    const warmMsg = queue.shift();
+    if (warmMsg) {
+      try {
+        const route = await classifyMessage(warmMsg, channelId, agent, summary);
+        summary.byRoute[route]++;
+      } catch (err) {
+        summary.byOutcome.ERROR++;
+        log.warn(`classify failed for ${warmMsg.id} (warmup): ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+      }
+      summary.processedMessages++;
+      processedSinceFlush++;
+    }
+  }
 
   const onSigterm = () => {
     log.info('Received SIGTERM — draining workers.');
@@ -215,6 +233,8 @@ async function classifyMessage(
 
   summary.totalInputTokens += resolved.usage?.inputTokens ?? 0;
   summary.totalOutputTokens += resolved.usage?.outputTokens ?? 0;
+  summary.totalCacheReadInputTokens = (summary.totalCacheReadInputTokens ?? 0) + (resolved.usage?.cacheReadInputTokens ?? 0);
+  summary.totalCacheCreationInputTokens = (summary.totalCacheCreationInputTokens ?? 0) + (resolved.usage?.cacheCreationInputTokens ?? 0);
 
   const route: 'hard-skip' | 'deterministic' | 'llm' =
     resolved.parseResult?.isHardSkip ? 'hard-skip'

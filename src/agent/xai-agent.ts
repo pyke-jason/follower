@@ -104,11 +104,17 @@ export class XAIAgent implements Agent {
       }
     }
 
+    // Store the non-cached portion in `inputTokens` to match Anthropic semantics
+    // (Anthropic's input_tokens excludes cached; xAI's prompt_tokens includes it).
+    const details = result.totalUsage.inputTokenDetails;
+    const cacheRead = details?.cacheReadTokens ?? 0;
+    const totalInput = result.totalUsage.inputTokens ?? 0;
+    const noCacheInput = details?.noCacheTokens ?? Math.max(0, totalInput - cacheRead);
     const usage: AgentUsage = {
-      inputTokens: result.totalUsage.inputTokens ?? 0,
+      inputTokens: noCacheInput,
       outputTokens: result.totalUsage.outputTokens ?? 0,
-      cacheReadInputTokens: result.totalUsage.inputTokenDetails?.cacheReadTokens ?? 0,
-      cacheCreationInputTokens: result.totalUsage.inputTokenDetails?.cacheWriteTokens ?? 0,
+      cacheReadInputTokens: cacheRead,
+      cacheCreationInputTokens: details?.cacheWriteTokens ?? 0,
     };
 
     return { model: this.identity, steps, result: capturedResult, usage };

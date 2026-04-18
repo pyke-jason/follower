@@ -253,8 +253,15 @@ export async function resolveLLMPath(
     };
   }
 
-  const usage = agentResult.usage.inputTokens > 0
-    ? { inputTokens: agentResult.usage.inputTokens, outputTokens: agentResult.usage.outputTokens }
+  const cacheRead = agentResult.usage.cacheReadInputTokens ?? 0;
+  const cacheWrite = agentResult.usage.cacheCreationInputTokens ?? 0;
+  const usage = agentResult.usage.inputTokens > 0 || cacheRead > 0
+    ? {
+        inputTokens: agentResult.usage.inputTokens,
+        outputTokens: agentResult.usage.outputTokens,
+        cacheReadInputTokens: cacheRead,
+        cacheCreationInputTokens: cacheWrite,
+      }
     : undefined;
   const taskResult = agentResult.result as TaskResult | null;
 
@@ -269,6 +276,8 @@ export async function resolveLLMPath(
     durationMs: agentResult.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
     inputTokens: agentResult.usage.inputTokens,
     outputTokens: agentResult.usage.outputTokens,
+    cacheReadInputTokens: cacheRead,
+    cacheCreationInputTokens: cacheWrite,
     turns: agentResult.steps.filter(s => s.tool).length,
     steps: agentResult.steps as IntentStep[],
   });
@@ -325,7 +334,7 @@ async function resolveFromCached(
   parse: ParseResult,
   ctx: OrchestratorContext,
 ): Promise<OrchestratorResult> {
-  const usage = { inputTokens: 0, outputTokens: 0 };
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
   const rawSignals: Signal[] = canonicalizeSignals(signals ?? []);
 
   if (decision === 'SKIP') {

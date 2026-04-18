@@ -92,6 +92,8 @@ export function writeIntent(entry: {
   durationMs?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
   turns?: number | null;
   steps?: IntentStep[] | null;
 }): void {
@@ -108,6 +110,8 @@ export function writeIntent(entry: {
         durationMs: entry.durationMs ?? null,
         inputTokens: entry.inputTokens ?? null,
         outputTokens: entry.outputTokens ?? null,
+        cacheReadInputTokens: entry.cacheReadInputTokens ?? null,
+        cacheCreationInputTokens: entry.cacheCreationInputTokens ?? null,
         turns: entry.turns ?? null,
         steps: entry.steps ?? null,
       })

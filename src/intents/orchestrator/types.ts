@@ -109,7 +109,12 @@ export type SerializedParseResult = z.infer<typeof SerializedParseResultSchema>;
 
 const ResultExtras = {
   parseResult: SerializedParseResultSchema.optional(),
-  usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }).optional(),
+  usage: z.object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    cacheReadInputTokens: z.number().optional(),
+    cacheCreationInputTokens: z.number().optional(),
+  }).optional(),
   llmReasoning: z.string().optional(),
   /**
    * Raw classifier output in the flat Signal schema shared with eval labels.

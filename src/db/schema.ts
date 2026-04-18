@@ -324,6 +324,8 @@ export const messageIntents = sqliteTable('message_intents', {
   durationMs:   integer('duration_ms'),
   inputTokens:  integer('input_tokens'),
   outputTokens: integer('output_tokens'),
+  cacheReadInputTokens:     integer('cache_read_input_tokens'),
+  cacheCreationInputTokens: integer('cache_creation_input_tokens'),
   turns:        integer('turns'),
   steps:        typedJson<IntentStep[]>('steps'),
   createdAt:    text('created_at').$defaultFn(() => new Date().toISOString()),
@@ -635,6 +637,8 @@ const ClassifyRunSummarySchema = z.object({
   }),
   totalInputTokens: z.number(),
   totalOutputTokens: z.number(),
+  totalCacheReadInputTokens: z.number().optional(),
+  totalCacheCreationInputTokens: z.number().optional(),
   durationMs: z.number(),
 });
 export type ClassifyRunSummary = z.infer<typeof ClassifyRunSummarySchema>;
