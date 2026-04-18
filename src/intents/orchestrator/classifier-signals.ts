@@ -41,5 +41,9 @@ export function synthesizeDeterministicSignals(parse: ParseResult): Signal[] {
 
   if (!parse.symbol) return [];
 
+  // No badge and no action verb detected → commentary/setup, not a trade.
+  // Without action, we'd emit a skeleton OPEN signal that inflates false positives.
+  if (parse.action == null) return [];
+
   return canonicalizeSignals([toSignal(parse)]);
 }

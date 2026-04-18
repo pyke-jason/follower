@@ -26,18 +26,37 @@ Steps 5-7 are gated by `needsLLM` — skipped entirely when complexity flags are
 
 ## Parser (parser.ts) -- Pure & Sync
 
-The parser is **synchronous with zero I/O**. It detects strategy, direction, strike hints, action, complexity flags, and special markers (lotto, strangle). No database queries, no API calls, no async.
+The parser is **synchronous with zero I/O**. It uses ONLY structural metadata from the Discord envelope:
+- `message.badges` — `Long` / `Short` / `Exit` drive action + direction.
+- `message.symbols[0]` — the cashtag-extracted ticker.
 
-Complexity flags trigger the LLM path. If you can handle a case deterministically, add it to the parser -- it is faster, cheaper, and more testable than LLM.
+For field-level content (strategy, strikes, expiry, statedPrice), the parser ONLY populates fields when the entire message matches a **whole-message canonical template** in `canonical-trade.ts`. Anything else stays null and the LLM handles it.
 
-Current complexity flags (see `ComplexityFlag` type in `types.ts`):
-- `extra_text` -- significant commentary beyond core trade fields
-- `multi_ticker` -- more than one ticker detected
-- `relational` -- references another trader's message
-- `mixed_action` -- entry + exit in same message
-- `ambiguous_strikes` -- slash pair could be date or strikes
-- `no_badge_exit` -- exit verb detected without Exit badge
-- `ambiguous_strategy` -- badge implies STOCK but no confirmation
+### Whole-message templates only — no prose keyword scanning
+
+**Banned pattern**: "message contains the word PDS → strategy = PDS". A long sentence that mentions `PDS` does not mean the trader is doing a PDS trade — the whole message might be commentary like "these PDSes look good today". Populating Signal fields from keyword presence produces false positives on commentary and over-specifies labels.
+
+**Required pattern**: the regex must describe the ENTIRE meaningful content after stripping badge + symbol + trivial modifiers (parens, P&L annotations like "for $5 gain", size notes like "spec size"). If any residue remains that the template didn't account for, don't match.
+
+Canonical templates we support (see `canonical-trade.ts` for the exact regexes):
+
+| Text shape | Extracts |
+|---|---|
+| `Long NVDA 182.38` / `Short VRT $260.76` | STOCK + price |
+| `Short VXX @ 34.20` / `Short SHOO at $32.03` | STOCK + price |
+| `Long NVDA 175c 12/21` | CALL strike + MM/DD expiry |
+| `Long NVDA 175c 9/26 2.03` / `… @ 2.03` / `… for 2.03` | CALL + strike + expiry + price |
+| `Long AMD 155p 10/3 @ 2.10` | PUT equivalent |
+| `Long UNH cds 330/340 for $0.52 [credit\|debit]` | CDS/PDS/PCS/CCS spread + strikes + price |
+
+Ambiguity is allowed in the output schema. `"Long NVDA"` alone returns null — we don't know if it was stock, a call, or a spread — and the LLM decides. The label schema permits `strategy: null` for that reason.
+
+### Hard skips from structural data only
+
+- Non-trade badge present without a trade badge (Annotation, Note, etc.) → SKIP.
+- No symbol AND no trade action → SKIP (pure commentary with no ticker).
+
+Paper-trade, futures, strangle, lotto, spread-acronym, and symbol-blacklist keyword scans have been removed. If a paper trade or futures ticker needs to hard-skip, the LLM returns SKIP with a reason.
 
 ## open-path.ts vs position-path.ts
 
@@ -82,4 +101,10 @@ The parser's `direction` field (LONG/SHORT) means whether the trader is BUYING o
 
 ## Known Parser Gaps
 
-CCS (Call Credit Spread) has no detection regex in the parser. Messages containing "call credit spread" or "CCS" without additional deterministic markers will fall to the LLM path.
+Anything not matching a canonical template falls to the LLM. Common unsupported shapes:
+- Bare ticker (`"Long NVDA"`) — strategy genuinely ambiguous without more context.
+- Rolls (`"rolled my $32 put to next week"`) — multi-step transactions.
+- Setup announcements (`"UNHLong calls 337s vs 340s will start taking pts"`) — future intent, not a trade yet.
+- Context-dependent exits (`"TSLA adding"`, `"same with OPEN"`) — needs prior-message context.
+
+If you find yourself wanting to add a prose keyword scan ("if the message contains X, set field Y"), stop and reconsider: is the entire message structure canonical, or are you fishing for a token in commentary? If the latter, the LLM owns it.
