@@ -361,6 +361,7 @@ function DecisionsTable({ rows, labelsByMessageId }: {
       columns={columns}
       data={rows}
       rowClassName={rowClassName}
+      getRowKey={(row) => row.decision.messageId ?? row.decision.id}
       className="flex-1 min-h-[400px]"
     />
   );

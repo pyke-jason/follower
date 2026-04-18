@@ -71,6 +71,13 @@ interface DataTableProps<T> {
   sort?: SortState<string>;
   /** Called when the user clicks a sortable column header. Required when `sort` is provided. */
   onSortChange?: (column: string) => void;
+  /**
+   * Stable row identity. When provided, Virtuoso keys rows by the returned
+   * string instead of index — preventing popover/hover state from re-attaching
+   * to a different row when the data refetches and shifts. Strongly recommended
+   * whenever rows live through data updates.
+   */
+  getRowKey?: (row: T) => string;
 }
 
 export function DataTable<T>({
@@ -86,6 +93,7 @@ export function DataTable<T>({
   isLoadingMore,
   sort: controlledSort,
   onSortChange,
+  getRowKey,
 }: DataTableProps<T>) {
   // Controlled sort: parent owns state (server-side sort for infinite scroll).
   // Uncontrolled sort: internal state with client-side sorting (static data).
@@ -185,6 +193,7 @@ export function DataTable<T>({
         context={context}
         fixedHeaderContent={renderHeader}
         itemContent={renderRow}
+        computeItemKey={getRowKey ? (_index, row) => getRowKey(row) : undefined}
         endReached={onEndReached}
         increaseViewportBy={200}
       />
