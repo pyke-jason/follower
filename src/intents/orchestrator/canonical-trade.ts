@@ -172,6 +172,16 @@ const TEMPLATES: Template[] = [
   },
 ];
 
+// Option-related word keywords. If present anywhere in the raw text (including
+// inside stripped parens), a STOCK template match would be unsafe — e.g.
+// "Long CWVX 17.56 (non stop call...)" template-matches STOCK at 17.56 but
+// the paren's "call" means the trader is buying calls.
+//
+// Word-form only (call/put/calls/puts/spread/strike/etc). NOT "Nc"/"Np"
+// patterns because those appear inside P&L annotations like "(-53c loss)"
+// where the c is "cents" not a call suffix.
+const OPTION_CUE_RE = /\b(?:call|put|calls|puts|spread|strike|premium|credit|debit|cds|pds|pcs|ccs|leap|lotto|yolo|strangle|straddle)\b/i;
+
 /**
  * Try to fully classify a message deterministically. Returns null if no
  * canonical template matches — caller should fall through to the LLM.
@@ -182,16 +192,17 @@ export function matchCanonicalTrade(
   action: TradeAction,
 ): CanonicalMatch | null {
   const core = stripToCoreText(rawText, symbol);
-  if (core === '') {
-    // No remaining content — bare "Long SYMBOL" / "Exit SYMBOL" style.
-    // Classify as bare STOCK trade if there's a direction-implying action.
-    // Actually no — if all we have is the ticker, we don't know strategy.
-    // Return null so LLM can decide.
-    return null;
-  }
+  if (core === '') return null;
   for (const tpl of TEMPLATES) {
     const m = tpl.re.exec(core);
-    if (m) return tpl.map(m, action);
+    if (!m) continue;
+    const match = tpl.map(m, action);
+    if (!match) continue;
+    // If we're about to call this STOCK but the original message contains
+    // option-related cues (most often inside stripped parens), bail out —
+    // ambiguous, let the LLM handle it.
+    if (match.strategy === 'STOCK' && OPTION_CUE_RE.test(rawText)) return null;
+    return match;
   }
   return null;
 }
