@@ -65,11 +65,14 @@ function toExpiryFromMonthName(mon: string, day: string): string {
 
 /**
  * Strip the message down to its canonical core:
- *   - remove the symbol (already extracted)
- *   - remove parenthetical content
- *   - remove trailing p&l annotations like "for $5 gain", "for .30c loss"
- *   - remove trailing commentary modifiers ("spec size", "for a swing", "small loss")
- *   - collapse whitespace
+ *   - remove badge words + symbol (already extracted from structural metadata)
+ *   - remove parenthetical content (e.g. "(36c gain)", "(2nd try)")
+ *   - remove STRUCTURED trailing P&L annotations ("for $5 gain", "- $1 - loss")
+ *
+ * Intentionally does NOT strip bare-trailing "profit"/"gain"/"loss"/"scratch"
+ * keywords: "Exit Long AGH .17 gain" has the number .17 as the P&L amount,
+ * not the exit price, so we need the template match to fail, not to strip
+ * "gain" and accidentally promote .17 to a stock price.
  */
 function stripToCoreText(text: string, symbol: string): string {
   let t = text;
@@ -77,19 +80,13 @@ function stripToCoreText(text: string, symbol: string): string {
   t = t.replace(/\b(?:Long|Short|Exit)\b/gi, '');
   // Remove the symbol (first occurrence, boundaried)
   t = t.replace(new RegExp(`\\b${symbol}\\b`, 'i'), '');
-  // Strip parens
+  // Strip parens (catches "(36c gain)", "(2nd try)", "(-53c loss)")
   t = t.replace(/\([^)]*\)/g, ' ');
-  // Strip trailing P&L annotations
+  // Strip structured trailing P&L: "for $N gain/loss/scratch/profit"
   t = t.replace(/\s+for\s+\$?\.?\d+(?:\.\d+)?\s*c?\s+(?:gain|loss|scratch|profit)\s*$/i, '');
-  t = t.replace(/\s+-\s*\$?\d+(?:\.\d+)?\s*-?\s*(?:small\s+)?(?:loss|gain|scratch)\s*$/i, '');
-  t = t.replace(/\s+(?:small|tiny|big)?\s*(?:loss|gain|scratch|profit)\s*$/i, '');
-  // Strip common size modifiers
-  t = t.replace(/\bspec\s+size\b/gi, '');
-  t = t.replace(/\bfor\s+a\s+swing\b/gi, '');
-  t = t.replace(/\b2nd\s+try\b/gi, '');
-  // Trim "-" separators
-  t = t.replace(/\s+-\s+/g, ' ');
-  // Normalize
+  // Strip structured dash-wrapped P&L: "- $N - small loss"
+  t = t.replace(/\s+-\s*\$?\d+(?:\.\d+)?\s*-?\s*(?:small|tiny|big)?\s*(?:loss|gain|scratch|profit)\s*$/i, '');
+  // Normalize whitespace
   t = t.replace(/\s{2,}/g, ' ').trim();
   return t;
 }
