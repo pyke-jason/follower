@@ -9,6 +9,7 @@ import type {
   ModelIdentity,
 } from './result.js';
 import { summarizeToolOutput, summarizeToolInput } from './result.js';
+import { estimateLlmCost } from '../lib/llm-cost.js';
 
 const log = createLogger('AnthropicAgent');
 
@@ -88,12 +89,14 @@ export class AnthropicAgent implements Agent {
         }
       } else if (msg.type === 'result') {
         const u = msg.usage;
-        usage = {
+        const tokenUsage = {
           inputTokens: u.input_tokens,
           outputTokens: u.output_tokens,
           cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
           cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
         };
+        // Anthropic does not return a cost field — compute from published rates.
+        usage = { ...tokenUsage, costUsd: estimateLlmCost(this.identity.model, tokenUsage) };
       }
     }
 

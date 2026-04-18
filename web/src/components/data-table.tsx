@@ -193,7 +193,7 @@ export function DataTable<T>({
         context={context}
         fixedHeaderContent={renderHeader}
         itemContent={renderRow}
-        computeItemKey={getRowKey ? (_index, row) => getRowKey(row) : undefined}
+        {...(getRowKey ? { computeItemKey: (_index: number, row: T) => getRowKey(row) } : {})}
         endReached={onEndReached}
         increaseViewportBy={200}
       />

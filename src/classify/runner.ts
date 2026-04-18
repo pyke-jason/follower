@@ -114,6 +114,7 @@ async function runClassifyInner(
     totalOutputTokens: 0,
     totalCacheReadInputTokens: 0,
     totalCacheCreationInputTokens: 0,
+    totalCostUsd: 0,
     durationMs: 0,
   };
 
@@ -235,6 +236,7 @@ async function classifyMessage(
   summary.totalOutputTokens += resolved.usage?.outputTokens ?? 0;
   summary.totalCacheReadInputTokens = (summary.totalCacheReadInputTokens ?? 0) + (resolved.usage?.cacheReadInputTokens ?? 0);
   summary.totalCacheCreationInputTokens = (summary.totalCacheCreationInputTokens ?? 0) + (resolved.usage?.cacheCreationInputTokens ?? 0);
+  summary.totalCostUsd = (summary.totalCostUsd ?? 0) + (resolved.usage?.costUsd ?? 0);
 
   const route: 'hard-skip' | 'deterministic' | 'llm' =
     resolved.parseResult?.isHardSkip ? 'hard-skip'

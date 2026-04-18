@@ -11,6 +11,14 @@ import type {
   ModelIdentity,
 } from './result.js';
 import { summarizeToolOutput, summarizeToolInput } from './result.js';
+import { xaiCostTicksToUsd } from '../lib/llm-cost.js';
+
+// xAI chat completions include `usage.cost_in_usd_ticks` on the raw response.
+// The @ai-sdk/xai Zod schema for chat usage DROPS this field (it's only
+// surfaced in providerMetadata for image/video models). We read the raw
+// response body that the SDK attaches as `step.response.body`.
+type XaiRawUsage = { cost_in_usd_ticks?: number };
+type XaiRawBody = { usage?: XaiRawUsage };
 
 const log = createLogger('XAIAgent');
 
@@ -110,11 +118,25 @@ export class XAIAgent implements Agent {
     const cacheRead = details?.cacheReadTokens ?? 0;
     const totalInput = result.totalUsage.inputTokens ?? 0;
     const noCacheInput = details?.noCacheTokens ?? Math.max(0, totalInput - cacheRead);
+
+    // Sum cost_in_usd_ticks across every step (one HTTP round-trip per step).
+    let costTicks = 0;
+    let anyCost = false;
+    for (const step of result.steps) {
+      const body = step.response?.body as XaiRawBody | undefined;
+      const ticks = body?.usage?.cost_in_usd_ticks;
+      if (typeof ticks === 'number') {
+        costTicks += ticks;
+        anyCost = true;
+      }
+    }
+
     const usage: AgentUsage = {
       inputTokens: noCacheInput,
       outputTokens: result.totalUsage.outputTokens ?? 0,
       cacheReadInputTokens: cacheRead,
       cacheCreationInputTokens: details?.cacheWriteTokens ?? 0,
+      ...(anyCost ? { costUsd: xaiCostTicksToUsd(costTicks) } : {}),
     };
 
     return { model: this.identity, steps, result: capturedResult, usage };

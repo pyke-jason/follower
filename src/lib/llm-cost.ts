@@ -1,13 +1,13 @@
 /**
- * LLM cost estimation with cache-aware pricing.
+ * Anthropic cost estimation from token counts.
  *
- * Pure function — no dependencies, no state. Usable by both
- * the web UI (display) and backend (logging).
+ * Anthropic does not return cost on responses, so `AnthropicAgent` computes it
+ * from published per-MTok rates. xAI returns the real billed cost via
+ * `usage.cost_in_usd_ticks` and stores it directly on `AgentUsage.costUsd` —
+ * that path never touches this file.
  *
- * Pricing is per million tokens. Cache reads are 90% cheaper than
- * regular input; cache writes are 25% more expensive. Backtests
- * benefit heavily from prompt caching (system prompt + tools are
- * cached via cache_control: { type: 'ephemeral' }).
+ * Source: https://platform.claude.com/docs/en/about-claude/models/overview
+ * Cache write (5m) = input × 1.25; cache read = input × 0.10.
  */
 
 type TokenUsage = {
@@ -20,51 +20,26 @@ type TokenUsage = {
 type ModelPricing = {
   input: number;    // $/MTok for regular (non-cached) input
   output: number;   // $/MTok for output
-  cacheWrite: number; // $/MTok for cache creation
+  cacheWrite: number; // $/MTok for cache creation (5-minute TTL)
   cacheRead: number;  // $/MTok for cache reads
 };
 
 const PRICING: Record<string, ModelPricing> = {
-  // Anthropic Claude Sonnet 4.6
-  'claude-sonnet-4-6': { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
-  // Anthropic Claude Haiku 3.5
-  'claude-haiku-4-5-20251001': { input: 0.80, output: 4.00, cacheWrite: 1.00, cacheRead: 0.08 },
-  // xAI Grok 4.1 Fast
-  'grok-4-1-fast-reasoning': { input: 0.20, output: 0.50, cacheWrite: 0.20, cacheRead: 0.02 },
-  'grok-4-1-fast-non-reasoning': { input: 0.20, output: 0.50, cacheWrite: 0.20, cacheRead: 0.02 },
+  // Claude Opus 4.7 — $5/$25 per MTok
+  'claude-opus-4-7':            { input: 5.00, output: 25.00, cacheWrite: 6.25, cacheRead: 0.50 },
+  // Claude Sonnet 4.6 — $3/$15 per MTok
+  'claude-sonnet-4-6':          { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
+  // Claude Haiku 4.5 — $1/$5 per MTok
+  'claude-haiku-4-5':           { input: 1.00, output: 5.00,  cacheWrite: 1.25, cacheRead: 0.10 },
+  'claude-haiku-4-5-20251001':  { input: 1.00, output: 5.00,  cacheWrite: 1.25, cacheRead: 0.10 },
+  // Legacy models still pinned in some runs
+  'claude-opus-4-6':            { input: 5.00, output: 25.00, cacheWrite: 6.25, cacheRead: 0.50 },
+  'claude-sonnet-4-5':          { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 },
 };
 
-// Conservative fallback — assumes Sonnet-class pricing
+// Conservative fallback — Sonnet-class pricing
 const DEFAULT_PRICING: ModelPricing = { input: 3.00, output: 15.00, cacheWrite: 3.75, cacheRead: 0.30 };
 
-// ─── Rate limits ────────────────────────────────────
-
-type ModelRateLimits = {
-  /** Max API requests per minute (from provider docs / console). */
-  rpm: number;
-};
-
-const RATE_LIMITS: Record<string, ModelRateLimits> = {
-  // Anthropic — Tier 1 (shared across the Sonnet 4.x and Haiku families)
-  'claude-sonnet-4-6': { rpm: 50 },
-  'claude-haiku-4-5-20251001': { rpm: 50 },
-  // xAI — from console (480 RPM on current plan)
-  'grok-4-1-fast-reasoning': { rpm: 480 },
-  'grok-4-1-fast-non-reasoning': { rpm: 480 },
-};
-
-const DEFAULT_RATE_LIMITS: ModelRateLimits = { rpm: 50 };
-
-export function getModelRateLimits(model: string): ModelRateLimits {
-  return RATE_LIMITS[model] ?? DEFAULT_RATE_LIMITS;
-}
-
-/**
- * Estimate LLM cost in USD from model name and token usage.
- *
- * Returns a rough estimate — actual billing may differ slightly
- * due to rounding and provider-specific rules.
- */
 export function estimateLlmCost(model: string, usage: TokenUsage): number {
   const pricing = PRICING[model] ?? DEFAULT_PRICING;
 
@@ -74,4 +49,12 @@ export function estimateLlmCost(model: string, usage: TokenUsage): number {
   const cacheReadCost = (usage.cacheReadInputTokens ?? 0) * pricing.cacheRead;
 
   return (inputCost + outputCost + cacheWriteCost + cacheReadCost) / 1_000_000;
+}
+
+/**
+ * Convert the xAI `usage.cost_in_usd_ticks` integer to dollars.
+ * Per xAI docs: 10,000,000,000 ticks = $1 (1 tick = $1e-10).
+ */
+export function xaiCostTicksToUsd(ticks: number): number {
+  return ticks / 10_000_000_000;
 }

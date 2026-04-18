@@ -255,12 +255,14 @@ export async function resolveLLMPath(
 
   const cacheRead = agentResult.usage.cacheReadInputTokens ?? 0;
   const cacheWrite = agentResult.usage.cacheCreationInputTokens ?? 0;
+  const costUsd = agentResult.usage.costUsd;
   const usage = agentResult.usage.inputTokens > 0 || cacheRead > 0
     ? {
         inputTokens: agentResult.usage.inputTokens,
         outputTokens: agentResult.usage.outputTokens,
         cacheReadInputTokens: cacheRead,
         cacheCreationInputTokens: cacheWrite,
+        ...(costUsd != null ? { costUsd } : {}),
       }
     : undefined;
   const taskResult = agentResult.result as TaskResult | null;
@@ -278,6 +280,7 @@ export async function resolveLLMPath(
     outputTokens: agentResult.usage.outputTokens,
     cacheReadInputTokens: cacheRead,
     cacheCreationInputTokens: cacheWrite,
+    costUsd: costUsd ?? null,
     turns: agentResult.steps.filter(s => s.tool).length,
     steps: agentResult.steps as IntentStep[],
   });
@@ -334,7 +337,8 @@ async function resolveFromCached(
   parse: ParseResult,
   ctx: OrchestratorContext,
 ): Promise<OrchestratorResult> {
-  const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+  // Cache hit = no network call = $0 additional cost for this resolution.
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUsd: 0 };
   const rawSignals: Signal[] = canonicalizeSignals(signals ?? []);
 
   if (decision === 'SKIP') {

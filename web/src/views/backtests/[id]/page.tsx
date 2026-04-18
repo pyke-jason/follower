@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -189,7 +189,7 @@ function BacktestDetailContent({ data, id }: {
     run, summary, byTrader, byStrategy,
     equityCurve, tradeScatter, rollingWinRate,
     decisions, allTrades, eventsByTradeId, flagsByTradeId,
-    llmTokens, messagesEndDate, evalSummary, labelsByTradeId,
+    llmCost, messagesEndDate, evalSummary, labelsByTradeId,
   } = data;
   const config = run.config;
 
@@ -400,8 +400,7 @@ function BacktestDetailContent({ data, id }: {
           <RunProgress
             processedMessages={new Set(decisions.map((d: BacktestDecisionRow) => d.message.id)).size}
             totalMessages={run.summary?.tradedMessages ?? 0}
-            agentModel={config.agentModel ?? 'default'}
-            llmTokens={llmTokens}
+            llmCost={llmCost}
             liveMetrics={liveMetrics}
             status={run.status}
             startedAt={run.startedAt}

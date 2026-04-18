@@ -114,6 +114,8 @@ const ResultExtras = {
     outputTokens: z.number(),
     cacheReadInputTokens: z.number().optional(),
     cacheCreationInputTokens: z.number().optional(),
+    /** Cost in USD (xAI: billed; Anthropic: computed from rates). */
+    costUsd: z.number().optional(),
   }).optional(),
   llmReasoning: z.string().optional(),
   /**

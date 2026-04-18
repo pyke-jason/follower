@@ -20,6 +20,12 @@ export type AgentUsage = {
   outputTokens: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  /**
+   * Actual (xAI) or computed (Anthropic) cost in USD for this agent run.
+   * Summed across all steps. Undefined when the adapter has no pricing
+   * info for the model (caller falls back to token-based estimation).
+   */
+  costUsd?: number;
 };
 
 export type AgentResult = {

@@ -1,15 +1,13 @@
 import { useState, useEffect } from 'react';
 import { InfoChip } from '@/components/info-chip';
 import { formatBytes, formatCurrency, formatDateShort, formatInteger, isoToDateKey } from '@/lib/format';
-import { estimateLlmCost } from '@src/lib/llm-cost';
 import type { LiveMetrics } from '@src/backtest/types';
 import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain } from 'lucide-react';
 
 interface RunProgressProps {
   processedMessages: number;
   totalMessages: number;
-  agentModel: string;
-  llmTokens: { input: number; output: number };
+  llmCost: number;
   liveMetrics: LiveMetrics | null;
   status: string;
   startedAt: string | null;
@@ -25,8 +23,7 @@ interface RunProgressProps {
 export function RunProgress({
   processedMessages,
   totalMessages,
-  agentModel,
-  llmTokens,
+  llmCost,
   liveMetrics,
   status,
   startedAt,
@@ -90,11 +87,6 @@ export function RunProgress({
   // Use timeline pct for replay, msg pct for extraction
   const barPct = isExtracting ? msgPct : timelinePct;
 
-  const llmCost = estimateLlmCost(agentModel, {
-    inputTokens: llmTokens.input,
-    outputTokens: llmTokens.output,
-  });
-
   const elapsedStr = elapsed == null
     ? ''
     : elapsed >= 60
@@ -135,7 +127,10 @@ export function RunProgress({
             <InfoChip label={`${liveMetrics.openPositionCount} open`} icon={Layers} />
           )}
           {llmCost > 0 && (
-            <InfoChip label={`~${formatCurrency(llmCost)} LLM`} icon={DollarSign} />
+            <InfoChip
+              label={`${formatCurrency(llmCost, 4)} LLM`}
+              icon={DollarSign}
+            />
           )}
           {liveMetrics != null && liveMetrics.databentoApiBytesRead > 0 && (
             <InfoChip label={`${formatBytes(liveMetrics.databentoApiBytesRead)} data`} icon={Database} />

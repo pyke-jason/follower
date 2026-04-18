@@ -25,7 +25,7 @@ import {
 import { CollapsibleError } from '@/views/backtests/[id]/collapsible-error';
 import { LogViewer } from '@/views/backtests/[id]/log-viewer';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
-import { formatInteger, formatDate, isoToDateKey } from '@/lib/format';
+import { formatInteger, formatDate, isoToDateKey, formatCurrency } from '@/lib/format';
 import { getClassifierSignalsFromSnapshot } from '@/lib/snapshot-accessors';
 import { Square, Trash2, ArrowLeft } from 'lucide-react';
 import type { Column } from '@/lib/api-types';
@@ -88,6 +88,7 @@ function ClassifyDetailContent({ data, id }: {
   })();
 
   const totalTokens = summary ? summary.totalInputTokens + summary.totalOutputTokens : 0;
+  const totalCostUsd = summary?.totalCostUsd ?? null;
 
   return (
     <div className="flex flex-col h-full">
@@ -163,6 +164,11 @@ function ClassifyDetailContent({ data, id }: {
               <Metric label="LLM" value={formatInteger(summary.byRoute.llm ?? 0)} muted />
               <Separator orientation="vertical" className="!h-8" />
               <Metric label="Tokens" value={totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : String(totalTokens)} muted />
+              <Metric
+                label="Cost"
+                value={totalCostUsd != null ? formatCurrency(totalCostUsd, 4) : '—'}
+                muted
+              />
             </div>
           )}
 

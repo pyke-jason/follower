@@ -57,6 +57,13 @@
       "when": 1776551686374,
       "tag": "0007_damp_baron_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1776552685667,
+      "tag": "0008_flippant_millenium_guard",
+      "breakpoints": true
     }
   ]
 }

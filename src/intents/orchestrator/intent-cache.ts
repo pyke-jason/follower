@@ -31,6 +31,11 @@ const CachedIntentSchema = z.object({
   signals: z.array(SignalSchema).nullable(),
   steps: z.array(IntentStepSchema).nullable(),
   durationMs: z.number().nullable(),
+  inputTokens: z.number().nullable(),
+  outputTokens: z.number().nullable(),
+  cacheReadInputTokens: z.number().nullable(),
+  cacheCreationInputTokens: z.number().nullable(),
+  costUsd: z.number().nullable(),
 });
 export type CachedIntent = z.infer<typeof CachedIntentSchema>;
 
@@ -54,6 +59,11 @@ export function lookupIntent(
       signals: messageIntents.signals,
       steps: messageIntents.steps,
       durationMs: messageIntents.durationMs,
+      inputTokens: messageIntents.inputTokens,
+      outputTokens: messageIntents.outputTokens,
+      cacheReadInputTokens: messageIntents.cacheReadInputTokens,
+      cacheCreationInputTokens: messageIntents.cacheCreationInputTokens,
+      costUsd: messageIntents.costUsd,
     })
     .from(messageIntents)
     .where(
@@ -94,6 +104,7 @@ export function writeIntent(entry: {
   outputTokens?: number | null;
   cacheReadInputTokens?: number | null;
   cacheCreationInputTokens?: number | null;
+  costUsd?: number | null;
   turns?: number | null;
   steps?: IntentStep[] | null;
 }): void {
@@ -112,6 +123,7 @@ export function writeIntent(entry: {
         outputTokens: entry.outputTokens ?? null,
         cacheReadInputTokens: entry.cacheReadInputTokens ?? null,
         cacheCreationInputTokens: entry.cacheCreationInputTokens ?? null,
+        costUsd: entry.costUsd ?? null,
         turns: entry.turns ?? null,
         steps: entry.steps ?? null,
       })

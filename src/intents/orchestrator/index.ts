@@ -24,6 +24,7 @@ import { traced } from '@/lib/trace.js';
 import { parseMessage } from './parser.js';
 import { resolveOpenPath, resolveAddPath } from './open-path.js';
 import { resolvePositionPath, buildReversalLeg } from './position-path.js';
+import { synthesizeDeterministicSignals } from './classifier-signals.js';
 import { resolveLLMPath } from './llm-path.js';
 import { writeIntent } from './intent-cache.js';
 import type { IntentRoute } from './intent-cache.js';
@@ -94,7 +95,7 @@ export async function resolveOrchestrator(
   if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
     log.debug(`[${ctx.message.id}] strangle exit → per-position close`);
     const r = await traced(env.trace, 'strangleExit', 'db', () => resolveStrangleExit(parse, ctx));
-    const result = { ...r, parseResult: serializedParse };
+    const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
     logResult(ctx, parse, result);
     await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
     return result;
@@ -104,7 +105,7 @@ export async function resolveOrchestrator(
   if (parse.isStrangle) {
     log.debug(`[${ctx.message.id}] strangle → forking into CALL + PUT`);
     const r = await traced(env.trace, 'strangle', 'market_data', () => resolveStrangle(parse, ctx));
-    const result = { ...r, parseResult: serializedParse };
+    const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
     logResult(ctx, parse, result);
     await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
     return result;
@@ -133,7 +134,7 @@ export async function resolveOrchestrator(
     if (parse.action === 'ADD') {
       log.debug(`[${ctx.message.id}] → add path`);
       const r = await traced(env.trace, 'addPath', 'market_data', () => resolveAddPath(parse, ctx));
-      const result = { ...r, parseResult: serializedParse };
+      const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
       logResult(ctx, parse, result);
       await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
       return result;
@@ -143,7 +144,7 @@ export async function resolveOrchestrator(
       log.debug(`[${ctx.message.id}] → open path`);
       const r = await traced(env.trace, 'openPath', 'market_data', () => resolveOpenPath(parse, ctx));
       if (r.outcome !== 'MANUAL_REVIEW') {
-        const result = { ...r, parseResult: serializedParse };
+        const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
         logResult(ctx, parse, result);
         await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
         return result;
@@ -160,7 +161,7 @@ export async function resolveOrchestrator(
       log.debug(`[${ctx.message.id}] → position path (${parse.action})`);
       const r = await traced(env.trace, 'positionPath', 'db', () => resolvePositionPath(parse, ctx));
       if (r.outcome !== 'MANUAL_REVIEW') {
-        const result = { ...r, parseResult: serializedParse };
+        const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
         logResult(ctx, parse, result);
         await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
         return result;

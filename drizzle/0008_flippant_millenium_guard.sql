@@ -1,0 +1,1 @@
+ALTER TABLE `message_intents` ADD `cost_usd` real;

@@ -326,6 +326,13 @@ export const messageIntents = sqliteTable('message_intents', {
   outputTokens: integer('output_tokens'),
   cacheReadInputTokens:     integer('cache_read_input_tokens'),
   cacheCreationInputTokens: integer('cache_creation_input_tokens'),
+  /**
+   * Cost in USD charged by the provider for this classification.
+   *   - xAI: billed value from `usage.cost_in_usd_ticks` (tick / 1e10).
+   *   - Anthropic: computed from published per-MTok rates.
+   * Null for hard-skip / deterministic routes (no LLM call) and legacy rows.
+   */
+  costUsd:      real('cost_usd'),
   turns:        integer('turns'),
   steps:        typedJson<IntentStep[]>('steps'),
   createdAt:    text('created_at').$defaultFn(() => new Date().toISOString()),
@@ -639,6 +646,8 @@ const ClassifyRunSummarySchema = z.object({
   totalOutputTokens: z.number(),
   totalCacheReadInputTokens: z.number().optional(),
   totalCacheCreationInputTokens: z.number().optional(),
+  /** Sum of LLM cost across all classifications in this run (USD). */
+  totalCostUsd: z.number().optional(),
   durationMs: z.number(),
 });
 export type ClassifyRunSummary = z.infer<typeof ClassifyRunSummarySchema>;

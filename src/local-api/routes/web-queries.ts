@@ -1175,14 +1175,22 @@ app.get('/backtests/:id', async (c) => {
   const commissionSchedule = config.commissionSchedule;
   const computeResult = computeFromTrades(clampedTrades, decisions, mtmSnapshots, commissionSchedule);
 
-  // LLM token sums
-  const llmTokens = decisions.reduce(
-    (acc, d) => ({
-      input: acc.input + (d.decision.inputTokens ?? 0),
-      output: acc.output + (d.decision.outputTokens ?? 0),
-    }),
-    { input: 0, output: 0 },
-  );
+  // Cost lives on `message_intents` (per-classification), not `run_decisions`.
+  // Sum across this run's messages for the configured agent model.
+  const llmCost = await (async () => {
+    const messageIds = Array.from(new Set(
+      decisions.map((d) => d.decision.messageId).filter((x): x is string => !!x),
+    ));
+    if (messageIds.length === 0) return 0;
+    const where = config.agentModel
+      ? and(inArray(schema.messageIntents.messageId, messageIds), eq(schema.messageIntents.model, config.agentModel))
+      : inArray(schema.messageIntents.messageId, messageIds);
+    const [row] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${schema.messageIntents.costUsd}), 0)` })
+      .from(schema.messageIntents)
+      .where(where);
+    return Number(row?.total ?? 0);
+  })();
 
   // Build labelByTradeId for the response
   const labelByTradeId: Record<string, TradeLabel> = {};
@@ -1198,7 +1206,7 @@ app.get('/backtests/:id', async (c) => {
     flagsByTradeId,
     mtmSnapshots,
     ...computeResult,
-    llmTokens,
+    llmCost,
     messagesEndDate,
     evalSummary,
     labelsByTradeId: labelByTradeId,
