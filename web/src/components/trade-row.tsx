@@ -11,7 +11,7 @@ import { formatLegsSummary } from '@src/lib/trade';
 import type { TradeFlag } from '@src/db/schema';
 import { useTradesStore } from '@/stores/trades-store';
 import { getTradeMeta, getEventMeta } from '@/lib/snapshot-accessors';
-import type { TradeLabel } from '@/lib/api-types';
+import type { TradeLabel } from '@src/local-api/http-schemas';
 import type { LucideIcon } from 'lucide-react';
 
 const FLAG_ICONS: Record<string, { icon: LucideIcon; tooltip: string; severity: 'muted' | 'warn' | 'danger' }> = {

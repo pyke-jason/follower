@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Trade, TradeEvent, TradeFlag, CommissionSchedule, Task, Message, RunDecision } from '@src/db/schema';
-import type { TradeLabel } from '@/lib/api-types';
+import type { TradeLabel } from '@src/local-api/http-schemas';
 import { api } from '@/lib/api';
 
 export type TradeStory = {

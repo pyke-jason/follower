@@ -7,8 +7,11 @@
  * `as Record<string, unknown>` chains.
  */
 
+import { z } from 'zod';
 import type { RunDecision, TradeEvent, TradeMetadata } from '@src/db/schema';
 import type { Span as TraceSpan } from '@src/lib/trace';
+import { SignalSchema } from '@src/agent/schemas';
+import type { Signal } from '@src/agent/schemas';
 
 export type { TraceSpan };
 
@@ -79,6 +82,21 @@ export function getCancelledOrder(snap: Record<string, unknown>): SnapshotCancel
 /** Extract the signal sub-object from a SETTLED snapshot. */
 export function getSnapshotSignal(snap: Record<string, unknown>): SnapshotSignal | undefined {
   return snap.signal as SnapshotSignal | undefined;
+}
+
+const ClassifierSignalsSchema = z.array(SignalSchema);
+
+/**
+ * Pull the raw classifier `Signal[]` from a SETTLED snapshot, validating the
+ * payload against `SignalSchema`. Returns [] on missing or malformed data so
+ * callers can treat this as a single source of truth without nullish checks.
+ */
+export function getClassifierSignalsFromSnapshot(snap: unknown): Signal[] {
+  if (!snap || typeof snap !== 'object') return [];
+  const raw = (snap as { classifierSignals?: unknown }).classifierSignals;
+  if (!Array.isArray(raw)) return [];
+  const parsed = ClassifierSignalsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : [];
 }
 
 /**

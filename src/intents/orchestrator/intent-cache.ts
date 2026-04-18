@@ -7,9 +7,12 @@
  */
 
 import { eq, and } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '@/db/client.js';
-import { messageIntents } from '@/db/schema.js';
-import type { Signal, IntentStep } from '@/db/schema.js';
+import { messageIntents, IntentStepSchema } from '@/db/schema.js';
+import type { IntentStep } from '@/db/schema.js';
+import { SignalSchema } from '@/agent/schemas.js';
+import type { Signal } from '@/agent/schemas.js';
 import { createLogger } from '@/lib/logger.js';
 
 const log = createLogger('IntentCache');
@@ -18,22 +21,27 @@ const log = createLogger('IntentCache');
  * Bump when NLU_SYSTEM_PROMPT, tool schemas, parser logic, or prompt
  * construction changes. Invalidates all cached results.
  */
-export const INTENT_VERSION = 2;
+export const INTENT_VERSION = 29;
 
 export type IntentRoute = 'hard-skip' | 'deterministic' | 'llm';
 
-export type CachedIntent = {
-  decision: string;
-  reasoning: string | null;
-  signals: Signal[] | null;
-  steps: IntentStep[] | null;
-  durationMs: number | null;
-};
+const CachedIntentSchema = z.object({
+  decision: z.string(),
+  reasoning: z.string().nullable(),
+  signals: z.array(SignalSchema).nullable(),
+  steps: z.array(IntentStepSchema).nullable(),
+  durationMs: z.number().nullable(),
+});
+export type CachedIntent = z.infer<typeof CachedIntentSchema>;
 
 /**
  * Look up a cached LLM intent result.
  * Returns null on miss. Only useful for LLM-route results (deterministic
  * paths are cheap to re-run).
+ *
+ * On schema mismatch (tightened validators rejecting older payloads),
+ * logs a warning and returns null — the caller re-runs the LLM and the
+ * fresh row overwrites via the unique-index upsert path.
  */
 export function lookupIntent(
   messageId: string,
@@ -60,13 +68,14 @@ export function lookupIntent(
 
   if (!row) return null;
 
-  return {
-    decision: row.decision,
-    reasoning: row.reasoning,
-    signals: row.signals,
-    steps: row.steps,
-    durationMs: row.durationMs,
-  };
+  const parsed = CachedIntentSchema.safeParse(row);
+  if (!parsed.success) {
+    log.warn(
+      `Cached intent schema mismatch for ${messageId} v${INTENT_VERSION} — treating as miss: ${parsed.error.message.slice(0, 200)}`,
+    );
+    return null;
+  }
+  return parsed.data;
 }
 
 /**

@@ -11,10 +11,10 @@ export const DirectionSchema = z.enum(['LONG', 'SHORT']);
 export type Direction = z.infer<typeof DirectionSchema>;
 
 export const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
-export type LegType = z.infer<typeof LegTypeSchema>;
 
 /** Option types only (no STOCK). */
-export type OptionType = Exclude<LegType, 'STOCK'>;
+export const OptionTypeSchema = z.enum(['CALL', 'PUT']);
+export type OptionType = z.infer<typeof OptionTypeSchema>;
 
 export const LegActionSchema = z.enum(['BUY', 'SELL']);
 export type LegAction = z.infer<typeof LegActionSchema>;

@@ -189,7 +189,7 @@ async function fetchWithRetry(
 
   for (let attempt = 0; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(url, init);
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
 
       if (res.ok) {
         if (res.status !== 200) {
@@ -240,11 +240,13 @@ async function fetchWithRetry(
         `Databento ${res.status} after ${RETRY_MAX_ATTEMPTS} retries: ${text.slice(0, 500)}`
       );
     } catch (err) {
-      // Network errors (TypeError from fetch) — retryable
-      if (err instanceof TypeError && attempt < RETRY_MAX_ATTEMPTS) {
+      // Network errors (TypeError) or 30s fetch timeout (AbortError/TimeoutError) — retryable
+      const isRetryable = err instanceof TypeError ||
+        (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError'));
+      if (isRetryable && attempt < RETRY_MAX_ATTEMPTS) {
         log.warn(
           `Retry ${attempt + 1}/${RETRY_MAX_ATTEMPTS} — ` +
-          `network error: ${err.message}, ` +
+          `${(err as Error).name}: ${(err as Error).message}, ` +
           `day=${context.day ?? '?'}, symbols=${(context.symbols ?? []).join(',').slice(0, 80)}`
         );
         const wait = Math.min(delay + Math.random() * delay * 0.5, RETRY_MAX_DELAY_MS);

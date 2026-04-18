@@ -8,7 +8,7 @@ import { db, schema } from '@/db/client.js';
 import { sendSystemAlert } from '@/lib/alert.js';
 import { assertSafeRunId } from '@/lib/channel.js';
 import { validateBody, validateParams } from '../validate.js';
-import { BacktestSpawnBodySchema, RunIdParamsSchema } from '../http-schemas.js';
+import { ClassifySpawnBodySchema, RunIdParamsSchema } from '../http-schemas.js';
 
 function logPathForRun(runId: string): string {
   assertSafeRunId(runId);
@@ -32,37 +32,13 @@ function readLogTail(logPath: string, bytes = 2000): string {
 const app = new Hono();
 
 app.post('/spawn', async (c) => {
-  const body = await validateBody(BacktestSpawnBodySchema, c);
-
-  const { runId, startDate, endDate, traders, agentProvider, agentModel, refreshQuoteCache, logLevel,
-    disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity,
-    commissionSchedule } = body;
-
-  const args = [
-    startDate,
-    endDate,
-    traders.join(','),
-    ...(agentProvider ? ['--agent-provider', agentProvider] : []),
-    ...(agentModel ? ['--agent-model', agentModel] : []),
-    '--quote-tape',
-    ...(refreshQuoteCache ? ['--refresh-quote-cache'] : []),
-    ...(disableRiskLimits ? ['--disable-risk-limits'] : []),
-    ...(maxOnSymbol != null ? ['--max-on-symbol', String(maxOnSymbol)] : []),
-    ...(maxTotalPositions != null ? ['--max-total-positions', String(maxTotalPositions)] : []),
-    ...(maxDrawdownPct != null ? ['--max-drawdown-pct', String(maxDrawdownPct)] : []),
-    ...(maxAgentCalls != null ? ['--max-agent-calls', String(maxAgentCalls)] : []),
-    ...(startingEquity != null ? ['--starting-equity', String(startingEquity)] : []),
-    ...(commissionSchedule?.option?.perContract != null ? ['--commission-option', String(commissionSchedule.option.perContract)] : []),
-    ...(commissionSchedule?.stock?.perShare != null ? ['--commission-stock', String(commissionSchedule.stock.perShare)] : []),
-    '--log-level', logLevel ?? 'debug',
-    '--run-id', runId,
-  ];
+  const { runId } = await validateBody(ClassifySpawnBodySchema, c);
 
   fs.mkdirSync(PATHS.logs, { recursive: true });
   const logPath = logPathForRun(runId);
   const logFd = fs.openSync(logPath, 'w');
 
-  const child = spawn('npx', ['tsx', 'src/backtest/launch.ts', ...args], {
+  const child = spawn('npx', ['tsx', 'src/classify/launch.ts', runId], {
     cwd: PROJECT_ROOT,
     stdio: ['ignore', logFd, logFd],
     detached: true,
@@ -79,22 +55,22 @@ app.post('/spawn', async (c) => {
 
     try {
       const [run] = await db
-        .select({ status: schema.backtestRuns.status })
-        .from(schema.backtestRuns)
-        .where(eq(schema.backtestRuns.id, runId));
+        .select({ status: schema.classifyRuns.status })
+        .from(schema.classifyRuns)
+        .where(eq(schema.classifyRuns.id, runId));
 
       if (!run || (run.status !== 'PENDING' && run.status !== 'RUNNING')) return;
 
       const errorMsg = `Process crashed (${exitDesc}).\n${tail}`.slice(0, 4000);
 
       await db
-        .update(schema.backtestRuns)
+        .update(schema.classifyRuns)
         .set({ status: 'FAILED', error: errorMsg, completedAt: new Date().toISOString() })
-        .where(eq(schema.backtestRuns.id, runId));
+        .where(eq(schema.classifyRuns.id, runId));
 
       await sendSystemAlert({
         severity: 'warning',
-        title: 'Backtest Process Crashed',
+        title: 'Classify Process Crashed',
         message: `Run \`${runId}\` died with ${exitDesc}`,
         fields: [
           { name: 'Run ID', value: runId, inline: true },
@@ -103,10 +79,10 @@ app.post('/spawn', async (c) => {
         ],
       });
     } catch (err) {
-      console.error('[backtests/spawn] exit handler error:', err);
+      console.error('[classify/spawn] exit handler error:', err);
       sendSystemAlert({
-        title: 'Backtest exit handler error',
-        message: `Failed to update DB after backtest crash: ${err instanceof Error ? err.message : String(err)}`,
+        title: 'Classify exit handler error',
+        message: `Failed to update DB after classify crash: ${err instanceof Error ? err.message : String(err)}`,
         severity: 'warning',
       });
     }
@@ -122,9 +98,9 @@ app.post('/:id/cancel', async (c) => {
   const { id: runId } = validateParams(RunIdParamsSchema, c);
 
   const [run] = await db
-    .select({ pid: schema.backtestRuns.pid, status: schema.backtestRuns.status })
-    .from(schema.backtestRuns)
-    .where(eq(schema.backtestRuns.id, runId));
+    .select({ pid: schema.classifyRuns.pid, status: schema.classifyRuns.status })
+    .from(schema.classifyRuns)
+    .where(eq(schema.classifyRuns.id, runId));
 
   if (!run) {
     return c.json({ error: 'Run not found' }, 404);

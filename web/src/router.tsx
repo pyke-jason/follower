@@ -21,6 +21,9 @@ const Messages = lazy(() => import('./views/messages/page'));
 const Backtests = lazy(() => import('./views/backtests/page'));
 const NewBacktest = lazy(() => import('./views/backtests/new/page'));
 const BacktestDetail = lazy(() => import('./views/backtests/[id]/page'));
+const Classify = lazy(() => import('./views/classify/page'));
+const NewClassify = lazy(() => import('./views/classify/new/page'));
+const ClassifyDetail = lazy(() => import('./views/classify/[id]/page'));
 const Reconciliation = lazy(() => import('./views/reconciliation/page'));
 const Settings = lazy(() => import('./views/settings/page'));
 const EvalReview = lazy(() => import('./views/eval/review/page'));
@@ -101,6 +104,9 @@ export function App() {
         <Route path="backtests" element={<Backtests />} />
         <Route path="backtests/new" element={<NewBacktest />} />
         <Route path="backtests/:id" element={<BacktestDetail />} />
+        <Route path="classify" element={<Classify />} />
+        <Route path="classify/new" element={<NewClassify />} />
+        <Route path="classify/:id" element={<ClassifyDetail />} />
         <Route path="reconciliation" element={<Reconciliation />} />
         <Route path="eval/review" element={<EvalReview />} />
         <Route path="architecture" element={<Architecture />} />

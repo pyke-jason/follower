@@ -46,11 +46,6 @@ export const TableDataResponseSchema = z.object({
   foreignKeys: z.array(ForeignKeyMetaSchema),
 });
 
-export const CellUpdateSchema = z.object({
-  column: z.string(),
-  value: z.union([z.string(), z.number(), z.null()]),
-});
-
 // ─── Inferred Types ──────────────────────────────────
 
 export type ColumnMeta = z.infer<typeof ColumnMetaSchema>;
@@ -59,4 +54,3 @@ export type TableMeta = z.infer<typeof TableMetaSchema>;
 export type Filter = z.infer<typeof FilterSchema>;
 export type FilterOp = z.infer<typeof FilterOpSchema>;
 export type TableDataResponse = z.infer<typeof TableDataResponseSchema>;
-export type CellUpdate = z.infer<typeof CellUpdateSchema>;

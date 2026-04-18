@@ -13,6 +13,7 @@
     "local-api": "tsx watch src/local-api/server.ts",
     "web": "cd web && pnpm dev",
     "backtest": "tsx src/backtest/launch.ts",
+    "classify": "tsx src/classify/launch.ts",
     "secrets:import": "tsx src/lib/secrets/manage.ts import",
     "secrets:set": "tsx src/lib/secrets/manage.ts set",
     "secrets:get": "tsx src/lib/secrets/manage.ts get",

@@ -1,30 +1,16 @@
 import { Hono } from 'hono';
-import type { Direction, LegAction } from '@/lib/enums.js';
 import type { BrokerService } from '@/broker/interface.js';
 import { db, schema } from '@/db/client.js';
 import { eq } from 'drizzle-orm';
 import { recordTrade } from '@/trades/record-trade.js';
+import { validateBody } from '../validate.js';
+import { ForceExitBodySchema } from '../http-schemas.js';
 
 export function createTradesRouter(channelBrokers: Map<string, BrokerService>) {
   const app = new Hono();
 
   app.post('/force-exit', async (c) => {
-    const body = await c.req.json<{
-      channelId: string;
-      tradeId: string;
-      symbol: string;
-      trader: string;
-      strategy: string;
-      direction: Direction;
-      legs: Array<{
-        symbol: string;
-        type: 'CALL' | 'PUT' | 'STOCK';
-        action: LegAction;
-        quantity: number;
-        expiry: string;
-        strike: number;
-      }>;
-    }>();
+    const body = await validateBody(ForceExitBodySchema, c);
 
     const broker = channelBrokers.get(body.channelId);
     if (!broker) {

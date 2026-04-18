@@ -297,11 +297,17 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
       log.info(`Processed ${i}/${tradableMessages.length} messages | open=${openTradesCount} closed=${closedTradesCount[0].count} PnL=$${safeParseFloat(totalPnlResult[0].total).toFixed(2)}`);
     }
 
-    await processMessage(
-      msg, btCtx, shadows,
-      { agentTrades, skipped, skipReasons, failedEntrySignals, failedExitSignals },
-      (stats) => { agentTrades = stats.agentTrades; skipped = stats.skipped; failedEntrySignals = stats.failedEntrySignals; failedExitSignals = stats.failedExitSignals; },
-    );
+    try {
+      await processMessage(
+        msg, btCtx, shadows,
+        { agentTrades, skipped, skipReasons, failedEntrySignals, failedExitSignals },
+        (stats) => { agentTrades = stats.agentTrades; skipped = stats.skipped; failedEntrySignals = stats.failedEntrySignals; failedExitSignals = stats.failedExitSignals; },
+      );
+    } catch (err) {
+      // One message's orchestrator/pricing error must not kill the run.
+      log.warn(`processMessage failed for ${msg.id}: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+      skipped++;
+    }
 
     // ── Write liveMetrics after every message ──
     const shouldRecomputeMtm =

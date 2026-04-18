@@ -256,56 +256,6 @@ export class SimBroker implements BrokerService {
 
     const isOptions = this.hasOptionLegs(params);
 
-    // ── Broker-level buying power gate (always enforced) ──
-    if (!params.isClosing && params.legs.length > 0) {
-      let underlyingPrice: number;
-      try {
-        const quote = await this.marketData.getQuote(params.symbol, this.clock.now());
-        underlyingPrice = (quote.bid + quote.ask) / 2;
-      } catch {
-        underlyingPrice = params.limitPrice ?? 0;
-      }
-
-      // For MARKET option orders, use the actual spread mid-price as the debit/credit estimate
-      // rather than falling back to the underlying price (which would produce a wildly inflated margin).
-      let estimatedPrice: number | null = params.limitPrice ?? null;
-      if (estimatedPrice === null) {
-        if (isOptions) {
-          try {
-            const spreadQuote = await this.getOptionSpreadQuote(params, this.clock.now(), EXECUTION_LOOKBACK_MINS);
-            estimatedPrice = (spreadQuote.bid + spreadQuote.ask) / 2;
-          } catch {
-            // No spread quote available — skip the buying power check now;
-            // the MARKET fill path below will reject with "no market data".
-            estimatedPrice = null;
-          }
-        } else {
-          estimatedPrice = underlyingPrice;
-        }
-      }
-
-      if (estimatedPrice !== null) {
-        const legs: TradeLeg[] = params.legs;
-
-        const marginReq = computeMarginRequirement({
-          strategy: params.strategy,
-          direction: params.direction,
-          entryPrice: estimatedPrice,
-          quantity: tradeQty(params.legs[0]?.quantity),
-          legs,
-          underlyingPrice,
-        });
-
-        if (marginReq.initial > 0) {
-          const balance = await this.getAccountBalance();
-          if (marginReq.initial > balance.buyingPower) {
-            log.debug(`  REJECTED: insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})`);
-            return { orderId, status: 'REJECTED', message: `Insufficient buying power (need $${marginReq.initial.toFixed(0)}, have $${balance.buyingPower.toFixed(0)})` };
-          }
-        }
-      }
-    }
-
     if (params.orderType === 'LIMIT') {
       if (params.limitPrice == null) {
         log.debug(`  LIMIT rejected: no limit price`);
@@ -722,8 +672,11 @@ export class SimBroker implements BrokerService {
   }
 
   async getAccountBalance(): Promise<AccountBalance> {
-    const nowMs = this.clock.now().getTime();
-    if (this.balanceCache && this.balanceCache.key === nowMs) {
+    // Minute-level cache: MTM over all open positions costs ~1-2s per option leg
+    // via Databento. Bursts of messages within the same minute can share a single
+    // MTM result without affecting correctness of the buying-power / margin checks.
+    const bucketMinute = Math.floor(this.clock.now().getTime() / 60_000);
+    if (this.balanceCache && this.balanceCache.key === bucketMinute) {
       return this.balanceCache.value;
     }
 
@@ -844,7 +797,7 @@ export class SimBroker implements BrokerService {
       timestamp: now.toISOString(),
       maintenanceMargin: roundCents(totalMaintenanceMargin),
     };
-    this.balanceCache = { key: nowMs, value: result };
+    this.balanceCache = { key: bucketMinute, value: result };
     return result;
   }
 

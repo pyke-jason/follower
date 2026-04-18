@@ -23,7 +23,7 @@ export const SignalObject = z.object({
   action: TradeActionSchema,
   symbol: z.string().min(1),
   direction: DirectionSchema.nullable().default(null)
-    .describe('Required for OPEN. Optional hint for exits.'),
+    .describe('LONG | SHORT. REQUIRED whenever determinable. Always set from badges when present: [LONG BADGE] → LONG; [SHORT BADGE] → SHORT; [EXIT BADGE]+[LONG BADGE] → LONG (closing a long); [EXIT BADGE]+[SHORT BADGE] → SHORT (closing a short). For spreads: CDS/PCS → LONG (bullish); PDS/CCS → SHORT (bearish). Only null if the message truly provides no directional signal at all.'),
   strategy: StrategySchema.nullable().default(null)
     .describe('Required for OPEN. Optional hint for exits.'),
   /** Strike prices stated in the message. Single option: [332.5]. Spread: [190, 192.5]. */
@@ -34,7 +34,7 @@ export const SignalObject = z.object({
     .describe('Expiry as stated in message: "Oct (17)", "next week", "5/23", "0DTE". Omit if not stated.'),
   /** Stated price: option premium, credit amount, or stock entry price. */
   statedPrice: zPrice.nullable().default(null)
-    .describe('OPEN only. The premium/price the trader stated in the message (e.g. 3.72 from "for $3.72"). Omit if no price stated.'),
+    .describe('The fill price the trader stated (entry on OPEN/ADD, exit on CLOSE/TRIM, credit/debit on spreads). REQUIRED whenever a price-like number appears anywhere in the message — including numbers stuck to the ticker ("Short UPS 85.38" → 85.38, "Long NVO55" → 55, "Short CVNA at 362" → 362), prices after badges ("Short Exit HOOD 98.89" → 98.89), and spread credits ("for .63 credit" → 0.63). Only null if the message contains NO price-like number, OR the number is unambiguously a quantity ("1,000 shares"), P&L figure ("$2 profit", "(51c gain)"), risk budget ("$500 risk"), or alert/threshold ("alert at 50"). When in doubt, emit the number. MUST be strictly positive (>0).'),
   /** Shares or contracts when stated. */
   quantity: z.number().nullable().default(null)
     .describe('Shares or contracts when stated. Omit if not stated.'),

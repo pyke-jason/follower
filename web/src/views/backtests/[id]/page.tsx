@@ -40,7 +40,7 @@ import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary'
 import type { ChatHydration } from '@/views/messages/chat-hydrator';
 import type { Message, Trade, RunDecision } from '@src/db/schema';
 import type { MessageDecision, TradeOutcome } from '@src/lib/enriched-message';
-import type { BacktestDetailResponse } from '@/lib/api-types';
+import type { BacktestDetailResponse } from '@src/local-api/http-schemas';
 
 type BacktestDecisionJoinRow = {
   decision: RunDecision;

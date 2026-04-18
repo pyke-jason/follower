@@ -333,13 +333,14 @@ export const messageIntents = sqliteTable('message_intents', {
   uniqueIndex('idx_intents_unique').on(table.messageId, table.model, table.version),
 ]);
 
-export type IntentStep = {
-  toolName?: string;
-  toolInput?: unknown;
-  toolOutput?: unknown;
-  reasoning?: string;
-  durationMs?: number;
-};
+export const IntentStepSchema = z.object({
+  toolName: z.string().optional(),
+  toolInput: z.unknown().optional(),
+  toolOutput: z.unknown().optional(),
+  reasoning: z.string().optional(),
+  durationMs: z.number().optional(),
+});
+export type IntentStep = z.infer<typeof IntentStepSchema>;
 
 // ─── Commission Schedule ─────────────────────────────
 
@@ -602,3 +603,63 @@ export type RuntimeHealth = typeof runtimeHealth.$inferSelect;
 export type DiscrepancyReview = typeof discrepancyReviews.$inferSelect;
 export type NewDiscrepancyReview = typeof discrepancyReviews.$inferInsert;
 export type EvalLabelRow = typeof evalLabels.$inferSelect;
+
+// ─── Classify Runs (re-added after DB-Zod refactor drop) ───
+
+const ClassifyRunConfigSchema = z.object({
+  startDate: z.string(),
+  endDate: z.string(),
+  traders: z.array(z.string()),
+  agentProvider: z.string().optional(),
+  agentModel: z.string().optional(),
+  concurrency: z.number().int().positive().optional(),
+  maxAgentCalls: z.number().int().positive().optional(),
+});
+export type ClassifyRunConfig = z.infer<typeof ClassifyRunConfigSchema>;
+export { ClassifyRunConfigSchema };
+
+const ClassifyRunSummarySchema = z.object({
+  totalMessages: z.number(),
+  tradableMessages: z.number(),
+  processedMessages: z.number(),
+  byOutcome: z.object({
+    EXECUTE: z.number(),
+    SKIP: z.number(),
+    MANUAL_REVIEW: z.number(),
+    ERROR: z.number(),
+  }),
+  byRoute: z.object({
+    'hard-skip': z.number(),
+    deterministic: z.number(),
+    llm: z.number(),
+  }),
+  totalInputTokens: z.number(),
+  totalOutputTokens: z.number(),
+  durationMs: z.number(),
+});
+export type ClassifyRunSummary = z.infer<typeof ClassifyRunSummarySchema>;
+export { ClassifyRunSummarySchema };
+
+export const classifyRuns = sqliteTable('classify_runs', {
+  id:              text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  status:          text('status').notNull().default('PENDING'),
+  config:          typedJson<ClassifyRunConfig>('config').notNull(),
+  summary:         typedJson<ClassifyRunSummary>('summary'),
+  createdAt:       text('created_at').$defaultFn(() => new Date().toISOString()),
+  startedAt:       text('started_at'),
+  completedAt:     text('completed_at'),
+  durationMs:      integer('duration_ms'),
+  error:           text('error'),
+  pid:             integer('pid'),
+  name:            text('name'),
+  experimentTag:   text('experiment_tag'),
+  pinned:          integer('pinned', { mode: 'boolean' }).default(false),
+  progressIndex:   integer('progress_index').default(0),
+  progressTotal:   integer('progress_total').default(0),
+  lastMessageTs:   text('last_message_ts'),
+  lastMessageId:   text('last_message_id'),
+}, (table) => [
+  index('idx_classify_runs_status').on(table.status),
+  index('idx_classify_runs_experiment_tag').on(table.experimentTag),
+]);
+export type ClassifyRun = typeof classifyRuns.$inferSelect;

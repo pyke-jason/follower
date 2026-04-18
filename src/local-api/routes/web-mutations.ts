@@ -5,8 +5,20 @@ import type { CommissionSchedule, BacktestRunConfig } from '@/db/schema.js';
 import { btChannel, generateRunId } from '@/lib/channel.js';
 import { generateReportFromTrades } from '@/backtest/report.js';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '@/config/risk-defaults.js';
-import { getProvider, SECRET_KEYS } from '@/lib/secrets/index.js';
+import { getProvider } from '@/lib/secrets/index.js';
 import { isClosed } from '@/trades/filters.js';
+import { validateBody } from '../validate.js';
+import {
+  BacktestStartBodySchema,
+  BulkIdsBodySchema,
+  TraderCreateBodySchema,
+  TraderPatchBodySchema,
+  TradersBulkBodySchema,
+  ReconciliationResolveBodySchema,
+  SettingsSecretBodySchema,
+  SettingsTogglesBodySchema,
+  EvalReviewBodySchema,
+} from '../http-schemas.js';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:3791';
 const DEFAULT_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'];
@@ -68,24 +80,7 @@ async function deleteIntentsByMessageIds(ids: string[]) {
 // ─── Backtests ───────────────────────────────────────
 
 app.post('/backtests/start', async (c) => {
-  const body = await c.req.json<{
-    startDate: string;
-    endDate: string;
-    traders: string[];
-    refreshQuoteCache?: boolean;
-    agentProvider?: string;
-    agentModel?: string;
-    logLevel?: string;
-    disableRiskLimits?: boolean;
-    clearIntentCache?: boolean;
-    maxOnSymbol?: number;
-    maxTotalPositions?: number;
-    maxDrawdownPct?: number;
-    maxAgentCalls?: number;
-    startingEquity?: number;
-    commissionOptionPerContract?: number;
-    commissionStockPerShare?: number;
-  }>();
+  const body = await validateBody(BacktestStartBodySchema, c);
 
   const {
     startDate, endDate, traders,
@@ -95,10 +90,6 @@ app.post('/backtests/start', async (c) => {
     startingEquity = DEFAULT_STARTING_EQUITY,
     commissionOptionPerContract, commissionStockPerShare,
   } = body;
-
-  if (!startDate || !endDate || !traders?.length) {
-    return c.json({ error: 'Missing required fields' }, 400);
-  }
 
   const commissionSchedule: CommissionSchedule = {
     option: { perContract: commissionOptionPerContract ?? DEFAULT_COMMISSION_SCHEDULE.option.perContract },
@@ -304,7 +295,7 @@ app.delete('/backtests/:id', async (c) => {
 });
 
 app.post('/backtests/bulk-delete', async (c) => {
-  const { ids } = await c.req.json<{ ids: string[] }>();
+  const { ids } = await validateBody(BulkIdsBodySchema, c);
   if (!ids?.length) return c.json({ ok: true });
 
   // Kill any running processes
@@ -452,11 +443,10 @@ app.post('/tasks/:id/skip', async (c) => {
 // ─── Traders ─────────────────────────────────────────
 
 app.post('/traders', async (c) => {
-  const { name } = await c.req.json<{ name: string }>();
-  if (!name?.trim()) return c.json({ error: 'Name required' }, 400);
+  const { name } = await validateBody(TraderCreateBodySchema, c);
 
   await db.insert(schema.trackedTraders).values({
-    name: name.trim(),
+    name,
     enabled: true,
     strategies: DEFAULT_STRATEGIES,
     notes: null,
@@ -480,35 +470,32 @@ app.patch('/traders/:name', async (c) => {
   const name = decodeURIComponent(c.req.param('name'));
   if (!name) return c.json({ error: 'Name required' }, 400);
 
-  const body = await c.req.json<{
-    field: 'enabled' | 'strategies' | 'notes' | 'riskPercent';
-    value: boolean | string[] | string | number | null;
-  }>();
+  const body = await validateBody(TraderPatchBodySchema, c);
 
   switch (body.field) {
     case 'enabled': {
       await db
         .update(schema.trackedTraders)
-        .set({ enabled: body.value as boolean })
+        .set({ enabled: body.value })
         .where(eq(schema.trackedTraders.name, name));
       break;
     }
     case 'strategies': {
       await db
         .update(schema.trackedTraders)
-        .set({ strategies: body.value as string[] })
+        .set({ strategies: body.value })
         .where(eq(schema.trackedTraders.name, name));
       break;
     }
     case 'notes': {
       await db
         .update(schema.trackedTraders)
-        .set({ notes: (body.value as string | null) || null })
+        .set({ notes: body.value || null })
         .where(eq(schema.trackedTraders.name, name));
       break;
     }
     case 'riskPercent': {
-      const riskPercent = body.value as number | null;
+      const riskPercent = body.value;
       if (riskPercent == null) {
         await db
           .update(schema.trackedTraders)
@@ -533,25 +520,18 @@ app.patch('/traders/:name', async (c) => {
       }
       break;
     }
-    default:
-      return c.json({ error: `Unknown field: ${body.field}` }, 400);
   }
 
   return c.json({ ok: true });
 });
 
 app.post('/traders/bulk', async (c) => {
-  const body = await c.req.json<{
-    action: 'add' | 'remove' | 'toggleStrategy';
-    names: string[];
-    strategy?: string;
-    enable?: boolean;
-  }>();
+  const body = await validateBody(TradersBulkBodySchema, c);
+  const { names } = body;
 
-  const { action, names } = body;
   if (!names?.length) return c.json({ ok: true });
 
-  switch (action) {
+  switch (body.action) {
     case 'add': {
       const valid = names.map((n) => n.trim()).filter(Boolean);
       if (!valid.length) return c.json({ ok: true });
@@ -573,7 +553,6 @@ app.post('/traders/bulk', async (c) => {
     }
     case 'toggleStrategy': {
       const { strategy, enable } = body;
-      if (!strategy || enable == null) return c.json({ error: 'strategy and enable required' }, 400);
       const traders = await db
         .select()
         .from(schema.trackedTraders)
@@ -592,8 +571,6 @@ app.post('/traders/bulk', async (c) => {
       }
       break;
     }
-    default:
-      return c.json({ error: `Unknown action: ${action}` }, 400);
   }
 
   return c.json({ ok: true });
@@ -603,9 +580,7 @@ app.post('/traders/bulk', async (c) => {
 
 app.post('/reconciliation/:id/resolve', async (c) => {
   const alertId = c.req.param('id');
-  const { reason } = await c.req.json<{ reason: string }>();
-
-  if (!reason) return c.json({ error: 'Reason required' }, 400);
+  const { reason } = await validateBody(ReconciliationResolveBodySchema, c);
 
   await db.update(schema.reconciliationAlerts)
     .set({
@@ -627,8 +602,7 @@ const TOGGLE_ENV: Record<string, string> = {
 };
 
 app.post('/settings/secrets', async (c) => {
-  const { key, value } = await c.req.json<{ key: string; value: string }>();
-  if (!key || !value) return c.json({ ok: false, error: 'Key and value are required' }, 400);
+  const { key, value } = await validateBody(SettingsSecretBodySchema, c);
 
   try {
     const provider = getProvider();
@@ -657,7 +631,7 @@ app.post('/settings/toggles/:id', async (c) => {
   const key = TOGGLE_ENV[id];
   if (!key) return c.json({ ok: false, error: `Unknown toggle: ${id}` }, 400);
 
-  const { enabled } = await c.req.json<{ enabled: boolean }>();
+  const { enabled } = await validateBody(SettingsTogglesBodySchema, c);
 
   try {
     const provider = getProvider();
@@ -736,15 +710,11 @@ app.post('/settings/test/pushover', async (c) => {
 
 app.post('/eval/review/:id', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json<{ verdict: string; reason?: string }>();
-
-  if (!['parser_right', 'label_right', 'both_wrong', 'skip'].includes(body.verdict)) {
-    return c.json({ error: 'Invalid verdict' }, 400);
-  }
+  const body = await validateBody(EvalReviewBodySchema, c);
 
   await db.update(schema.discrepancyReviews)
     .set({
-      verdict: body.verdict as 'parser_right' | 'label_right' | 'both_wrong' | 'skip',
+      verdict: body.verdict,
       reason: body.reason ?? null,
       reviewed: true,
       reviewedAt: new Date().toISOString(),

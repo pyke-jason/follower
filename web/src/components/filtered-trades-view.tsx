@@ -5,7 +5,7 @@ import { EmptyState } from './empty-state';
 import { Button } from '@/components/ui/button';
 import { useTradesStore } from '@/stores/trades-store';
 import type { TradeEvent, TradeFlag, CommissionSchedule } from '@src/db/schema';
-import type { TradeLabel } from '@/lib/api-types';
+import type { TradeLabel } from '@src/local-api/http-schemas';
 
 export function FilteredTradesView({
   eventsByTradeId = {},

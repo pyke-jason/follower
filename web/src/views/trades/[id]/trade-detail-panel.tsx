@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { X, CircleCheck, XCircle, AlertTriangle } from 'lucide-react';
 import { ReactionBadges } from '@/components/reaction-badges';
 import type { Message, RunDecision, Trade } from '@src/db/schema';
-import type { TradeLabel } from '@/lib/api-types';
+import type { TradeLabel } from '@src/local-api/http-schemas';
 import { formatLegsSummary } from '@src/lib/trade';
 import { ExecutionTrace } from './execution-trace';
 import { Button } from '@/components/ui/button';

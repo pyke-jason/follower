@@ -28,14 +28,15 @@ import { resolveLLMPath } from './llm-path.js';
 import { writeIntent } from './intent-cache.js';
 import type { IntentRoute } from './intent-cache.js';
 import { getRecentChatMessages, formatChatContext } from '../trader-context.js';
-import type {
-  OrchestratorContext,
-  OrchestratorEnv,
-  OrchestratorResult,
-  ParseResult,
-  SerializedParseResult,
-  ResolvedSignal,
-  Leg,
+import {
+  SerializedParseResultSchema,
+  type OrchestratorContext,
+  type OrchestratorEnv,
+  type OrchestratorResult,
+  type ParseResult,
+  type SerializedParseResult,
+  type ResolvedSignal,
+  type Leg,
 } from './types.js';
 
 export type { OrchestratorEnv, OrchestratorResult, ResolvedSignal };
@@ -81,6 +82,7 @@ export async function resolveOrchestrator(
       outcome: 'SKIP',
       reason: parse.skipReason ?? 'hard skip',
       parseResult: serializedParse,
+      classifierSignals: [],
     };
     logResult(ctx, parse, result);
     await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'hard-skip'));
@@ -255,8 +257,14 @@ async function emitOrchestratorEvents(
 // ── Serialize ParseResult for snapshot ────────────────────────────────────────
 
 function serializeParseResult(parse: ParseResult): SerializedParseResult {
-  const { complexityFlags, targetStrategy, skipReason, ...rest } = parse;
-  return { ...rest, complexityFlags: Array.from(complexityFlags) };
+  const { complexityFlags, targetStrategy: _drop, ...rest } = parse;
+  // Write-time validation: catches schema drift at the source. Every orchestrator
+  // branch funnels through this helper, so every `run_decisions.snapshot.parseResult`
+  // payload is guaranteed to match SerializedParseResultSchema.
+  return SerializedParseResultSchema.parse({
+    ...rest,
+    complexityFlags: Array.from(complexityFlags),
+  });
 }
 
 // ── Info-level summary log ────────────────────────────────────────────────────

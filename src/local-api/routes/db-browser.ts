@@ -1,143 +1,138 @@
 import { Hono } from 'hono';
-import { sqliteClient } from '@/db/client.js';
+import { db, schema } from '@/db/client.js';
 import {
-  FiltersSchema, CellUpdateSchema,
+  eq, ne, like, gt, lt, gte, lte, isNull, isNotNull, and,
+  asc, desc, count, getTableColumns, isTable,
+} from 'drizzle-orm';
+import type { AnyColumn, SQL } from 'drizzle-orm';
+import { getTableConfig } from 'drizzle-orm/sqlite-core';
+import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
+import {
+  FiltersSchema, type FilterOp,
   type ColumnMeta, type ForeignKeyMeta, type TableMeta,
 } from '../db-browser-types.js';
+import { validateBody, validateQuery } from '../validate.js';
+import { CellUpdateBodySchema, DbTableQuerySchema } from '../http-schemas.js';
 
 const app = new Hono();
 
-// ─── Helpers ─────────────────────────────────────────
-
-const EXCLUDED_TABLES = new Set([
-  'sqlite_sequence', '__drizzle_migrations', 'drizzle_migrations',
-  'sqlite_schema', 'sqlite_temp_schema',
-]);
-
-type PragmaTableInfo = { cid: number; name: string; type: string; notnull: 0 | 1; dflt_value: string | null; pk: number };
-type PragmaFKList = { id: number; seq: number; table: string; from: string; to: string };
-
-function getTableNames(): string[] {
-  const rows = sqliteClient.pragma('table_list') as { name: string; type: string }[];
-  return rows
-    .filter(r => r.type === 'table' && !r.name.startsWith('_') && !r.name.startsWith('sqlite_') && !EXCLUDED_TABLES.has(r.name))
-    .map(r => r.name)
-    .sort();
+const tableByName: Map<string, SQLiteTable> = new Map();
+for (const value of Object.values(schema)) {
+  if (isTable(value)) {
+    const table = value as SQLiteTable;
+    tableByName.set(getTableConfig(table).name, table);
+  }
 }
 
-function getColumns(table: string): ColumnMeta[] {
-  const rows = sqliteClient.pragma(`table_info("${table}")`) as PragmaTableInfo[];
-  return rows.map(r => ({
-    name: r.name,
-    type: r.type || 'TEXT',
-    notnull: r.notnull === 1,
-    primaryKey: r.pk > 0,
-    defaultValue: r.dflt_value,
+function describeColumns(table: SQLiteTable): ColumnMeta[] {
+  return getTableConfig(table).columns.map((col) => ({
+    name: col.name,
+    type: col.getSQLType(),
+    notnull: col.notNull,
+    primaryKey: col.primary,
+    defaultValue: col.default !== undefined ? String(col.default) : null,
   }));
 }
 
-function getForeignKeys(table: string): ForeignKeyMeta[] {
-  const rows = sqliteClient.pragma(`foreign_key_list("${table}")`) as PragmaFKList[];
-  return rows.map(r => ({
-    column: r.from,
-    referencedTable: r.table,
-    referencedColumn: r.to,
-  }));
+function describeForeignKeys(table: SQLiteTable): ForeignKeyMeta[] {
+  const out: ForeignKeyMeta[] = [];
+  for (const fk of getTableConfig(table).foreignKeys) {
+    const ref = fk.reference();
+    const refTableName = getTableConfig(ref.foreignTable as SQLiteTable).name;
+    for (let i = 0; i < ref.columns.length; i++) {
+      out.push({
+        column: ref.columns[i].name,
+        referencedTable: refTableName,
+        referencedColumn: ref.foreignColumns[i].name,
+      });
+    }
+  }
+  return out;
 }
 
-function getRowCount(table: string): number {
-  const row = sqliteClient.prepare(`SELECT count(*) as cnt FROM "${table}"`).get() as { cnt: number };
-  return row.cnt;
+function findColumn(table: SQLiteTable, sqlName: string): AnyColumn | undefined {
+  return getTableConfig(table).columns.find((c) => c.name === sqlName) as AnyColumn | undefined;
 }
 
-function getPrimaryKeyColumn(columns: ColumnMeta[]): string | null {
-  return columns.find(c => c.primaryKey)?.name ?? null;
+function findColumnPropertyName(table: SQLiteTable, sqlName: string): string | undefined {
+  for (const [propName, col] of Object.entries(getTableColumns(table))) {
+    if ((col as AnyColumn).name === sqlName) return propName;
+  }
+  return undefined;
 }
 
-function validateTableName(name: string): boolean {
-  return getTableNames().includes(name);
+function primaryKeyColumn(table: SQLiteTable): AnyColumn | undefined {
+  return getTableConfig(table).columns.find((c) => c.primary) as AnyColumn | undefined;
 }
 
-function validateColumnName(column: string, columns: ColumnMeta[]): boolean {
-  return columns.some(c => c.name === column);
+function buildCondition(col: AnyColumn, op: FilterOp, value: string | undefined): SQL {
+  switch (op) {
+    case 'eq':          return eq(col, value);
+    case 'neq':         return ne(col, value);
+    case 'like':        return like(col, `%${value ?? ''}%`);
+    case 'gt':          return gt(col, value as never);
+    case 'lt':          return lt(col, value as never);
+    case 'gte':         return gte(col, value as never);
+    case 'lte':         return lte(col, value as never);
+    case 'is_null':     return isNull(col);
+    case 'is_not_null': return isNotNull(col);
+  }
+}
+
+function safeJsonParse(s: string): unknown {
+  try { return JSON.parse(s); } catch { return undefined; }
 }
 
 // ─── GET /db/tables ──────────────────────────────────
 
-app.get('/db/tables', (c) => {
-  const names = getTableNames();
-  const tables: TableMeta[] = names.map(name => ({
-    name,
-    rowCount: getRowCount(name),
-    columns: getColumns(name),
-    foreignKeys: getForeignKeys(name),
+app.get('/db/tables', async (c) => {
+  const names = [...tableByName.keys()].sort();
+  const tables: TableMeta[] = await Promise.all(names.map(async (name) => {
+    const table = tableByName.get(name)!;
+    const [{ n }] = await db.select({ n: count() }).from(table);
+    return {
+      name,
+      rowCount: n,
+      columns: describeColumns(table),
+      foreignKeys: describeForeignKeys(table),
+    };
   }));
   return c.json(tables);
 });
 
 // ─── GET /db/tables/:name ────────────────────────────
 
-app.get('/db/tables/:name', (c) => {
+app.get('/db/tables/:name', async (c) => {
   const tableName = c.req.param('name');
-  if (!validateTableName(tableName)) {
-    return c.json({ error: `Unknown table: ${tableName}` }, 404);
-  }
+  const table = tableByName.get(tableName);
+  if (!table) return c.json({ error: `Unknown table: ${tableName}` }, 404);
 
-  const columns = getColumns(tableName);
-  const foreignKeys = getForeignKeys(tableName);
+  const { limit, offset, sort, dir, filters: filtersParam } = validateQuery(DbTableQuerySchema, c);
 
-  // Pagination
-  const limit = Math.min(Math.max(parseInt(c.req.query('limit') ?? '100'), 1), 1000);
-  const offset = Math.max(parseInt(c.req.query('offset') ?? '0'), 0);
+  const columns = describeColumns(table);
+  const sortColName = sort ?? primaryKeyColumn(table)?.name ?? columns[0]?.name;
+  const sortCol = sortColName ? findColumn(table, sortColName) : undefined;
+  if (!sortCol) return c.json({ error: `Invalid sort column: ${sortColName}` }, 400);
 
-  // Sort
-  const sortCol = c.req.query('sort') ?? getPrimaryKeyColumn(columns) ?? columns[0]?.name ?? 'rowid';
-  const sortDir = c.req.query('dir') === 'asc' ? 'ASC' : 'DESC';
-
-  if (sortCol !== 'rowid' && !validateColumnName(sortCol, columns)) {
-    return c.json({ error: `Invalid sort column: ${sortCol}` }, 400);
-  }
-
-  // Filters
-  let whereClauses: string[] = [];
-  let whereParams: unknown[] = [];
-
-  const filtersParam = c.req.query('filters');
+  const conditions: SQL[] = [];
   if (filtersParam) {
-    try {
-      const filters = FiltersSchema.parse(JSON.parse(filtersParam));
-      for (const f of filters) {
-        if (!validateColumnName(f.column, columns)) continue;
-
-        const col = `"${f.column}"`;
-        switch (f.op) {
-          case 'eq':          whereClauses.push(`${col} = ?`); whereParams.push(f.value); break;
-          case 'neq':         whereClauses.push(`${col} != ?`); whereParams.push(f.value); break;
-          case 'like':        whereClauses.push(`${col} LIKE ?`); whereParams.push(`%${f.value}%`); break;
-          case 'gt':          whereClauses.push(`${col} > ?`); whereParams.push(f.value); break;
-          case 'lt':          whereClauses.push(`${col} < ?`); whereParams.push(f.value); break;
-          case 'gte':         whereClauses.push(`${col} >= ?`); whereParams.push(f.value); break;
-          case 'lte':         whereClauses.push(`${col} <= ?`); whereParams.push(f.value); break;
-          case 'is_null':     whereClauses.push(`${col} IS NULL`); break;
-          case 'is_not_null': whereClauses.push(`${col} IS NOT NULL`); break;
-        }
-      }
-    } catch {
-      return c.json({ error: 'Invalid filters parameter' }, 400);
+    const parsed = FiltersSchema.safeParse(safeJsonParse(filtersParam));
+    if (!parsed.success) return c.json({ error: 'Invalid filters parameter' }, 400);
+    for (const f of parsed.data) {
+      const col = findColumn(table, f.column);
+      if (col) conditions.push(buildCondition(col, f.op, f.value));
     }
   }
 
-  const whereSQL = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const orderBy = dir === 'asc' ? asc(sortCol) : desc(sortCol);
 
-  const countRow = sqliteClient.prepare(
-    `SELECT count(*) as cnt FROM "${tableName}" ${whereSQL}`
-  ).get(...whereParams) as { cnt: number };
+  const [rows, [{ n: total }]] = await Promise.all([
+    db.select().from(table).where(where).orderBy(orderBy).limit(limit).offset(offset),
+    db.select({ n: count() }).from(table).where(where),
+  ]);
 
-  const rows = sqliteClient.prepare(
-    `SELECT * FROM "${tableName}" ${whereSQL} ORDER BY "${sortCol}" ${sortDir} LIMIT ? OFFSET ?`
-  ).all(...whereParams, limit, offset) as Record<string, unknown>[];
-
-  return c.json({ rows, total: countRow.cnt, columns, foreignKeys });
+  return c.json({ rows, total, columns, foreignKeys: describeForeignKeys(table) });
 });
 
 // ─── PATCH /db/tables/:name/:rowId ───────────────────
@@ -145,31 +140,19 @@ app.get('/db/tables/:name', (c) => {
 app.patch('/db/tables/:name/:rowId', async (c) => {
   const tableName = c.req.param('name');
   const rowId = c.req.param('rowId');
+  const table = tableByName.get(tableName);
+  if (!table) return c.json({ error: `Unknown table: ${tableName}` }, 404);
 
-  if (!validateTableName(tableName)) {
-    return c.json({ error: `Unknown table: ${tableName}` }, 404);
-  }
+  const pk = primaryKeyColumn(table);
+  if (!pk) return c.json({ error: `No primary key found for table: ${tableName}` }, 400);
 
-  const columns = getColumns(tableName);
-  const pkCol = getPrimaryKeyColumn(columns);
-  if (!pkCol) {
-    return c.json({ error: `No primary key found for table: ${tableName}` }, 400);
-  }
+  const body = await validateBody(CellUpdateBodySchema, c);
+  const propName = findColumnPropertyName(table, body.column);
+  if (!propName) return c.json({ error: `Invalid column: ${body.column}` }, 400);
 
-  let body: { column: string; value: string | number | null };
-  try {
-    body = CellUpdateSchema.parse(await c.req.json());
-  } catch {
-    return c.json({ error: 'Invalid body: expected { column, value }' }, 400);
-  }
-
-  if (!validateColumnName(body.column, columns)) {
-    return c.json({ error: `Invalid column: ${body.column}` }, 400);
-  }
-
-  sqliteClient.prepare(
-    `UPDATE "${tableName}" SET "${body.column}" = ? WHERE "${pkCol}" = ?`
-  ).run(body.value, rowId);
+  await db.update(table)
+    .set({ [propName]: body.value } as never)
+    .where(eq(pk, rowId));
 
   return c.json({ ok: true });
 });

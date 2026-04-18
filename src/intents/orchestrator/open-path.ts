@@ -209,20 +209,26 @@ export async function resolveOpenPath(
     strategy !== 'STOCK' &&
     strikeSelection.strikes.length === 1
   ) {
-    const quote = await ctx.marketData.getQuote(symbol);
-    const stockPrice = (quote.bid + quote.ask) / 2;
-    const strike = strikeSelection.strikes[0];
-    if (strike < stockPrice * 0.15 || strike > stockPrice * 5) {
-      log.debug(
-        'open-path: explicit strike %s implausible vs stock price %s — falling back to ATM',
-        strike,
-        stockPrice.toFixed(2),
-      );
-      strikeSelection = { method: 'atm' };
+    try {
+      const quote = await ctx.marketData.getQuote(symbol);
+      const stockPrice = (quote.bid + quote.ask) / 2;
+      const strike = strikeSelection.strikes[0];
+      if (strike < stockPrice * 0.15 || strike > stockPrice * 5) {
+        log.debug(
+          'open-path: explicit strike %s implausible vs stock price %s — falling back to ATM',
+          strike,
+          stockPrice.toFixed(2),
+        );
+        strikeSelection = { method: 'atm' };
+      }
+    } catch (err) {
+      // Safety-net only — if we can't price the underlying, accept the stated strike and proceed.
+      log.debug('open-path: stock quote failed (%s), keeping explicit strike', err instanceof Error ? err.message.slice(0, 80) : String(err));
     }
   }
 
   let resolvedExpiry: string | null = null;
+  let fallbackExpiries: string[] = [];
 
   if (strategy === 'STOCK') {
     // Stock needs no expiry
@@ -267,6 +273,7 @@ export async function resolveOpenPath(
       }
       if (candidateExpiries.length > 0) {
         resolvedExpiry = candidateExpiries[0];
+        fallbackExpiries = candidateExpiries.slice(1);
         log.debug('open-path: defaulted to nearest expiry %s for %s (no hint)', resolvedExpiry, symbol);
       } else {
         return {
@@ -476,7 +483,21 @@ export async function resolveOpenPath(
     return { outcome: 'MANUAL_REVIEW', reason: 'No expiry resolved' };
   }
 
-  const buildResult = await buildLegsForExpiry(resolvedExpiry);
+  const tryExpiries = [resolvedExpiry, ...fallbackExpiries];
+  let buildResult: ResolvedLegs | { error: string } | null = null;
+  for (const expiry of tryExpiries) {
+    const r = await buildLegsForExpiry(expiry);
+    if ('error' in r && /No option chain/.test(r.error)) {
+      log.debug('open-path: %s no chain for %s, trying next candidate', symbol, expiry);
+      continue;
+    }
+    resolvedExpiry = expiry;
+    buildResult = r;
+    break;
+  }
+  if (buildResult === null) {
+    return { outcome: 'MANUAL_REVIEW', reason: `No option chain found for ${symbol} on any candidate expiry` };
+  }
   if ('error' in buildResult) {
     return {
       outcome: 'MANUAL_REVIEW',
@@ -639,7 +660,15 @@ export async function resolveAddPath(
     }
   }
 
-  // Enrich direction from the matched position when parse didn't determine it
+  // ADD with no matching position and no parsed strategy = unfollowed add.
+  // Same shape as unfollowed_exit: we can't size this without prior-position context.
+  if (!matched && !parse.strategy) {
+    return {
+      outcome: 'MANUAL_REVIEW',
+      reason: `no open position found for ${parse.symbol} to ADD to`,
+    };
+  }
+
   const enrichedParse: ParseResult = {
     ...parse,
     action: 'OPEN', // delegate to open-path as a new OPEN

@@ -8,7 +8,17 @@
  * See docs/plan-orchestrator-technical.md for the full design.
  */
 
-import type { Direction, LegAction, OptionType, OrderCategory, Strategy, TradeAction } from '../../lib/enums.js';
+import { z } from 'zod';
+import {
+  DirectionSchema,
+  LegActionSchema,
+  OptionTypeSchema,
+  OrderCategorySchema,
+  StrategySchema,
+  TradeActionSchema,
+} from '../../lib/enums.js';
+import type { Direction, OptionType, Strategy } from '../../lib/enums.js';
+import { SignalSchema } from '../../agent/schemas.js';
 import type { Quote, OptionsChain } from '../../broker/types.js';
 import type { BrokerService } from '../../broker/interface.js';
 import type { SignalEventEmitter } from '../../decisions/emitter.js';
@@ -16,26 +26,29 @@ import type { Message, TradeLeg } from '../../db/schema.js';
 import type { TraceContext } from '../../lib/trace.js';
 import type { Agent } from '../../agent/result.js';
 
-// ── Output types ──────────────────────────────────────────────────────────────
+// ── Output schemas ────────────────────────────────────────────────────────────
 
-export type OptionLeg = {
-  type: 'option';
-  symbol: string;           // underlying ticker, e.g. "AAPL"
-  expiry: string;           // YYYY-MM-DD
-  optionType: OptionType;
-  strike: number;
-  side: LegAction;
-  quantity: number;         // ratio per lot (1 = standard, 2 = ratio spread)
-};
+export const OptionLegSchema = z.object({
+  type: z.literal('option'),
+  symbol: z.string().min(1),
+  expiry: z.string(),
+  optionType: OptionTypeSchema,
+  strike: z.number(),
+  side: LegActionSchema,
+  quantity: z.number(),
+});
+export type OptionLeg = z.infer<typeof OptionLegSchema>;
 
-export type StockLeg = {
-  type: 'stock';
-  symbol: string;
-  side: LegAction;
-  quantity: number;         // ratio per lot
-};
+export const StockLegSchema = z.object({
+  type: z.literal('stock'),
+  symbol: z.string().min(1),
+  side: LegActionSchema,
+  quantity: z.number(),
+});
+export type StockLeg = z.infer<typeof StockLegSchema>;
 
-export type Leg = OptionLeg | StockLeg;
+export const LegSchema = z.discriminatedUnion('type', [OptionLegSchema, StockLegSchema]);
+export type Leg = z.infer<typeof LegSchema>;
 
 /**
  * A fully concrete broker instruction produced by the orchestrator.
@@ -45,24 +58,87 @@ export type Leg = OptionLeg | StockLeg;
  * - quantity on each leg is a per-lot ratio; the execution pipeline multiplies
  *   by the sized lot count.
  */
-export type ResolvedSignal = {
-  orderType: OrderCategory;
-  legs: Leg[];
-  limitPrice?: number;
-  /** The trade action resolved by the orchestrator. Required — no implicit defaults. */
-  action: TradeAction;
-  /** For position-reducing signals: the trade ID matched by the orchestrator. */
-  tradeId?: string;
-  /** For TRIM signals: the exit fraction (0.0–1.0) from the orchestrator parse. */
-  exitPercent?: number;
-};
+export const ResolvedSignalSchema = z.object({
+  orderType: OrderCategorySchema,
+  legs: z.array(LegSchema),
+  limitPrice: z.number().optional(),
+  action: TradeActionSchema,
+  tradeId: z.string().optional(),
+  exitPercent: z.number().optional(),
+});
+export type ResolvedSignal = z.infer<typeof ResolvedSignalSchema>;
 
 export type { SignalEventEmitter } from '../../decisions/emitter.js';
 
-export type OrchestratorResult =
-  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number }; llmReasoning?: string }
-  | { outcome: 'SKIP'; reason: string; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number }; llmReasoning?: string }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number }; llmReasoning?: string };
+// ── Parse-result schemas (must precede OrchestratorResult) ────────────────────
+
+export const ComplexityFlagSchema = z.enum([
+  'extra_text',       // significant commentary beyond core trade fields
+  'multi_ticker',     // more than one ticker detected
+  'relational',       // references another trader's message ("following Dave")
+  'mixed_action',     // entry + exit in same message
+  'ambiguous_strikes',  // slash pair could be date or strikes (cheap-stock spread)
+  'no_badge_exit',    // exit verb detected without Exit badge — needs LLM confirmation
+  'ambiguous_strategy',  // badge implies STOCK but no price/qty confirmation — needs LLM
+]);
+export type ComplexityFlag = z.infer<typeof ComplexityFlagSchema>;
+
+/**
+ * JSON-safe projection of ParseResult — what lands in `run_decisions.snapshot`
+ * and `PARSED`/`SETTLED` event bodies. `complexityFlags` is an array here
+ * (not a Set); `targetStrategy` is excluded because it is internal-only.
+ */
+export const SerializedParseResultSchema = z.object({
+  action: TradeActionSchema.nullable(),
+  symbol: z.string().nullable(),
+  direction: DirectionSchema.nullable(),
+  strategy: StrategySchema.nullable(),
+  strikes: z.array(z.number()).nullable(),
+  expiryHint: z.string().nullable(),
+  premiumHint: z.number().nullable(),
+  exitPercent: z.number().nullable(),
+  isLotto: z.boolean(),
+  isStrangle: z.boolean(),
+  isHardSkip: z.boolean(),
+  skipReason: z.string().nullable(),
+  complexityFlags: z.array(ComplexityFlagSchema),
+});
+export type SerializedParseResult = z.infer<typeof SerializedParseResultSchema>;
+
+// ── OrchestratorResult ────────────────────────────────────────────────────────
+
+const ResultExtras = {
+  parseResult: SerializedParseResultSchema.optional(),
+  usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }).optional(),
+  llmReasoning: z.string().optional(),
+  /**
+   * Raw classifier output in the flat Signal schema shared with eval labels.
+   * - LLM path: the raw `submit_decision.signals` array.
+   * - Deterministic path: synthesized from the parse result.
+   * - Hard-skip: empty array.
+   */
+  classifierSignals: z.array(SignalSchema).optional(),
+} as const;
+
+export const OrchestratorResultSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('EXECUTE'),
+    signals: z.array(ResolvedSignalSchema),
+    ...ResultExtras,
+  }),
+  z.object({
+    outcome: z.literal('SKIP'),
+    reason: z.string(),
+    ...ResultExtras,
+  }),
+  z.object({
+    outcome: z.literal('MANUAL_REVIEW'),
+    reason: z.string(),
+    partial: z.array(ResolvedSignalSchema.partial()).optional(),
+    ...ResultExtras,
+  }),
+]);
+export type OrchestratorResult = z.infer<typeof OrchestratorResultSchema>;
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -144,23 +220,16 @@ export type OrchestratorContext = {
 
 // ── Internal parse types ──────────────────────────────────────────────────────
 
-export type ComplexityFlag =
-  | 'extra_text'     // significant commentary beyond core trade fields
-  | 'multi_ticker'   // more than one ticker detected
-  | 'relational'     // references another trader's message ("following Dave")
-  | 'mixed_action'   // entry + exit in same message
-  | 'ambiguous_strikes'  // slash pair could be date or strikes (cheap-stock spread)
-  | 'no_badge_exit'      // exit verb detected without Exit badge — needs LLM confirmation
-  | 'ambiguous_strategy';  // badge implies STOCK but no price/qty confirmation — needs LLM
-
 /**
  * Output of the synchronous parse step. Contains everything derivable from
  * the message text and badges alone, before any I/O.
  *
- * This is an internal type — it never appears in the orchestrator's output.
+ * This is an internal type — it never crosses a process or storage boundary,
+ * so it keeps `Set<ComplexityFlag>` for efficient in-code add/has checks.
+ * `SerializedParseResult` is the JSON-safe projection that lands in snapshots.
  */
 export type ParseResult = {
-  action: TradeAction | null;
+  action: z.infer<typeof TradeActionSchema> | null;
   symbol: string | null;
   direction: Direction | null;
   strategy: Strategy | null;
@@ -174,15 +243,6 @@ export type ParseResult = {
   isHardSkip: boolean;             // true when message is definitively not a trade
   skipReason: string | null;
   complexityFlags: Set<ComplexityFlag>;
-};
-
-/**
- * Serializable subset of ParseResult — complexityFlags as array, minus
- * internal-only fields (targetStrategy, skipReason).
- * New ParseResult fields auto-flow through the Omit without changes here.
- */
-export type SerializedParseResult = Omit<ParseResult, 'complexityFlags' | 'targetStrategy' | 'skipReason'> & {
-  complexityFlags: ComplexityFlag[];
 };
 
 /**

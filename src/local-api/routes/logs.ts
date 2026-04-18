@@ -2,34 +2,24 @@ import { Hono } from 'hono';
 import fs from 'fs';
 import path from 'path';
 import { PATHS } from '@/lib/paths.js';
-import { assertSafeRunId } from '@/lib/channel.js';
+import { validateParams } from '../validate.js';
+import { RunIdParamsSchema } from '../http-schemas.js';
 
 const app = new Hono();
 
 app.get('/:id', (c) => {
-  const { id } = c.req.param();
-  try {
-    assertSafeRunId(id);
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
-  }
+  const { id } = validateParams(RunIdParamsSchema, c);
   const logPath = path.join(PATHS.logs, `${id}.log`);
 
   try {
-    const content = fs.readFileSync(logPath, 'utf-8');
-    return c.text(content);
+    return c.text(fs.readFileSync(logPath, 'utf-8'));
   } catch {
     return c.text('');
   }
 });
 
 app.delete('/:id', (c) => {
-  const { id } = c.req.param();
-  try {
-    assertSafeRunId(id);
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
-  }
+  const { id } = validateParams(RunIdParamsSchema, c);
   const logPath = path.join(PATHS.logs, `${id}.log`);
 
   try {

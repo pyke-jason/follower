@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { createFilterParams } from '@/hooks/use-filter-params';
 import { TRADE_FLAGS } from '@src/db/schema';
 import type { Trade, TradeFlag } from '@src/db/schema';
-import type { EvalSummary } from '@/lib/api-types';
+import type { EvalSummary } from '@src/local-api/http-schemas';
 
 // ── Filter values ──────────────────────────────────────────────────
 

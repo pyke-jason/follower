@@ -52,6 +52,10 @@ export function btChannel(runId: string): string {
   return `bt:${runId}`;
 }
 
+export function clsChannel(runId: string): string {
+  return `cls:${runId}`;
+}
+
 export function paperChannel(accountId: string): string {
   return ibkrChannel('paper', accountId);
 }

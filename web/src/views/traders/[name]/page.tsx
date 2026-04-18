@@ -4,7 +4,7 @@ import { useChannelId } from '@/hooks/use-channel-id';
 import { useEffect } from 'react';
 import { useTradesStore } from '@/stores/trades-store';
 import { queries } from '@/lib/queries';
-import type { TraderDetailResponse } from '@/lib/api-types';
+import type { TraderDetailResponse } from '@src/local-api/http-schemas';
 import { Badge } from '@/components/badge';
 import { InfoChip } from '@/components/info-chip';
 import { MetricStrip, type Metric } from '@/components/metric-strip';

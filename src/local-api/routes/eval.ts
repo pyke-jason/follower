@@ -1,48 +1,36 @@
 import { Hono } from 'hono';
-import { z } from 'zod';
 import { db, schema } from '@/db/client.js';
 import { getEvalSummary } from '@/eval/eval.js';
 import { eq, and, desc, asc, count, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { SignalSchema } from '@/agent/schemas.js';
-
-const EvalLabelDataSchema = z.object({
-  reasoning: z.string(),
-  isTrade: z.boolean(),
-  confidence: z.enum(['HIGH', 'LOW']).default('HIGH'),
-  trades: z.array(z.array(SignalSchema)).default([]),
-});
+import { validateBody, validateQuery } from '../validate.js';
+import {
+  EvalLabelReviewBodySchema,
+  EvalLabelRejectBodySchema,
+  EvalLabelsListQuerySchema,
+} from '../http-schemas.js';
 
 const app = new Hono();
 
 // ── GET /eval/labels — List eval labels with filtering ─────────────────
 
 app.get('/eval/labels', async (c) => {
-  const version = c.req.query('version');
-  const source = c.req.query('source');         // agent | human
-  const verified = c.req.query('verified');     // true | false
-  const confidence = c.req.query('confidence'); // HIGH | LOW
-  const limit = parseInt(c.req.query('limit') ?? '500', 10);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
-  const sortDir = c.req.query('sort') ?? 'desc'; // asc | desc
+  const { version, source, verified, confidence, isTrade, limit, offset, sort } =
+    validateQuery(EvalLabelsListQuerySchema, c);
 
   const conditions: SQL[] = [];
-  if (version) conditions.push(eq(schema.evalLabels.version, parseInt(version, 10)));
+  if (version !== undefined) conditions.push(eq(schema.evalLabels.version, version));
   if (source) conditions.push(eq(schema.evalLabels.source, source));
-  if (verified === 'true') conditions.push(eq(schema.evalLabels.humanVerified, true));
-  if (verified === 'false') conditions.push(eq(schema.evalLabels.humanVerified, false));
+  if (verified !== undefined) conditions.push(eq(schema.evalLabels.humanVerified, verified));
   if (confidence) {
     conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.confidence') = ${confidence}`);
   }
-  const isTrade = c.req.query('isTrade');
-  if (isTrade === 'true') {
-    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.isTrade') = true`);
-  } else if (isTrade === 'false') {
-    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.isTrade') = false`);
+  if (isTrade !== undefined) {
+    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.isTrade') = ${isTrade}`);
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
-  const orderFn = sortDir === 'asc' ? asc : desc;
+  const orderFn = sort === 'asc' ? asc : desc;
 
   // Join with messages to get author, timestamp, cleanText, badges, symbols
   const rows = await db
@@ -181,16 +169,12 @@ app.get('/eval/labels/:id/context', async (c) => {
 
 app.post('/eval/labels/:id/review', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
-  const parsed = EvalLabelDataSchema.safeParse(body.humanLabel);
-  if (!parsed.success) {
-    return c.json({ error: 'Invalid label', details: parsed.error.flatten() }, 400);
-  }
+  const { humanLabel } = await validateBody(EvalLabelReviewBodySchema, c);
 
   await db.update(schema.evalLabels)
     .set({
       humanVerified: true,
-      humanLabel: parsed.data,
+      humanLabel,
       reviewedAt: new Date().toISOString(),
     })
     .where(eq(schema.evalLabels.id, id));
@@ -220,8 +204,7 @@ app.post('/eval/labels/:id/approve', async (c) => {
 
 app.post('/eval/labels/:id/reject', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json<{ reason: string; feedback?: string }>();
-  if (!body.reason) return c.json({ error: 'reason is required' }, 400);
+  const body = await validateBody(EvalLabelRejectBodySchema, c);
 
   await db.update(schema.evalLabels)
     .set({

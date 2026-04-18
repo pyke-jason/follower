@@ -2,11 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { buildScopedPath } from '@/lib/channel-scope';
 import { fetchDashboardPageData, type DashboardPageData, fetchBacktestsPageData, type BacktestsPageData } from '@/lib/page-adapters';
-import type { Trade, TradeFlag, Task } from '@src/db/schema';
+import type { Trade, TradeFlag, Task, ClassifyRun } from '@src/db/schema';
+import type {
+  BacktestDetailResponse,
+  ClassifyDetailResponse,
+  TraderDetailResponse,
+} from '@src/local-api/http-schemas';
 import {
   type CursorResponse,
-  type BacktestDetailResponse,
-  type TraderDetailResponse,
   type StatusResponse,
   statusResponseSchema,
 } from '@/lib/api-types';
@@ -57,6 +60,28 @@ export const queries = {
       queryKey: ['backtest', id] as const,
       queryFn: () => api<BacktestDetailResponse>(`/backtests/${id}`),
       refetchInterval: (query: { state: { data?: BacktestDetailResponse } }) => {
+        const status = query.state.data?.run?.status;
+        return status === 'RUNNING' || status === 'PENDING' ? 3000 : false;
+      },
+      enabled: id.length > 0,
+    }),
+  },
+
+  classify: {
+    list: () => ({
+      queryKey: ['classify'] as const,
+      queryFn: () => api<ClassifyRun[]>('/classify'),
+      refetchInterval: (query: { state: { data?: ClassifyRun[] } }) => {
+        const runs = query.state.data;
+        if (runs?.some((r) => r.status === 'RUNNING' || r.status === 'PENDING')) return 3000;
+        return false;
+      },
+    }),
+
+    detail: (id: string) => ({
+      queryKey: ['classify', id] as const,
+      queryFn: () => api<ClassifyDetailResponse>(`/classify/${id}`),
+      refetchInterval: (query: { state: { data?: ClassifyDetailResponse } }) => {
         const status = query.state.data?.run?.status;
         return status === 'RUNNING' || status === 'PENDING' ? 3000 : false;
       },
