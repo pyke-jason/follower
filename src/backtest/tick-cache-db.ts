@@ -43,21 +43,20 @@ export async function readCachedTicks(
 }
 
 /** Write ticks + merge range in a single transaction. INSERT OR IGNORE for dedup. */
-export async function writeCachedTicks(
+export function writeCachedTicks(
   db: TickCacheDB,
   dataset: string,
   dbnSchema: string,
   symbol: string,
   ticks: QuoteTick[],
   range: [number, number],
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    // Batch insert ticks (INSERT OR IGNORE handles dupes on composite PK)
+): void {
+  db.transaction((tx) => {
     const BATCH_SIZE = 500;
     for (let i = 0; i < ticks.length; i += BATCH_SIZE) {
       const batch = ticks.slice(i, i + BATCH_SIZE);
       if (batch.length === 0) continue;
-      await tx.insert(quoteTicks)
+      tx.insert(quoteTicks)
         .values(batch.map(t => ({
           symbol: t.symbol,
           dbnSchema,
@@ -68,40 +67,41 @@ export async function writeCachedTicks(
           close: t.close ?? null,
           volume: t.volume ?? null,
         })))
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .run();
     }
 
-    // Merge ranges: read existing, merge, delete old, insert merged
-    const existingRows = await tx
+    const existingRows = tx
       .select({ startMs: tickCacheRanges.startMs, endMs: tickCacheRanges.endMs })
       .from(tickCacheRanges)
       .where(and(
         eq(tickCacheRanges.dataset, dataset),
         eq(tickCacheRanges.dbnSchema, dbnSchema),
         eq(tickCacheRanges.symbol, symbol),
-      ));
+      ))
+      .all();
     const existingRanges = existingRows.map(r => [r.startMs, r.endMs] as [number, number]);
 
     const merged = mergeRanges(existingRanges, range);
 
-    // Delete old range rows for this key
-    await tx.delete(tickCacheRanges)
+    tx.delete(tickCacheRanges)
       .where(and(
         eq(tickCacheRanges.dataset, dataset),
         eq(tickCacheRanges.dbnSchema, dbnSchema),
         eq(tickCacheRanges.symbol, symbol),
-      ));
+      ))
+      .run();
 
-    // Insert merged ranges
     if (merged.length > 0) {
-      await tx.insert(tickCacheRanges)
+      tx.insert(tickCacheRanges)
         .values(merged.map(([startMs, endMs]) => ({
           dataset,
           dbnSchema,
           symbol,
           startMs,
           endMs,
-        })));
+        })))
+        .run();
     }
   });
 }
@@ -145,36 +145,36 @@ export async function loadCachedChain(
 }
 
 /** Save chain definitions + meta in a single transaction. */
-export async function saveCachedChain(
+export function saveCachedChain(
   db: TickCacheDB,
   dataset: string,
   parentSymbol: string,
   day: string,
   defs: ChainDefinition[],
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    // Upsert meta
-    await tx.insert(chainCacheMeta)
-      .values({ dataset, parentSymbol, day, fetchedAt: new Date().toISOString() })
+): void {
+  db.transaction((tx) => {
+    const fetchedAt = new Date().toISOString();
+    tx.insert(chainCacheMeta)
+      .values({ dataset, parentSymbol, day, fetchedAt })
       .onConflictDoUpdate({
         target: [chainCacheMeta.dataset, chainCacheMeta.parentSymbol, chainCacheMeta.day],
-        set: { fetchedAt: new Date().toISOString() },
-      });
+        set: { fetchedAt },
+      })
+      .run();
 
-    // Delete old definitions for this key
-    await tx.delete(chainDefinitions)
+    tx.delete(chainDefinitions)
       .where(and(
         eq(chainDefinitions.dataset, dataset),
         eq(chainDefinitions.parentSymbol, parentSymbol),
         eq(chainDefinitions.day, day),
-      ));
+      ))
+      .run();
 
-    // Insert new definitions
     if (defs.length > 0) {
       const BATCH_SIZE = 500;
       for (let i = 0; i < defs.length; i += BATCH_SIZE) {
         const batch = defs.slice(i, i + BATCH_SIZE);
-        await tx.insert(chainDefinitions)
+        tx.insert(chainDefinitions)
           .values(batch.map(d => ({
             dataset,
             parentSymbol,
@@ -183,7 +183,8 @@ export async function saveCachedChain(
             expiry: d.expiry,
             strike: d.strike,
             callPut: d.callPut,
-          })));
+          })))
+          .run();
       }
     }
   });

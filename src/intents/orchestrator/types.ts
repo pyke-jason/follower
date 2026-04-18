@@ -14,6 +14,7 @@ import type { BrokerService } from '../../broker/interface.js';
 import type { SignalEventEmitter } from '../../decisions/emitter.js';
 import type { Message, TradeLeg } from '../../db/schema.js';
 import type { TraceContext } from '../../lib/trace.js';
+import type { Agent } from '../../agent/result.js';
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -59,9 +60,9 @@ export type ResolvedSignal = {
 export type { SignalEventEmitter } from '../../decisions/emitter.js';
 
 export type OrchestratorResult =
-  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
-  | { outcome: 'SKIP'; reason: string; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } }
-  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number } };
+  | { outcome: 'EXECUTE'; signals: ResolvedSignal[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number }; llmReasoning?: string }
+  | { outcome: 'SKIP'; reason: string; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number }; llmReasoning?: string }
+  | { outcome: 'MANUAL_REVIEW'; reason: string; partial?: Partial<ResolvedSignal>[]; parseResult?: SerializedParseResult; usage?: { inputTokens: number; outputTokens: number }; llmReasoning?: string };
 
 // ── Provider interfaces ───────────────────────────────────────────────────────
 
@@ -119,57 +120,10 @@ export interface ChatHistoryProvider {
   getRecentMessages(author?: string, limit?: number): Promise<string>;
 }
 
-export type OrchestratorLLMToolCall = {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-};
-
-export type OrchestratorLLMUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
-
-export type OrchestratorLLMTurnResult = {
-  textBlocks: string[];
-  toolCalls: OrchestratorLLMToolCall[];
-  stopReason: 'end_turn' | 'tool_use' | 'max_tokens';
-  rawAssistantMessage: unknown;
-  usage?: OrchestratorLLMUsage;
-};
-
-export interface OrchestratorLLMProvider {
-  readonly identity: {
-    provider: 'anthropic' | 'xai';
-    model: string;
-  };
-  chat(params: {
-    system?: string;
-    messages: unknown[];
-    maxTokens: number;
-    temperature?: number;
-  }): Promise<OrchestratorLLMTurnResult>;
-  chatWithTools(params: {
-    system?: string;
-    messages: unknown[];
-    maxTokens: number;
-    temperature?: number;
-    tools: unknown[];
-  }): Promise<OrchestratorLLMTurnResult>;
-  makeUserMessage(text: string): unknown;
-  formatToolResults(results: Array<{
-    toolCallId: string;
-    output: string;
-    isError?: boolean;
-  }>): unknown;
-}
-
 /** Dependencies the orchestrator needs from the caller's environment. */
 export type OrchestratorEnv = {
   getPositions: (symbol?: string) => Promise<TradePosition[]>;
-  llm: OrchestratorLLMProvider;
+  agent: Agent;
   broker: BrokerService;
   emitter: SignalEventEmitter;
   trace?: TraceContext;

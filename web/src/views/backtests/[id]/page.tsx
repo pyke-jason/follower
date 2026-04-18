@@ -40,6 +40,7 @@ import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary'
 import type { ChatHydration } from '@/views/messages/chat-hydrator';
 import type { Message, Trade, RunDecision } from '@src/db/schema';
 import type { MessageDecision, TradeOutcome } from '@src/lib/enriched-message';
+import type { BacktestDetailResponse } from '@/lib/api-types';
 
 type BacktestDecisionJoinRow = {
   decision: RunDecision;
@@ -153,6 +154,20 @@ export default function BacktestDetailPage() {
 
   const query = useQuery(queries.backtests.detail(id!));
 
+  return (
+    <QueryBoundary query={query} skeleton={<MetricStripSkeleton count={4} />}>
+      {(data) => <BacktestDetailContent data={data} id={id!} />}
+    </QueryBoundary>
+  );
+}
+
+function BacktestDetailContent({ data, id }: {
+  data: BacktestDetailResponse;
+  id: string;
+}) {
+  const navigate = useNavigate();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const cancelMut = useApiMutation('POST', `/backtests/${id}/cancel`, {
     invalidate: [['backtest', id]],
     onSuccess: () => toast.success('Backtest cancelled'),
@@ -170,31 +185,6 @@ export default function BacktestDetailPage() {
     onSuccess: () => toast.success('Intent cache cleared'),
   });
 
-  return (
-    <QueryBoundary query={query} skeleton={<MetricStripSkeleton count={4} />}>
-      {(data) => (
-        <BacktestDetailContent
-          data={data}
-          id={id!}
-          navigate={navigate}
-          cancelMut={cancelMut}
-          deleteMut={deleteMut}
-          invalidateCacheMut={invalidateCacheMut}
-        />
-      )}
-    </QueryBoundary>
-  );
-}
-
-function BacktestDetailContent({ data, id, navigate, cancelMut, deleteMut, invalidateCacheMut }: {
-  data: any;
-  id: string;
-  navigate: ReturnType<typeof useNavigate>;
-  cancelMut: any;
-  deleteMut: any;
-  invalidateCacheMut: any;
-}) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const {
     run, summary, byTrader, byStrategy,
     equityCurve, tradeScatter, rollingWinRate,

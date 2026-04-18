@@ -307,7 +307,7 @@ export async function loadChainDefinitions(params: {
 
   // Only cache non-empty results — empty may be transient (pre-market, API issues)
   if (definitions.length > 0) {
-    await saveCachedChain(params.db, params.dataset, params.parentSymbol, params.day, definitions);
+    saveCachedChain(params.db, params.dataset, params.parentSymbol, params.day, definitions);
   }
 
   return definitions;

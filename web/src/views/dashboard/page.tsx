@@ -13,6 +13,8 @@ import { RiskPanel } from './risk-panel';
 import { EmptyState } from '@/components/empty-state';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
 import { ArrowRight, CheckCircle2, Clock, XCircle, AlertTriangle } from 'lucide-react';
+import type { DashboardPageData, DashboardSignalRow } from '@/lib/page-adapters';
+import type { Trade } from '@src/db/schema';
 
 export default function OverviewPage() {
   const href = useScopedHref();
@@ -27,9 +29,9 @@ export default function OverviewPage() {
   );
 }
 
-function DashboardContent({ data, href }: { data: any; href: ReturnType<typeof useScopedHref> }) {
+function DashboardContent({ data, href }: { data: DashboardPageData; href: ReturnType<typeof useScopedHref> }) {
   const { pathname } = useLocation();
-  const { stats, openTrades, equityData, traderData, metrics, signals, pendingReviews, riskSnapshot } = data;
+  const { openTrades, equityData, traderData, metrics, signals, pendingReviews, riskSnapshot } = data;
 
   return (
     <div className="space-y-4">
@@ -96,7 +98,7 @@ function DashboardContent({ data, href }: { data: any; href: ReturnType<typeof u
                 <EmptyState title="No open positions" hint="Signals will open positions here" />
               ) : (
                 <div className="divide-y divide-border/50">
-                  {openTrades.slice(0, 6).map((t: any) => (
+                  {openTrades.slice(0, 6).map((t: Trade) => (
                     <Link
                       key={t.id}
                       to={href(`/trades/${t.id}`, { from: pathname })}
@@ -146,7 +148,7 @@ function DashboardContent({ data, href }: { data: any; href: ReturnType<typeof u
                 <EmptyState title="No recent signals" hint="Trader messages will appear here" />
               ) : (
                 <div className="divide-y divide-border/50">
-                  {signals.slice(0, 8).map(({ message: m, trade: t }: any) => (
+                  {signals.slice(0, 8).map(({ message: m, trade: t }: DashboardSignalRow) => (
                     <div
                       key={m.id}
                       className={`flex items-start gap-3 px-4 py-2.5 border-l-2 ${signalBorderColor(m.actionHint, m.directionHint)}`}

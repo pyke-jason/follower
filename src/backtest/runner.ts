@@ -9,8 +9,8 @@ import { BACKTEST_RISK_DEFAULTS } from '../config/risk-defaults.js';
 import { loadHistoricalMessages } from './historical-loader.js';
 import { generateReportFromTrades } from './report.js';
 import { toDateKeyET, parseDateKey, isoToDateKey, marketCloseUTC } from '../lib/et-date.js';
-import type { LLMProvider } from '../agent/providers.js';
-import { createProvider, getDefaultTradeModel } from '../agent/providers.js';
+import type { Agent } from '../agent/result.js';
+import { createAgent, getDefaultTradeModel } from '../agent/factory.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { createTrace } from '../lib/trace.js';
 import { ShadowTracker } from './shadow-tracker.js';
@@ -38,7 +38,7 @@ const log = createLogger('Backtest');
  */
 type BacktestContext = {
   runId: string;
-  agentProvider: LLMProvider;
+  agent: Agent;
   agentIdentity: { provider: string; model: string };
   bundle: PipelineBundle;
 };
@@ -159,7 +159,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
     provider: (config.agentProvider ?? getDefaultTradeModel().provider) as 'anthropic' | 'xai',
     model: config.agentModel ?? getDefaultTradeModel().model,
   };
-  const agentProvider = await createProvider(agentIdentity);
+  const agent = await createAgent(agentIdentity);
   log.info(`Agent: ${agentIdentity.provider}/${agentIdentity.model}`);
 
   const bundle = buildPipelineDeps({
@@ -178,7 +178,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string): Promise<
   });
   const btCtx: BacktestContext = {
     runId,
-    agentProvider,
+    agent,
     agentIdentity,
     bundle,
   };
@@ -478,7 +478,7 @@ async function processMessage(
 
   await processTaskShared(task, {
     getOpenPositions: btCtx.bundle.getOpenPositions,
-    llm: btCtx.agentProvider,
+    agent: btCtx.agent,
     pipeline: btCtx.bundle.pipelineDeps,
     scope: btChannel(btCtx.runId),
     agentIdentity: btCtx.agentIdentity,

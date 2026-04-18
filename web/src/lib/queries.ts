@@ -1,8 +1,15 @@
+import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { buildScopedPath } from '@/lib/channel-scope';
 import { fetchDashboardPageData, type DashboardPageData, fetchBacktestsPageData, type BacktestsPageData } from '@/lib/page-adapters';
 import type { Trade, TradeFlag, Task } from '@src/db/schema';
-import type { CursorResponse, BacktestDetailResponse, TraderDetailResponse } from '@/lib/api-types';
+import {
+  type CursorResponse,
+  type BacktestDetailResponse,
+  type TraderDetailResponse,
+  type StatusResponse,
+  statusResponseSchema,
+} from '@/lib/api-types';
 
 type TradesResponse = {
   rows: Trade[];
@@ -19,6 +26,19 @@ export const queries = {
       queryKey: ['trades', channelId] as const,
       queryFn: () =>
         api<TradesResponse>(buildScopedPath('/trades', channelId, { limit: '200' })),
+    }),
+  },
+
+  channel: {
+    status: (channelId: string | undefined) => ({
+      queryKey: ['channel-status', channelId] as const,
+      queryFn: async (): Promise<StatusResponse> => {
+        const raw = await api<unknown>(buildScopedPath('/status', channelId));
+        return statusResponseSchema.parse(raw);
+      },
+      enabled: Boolean(channelId),
+      refetchInterval: 5_000,
+      refetchIntervalInBackground: false,
     }),
   },
 
@@ -71,3 +91,12 @@ export const queries = {
     }),
   },
 } as const;
+
+/**
+ * Poll /status for the given channel. Returns the full query result so
+ * callers can read `data`, `isLoading`, `error`, etc. When `channelId` is
+ * undefined the query stays disabled.
+ */
+export function useChannelStatus(channelId: string | undefined) {
+  return useQuery(queries.channel.status(channelId));
+}

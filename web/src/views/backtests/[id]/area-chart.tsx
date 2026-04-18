@@ -7,6 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import type { Formatter, NameType } from 'recharts/types/component/DefaultTooltipContent';
 
 type AreaChartProps = {
   data: Record<string, unknown>[];
@@ -17,8 +18,7 @@ type AreaChartProps = {
   height?: number;
   formatX?: (v: string) => string;
   formatY?: (v: number) => string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tooltipFormatter?: (...args: any[]) => [string, string];
+  tooltipFormatter?: Formatter<number, NameType>;
   domain?: [number | string, number | string];
 };
 

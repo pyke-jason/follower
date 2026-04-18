@@ -7,8 +7,81 @@ import type { KeyedSignal, KeyedTrade } from './label-components';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const SIGNAL_ACTIONS: Signal['action'][] = ['OPEN', 'CLOSE', 'ADD', 'TRIM', 'LEG_OFF'];
-const SIGNAL_STRATEGIES = ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS', 'CCS'] as const;
+const SIGNAL_ACTIONS = ['OPEN', 'CLOSE', 'ADD', 'TRIM', 'LEG_OFF'] as const satisfies readonly Signal['action'][];
+const SIGNAL_DIRECTIONS = ['LONG', 'SHORT'] as const satisfies readonly NonNullable<Signal['direction']>[];
+const SIGNAL_STRATEGIES = ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'PCS', 'CCS'] as const satisfies readonly NonNullable<Signal['strategy']>[];
+const CLEAR = '---';
+
+// ── Typed ToggleGroup wrappers (no casts) ───────────────────────────────────
+
+function EnumToggleGroup<T extends string>({ value, options, onChange, className }: {
+  value: T;
+  options: readonly T[];
+  onChange: (next: T) => void;
+  className?: string;
+}) {
+  return (
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      size="sm"
+      value={value}
+      onValueChange={(v) => {
+        const next = options.find((o) => o === v);
+        if (next !== undefined) onChange(next);
+      }}
+      className={className}
+    >
+      {options.map((o) => (
+        <ToggleGroupItem key={o} value={o} className="text-xs h-6 px-2">
+          {o}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
+  );
+}
+
+function NullableEnumToggleGroup<T extends string, Empty extends null | undefined>({
+  value,
+  options,
+  emptyValue,
+  onChange,
+  className,
+}: {
+  value: T | Empty;
+  options: readonly T[];
+  emptyValue: Empty;
+  onChange: (next: T | Empty) => void;
+  className?: string;
+}) {
+  return (
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      size="sm"
+      value={value ?? CLEAR}
+      onValueChange={(v) => {
+        if (!v) return;
+        if (v === CLEAR) {
+          onChange(emptyValue);
+          return;
+        }
+        const next = options.find((o) => o === v);
+        if (next !== undefined) onChange(next);
+      }}
+      className={className}
+    >
+      {options.map((o) => (
+        <ToggleGroupItem key={o} value={o} className="text-xs h-6 px-2">
+          {o}
+        </ToggleGroupItem>
+      ))}
+      <ToggleGroupItem value={CLEAR} className="text-xs h-6 px-2">
+        {CLEAR}
+      </ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
 
 // ── Signal Editor ───────────────────────────────────────────────────────────
 
@@ -19,10 +92,6 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
   onChange: (s: KeyedSignal) => void;
   onRemove: (() => void) | null;
 }) {
-  const update = <K extends keyof Signal>(key: K, value: Signal[K]) => {
-    onChange({ ...signal, [key]: value } as KeyedSignal);
-  };
-
   return (
     <div className={cn(index > 0 && 'border-t pt-3 mt-3')}>
       <div className="flex items-center justify-between mb-2">
@@ -40,17 +109,12 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
       <div className="grid grid-cols-1 gap-2 text-xs md:grid-cols-2">
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground w-16">action</span>
-          <ToggleGroup type="single" variant="outline" size="sm"
+          <EnumToggleGroup
             value={signal.action}
-            onValueChange={v => { if (v) update('action', v as Signal['action']); }}
+            options={SIGNAL_ACTIONS}
+            onChange={(action) => onChange({ ...signal, action })}
             className="flex-wrap justify-start"
-          >
-            {SIGNAL_ACTIONS.map((action) => (
-              <ToggleGroupItem key={action} value={action} className="text-xs h-6 px-2">
-                {action}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+          />
         </div>
 
         <div className="flex items-center gap-2">
@@ -58,7 +122,7 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
           <Input
             type="text"
             value={signal.symbol}
-            onChange={e => update('symbol', e.target.value.toUpperCase())}
+            onChange={e => onChange({ ...signal, symbol: e.target.value.toUpperCase() })}
             className="flex-1 h-6 px-1.5 py-0.5 text-xs"
             placeholder="e.g. SPY"
           />
@@ -66,31 +130,23 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
 
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground w-16">direction</span>
-          <ToggleGroup type="single" variant="outline" size="sm"
-            value={signal.direction ?? '---'}
-            onValueChange={v => { if (v) update('direction', v === '---' ? null : v as Signal['direction']); }}
-            className=""
-          >
-            <ToggleGroupItem value="LONG" className="text-xs h-6 px-2">LONG</ToggleGroupItem>
-            <ToggleGroupItem value="SHORT" className="text-xs h-6 px-2">SHORT</ToggleGroupItem>
-            <ToggleGroupItem value="---" className="text-xs h-6 px-2">---</ToggleGroupItem>
-          </ToggleGroup>
+          <NullableEnumToggleGroup
+            value={signal.direction}
+            options={SIGNAL_DIRECTIONS}
+            emptyValue={null}
+            onChange={(direction) => onChange({ ...signal, direction })}
+          />
         </div>
 
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground w-16">strategy</span>
-          <ToggleGroup type="single" variant="outline" size="sm"
-            value={signal.strategy ?? '---'}
-            onValueChange={v => { if (v) update('strategy', v === '---' ? null : v as Signal['strategy']); }}
+          <NullableEnumToggleGroup
+            value={signal.strategy}
+            options={SIGNAL_STRATEGIES}
+            emptyValue={null}
+            onChange={(strategy) => onChange({ ...signal, strategy })}
             className="flex-wrap justify-start"
-          >
-            {SIGNAL_STRATEGIES.map((strategy) => (
-              <ToggleGroupItem key={strategy} value={strategy} className="text-xs h-6 px-2">
-                {strategy}
-              </ToggleGroupItem>
-            ))}
-            <ToggleGroupItem value="---" className="text-xs h-6 px-2">---</ToggleGroupItem>
-          </ToggleGroup>
+          />
         </div>
 
         <div className="flex items-center gap-2">
@@ -100,9 +156,9 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
             value={signal.strikes?.join(', ') ?? ''}
             onChange={e => {
               const val = e.target.value;
-              if (!val.trim()) { update('strikes', null); return; }
+              if (!val.trim()) { onChange({ ...signal, strikes: null }); return; }
               const nums = val.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
-              update('strikes', nums.length > 0 ? nums : null);
+              onChange({ ...signal, strikes: nums.length > 0 ? nums : null });
             }}
             className="flex-1 h-6 px-1.5 py-0.5 text-xs"
             placeholder="e.g. 450, 460"
@@ -114,7 +170,7 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
           <Input
             type="text"
             value={signal.expiry ?? ''}
-            onChange={e => update('expiry', e.target.value || null)}
+            onChange={e => onChange({ ...signal, expiry: e.target.value || null })}
             className="flex-1 h-6 px-1.5 py-0.5 text-xs"
             placeholder="e.g. 5/23 or Oct (17)"
           />
@@ -126,7 +182,7 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
             type="number"
             step="0.01"
             value={signal.statedPrice ?? ''}
-            onChange={e => update('statedPrice', e.target.value ? parseFloat(e.target.value) : null)}
+            onChange={e => onChange({ ...signal, statedPrice: e.target.value ? parseFloat(e.target.value) : null })}
             className="flex-1 h-6 px-1.5 py-0.5 text-xs"
             placeholder="e.g. 2.50"
           />
@@ -138,7 +194,7 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
             type="number"
             step="1"
             value={signal.quantity ?? ''}
-            onChange={e => update('quantity', e.target.value ? parseInt(e.target.value, 10) : null)}
+            onChange={e => onChange({ ...signal, quantity: e.target.value ? parseInt(e.target.value, 10) : null })}
             className="flex-1 h-6 px-1.5 py-0.5 text-xs"
             placeholder="e.g. 10"
           />
@@ -152,7 +208,7 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
             min="0"
             max="1"
             value={signal.exitPercent ?? ''}
-            onChange={e => update('exitPercent', e.target.value ? parseFloat(e.target.value) : undefined)}
+            onChange={e => onChange({ ...signal, exitPercent: e.target.value ? parseFloat(e.target.value) : undefined })}
             className="flex-1 h-6 px-1.5 py-0.5 text-xs"
             placeholder="e.g. 0.5"
           />
@@ -160,18 +216,13 @@ function SignalEditor({ signal, index, total, onChange, onRemove }: {
 
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground w-16">target</span>
-          <ToggleGroup type="single" variant="outline" size="sm"
-            value={signal.targetStrategy ?? '---'}
-            onValueChange={v => { if (v) update('targetStrategy', v === '---' ? undefined : v as Signal['targetStrategy']); }}
+          <NullableEnumToggleGroup
+            value={signal.targetStrategy}
+            options={SIGNAL_STRATEGIES}
+            emptyValue={undefined}
+            onChange={(targetStrategy) => onChange({ ...signal, targetStrategy })}
             className="flex-wrap justify-start"
-          >
-            {SIGNAL_STRATEGIES.map((strategy) => (
-              <ToggleGroupItem key={strategy} value={strategy} className="text-xs h-6 px-2">
-                {strategy}
-              </ToggleGroupItem>
-            ))}
-            <ToggleGroupItem value="---" className="text-xs h-6 px-2">---</ToggleGroupItem>
-          </ToggleGroup>
+          />
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { TableVirtuoso } from 'react-virtuoso';
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from 'lucide-react';
 import { EmptyState } from './empty-state';
@@ -22,11 +22,11 @@ function buildVirtuosoComponents<T>() {
     Table: ({ style, ...props }: React.ComponentProps<'table'> & { style?: React.CSSProperties }) => (
       <table style={{ ...style, tableLayout: 'fixed' }} className="w-full caption-bottom text-sm" {...props} />
     ),
-    TableHead: forwardRef<HTMLTableSectionElement, React.ComponentProps<'thead'>>(
-      (props, ref) => <thead ref={ref} className="[&_tr]:border-b bg-card sticky top-0 z-10" {...props} />,
+    TableHead: ({ ref, ...props }: React.ComponentProps<'thead'> & { ref?: React.Ref<HTMLTableSectionElement> }) => (
+      <thead ref={ref} className="[&_tr]:border-b bg-card sticky top-0 z-10" {...props} />
     ),
-    TableBody: forwardRef<HTMLTableSectionElement, React.ComponentProps<'tbody'>>(
-      (props, ref) => <tbody ref={ref} className="[&_tr:last-child]:border-0" {...props} />,
+    TableBody: ({ ref, ...props }: React.ComponentProps<'tbody'> & { ref?: React.Ref<HTMLTableSectionElement> }) => (
+      <tbody ref={ref} className="[&_tr:last-child]:border-0" {...props} />
     ),
     // SAFETY: react-virtuoso passes `item` and `context` in TableRow props
     TableRow: ({ style, item, context, ...props }: React.ComponentProps<'tr'> & { style?: React.CSSProperties; item?: T; context?: TableContext<T> }) => (

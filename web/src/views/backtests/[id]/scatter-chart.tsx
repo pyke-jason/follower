@@ -10,6 +10,8 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
+import type { ContentType } from 'recharts/types/component/Tooltip';
+import type { NameType, ValueType } from 'recharts/types/component/DefaultTooltipContent';
 
 type ScatterSeries = {
   key: string;
@@ -25,7 +27,18 @@ type ReferenceLineConfig = {
   strokeDasharray?: string;
 };
 
-type ScatterPlotChartProps = {
+/**
+ * Props consumed by caller-provided scatter tooltip components. Callers receive
+ * Recharts' runtime payload wrapped with their own per-point shape `TPayload`.
+ * Each payload entry carries an optional `payload` field (Recharts may omit it
+ * when a series has no active point) — callers must handle the undefined case.
+ */
+export type ScatterTooltipProps<TPayload> = {
+  active?: boolean;
+  payload?: Array<{ payload?: TPayload }>;
+};
+
+type ScatterPlotChartProps<TPayload = unknown> = {
   series: ScatterSeries[];
   xKey: string;
   yKey: string;
@@ -33,13 +46,12 @@ type ScatterPlotChartProps = {
   height?: number;
   formatX?: (v: string) => string;
   formatY?: (v: number) => string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tooltipContent?: (props: any) => React.ReactNode;
+  tooltipContent?: (props: ScatterTooltipProps<TPayload>) => React.ReactNode;
   referenceLines?: ReferenceLineConfig[];
   zRange?: [number, number];
 };
 
-export function ScatterPlotChart({
+export function ScatterPlotChart<TPayload = unknown>({
   series,
   xKey,
   yKey,
@@ -50,7 +62,21 @@ export function ScatterPlotChart({
   tooltipContent,
   referenceLines,
   zRange = [30, 200],
-}: ScatterPlotChartProps) {
+}: ScatterPlotChartProps<TPayload>) {
+  // Bridge the caller's narrow tooltip (typed against a domain-specific
+  // payload shape) into Recharts' Tooltip, which passes `Payload<ValueType, NameType>`.
+  // `Payload.payload` is typed `any` upstream — so we destructure and repackage
+  // it into our `ScatterTooltipProps<TPayload>` shape. No cast needed because
+  // `any` is assignable to `TPayload | undefined` at the destructure site.
+  const bridge: ContentType<ValueType, NameType> | undefined = tooltipContent
+    ? (props) => {
+        const items = props.payload?.map(({ payload }: { payload?: TPayload }) => ({
+          payload,
+        }));
+        return tooltipContent({ active: props.active, payload: items });
+      }
+    : undefined;
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <RechartsScatterChart margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -88,8 +114,8 @@ export function ScatterPlotChart({
             } : undefined}
           />
         ))}
-        {tooltipContent ? (
-          <Tooltip content={tooltipContent} />
+        {bridge ? (
+          <Tooltip content={bridge} />
         ) : (
           <Tooltip
             contentStyle={{

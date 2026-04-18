@@ -18,7 +18,8 @@ import { SignalSheet } from './signal-sheet';
 import { ThemeToggle } from './theme-toggle';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { formatCurrency, pnlColor } from '@/lib/format';
-import { useChannelStore } from '@/stores/channel-store';
+import { useChannelId } from '@/hooks/use-channel-id';
+import { useChannelStatus } from '@/lib/queries';
 
 /** Map top-level route segments to human-readable labels. */
 const segmentLabels: Record<string, string> = {
@@ -51,8 +52,10 @@ function useBreadcrumbs(): { label: string; href: string }[] {
 }
 
 export function TopBar() {
-  const status = useChannelStore((s) => s.status);
-  const statusError = useChannelStore((s) => s.statusError);
+  const channelId = useChannelId();
+  const statusQuery = useChannelStatus(channelId);
+  const status = statusQuery.data ?? null;
+  const statusError = statusQuery.isError ? 'Status unavailable' : null;
   const crumbs = useBreadcrumbs();
 
   const pnl = status?.todayPnl ?? 0;

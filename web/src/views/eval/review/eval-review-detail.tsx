@@ -40,12 +40,17 @@ export function EvalReviewDetail({ items, nav }: {
   const [lastReviewedId, setLastReviewedId] = useState<string | null>(null);
   const rejectTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  // Reset inline when the active item changes — not via useEffect (avoids a
+  // render pass with stale state) and not via key= on this subtree (which would
+  // remount the chatCtx query). See web-components.md §React Performance.
+  const lastIdRef = useRef(current.id);
+  if (lastIdRef.current !== current.id) {
+    lastIdRef.current = current.id;
     setMode('view');
     setEditLabel(null);
     setRejectReason('');
     setRejectFeedback('');
-  }, [current.id]);
+  }
 
   // Auto-focus textarea when entering reject mode
   useEffect(() => {
@@ -151,8 +156,9 @@ export function EvalReviewDetail({ items, nav }: {
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement)?.tagName;
-      const isInputFocused = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement).isContentEditable;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const tag = target?.tagName;
+      const isInputFocused = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable === true;
 
       // Cmd/Ctrl+Enter to submit in edit or reject mode (works even in inputs)
       if (mode !== 'view' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -163,7 +169,7 @@ export function EvalReviewDetail({ items, nav }: {
       }
 
       if (isInputFocused) {
-        if (e.key === 'Escape') (e.target as HTMLElement).blur();
+        if (e.key === 'Escape') target?.blur();
         return;
       }
 

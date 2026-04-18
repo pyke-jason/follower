@@ -2,8 +2,8 @@ import { db, schema } from '../db/client.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { completeTask, handleTaskError, expireTask } from '../pipeline/task-lifecycle.js';
 import type { Task } from '../db/schema.js';
-import { createProvider, getDefaultTradeModel } from '../agent/providers.js';
-import type { LLMProvider } from '../agent/providers.js';
+import { createAgent, getDefaultTradeModel } from '../agent/factory.js';
+import type { Agent } from '../agent/result.js';
 import { processTask as processTaskShared } from '../pipeline/process-task.js';
 import { createTrace } from '../lib/trace.js';
 import {
@@ -39,12 +39,12 @@ let _initialized = false;
 let expiryTimer: ReturnType<typeof setInterval> | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 
-// ─── Lazy LLM provider (single instance reused across tasks) ───
+// ─── Lazy agent (single instance reused across tasks) ───
 
-let _provider: LLMProvider | null = null;
-async function getProvider(): Promise<LLMProvider> {
-  if (!_provider) _provider = await createProvider(getDefaultTradeModel());
-  return _provider;
+let _agent: Agent | null = null;
+async function getAgent(): Promise<Agent> {
+  if (!_agent) _agent = await createAgent(getDefaultTradeModel());
+  return _agent;
 }
 
 // ─── Push-based task queue ───
@@ -129,7 +129,7 @@ async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> 
   try {
     await processTaskShared(task, {
       getOpenPositions: state.bundle.getOpenPositions,
-      llm: await getProvider(),
+      agent: await getAgent(),
       pipeline: state.bundle.pipelineDeps,
       scope: state.service.channelId,
       agentIdentity: getDefaultTradeModel(),

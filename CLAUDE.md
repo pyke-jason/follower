@@ -66,6 +66,15 @@ npx tsc --noEmit && npm test && npm --prefix web run check
 
 Message -> parser (sync, zero I/O) -> routing (hard skip / deterministic open-close / LLM fallback) -> execution -> broker -> record trade. Prefer deterministic paths over LLM. See `.claude/rules/orchestrator.md` for the full routing diagram.
 
+## Domain glossary
+
+- **Actions:** `OPEN` (entry), `ADD` (scale into existing position), `TRIM` (partial close, `exitPercent` in 0..1), `CLOSE` (full exit), `LEG_OFF` (close one leg of a spread, keep `targetStrategy`).
+- **Strategies:** `STOCK`, `CALL`, `PUT` (single-leg), `CDS`/`PDS` (call/put debit spread), `CCS`/`PCS` (call/put credit spread). Spread direction is derived from leg structure, not the `direction` field.
+- **Direction:** `LONG`/`SHORT` means buying vs selling the instrument — not a bullish/bearish view.
+- **Fill models (backtest):** `orats` (bid-ask width + leg count estimate), `midpoint`, `natural` (buy ask / sell bid).
+- **Run scoping:** Live data has no run scope; backtest data is isolated per `channelId = 'bt:<runId>'`. Dashboard pages accept `?run=<id>` for scoped views.
+- **Agent:** `Agent` (`src/agent/result.ts`) is the provider-agnostic interface. `createAgent(identity)` returns `AnthropicAgent` (via `@anthropic-ai/claude-agent-sdk`) or `XAIAgent` (via `@ai-sdk/xai`).
+
 ## Coding standards
 
 `docs/rails.md` is the single source of truth. Read it before writing code. The most-violated rule:

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
+import { z } from 'zod';
 import type { Message, Trade, BacktestRun, RunDecision, TradeEvent, TradeFlag, BacktestRunSummary } from '@src/db/schema';
+import type { Signal } from '@src/agent/schemas';
 import type { TraderStats, StrategyStats, EquityPoint } from '@src/backtest/types';
 import type { TradeScatterPoint } from '@/views/backtests/[id]/trade-scatter';
 import type { RollingWinRatePoint } from '@/views/backtests/[id]/rolling-win-rate';
@@ -9,6 +11,41 @@ export type CursorResponse<T> = {
   nextCursor: string | null;
   total?: number;
 };
+
+/* ---- /status response ---- */
+
+export const channelKindSchema = z.enum(['runtime', 'backtest', 'unknown']);
+export type ChannelKind = z.infer<typeof channelKindSchema>;
+
+export const channelBriefSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  status: z.string(),
+  traders: z.array(z.string()),
+  startDate: z.string(),
+  endDate: z.string(),
+  agentModel: z.string(),
+  totalPnl: z.number(),
+  winRate: z.number(),
+  totalTrades: z.number(),
+});
+export type ChannelBrief = z.infer<typeof channelBriefSchema>;
+
+export const statusResponseSchema = z.object({
+  channelId: z.string(),
+  channelKind: channelKindSchema,
+  openTrades: z.number(),
+  todayPnl: z.number(),
+  pendingTasks: z.number(),
+  tradingBlocked: z.boolean().optional(),
+  unresolvedAlertCount: z.number().optional(),
+  channelBrief: channelBriefSchema.optional(),
+  brokerHealthy: z.boolean().optional(),
+  circuitOpen: z.boolean().optional(),
+  lastError: z.string().nullable().optional(),
+  healthUpdatedAt: z.string().optional(),
+});
+export type StatusResponse = z.infer<typeof statusResponseSchema>;
 
 export type Column<T> = {
   key: string;
@@ -30,7 +67,7 @@ export type Mismatch = {
 export type TradeLabel = {
   bucket: 'tp' | 'fp' | 'unlabeled';
   match: { mismatches: Mismatch[] } | null;
-  labelSignals: unknown[] | null;
+  labelSignals: Signal[] | null;
   labelId: string | null;
   labelIsTrade: boolean | null;
   labelReasoning: string | null;

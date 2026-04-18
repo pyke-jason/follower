@@ -27,8 +27,8 @@ const FLAG_ICONS: Record<string, { icon: LucideIcon; tooltip: string; severity: 
 
 const SEVERITY_COLOR = {
   muted: 'text-muted-foreground/50 hover:text-muted-foreground',
-  warn: 'text-amber-400/60 hover:text-amber-400',
-  danger: 'text-rose-400/60 hover:text-rose-400',
+  warn: 'text-warning/60 hover:text-warning',
+  danger: 'text-destructive/60 hover:text-destructive',
 };
 
 function FlagIcon({ flag, tooltip }: { flag: string; tooltip?: string }) {
@@ -167,13 +167,13 @@ export function TradeRow({
                   className={`inline-flex items-center gap-0.5 transition-colors ${slippageEmphasis > 0 ? 'rounded-sm px-1' : ''}`}
                   style={hasSlippage && slippageIntensity > 0
                     ? {
-                        color: `color-mix(in oklab, rgb(239 68 68) ${Math.round(slippageIntensity * 100)}%, rgb(161 161 170))`,
+                        color: `color-mix(in oklab, var(--destructive) ${Math.round(slippageIntensity * 100)}%, var(--muted-foreground))`,
                         ...(slippageEmphasis > 0 ? {
                           fontWeight: Math.round(400 + slippageEmphasis * 500),
-                          backgroundColor: `rgb(239 68 68 / ${(slippageEmphasis * 0.25).toFixed(2)})`,
-                          boxShadow: `0 0 ${Math.round(slippageEmphasis * 16)}px rgb(239 68 68 / ${(slippageEmphasis * 0.5).toFixed(2)}), 0 0 ${Math.round(slippageEmphasis * 40)}px rgb(239 68 68 / ${(slippageEmphasis * 0.2).toFixed(2)})`,
-                          textShadow: `0 0 ${Math.round(slippageEmphasis * 10)}px rgb(239 68 68 / ${(slippageEmphasis * 0.9).toFixed(2)}), 0 0 ${Math.round(slippageEmphasis * 30)}px rgb(239 68 68 / ${(slippageEmphasis * 0.5).toFixed(2)})`,
-                          outline: slippageEmphasis > 0.3 ? `1px solid rgb(239 68 68 / ${(slippageEmphasis * 0.5).toFixed(2)})` : undefined,
+                          backgroundColor: `color-mix(in oklab, var(--destructive) ${Math.round(slippageEmphasis * 25)}%, transparent)`,
+                          boxShadow: `0 0 ${Math.round(slippageEmphasis * 16)}px color-mix(in oklab, var(--destructive) ${Math.round(slippageEmphasis * 50)}%, transparent), 0 0 ${Math.round(slippageEmphasis * 40)}px color-mix(in oklab, var(--destructive) ${Math.round(slippageEmphasis * 20)}%, transparent)`,
+                          textShadow: `0 0 ${Math.round(slippageEmphasis * 10)}px color-mix(in oklab, var(--destructive) ${Math.round(slippageEmphasis * 90)}%, transparent), 0 0 ${Math.round(slippageEmphasis * 30)}px color-mix(in oklab, var(--destructive) ${Math.round(slippageEmphasis * 50)}%, transparent)`,
+                          outline: slippageEmphasis > 0.3 ? `1px solid color-mix(in oklab, var(--destructive) ${Math.round(slippageEmphasis * 50)}%, transparent)` : undefined,
                         } : {}),
                       }
                     : undefined
@@ -281,7 +281,7 @@ function LabelIcon({ label }: { label: TradeLabel | undefined }) {
   if (!label || label.bucket === 'unlabeled') {
     return (
       <span title="No label" className="inline-flex justify-center">
-        <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+        <AlertTriangle className="h-3.5 w-3.5 text-warning" />
       </span>
     );
   }
@@ -289,7 +289,7 @@ function LabelIcon({ label }: { label: TradeLabel | undefined }) {
   if (label.bucket === 'fp') {
     return (
       <span title="Label says not a trade" className="inline-flex justify-center">
-        <XCircle className="h-3.5 w-3.5 text-red-500" />
+        <XCircle className="h-3.5 w-3.5 text-destructive" />
       </span>
     );
   }
@@ -299,15 +299,15 @@ function LabelIcon({ label }: { label: TradeLabel | undefined }) {
   if (mismatches.length === 0) {
     return (
       <span title="Label match" className="inline-flex justify-center">
-        <CircleCheck className="h-3.5 w-3.5 text-emerald-500" />
+        <CircleCheck className="h-3.5 w-3.5 text-profit" />
       </span>
     );
   }
 
   return (
     <span className="relative inline-flex justify-center" title={`Trade matched, ${mismatches.length} field diff${mismatches.length !== 1 ? 's' : ''}`}>
-      <CircleCheck className="h-3.5 w-3.5 text-emerald-500" />
-      <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+      <CircleCheck className="h-3.5 w-3.5 text-profit" />
+      <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-warning" />
     </span>
   );
 }

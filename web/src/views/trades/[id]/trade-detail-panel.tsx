@@ -221,8 +221,8 @@ function LabelSection({ label, trade, systemDecision }: { label: TradeLabel | un
       <section>
         <div className="flex items-center gap-1.5 mb-2">
           <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Label</h4>
-          <AlertTriangle className="h-3 w-3 text-amber-400" />
-          <span className="text-[10px] text-amber-500">No label</span>
+          <AlertTriangle className="h-3 w-3 text-warning" />
+          <span className="text-[10px] text-warning">No label</span>
         </div>
       </section>
     );
@@ -238,18 +238,18 @@ function LabelSection({ label, trade, systemDecision }: { label: TradeLabel | un
         <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Label</h4>
         {isFP ? (
           <>
-            <XCircle className="h-3 w-3 text-red-500" />
-            <span className="text-[10px] text-red-500 font-medium">False positive</span>
+            <XCircle className="h-3 w-3 text-destructive" />
+            <span className="text-[10px] text-destructive font-medium">False positive</span>
           </>
         ) : isMatch ? (
           <>
-            <CircleCheck className="h-3 w-3 text-emerald-500" />
-            <span className="text-[10px] text-emerald-500">Match</span>
+            <CircleCheck className="h-3 w-3 text-profit" />
+            <span className="text-[10px] text-profit">Match</span>
           </>
         ) : (
           <>
-            <CircleCheck className="h-3 w-3 text-emerald-500" />
-            <span className="text-[10px] text-amber-500">{mismatches.length} diff{mismatches.length !== 1 ? 's' : ''}</span>
+            <CircleCheck className="h-3 w-3 text-profit" />
+            <span className="text-[10px] text-warning">{mismatches.length} diff{mismatches.length !== 1 ? 's' : ''}</span>
           </>
         )}
         {label.labelConfidence === 'LOW' && (
@@ -356,8 +356,7 @@ type DiffRow = { field: string; label: string; system: string; match: boolean };
 
 function LabelDiffTable({ label, trade, mismatches }: { label: TradeLabel; trade: Trade; mismatches: { path: string; expected: string; got: string }[] }) {
   const mismatchMap = new Map(mismatches.map(m => [m.path, m]));
-  const sig = (label.labelSignals?.[0] ?? null) as Record<string, unknown> | null;
-  const hasSig = sig !== null;
+  const sig = label.labelSignals?.[0] ?? null;
 
   // Always show full trade details on the system side
   const legsSummary = formatLegsSummary(trade.legs, trade.strategy);
@@ -370,30 +369,30 @@ function LabelDiffTable({ label, trade, mismatches }: { label: TradeLabel; trade
     },
     {
       field: 'action',
-      system: hasSig ? (mismatchMap.get('action')?.got ?? String(sig.action ?? '—')) : (trade.status === 'CANCELLED' ? 'CANCELLED' : 'OPEN'),
-      labelVal: hasSig ? String(sig.action ?? '—') : null,
+      system: sig ? (mismatchMap.get('action')?.got ?? String(sig.action ?? '—')) : (trade.status === 'CANCELLED' ? 'CANCELLED' : 'OPEN'),
+      labelVal: sig ? String(sig.action ?? '—') : null,
       match: !mismatchMap.has('action'),
     },
-    { field: 'symbol', system: trade.symbol, labelVal: hasSig ? String(sig.symbol ?? '—') : null, match: !mismatchMap.has('symbol') },
-    { field: 'direction', system: trade.direction, labelVal: hasSig ? String(sig.direction ?? 'null') : null, match: !mismatchMap.has('direction') },
-    { field: 'strategy', system: trade.strategy, labelVal: hasSig ? String(sig.strategy ?? 'null') : null, match: !mismatchMap.has('strategy') },
+    { field: 'symbol', system: trade.symbol, labelVal: sig ? String(sig.symbol ?? '—') : null, match: !mismatchMap.has('symbol') },
+    { field: 'direction', system: trade.direction, labelVal: sig ? String(sig.direction ?? 'null') : null, match: !mismatchMap.has('direction') },
+    { field: 'strategy', system: trade.strategy, labelVal: sig ? String(sig.strategy ?? 'null') : null, match: !mismatchMap.has('strategy') },
   ];
 
   // Always show strikes/expiry/price from the trade — these matter for judging correctness
-  if (legsSummary) tradeFields.push({ field: 'strikes', system: legsSummary, labelVal: hasSig && sig.strikes ? JSON.stringify(sig.strikes) : null, match: true });
+  if (legsSummary) tradeFields.push({ field: 'strikes', system: legsSummary, labelVal: sig?.strikes ? JSON.stringify(sig.strikes) : null, match: true });
 
   // Extract expiry from legs if available
   const tradeExpiry = trade.legs?.find((l: { expiry?: string }) => l.expiry)?.expiry;
-  if (tradeExpiry || (hasSig && sig.expiry)) {
-    tradeFields.push({ field: 'expiry', system: tradeExpiry ?? '—', labelVal: hasSig && sig.expiry ? String(sig.expiry) : null, match: true });
+  if (tradeExpiry || sig?.expiry) {
+    tradeFields.push({ field: 'expiry', system: tradeExpiry ?? '—', labelVal: sig?.expiry ? String(sig.expiry) : null, match: true });
   }
 
-  if (trade.entryPrice || (hasSig && sig.statedPrice != null)) {
-    tradeFields.push({ field: 'price', system: trade.entryPrice ?? '—', labelVal: hasSig && sig.statedPrice != null ? String(sig.statedPrice) : null, match: true });
+  if (trade.entryPrice || (sig && sig.statedPrice != null)) {
+    tradeFields.push({ field: 'price', system: trade.entryPrice ?? '—', labelVal: sig && sig.statedPrice != null ? String(sig.statedPrice) : null, match: true });
   }
 
-  if (trade.quantity || (hasSig && sig.quantity != null)) {
-    tradeFields.push({ field: 'quantity', system: String(trade.quantity ?? '—'), labelVal: hasSig && sig.quantity != null ? String(sig.quantity) : null, match: true });
+  if (trade.quantity || (sig && sig.quantity != null)) {
+    tradeFields.push({ field: 'quantity', system: String(trade.quantity ?? '—'), labelVal: sig && sig.quantity != null ? String(sig.quantity) : null, match: true });
   }
 
   return (
@@ -406,7 +405,7 @@ function LabelDiffTable({ label, trade, mismatches }: { label: TradeLabel; trade
       {tradeFields.map((r) => (
         <div key={r.field} className={cn(
           'grid grid-cols-[72px_1fr_1fr] border-b last:border-b-0',
-          !r.match && 'bg-red-500/5',
+          !r.match && 'bg-destructive/5',
         )}>
           <div className="px-2 py-1 font-mono text-muted-foreground">{r.field}</div>
           <div className={cn('px-2 py-1', r.labelVal == null ? 'text-muted-foreground/40' : 'font-medium')}>

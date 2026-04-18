@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ScatterPlotChart } from './scatter-chart';
+import { ScatterPlotChart, type ScatterTooltipProps } from './scatter-chart';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { formatCurrency } from '@/lib/format';
 export type TradeScatterPoint = {
@@ -26,9 +26,9 @@ function colorFor(index: number): string {
   return CHART_COLORS[index % CHART_COLORS.length];
 }
 
-function ScatterTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: TradeScatterPoint }> }) {
-  if (!active || !payload?.[0]) return null;
-  const d = payload[0].payload as TradeScatterPoint;
+function ScatterTooltip({ active, payload }: ScatterTooltipProps<TradeScatterPoint>) {
+  const d = payload?.[0]?.payload;
+  if (!active || !d) return null;
   return (
     <div className="rounded-lg border bg-card px-3 py-2 text-xs shadow-md">
       <div className="font-medium text-foreground">{d.symbol}</div>

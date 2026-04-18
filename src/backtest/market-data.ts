@@ -390,7 +390,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       const merged = this.mergeTicks(existing.ticks, newTicks);
       const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
       this.tickCache.set(memKey, updated);
-      await writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, newTicks, [gapStart, gapEnd]);
+      writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, newTicks, [gapStart, gapEnd]);
     }
 
     // 5. Return filtered ticks from (now-updated) cache
@@ -489,7 +489,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
       this.tickCache.set(symbol, updated);
 
-      await writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, symTicks, [startMs, endMs]);
+      writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, symTicks, [startMs, endMs]);
     }
   }
 

@@ -130,12 +130,12 @@ export function LabelDisplay({ label, title }: { label: EvalLabel; title: string
       <div className="flex items-center gap-3 mb-2">
         <LabelField label="isTrade" value={label.isTrade ? 'YES' : 'NO'} highlight={label.isTrade} />
         {trades.length > 1 && (
-          <span className="text-xs bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded font-medium">
+          <span className="text-xs bg-info/10 text-info px-1.5 py-0.5 rounded font-medium">
             {trades.length} trades
           </span>
         )}
         {trades.length === 1 && totalSignals > 1 && (
-          <span className="text-xs bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded font-medium">
+          <span className="text-xs bg-info/10 text-info px-1.5 py-0.5 rounded font-medium">
             {totalSignals} signals
           </span>
         )}

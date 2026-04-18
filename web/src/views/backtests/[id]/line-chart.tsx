@@ -9,6 +9,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
+import type { Formatter, NameType } from 'recharts/types/component/DefaultTooltipContent';
 
 type LineSeries = {
   key: string;
@@ -30,8 +31,7 @@ type MultiLineChartProps = {
   height?: number;
   formatX?: (v: string) => string;
   formatY?: (v: number) => string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tooltipFormatter?: (...args: any[]) => [string, string];
+  tooltipFormatter?: Formatter<number | string, NameType>;
   domain?: [number | string, number | string];
   referenceLines?: ReferenceLineConfig[];
 };

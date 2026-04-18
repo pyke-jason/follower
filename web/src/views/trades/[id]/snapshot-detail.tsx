@@ -42,8 +42,8 @@ export function ParseResultView({ data }: { data: Record<string, unknown> }) {
       {(routeLabel || isLotto || isStrangle) && (
         <div className="flex items-center gap-2 flex-wrap">
           {routeLabel && <Badge label={routeLabel} />}
-          {isLotto && <span className="text-[10px] text-amber-500 font-medium">LOTTO</span>}
-          {isStrangle && <span className="text-[10px] text-violet-400 font-medium">STRANGLE</span>}
+          {isLotto && <span className="text-[10px] text-warning font-medium">LOTTO</span>}
+          {isStrangle && <span className="text-[10px] text-strategy-pds font-medium">STRANGLE</span>}
         </div>
       )}
 
@@ -278,7 +278,7 @@ export function OrderFilledView({ data }: { data: Record<string, unknown> }) {
           ? 'text-profit'
           : slippage == null || slippage === 0
             ? 'text-foreground'
-            : 'text-amber-500',
+            : 'text-warning',
       )}>
         {immediatelyFilled
           ? 'Filled immediately at limit'

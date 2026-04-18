@@ -64,7 +64,7 @@ type DashboardApiResponse = {
   channelId: string;
 };
 
-type DashboardSignalRow = {
+export type DashboardSignalRow = {
   message: Message;
   trade: Trade | null;
 };

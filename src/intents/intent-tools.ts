@@ -11,33 +11,27 @@ import {
   flagForReviewTool,
   submitDecisionTool,
 } from '../agent/tool-factory.js';
-import { FlagForReviewInput, SubmitDecisionInput } from '../agent/schemas.js';
+import {
+  FlagForReviewInput,
+  GetRecentChatInput,
+  SubmitDecisionInput,
+} from '../agent/schemas.js';
 
 /** Callback for the get_recent_chat tool. */
 export type ChatLookup = (author: string | undefined, limit: number) => Promise<string>;
 
 /** Create the standard intent extraction tools with a pluggable chat lookup. */
 export function createIntentTools(chat: ChatLookup): ToolDef[] {
-  return [
-    flagForReviewTool(),
-    submitDecisionTool(),
-    {
-      name: 'get_recent_chat',
-      description: 'Get recent chat room messages before this message. Use to resolve follow-trades: when a trader references another trader ("following Dave", "@spectre", "ty Hari") or posts a bare entry that might follow someone else\'s call. Optionally filter by author.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          author: { type: 'string', description: 'Filter to a specific author (optional). Omit to get all authors.' },
-          limit: { type: 'number', description: 'Number of messages to return (default 20, max 50)' },
-        },
-      },
-      execute: async (input) => {
-        const author = (input as { author?: string }).author;
-        const limit = Math.min((input as { limit?: number }).limit ?? 20, 50);
-        return chat(author, limit);
-      },
+  const getRecentChat: ToolDef<typeof GetRecentChatInput> = {
+    name: 'get_recent_chat',
+    description: 'Get recent chat room messages before this message. Use to resolve follow-trades: when a trader references another trader ("following Dave", "@spectre", "ty Hari") or posts a bare entry that might follow someone else\'s call. Optionally filter by author.',
+    input: GetRecentChatInput,
+    execute: async (input) => {
+      const limit = Math.min(input.limit ?? 20, 50);
+      return chat(input.author, limit);
     },
-  ];
+  };
+  return [flagForReviewTool(), submitDecisionTool(), getRecentChat];
 }
 
 /** Shared onToolCall handler for submit_decision and flag_for_review. */

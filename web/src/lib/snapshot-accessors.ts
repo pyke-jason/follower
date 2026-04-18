@@ -8,6 +8,9 @@
  */
 
 import type { RunDecision, TradeEvent, TradeMetadata } from '@src/db/schema';
+import type { Span as TraceSpan } from '@src/lib/trace';
+
+export type { TraceSpan };
 
 // ── Snapshot sub-shapes ──────────────────────────────
 
@@ -76,6 +79,19 @@ export function getCancelledOrder(snap: Record<string, unknown>): SnapshotCancel
 /** Extract the signal sub-object from a SETTLED snapshot. */
 export function getSnapshotSignal(snap: Record<string, unknown>): SnapshotSignal | undefined {
   return snap.signal as SnapshotSignal | undefined;
+}
+
+/**
+ * Extract the `spans` array from a TRACE decision's snapshot.
+ * Returns null when the decision has no snapshot, no spans field, or spans is not an array.
+ * Spans are emitted by the backend via `src/lib/trace.ts` and serialized onto the decision snapshot.
+ */
+export function getTraceSpans(d: RunDecision): TraceSpan[] | null {
+  const snap = getSnapshot(d);
+  if (!snap) return null;
+  const spans = snap.spans;
+  if (!Array.isArray(spans)) return null;
+  return spans as TraceSpan[];
 }
 
 // ── TradeEvent metadata accessor ─────────────────────

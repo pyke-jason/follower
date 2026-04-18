@@ -8,6 +8,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts';
+import type { Formatter, NameType } from 'recharts/types/component/DefaultTooltipContent';
 
 type BarChartProps = {
   data: Record<string, unknown>[];
@@ -19,8 +20,7 @@ type BarChartProps = {
   color?: string;
   formatX?: (v: string) => string;
   formatY?: (v: number) => string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tooltipFormatter?: (...args: any[]) => [string, string];
+  tooltipFormatter?: Formatter<number, NameType>;
   barSize?: number;
 };
 

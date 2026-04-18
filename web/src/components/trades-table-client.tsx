@@ -109,14 +109,14 @@ const useTradeSortParams = createFilterParams({
   sort: { type: 'sort', defaultColumn: 'openedAt', defaultDir: 'desc' },
 });
 
+const EMPTY_PNL: Record<string, number> = {};
+
 export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {}) {
   const trades = useTradesStore((s) => s.trades);
   const eventsByTradeId = useTradesStore((s) => s.eventsByTradeId);
   const labelsByTradeId = useTradesStore((s) => s.labelsByTradeId);
   const selectedTradeId = useTradesStore((s) => s.selectedTradeId);
   const selectTrade = useTradesStore((s) => s.selectTrade);
-  const unrealizedPnl = useTradesStore((s) => s.unrealizedPnl);
-  const setUnrealizedPnl = useTradesStore((s) => s.setUnrealizedPnl);
   const commissionSchedule = useTradesStore((s) => s.commissionSchedule);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasLabels = Object.keys(labelsByTradeId).length > 0;
@@ -132,17 +132,15 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
 
   const [urlTradeId, setUrlTradeId] = useSearchParam('trade');
 
-  // Poll unrealized P&L for live channels
-  useQuery({
+  // Poll unrealized P&L for live channels. Read the query `data` directly —
+  // `select` must be pure, so we do not call any setters inside it.
+  const openPnlQuery = useQuery({
     queryKey: ['open-pnl', channelId],
     queryFn: () => api<Record<string, number>>(buildScopedPath('/open-pnl', channelId)),
     refetchInterval: 10_000,
     enabled: isLiveChannel,
-    select: (data) => {
-      setUnrealizedPnl(data);
-      return data;
-    },
   });
+  const unrealizedPnl = openPnlQuery.data ?? EMPTY_PNL;
 
   // Sync URL → store
   useEffect(() => {

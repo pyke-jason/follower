@@ -1,73 +1,73 @@
 import { useEffect, useCallback } from 'react';
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useChannelStore } from '@/stores/channel-store';
+import { useChannelStatus } from '@/lib/queries';
 import { api } from '@/lib/api';
 
-export type { ChannelBrief, StatusData } from '@/stores/channel-store';
-
 /**
- * URL <-> zustand sync. Mount once in the root layout -- reads `?channel=`
- * from the URL and keeps the zustand store in sync. Also injects the
- * router-based `selectChannel` implementation so store consumers can
- * navigate without importing react-router themselves.
+ * Mount once in the root layout. Reads `?channel=` from the URL, redirects
+ * to the resolved default when the URL is empty, exposes a router-aware
+ * `selectChannel` through the store for callers that cannot import
+ * react-router directly, and mirrors the /status response + channel ids
+ * into the store for consumers (`router`, `sidebar`, `backtest-banner`,
+ * `channel-scope-selector`) that subscribe to it.
  */
 export function ChannelScopeSync() {
   const [searchParams] = useSearchParams();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const channelId = searchParams.get('channel');
+  const urlChannelId = searchParams.get('channel');
   const search = searchParams.toString();
 
-  const storeChannelId = useChannelStore((s) => s.channelId);
+  // Fetch the default-channel metadata once. Kept separate from the status
+  // query because /status is scoped to a specific channel.
+  const channelsQuery = useQuery({
+    queryKey: ['channels', 'default'],
+    queryFn: () => api<{ defaultChannelId: string | null }>('/channels'),
+    staleTime: 60_000,
+  });
+  const defaultChannelId = channelsQuery.data?.defaultChannelId ?? null;
+
+  // Resolve the channel we should scope queries to. Prefer the URL, fall
+  // back to the server-provided default while we wait for the redirect below.
+  const resolvedChannelId = urlChannelId ?? defaultChannelId ?? undefined;
+
+  // Poll /status for the resolved channel via TanStack Query.
+  const statusQuery = useChannelStatus(resolvedChannelId);
+
   const setChannelId = useChannelStore((s) => s.setChannelId);
   const setDefaultChannelId = useChannelStore((s) => s.setDefaultChannelId);
-  const startPolling = useChannelStore((s) => s.startPolling);
-  const stopPolling = useChannelStore((s) => s.stopPolling);
-  const refreshStatus = useChannelStore((s) => s.refreshStatus);
+  const setStatus = useChannelStore((s) => s.setStatus);
 
-  // URL → store: sync when URL has ?channel=
   useEffect(() => {
-    if (channelId) {
-      setChannelId(channelId);
+    if (resolvedChannelId) setChannelId(resolvedChannelId);
+  }, [resolvedChannelId, setChannelId]);
+
+  useEffect(() => {
+    if (defaultChannelId) setDefaultChannelId(defaultChannelId);
+  }, [defaultChannelId, setDefaultChannelId]);
+
+  useEffect(() => {
+    if (statusQuery.data) {
+      setStatus(statusQuery.data, null);
+    } else if (statusQuery.isError) {
+      setStatus(null, 'Status unavailable');
     }
-  }, [channelId, setChannelId]);
+  }, [statusQuery.data, statusQuery.isError, setStatus]);
 
-  // Store → URL: ensure ?channel= is ALWAYS in the URL.
-  // Fires when navigating to a bare path (e.g. hardcoded link)
-  // or after the default channel is resolved on first load.
+  // ── URL is source of truth ─────────────────────────────────────────────
+  // When the URL has no channel and we know the default, redirect once so
+  // every subsequent render sees a channel id in the URL.
   useEffect(() => {
-    if (!channelId && storeChannelId) {
-      const params = new URLSearchParams(search);
-      params.set('channel', storeChannelId);
-      navigate(`${pathname}?${params.toString()}`, { replace: true });
-    }
-  }, [channelId, storeChannelId, pathname, search, navigate]);
+    if (urlChannelId || !defaultChannelId) return;
+    const params = new URLSearchParams(search);
+    params.set('channel', defaultChannelId);
+    navigate(`${pathname}?${params.toString()}`, { replace: true });
+  }, [urlChannelId, defaultChannelId, pathname, search, navigate]);
 
-  // Fetch default channel on mount
-  useEffect(() => {
-    let active = true;
-
-    api<{ defaultChannelId: string | null }>('/channels')
-      .then((data) => {
-        if (!active) return;
-        const fallback = data.defaultChannelId;
-        if (!fallback) return;
-        setDefaultChannelId(fallback);
-        if (!useChannelStore.getState().channelId) {
-          setChannelId(fallback);
-        }
-      })
-      .catch((error: unknown) => {
-        if (import.meta.env.DEV) {
-          console.warn('[channel-scope] failed to load channels', error);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [setChannelId, setDefaultChannelId]);
-
+  // Router-aware selectChannel exposed through the store for callers that
+  // cannot import react-router (e.g., the backtest banner Exit button).
   const selectChannel = useCallback(
     (id: string) => {
       const params = new URLSearchParams(search);
@@ -80,16 +80,6 @@ export function ChannelScopeSync() {
   useEffect(() => {
     useChannelStore.setState({ selectChannel });
   }, [selectChannel]);
-
-  useEffect(() => {
-    startPolling();
-    const onFocus = () => refreshStatus();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      stopPolling();
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [channelId, startPolling, stopPolling, refreshStatus]);
 
   return null;
 }

@@ -28,7 +28,12 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: true,
-      throwOnError: (error: any) => error?.status >= 500,
+      throwOnError: (error: unknown) => {
+        if (error instanceof Error && 'status' in error && typeof error.status === 'number') {
+          return error.status >= 500;
+        }
+        return false;
+      },
     },
   },
 });

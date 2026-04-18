@@ -88,7 +88,7 @@ export function EventTimeline({ events, closeMessageId }: { events: TradeEvent[]
               <span className="text-xs text-muted-foreground tabular-nums w-5">{i + 1}.</span>
               <Badge label={event.action} />
               {event.action === 'CLOSE' && (
-                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${closeMessageId ? 'text-blue-600 bg-blue-500/10' : 'text-muted-foreground bg-muted'}`}>
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${closeMessageId ? 'text-info bg-info/10' : 'text-muted-foreground bg-muted'}`}>
                   {closeMessageId ? 'Signal' : 'Auto'}
                 </span>
               )}

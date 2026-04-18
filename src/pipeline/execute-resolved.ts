@@ -16,7 +16,7 @@ import type { RiskCheckResult } from '../orders/risk-check.js';
 import type { RecordTradeInput, RecordTradeResult } from '../trades/record-trade.js';
 import type { ResolvedSignal, OrchestratorResult, Leg, TradePosition, SignalEventEmitter } from '../intents/orchestrator/types.js';
 import type { Message, TradeFlag, TradeMetadata } from '../db/schema.js';
-import type { LLMProvider } from '../agent/providers.js';
+import type { Agent } from '../agent/result.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 import type { TraceContext } from '../lib/trace.js';
 import { traced } from '../lib/trace.js';
@@ -79,7 +79,7 @@ export type ResolvedPipelineResult = {
 /** What executeResolvedSignals needs from the caller's env. */
 export type ExecuteEnv = {
   getPositions: (symbol?: string) => Promise<TradePosition[]>;
-  llm: LLMProvider;
+  agent: Agent;
   pipeline: ResolvedPipelineDeps;
   emitter: SignalEventEmitter;
   trace?: TraceContext;
@@ -379,6 +379,12 @@ async function executeResolvedSignal(
     // 2. Risk check
     const risk = await traced(trace, 'riskCheck', 'db', () => deps.checkRiskLimits({ symbol, strategy, trader, action: signalAction, direction }));
     if (!risk.allowed) {
+      const optLegs2 = getOptionLegs(signal.legs);
+      const detail = optLegs2.length > 0
+        ? ` strikes=${optLegs2.map(l => l.strike).join('/')} expiry=${optLegs2[0].expiry}`
+        : '';
+      const px = signal.limitPrice != null ? ` @$${signal.limitPrice}` : '';
+      log.warn(`Risk blocked: ${risk.reason} | dropped ${signalAction} ${direction} ${strategy} ${symbol}${detail}${px} (trader=${trader})`);
       return { signal, executed: false, reason: `Risk blocked: ${risk.reason}` };
     }
 
@@ -576,7 +582,7 @@ export async function executeResolvedSignals(ctx: {
 
         const retryResolved = await resolveOrchestrator(message, {
           getPositions: env.getPositions,
-          llm: env.llm,
+          agent: env.agent,
           broker: deps.broker,
           emitter,
         }, { failureContext: { error: err.originalMessage } });

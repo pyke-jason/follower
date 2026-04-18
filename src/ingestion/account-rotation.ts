@@ -29,7 +29,7 @@ import { PATHS } from '../lib/paths.js';
 
 // ─── Constants ───────────────────────────────────────
 
-const HME_PATH = '/Users/jason/Workspace/utils/hme';
+const HME_PATH = '/Users/jason/Workspace/projects/utils/hme';
 const ONEOP_REGISTER_URL = 'https://app.oneoption.com/account/register';
 const STORAGE_STATE_PATH = resolve(PATHS.data, 'browser-storage.json');
 

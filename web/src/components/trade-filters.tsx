@@ -323,7 +323,7 @@ export function TradeFilters({ className, evalSummary }: { className?: string; e
           {evalSummary.unlabeled > 0 && (
             <Badge
               variant={evalSummary.unlabeled / (evalSummary.labeled + evalSummary.unlabeled) > 0.2 ? 'destructive' : 'secondary'}
-              className={evalSummary.unlabeled / (evalSummary.labeled + evalSummary.unlabeled) <= 0.2 ? 'bg-amber-500/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 text-[10px]' : 'text-[10px]'}
+              className={evalSummary.unlabeled / (evalSummary.labeled + evalSummary.unlabeled) <= 0.2 ? 'bg-warning/15 text-warning text-[10px]' : 'text-[10px]'}
             >
               {evalSummary.unlabeled} unlabeled
             </Badge>

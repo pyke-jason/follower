@@ -1,0 +1,30 @@
+---
+name: calendar-demo
+type: example
+registry: "@shadcn"
+source: registry/new-york-v4/examples/calendar-demo.tsx
+---
+
+# calendar-demo
+
+```tsx
+"use client"
+
+import * as React from "react"
+
+import { Calendar } from "@/registry/new-york-v4/ui/calendar"
+
+export default function CalendarDemo() {
+  const [date, setDate] = React.useState<Date | undefined>(new Date())
+
+  return (
+    <Calendar
+      mode="single"
+      selected={date}
+      onSelect={setDate}
+      className="rounded-md border shadow-sm"
+      captionLayout="dropdown"
+    />
+  )
+}
+```

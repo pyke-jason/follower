@@ -54,7 +54,7 @@ const log = createLogger('Orchestrator');
  * Emits PARSED + SETTLED (for skips) or SIGNAL_RESOLVED (for executes) via env.emitter.
  *
  * @param message  The chat message to resolve
- * @param env      Pipeline environment (positions, LLM, broker, emitter)
+ * @param env      Pipeline environment (positions, agent, broker, emitter)
  * @param opts     Optional: failureContext for 422 retry
  */
 export async function resolveOrchestrator(
@@ -178,21 +178,7 @@ export async function resolveOrchestrator(
         : 'action=null';
   log.debug(`[${ctx.message.id}] → LLM path (${flagDetail})`);
 
-  if (!env.llm) {
-    log.warn(
-      `[${ctx.message.id}] LLM path needed (${flagDetail}) but no provider supplied`,
-    );
-    const result: OrchestratorResult = {
-      outcome: 'MANUAL_REVIEW',
-      reason: `Requires NLU (${flagDetail}) but no LLM provider available`,
-      parseResult: serializedParse,
-    };
-    logResult(ctx, parse, result);
-    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'llm'));
-    return result;
-  }
-
-  const r = await traced(env.trace, 'llmPath', 'llm', () => resolveLLMPath(parse, ctx, env.llm));
+  const r = await traced(env.trace, 'llmPath', 'llm', () => resolveLLMPath(parse, ctx, env.agent));
   const result = { ...r, parseResult: serializedParse };
   logResult(ctx, parse, result);
   await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'llm'));
@@ -258,7 +244,7 @@ async function emitOrchestratorEvents(
       ? result.reason : null;
     writeIntent({
       messageId: message.id,
-      model: env.llm?.identity.model ?? 'deterministic',
+      model: env.agent.identity.model,
       route: route as IntentRoute,
       decision: result.outcome,
       reasoning: reason,
@@ -300,10 +286,18 @@ function logResult(ctx: OrchestratorContext, parse: ParseResult, result: Orchest
 
   if (result.outcome === 'EXECUTE') {
     const legCount = result.signals.reduce((n, s) => n + s.legs.length, 0);
-    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)\n  msg: ${ctx.message.cleanText}`);
+    const why = result.llmReasoning ? `\n  why: ${truncateLine(result.llmReasoning, 300)}` : '';
+    log.info(`${id} ${who} | ${head}${detail} | → EXECUTE ${result.signals.length} signal(s) ${legCount} leg(s)${why}\n  msg: ${ctx.message.cleanText}`);
   } else {
-    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}\n  msg: ${ctx.message.cleanText}`);
+    const why = result.llmReasoning && result.llmReasoning !== result.reason
+      ? `\n  why: ${truncateLine(result.llmReasoning, 300)}` : '';
+    log.info(`${id} ${who} | ${head}${detail} | → MANUAL_REVIEW: ${result.reason}${why}\n  msg: ${ctx.message.cleanText}`);
   }
+}
+
+function truncateLine(s: string, max: number): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + '…';
 }
 
 // ── Strangle resolution ───────────────────────────────────────────────────────

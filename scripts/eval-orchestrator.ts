@@ -8,8 +8,8 @@ import type { Message } from '../src/db/schema.js';
 import type { BrokerService } from '../src/broker/interface.js';
 import { DatabentoMarketDataProvider } from '../src/backtest/market-data.js';
 import { tickCacheDb } from '../src/db/tick-cache-client.js';
-import { createProvider } from '../src/agent/providers.js';
-import type { LLMProvider } from '../src/agent/providers.js';
+import { createAgent } from '../src/agent/factory.js';
+import type { Agent } from '../src/agent/result.js';
 import type { EvalCase, EvalRunResult, EvalResult } from '../src/intents/evals/types.js';
 import { htmlToCleanText } from '../src/parsing/html.js';
 import { extractBadges } from '../src/parsing/badges.js';
@@ -44,13 +44,13 @@ async function main() {
   const providerName = args.provider as 'anthropic' | 'xai';
   const modelName = args.model!;
 
-  // LLM provider is lazy — skip cases don't need it
-  let llmProvider: LLMProvider | undefined;
-  async function getProvider(): Promise<LLMProvider> {
-    if (!llmProvider) {
-      llmProvider = await createProvider({ provider: providerName, model: modelName });
+  // Agent is lazy — skip cases don't need it
+  let agent: Agent | undefined;
+  async function getAgent(): Promise<Agent> {
+    if (!agent) {
+      agent = await createAgent({ provider: providerName, model: modelName });
     }
-    return llmProvider;
+    return agent;
   }
 
   const apiKey = process.env.DATABENTO_API_KEY;
@@ -61,8 +61,8 @@ async function main() {
   const CONCURRENCY = 8;
   console.log(`Running ${cases.length} cases (${providerName}/${modelName}, concurrency=${CONCURRENCY})...\n`);
 
-  // Ensure LLM provider is initialized before parallel work
-  const provider = await getProvider();
+  // Ensure agent is initialized before parallel work
+  const resolvedAgent = await getAgent();
 
   async function runCase(evalCase: EvalCase): Promise<EvalResult> {
     const start = Date.now();
@@ -103,7 +103,7 @@ async function main() {
 
     const env: OrchestratorEnv = {
       getPositions: async () => input.positions ?? [],
-      llm: provider,
+      agent: resolvedAgent,
       broker,
       emitter: { emit: async () => {} },
     };

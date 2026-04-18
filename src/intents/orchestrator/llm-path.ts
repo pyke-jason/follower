@@ -15,14 +15,13 @@
 
 import { htmlToLLMText } from '@/parsing/html.js';
 import { formatTimestampForLLM } from '@/lib/et-date.js';
-import { runAgentLoop } from '@/agent/agent-loop.js';
+import type { Agent, AgentResult, AgentStep } from '@/agent/result.js';
 import { createIntentTools, intentOnToolCall } from '../intent-tools.js';
 import type { Signal } from '@/agent/schemas.js';
 import type { TaskResult } from '@/agent/schemas.js';
 import { createLogger } from '@/lib/logger.js';
 import type {
   OrchestratorContext,
-  OrchestratorLLMProvider,
   OrchestratorResult,
   ParseResult,
   ResolvedSignal,
@@ -108,15 +107,18 @@ Call submit_decision or flag_for_review when ready.`;
 export async function resolveLLMPath(
   parse: ParseResult,
   ctx: OrchestratorContext,
-  provider: OrchestratorLLMProvider,
+  agent: Agent,
 ): Promise<OrchestratorResult> {
-  const model = provider.identity.model;
+  const model = agent.identity.model;
 
   // ── Cache check (skip for 422 retries — failureContext alters the prompt) ──
   if (!ctx.failureContext) {
     const cached = lookupIntent(ctx.message.id, model);
     if (cached) {
-      log.debug(`LLM cache hit for message ${ctx.message.id} (v${INTENT_VERSION})`);
+      log.debug(
+        `LLM cache hit for message ${ctx.message.id} (v${INTENT_VERSION}) → ` +
+        `${describeCachedDecision(cached.decision, cached.signals, cached.reasoning)}`,
+      );
       return resolveFromCached(cached.decision, cached.reasoning, cached.signals, parse, ctx);
     }
   }
@@ -129,18 +131,15 @@ export async function resolveLLMPath(
     return ctx.chatHistory.getRecentMessages(author, limit);
   });
 
-  let loopResult: Awaited<ReturnType<typeof runAgentLoop>>;
+  let agentResult: AgentResult;
   try {
-    loopResult = await runAgentLoop(
-      {
-        systemPrompt: NLU_SYSTEM_PROMPT,
-        tools,
-        onToolCall: intentOnToolCall,
-        maxTurns: 5,
-      },
+    agentResult = await agent.run({
+      systemPrompt: NLU_SYSTEM_PROMPT,
       userPrompt,
-      provider,
-    );
+      tools,
+      onToolCall: intentOnToolCall,
+      maxTurns: 5,
+    });
   } catch (err) {
     log.error('LLM path agent loop failed:', err);
     return {
@@ -149,10 +148,10 @@ export async function resolveLLMPath(
     };
   }
 
-  const usage = loopResult.usage.inputTokens > 0
-    ? { inputTokens: loopResult.usage.inputTokens, outputTokens: loopResult.usage.outputTokens }
+  const usage = agentResult.usage.inputTokens > 0
+    ? { inputTokens: agentResult.usage.inputTokens, outputTokens: agentResult.usage.outputTokens }
     : undefined;
-  const taskResult = loopResult.result as TaskResult | null;
+  const taskResult = agentResult.result as TaskResult | null;
 
   // ── Write to cache (fire-and-forget, INSERT OR IGNORE) ──
   writeIntent({
@@ -162,14 +161,18 @@ export async function resolveLLMPath(
     decision: taskResult?.decision ?? 'MANUAL_REVIEW',
     reasoning: taskResult?.reasoning ?? 'LLM did not call a decision tool',
     signals: taskResult?.signals ?? null,
-    durationMs: loopResult.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
-    inputTokens: loopResult.usage.inputTokens,
-    outputTokens: loopResult.usage.outputTokens,
-    turns: loopResult.steps.filter(s => s.tool).length,
-    steps: loopResult.steps as IntentStep[],
+    durationMs: agentResult.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
+    inputTokens: agentResult.usage.inputTokens,
+    outputTokens: agentResult.usage.outputTokens,
+    turns: agentResult.steps.filter(s => s.tool).length,
+    steps: agentResult.steps as IntentStep[],
   });
 
   if (!taskResult) {
+    const stepSummary = summarizeAgentSteps(agentResult.steps);
+    log.warn(
+      `LLM did not call a decision tool for message ${ctx.message.id} — ${stepSummary}`,
+    );
     return { outcome: 'MANUAL_REVIEW', reason: 'LLM did not call a decision tool', usage };
   }
 
@@ -186,12 +189,13 @@ export async function resolveLLMPath(
   }
 
   log.debug(
-    `LLM path: ${taskResult.signals.length} signal(s) for message ${ctx.message.id}`,
+    `LLM path: ${taskResult.signals.length} signal(s) for message ${ctx.message.id} — ` +
+    `${describeSignals(taskResult.signals)} | reasoning: ${truncate(taskResult.reasoning, 200)}`,
   );
 
   // Route each signal through the appropriate resolution path
   const result = await routeLLMSignals(taskResult.signals, parse, ctx);
-  return { ...result, usage };
+  return { ...result, usage, llmReasoning: taskResult.reasoning };
 }
 
 /** Reconstruct an OrchestratorResult from a cached intent (zero token usage). */
@@ -215,7 +219,7 @@ async function resolveFromCached(
   }
 
   const result = await routeLLMSignals(signals, parse, ctx);
-  return { ...result, usage };
+  return { ...result, usage, llmReasoning: reasoning ?? undefined };
 }
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
@@ -364,4 +368,55 @@ function signalToParseResult(signal: Signal, originalParse: ParseResult): ParseR
     skipReason: null,
     complexityFlags: new Set(), // LLM-resolved signals have no complexity flags
   };
+}
+
+// ── Logging helpers ───────────────────────────────────────────────────────────
+
+function describeSignals(signals: Signal[]): string {
+  return signals
+    .map((s) => {
+      const head = [s.action, s.strategy, s.symbol].filter(Boolean).join(' ');
+      const dir = s.direction ? ` ${s.direction}` : '';
+      const strikes = s.strikes && s.strikes.length ? ` ${s.strikes.join('/')}` : '';
+      const expiry = s.expiry ? ` exp=${s.expiry}` : '';
+      const price = s.statedPrice != null ? ` $${s.statedPrice}` : '';
+      return `${head}${dir}${strikes}${expiry}${price}`;
+    })
+    .join(' | ');
+}
+
+function describeCachedDecision(
+  decision: string,
+  signals: Signal[] | null,
+  reasoning: string | null,
+): string {
+  if (decision === 'EXECUTE' && signals && signals.length > 0) {
+    return `EXECUTE ${signals.length} signal(s) [${describeSignals(signals)}]`;
+  }
+  const r = reasoning ? ` reasoning="${truncate(reasoning, 120)}"` : '';
+  return `${decision}${r}`;
+}
+
+function summarizeAgentSteps(steps: AgentStep[]): string {
+  const toolCalls = steps.filter((s) => s.tool);
+  const textSteps = steps.filter((s) => !s.tool && s.reasoning);
+  const parts: string[] = [
+    `${steps.length} step(s)`,
+    `${toolCalls.length} tool call(s)`,
+    `${textSteps.length} text step(s)`,
+  ];
+  if (toolCalls.length > 0) {
+    const toolNames = toolCalls.map((s) => s.tool).join(',');
+    parts.push(`tools=[${toolNames}]`);
+  }
+  if (textSteps.length > 0) {
+    const lastText = textSteps[textSteps.length - 1].reasoning ?? '';
+    parts.push(`lastText="${truncate(lastText, 200)}"`);
+  }
+  return parts.join(' ');
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + '…';
 }

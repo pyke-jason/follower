@@ -9,6 +9,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Search, X, Plus, ListPlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { cva, type VariantProps } from 'class-variance-authority';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
@@ -76,24 +77,63 @@ const bulkToggleStrategy = (names: string[], strategy: string, enable: boolean) 
   api('/traders/bulk', { method: 'POST', body: JSON.stringify({ action: 'toggleStrategy', names, strategy, enable }) });
 
 const ALL_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'] as const;
+type Strategy = (typeof ALL_STRATEGIES)[number];
 
-const STRAT_OFF =
-  'data-[state=off]:!text-muted-foreground/25 data-[state=off]:line-through';
-const STRAT_CLASSES: Record<string, string> = {
-  CDS: `data-[state=on]:!bg-amber-500/15 data-[state=on]:!text-amber-800 dark:data-[state=on]:!text-amber-300 ${STRAT_OFF}`,
-  PDS: `data-[state=on]:!bg-violet-500/15 data-[state=on]:!text-violet-800 dark:data-[state=on]:!text-violet-300 ${STRAT_OFF}`,
-  CALL: `data-[state=on]:!bg-emerald-500/15 data-[state=on]:!text-emerald-800 dark:data-[state=on]:!text-emerald-300 ${STRAT_OFF}`,
-  PUT: `data-[state=on]:!bg-rose-500/15 data-[state=on]:!text-rose-800 dark:data-[state=on]:!text-rose-300 ${STRAT_OFF}`,
-  STOCK: `data-[state=on]:!bg-sky-500/15 data-[state=on]:!text-sky-800 dark:data-[state=on]:!text-sky-300 ${STRAT_OFF}`,
-};
+// Strategy-themed toggle item. `data-[state=on]:` selectors match the base
+// Toggle cva's specificity — tailwind-merge resolves conflicts in caller order,
+// so these override `data-[state=on]:bg-accent` without `!important`.
+const strategyToggleVariants = cva(
+  'h-6 min-w-0 px-1.5 text-[10px] font-mono font-semibold shadow-none data-[state=off]:text-muted-foreground/25 data-[state=off]:line-through',
+  {
+    variants: {
+      strategy: {
+        CDS: 'data-[state=on]:bg-strategy-cds/15 data-[state=on]:text-strategy-cds-fg',
+        PDS: 'data-[state=on]:bg-strategy-pds/15 data-[state=on]:text-strategy-pds-fg',
+        CALL: 'data-[state=on]:bg-strategy-call/15 data-[state=on]:text-strategy-call-fg',
+        PUT: 'data-[state=on]:bg-strategy-put/15 data-[state=on]:text-strategy-put-fg',
+        STOCK: 'data-[state=on]:bg-strategy-stock/15 data-[state=on]:text-strategy-stock-fg',
+      },
+    },
+  },
+);
 
-const BULK_ON: Record<string, string> = {
-  CDS: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-400/40',
-  PDS: 'bg-violet-500/15 text-violet-800 dark:text-violet-300 border-violet-400/40',
-  CALL: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-400/40',
-  PUT: 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-400/40',
-  STOCK: 'bg-sky-500/15 text-sky-800 dark:text-sky-300 border-sky-400/40',
-};
+const strategyBulkButtonVariants = cva(
+  'px-2 py-1 h-auto rounded text-[11px] font-mono font-semibold transition-all hover:brightness-110 active:scale-95',
+  {
+    variants: {
+      strategy: {
+        CDS: 'bg-strategy-cds/15 text-strategy-cds-fg border-strategy-cds-border',
+        PDS: 'bg-strategy-pds/15 text-strategy-pds-fg border-strategy-pds-border',
+        CALL: 'bg-strategy-call/15 text-strategy-call-fg border-strategy-call-border',
+        PUT: 'bg-strategy-put/15 text-strategy-put-fg border-strategy-put-border',
+        STOCK: 'bg-strategy-stock/15 text-strategy-stock-fg border-strategy-stock-border',
+      },
+    },
+  },
+);
+
+// Local wrapper that binds a Strategy value to the themed variant. Keeps the
+// strategy-specific styling at the consumer level without modifying the shadcn
+// primitive.
+function StrategyToggleItem({
+  strategy,
+  className,
+  children,
+  ...props
+}: Omit<React.ComponentProps<typeof ToggleGroupItem>, 'value'> &
+  VariantProps<typeof strategyToggleVariants> & {
+    strategy: Strategy;
+  }) {
+  return (
+    <ToggleGroupItem
+      value={strategy}
+      className={cn(strategyToggleVariants({ strategy }), className)}
+      {...props}
+    >
+      {children ?? strategy}
+    </ToggleGroupItem>
+  );
+}
 
 type OptAction =
   | { type: 'add'; name: string }
@@ -128,29 +168,26 @@ export function TraderRoster({
     traders,
     (state: TrackedTrader[], action: OptAction): TrackedTrader[] => {
       switch (action.type) {
-        case 'add':
-          return [
-            ...state,
-            {
-              name: action.name,
-              enabled: true,
-              strategies: [...ALL_STRATEGIES],
-              notes: null,
-              positionSizingConfig: null,
-            },
-          ];
-        case 'addAll':
-          return [
-            ...state,
-            ...action.names.map((name) => ({
-              name,
-              enabled: true as boolean | null,
-              strategies: [...ALL_STRATEGIES],
-              notes: null as string | null,
-              positionSizingConfig:
-                null as TrackedTrader['positionSizingConfig'],
-            })),
-          ];
+        case 'add': {
+          const added: TrackedTrader = {
+            name: action.name,
+            enabled: true,
+            strategies: [...ALL_STRATEGIES],
+            notes: null,
+            positionSizingConfig: null,
+          };
+          return [...state, added];
+        }
+        case 'addAll': {
+          const added: TrackedTrader[] = action.names.map((name) => ({
+            name,
+            enabled: true,
+            strategies: [...ALL_STRATEGIES],
+            notes: null,
+            positionSizingConfig: null,
+          }));
+          return [...state, ...added];
+        }
         case 'remove':
           return state.filter((t) => t.name !== action.name);
         case 'removeAll':
@@ -183,7 +220,7 @@ export function TraderRoster({
                   ...t,
                   positionSizingConfig: action.riskPercent != null
                     ? {
-                        strategy: 'atr' as const,
+                        strategy: 'atr',
                         riskPercent: action.riskPercent,
                         atrMultiplier: (t.positionSizingConfig?.strategy === 'atr' ? t.positionSizingConfig.atrMultiplier : 2.0),
                       }
@@ -198,7 +235,7 @@ export function TraderRoster({
   // / to open search, Escape to clear selection
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement)?.tagName;
+      const tag = e.target instanceof HTMLElement ? e.target.tagName : null;
       if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA') {
         e.preventDefault();
         setAddOpen(true);
@@ -460,16 +497,7 @@ export function TraderRoster({
           className="gap-1"
         >
           {ALL_STRATEGIES.map((s) => (
-            <ToggleGroupItem
-              key={s}
-              value={s}
-              className={cn(
-                '!h-6 !min-w-0 !px-1.5 text-[10px] font-mono font-semibold !shadow-none',
-                STRAT_CLASSES[s],
-              )}
-            >
-              {s}
-            </ToggleGroupItem>
+            <StrategyToggleItem key={s} strategy={s} />
           ))}
         </ToggleGroup>
       ),
@@ -478,19 +506,24 @@ export function TraderRoster({
       key: 'riskPercent',
       label: 'Risk %',
       className: 'w-[70px]',
-      render: (t) => (
-        <RiskPercentCell
-          key={t.name}
-          name={t.name}
-          riskPercent={t.positionSizingConfig?.strategy === 'atr' ? t.positionSizingConfig.riskPercent : null}
-          onChange={doRiskPercentChange}
-        />
-      ),
+      render: (t) => {
+        const riskPercent = t.positionSizingConfig?.strategy === 'atr' ? t.positionSizingConfig.riskPercent : null;
+        return (
+          <RiskPercentCell
+            key={`${t.name}:${riskPercent ?? 'null'}`}
+            name={t.name}
+            riskPercent={riskPercent}
+            onChange={doRiskPercentChange}
+          />
+        );
+      },
     },
     {
       key: 'notes',
       label: 'Notes',
-      render: (t) => <NotesCell key={t.name} name={t.name} notes={t.notes} />,
+      render: (t) => (
+        <NotesCell key={`${t.name}:${t.notes ?? ''}`} name={t.name} notes={t.notes} />
+      ),
     },
     {
       key: 'remove',
@@ -543,12 +576,11 @@ export function TraderRoster({
                     size="sm"
                     onClick={() => doBulkStrategy(s, !isOn)}
                     className={cn(
-                      'px-2 py-1 h-auto rounded text-[11px] font-mono font-semibold transition-all hover:brightness-110 active:scale-95',
                       isOn
-                        ? BULK_ON[s]
+                        ? strategyBulkButtonVariants({ strategy: s })
                         : isMixed
-                          ? `${BULK_ON[s]} opacity-50`
-                          : 'border-border/50 text-muted-foreground/30',
+                          ? cn(strategyBulkButtonVariants({ strategy: s }), 'opacity-50')
+                          : 'px-2 py-1 h-auto rounded text-[11px] font-mono font-semibold transition-all hover:brightness-110 active:scale-95 border-border/50 text-muted-foreground/30',
                     )}
                     title={
                       isOn
@@ -751,7 +783,6 @@ function RiskPercentCell({
 }) {
   const displayVal = riskPercent != null ? (riskPercent * 100).toFixed(1) : '';
   const [value, setValue] = useState(displayVal);
-  const [, startTransition] = useTransition();
 
   function save() {
     const trimmed = value.trim();
@@ -776,11 +807,11 @@ function RiskPercentCell({
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          (e.target as HTMLInputElement).blur();
+          e.currentTarget.blur();
         }
         if (e.key === 'Escape') {
           setValue(displayVal);
-          (e.target as HTMLInputElement).blur();
+          e.currentTarget.blur();
         }
       }}
       autoComplete="off"
@@ -817,11 +848,11 @@ function NotesCell({
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          (e.target as HTMLInputElement).blur();
+          e.currentTarget.blur();
         }
         if (e.key === 'Escape') {
           setValue(notes ?? '');
-          (e.target as HTMLInputElement).blur();
+          e.currentTarget.blur();
         }
       }}
       autoComplete="off"

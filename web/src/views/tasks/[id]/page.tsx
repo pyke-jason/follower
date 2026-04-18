@@ -64,7 +64,7 @@ export default function TaskDetailPage() {
 function TaskDetailContent({ data, href, skipMut }: {
   data: TaskDetailResponse;
   href: ReturnType<typeof useScopedHref>;
-  skipMut: any;
+  skipMut: ReturnType<typeof useApiMutation<void, unknown>>;
 }) {
   const { task, sourceMessage, runDecision, nearbyMessages } = data;
   if (!task) return <div className="py-20 text-center text-muted-foreground">Task not found</div>;

@@ -18,12 +18,12 @@ import {
   CommandSeparator,
 } from '@/components/ui/command';
 import { useChannelStore } from '@/stores/channel-store';
-import type { StatusData } from '@/stores/channel-store';
+import type { StatusResponse } from '@/lib/api-types';
 import { api } from '@/lib/api';
 
 type HealthState = 'healthy' | 'degraded' | 'unknown';
 
-function deriveHealthState(status: StatusData | null): HealthState {
+function deriveHealthState(status: StatusResponse | null): HealthState {
   if (!status || status.channelKind !== 'runtime') return 'unknown';
   if (status.circuitOpen || status.brokerHealthy === false) return 'degraded';
   return 'healthy';

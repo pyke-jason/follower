@@ -9,7 +9,7 @@
 
 import type { Task, Trade } from '../db/schema.js';
 import { TaskContextSchema } from '../db/schema.js';
-import type { LLMProvider } from '../agent/providers.js';
+import type { Agent } from '../agent/result.js';
 import type { OrchestratorResult, ResolvedSignal, SignalEventEmitter, SerializedParseResult } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult, ExecuteEnv } from './execute-resolved.js';
 import type { TradeScope } from './build-deps.js';
@@ -34,7 +34,7 @@ export type ProcessTaskResult =
 
 export type TaskEnv = {
   getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
-  llm: LLMProvider;
+  agent: Agent;
   pipeline: ResolvedPipelineDeps;
   scope: TradeScope;
   agentIdentity: { provider: string; model: string };
@@ -102,7 +102,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
 
   const executeEnv: ExecuteEnv = {
     getPositions,
-    llm: env.llm,
+    agent: env.agent,
     pipeline,
     emitter,
   };
@@ -111,7 +111,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   const resolved = await traced(env.trace, 'orchestrator', 'sync', () =>
     resolveOrchestrator(message, {
       getPositions,
-      llm: env.llm,
+      agent: env.agent,
       broker: env.pipeline.broker,
       emitter,
       trace: env.trace,

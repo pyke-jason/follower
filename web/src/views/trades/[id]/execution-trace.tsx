@@ -1,18 +1,11 @@
 import { cn } from '@/lib/utils';
 import { fmtMs } from '@/components/decision-shared';
 import type { RunDecision } from '@src/db/schema';
+import { getTraceSpans, type TraceSpan as Span } from '@/lib/snapshot-accessors';
 
 // ─── Types ───────────────────────────────────────────
 
-type SpanCategory = 'sync' | 'db' | 'broker' | 'llm' | 'market_data';
-
-type Span = {
-  name: string;
-  category: SpanCategory;
-  startMs: number;
-  durationMs: number;
-  children: Span[];
-};
+type SpanCategory = Span['category'];
 
 // ─── Constants ───────────────────────────────────────
 
@@ -23,16 +16,19 @@ const CAT_LABEL: Record<SpanCategory, string> = {
 };
 
 const CAT_BAR: Record<SpanCategory, string> = {
-  sync: 'bg-slate-400/40',
-  db: 'bg-amber-400/50',
-  broker: 'bg-sky-400/50',
-  llm: 'bg-violet-400/60',
-  market_data: 'bg-emerald-400/50',
+  sync: 'bg-muted-foreground/40',
+  db: 'bg-warning/50',
+  broker: 'bg-info/50',
+  llm: 'bg-strategy-pds/60',
+  market_data: 'bg-profit/50',
 };
 
 const CAT_DOT: Record<SpanCategory, string> = {
-  sync: 'bg-slate-400', db: 'bg-amber-400', broker: 'bg-sky-400',
-  llm: 'bg-violet-400', market_data: 'bg-emerald-400',
+  sync: 'bg-muted-foreground',
+  db: 'bg-warning',
+  broker: 'bg-info',
+  llm: 'bg-strategy-pds',
+  market_data: 'bg-profit',
 };
 
 const SPAN_LABEL: Record<string, string> = {
@@ -84,10 +80,9 @@ export function ExecutionTrace({ decisions }: { decisions: RunDecision[] }) {
   const traceDecision = decisions.find(d => d.event === 'TRACE');
   if (!traceDecision) return null;
 
-  const snapshot = traceDecision.snapshot as Record<string, unknown> | null;
-  if (!snapshot?.spans || !Array.isArray(snapshot.spans)) return null;
+  const spans = getTraceSpans(traceDecision);
+  if (!spans) return null;
 
-  const spans = snapshot.spans as Span[];
   const totalMs = maxEnd(spans);
   if (totalMs <= 0) return null;
 
