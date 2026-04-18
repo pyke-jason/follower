@@ -13,13 +13,12 @@ Methods: `getQuote`, `placeOrder`, `modifyOrder`, `cancelOrder`, `getOrderStatus
 Implementations:
 - `SimBroker` (`src/backtest/sim-broker.ts`) — simulated fills for backtesting
 - IBKR (`src/broker/ibkr/`) — Interactive Brokers via Java sidecar
-- TradeStation (`src/broker/tradestation/`) — TradeStation REST API
 
 ## Broker Selection (`select.ts`)
 
 `getRuntimeChannelServices()` returns an array of `RuntimeChannelService` (channel definition + `BrokerService` instance). `getRuntimeBrokerMap()` returns a `Map<channelId, BrokerService>` for lookup.
 
-Channel config is resolved by `getRuntimeChannelDefinitions()` in `src/lib/runtime-channels.ts`, which reads env vars (`IBKR_LIVE_ACCOUNT_ID`, `IBKR_PAPER_ACCOUNT_ID`, `TS_ACCOUNT_ID`) and applies `ENABLED_CHANNEL_IDS` filtering.
+Channel config is resolved by `getRuntimeChannelDefinitions()` in `src/lib/runtime-channels.ts`, which reads env vars (`IBKR_LIVE_ACCOUNT_ID`, `IBKR_PAPER_ACCOUNT_ID`) and applies `ENABLED_CHANNEL_IDS` filtering.
 
 ## Rules
 

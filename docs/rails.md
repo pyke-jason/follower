@@ -95,7 +95,6 @@ These are mandatory -- do not rebuild them per page:
 | Need | Use this | Not this |
 |------|----------|----------|
 | Tables | `DataTable` from `web/src/components/data-table.tsx` | Inline `<Table>` with `.map()` |
-| Paginated lists | `useInfiniteList` from `web/src/hooks/use-infinite-list.ts` | Manual pagination or loading all rows |
 | URL-synced filters | `createFilterParams` from `web/src/hooks/use-filter-params.ts` | Hand-rolling `useSearchParams` or `useState` |
 | Loading/error boundaries | `QueryBoundary` from `web/src/components/query-boundary.tsx` | `if (!data) return <Spinner />` |
 | Empty states | `EmptyState` with `variant` prop | `return null` or bare text |

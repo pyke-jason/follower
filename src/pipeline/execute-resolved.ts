@@ -24,7 +24,7 @@ import { isSpread, getOptionLegs } from '../lib/trade.js';
 import { OrderResultSchema } from '../broker/order-schemas.js';
 import { formatOccSymbol } from '../lib/occ-symbology.js';
 import { getMidpoint, getQuoteMark, isCreditOrder, isCreditOrderStructural } from './leg-pricing.js';
-import { QuoteResolutionError } from '../lib/errors.js';
+import { QuoteResolutionError, QuoteUnavailableError } from '../lib/errors.js';
 import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { floorCents, round, roundCents } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
@@ -562,6 +562,23 @@ export async function executeResolvedSignals(ctx: {
         { signal, result, resolved },
       );
     } catch (err) {
+      if (err instanceof QuoteUnavailableError) {
+        const failResult: ResolvedPipelineResult = {
+          signal,
+          executed: false,
+          reason: `No quote available for ${err.symbol}${err.detail ? ` (${err.detail})` : ''}`,
+        };
+        results.push(failResult);
+        log.warn(`Skipping signal — ${failResult.reason}`);
+        if (signal.tradeId) {
+          await addTradeFlags(signal.tradeId, 'marketDataFail');
+        }
+        await emitter.emit('SETTLED',
+          { outcome: 'FAIL', signalIndex: i, reasoning: failResult.reason },
+          { signal, result: failResult, quoteUnavailable: { symbol: err.symbol, detail: err.detail } },
+        );
+        continue;
+      }
       if (err instanceof QuoteResolutionError) {
         // Record the original failure
         const failResult: ResolvedPipelineResult = {

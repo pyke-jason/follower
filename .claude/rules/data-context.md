@@ -32,11 +32,10 @@ All trades, tasks, and decisions are scoped by `channel_id`. Always filter queri
 **Format:** `<broker>:<mode>:<accountId>` for live/paper, `bt:<runId>` for backtests.
 
 **Helpers in `src/lib/channel.ts`:**
-- `runtimeChannel(broker, mode, accountId)` -- general-purpose (works for any broker)
+- `runtimeChannel(broker, mode, accountId)` -- general-purpose
 - `ibkrChannel(mode, accountId)` -- IBKR shortcut
-- `tradestationChannel(mode, accountId)` -- TradeStation shortcut
-- `liveChannel(accountId)` -- shortcut for `ibkrChannel('live', accountId)` (IBKR-specific)
-- `paperChannel(accountId)` -- shortcut for `ibkrChannel('paper', accountId)` (IBKR-specific)
+- `liveChannel(accountId)` -- shortcut for `ibkrChannel('live', accountId)`
+- `paperChannel(accountId)` -- shortcut for `ibkrChannel('paper', accountId)`
 - `btChannel(runId)` -- backtest channel
 
 Do not hand-construct channel ID strings. Use these helpers so the format stays consistent.

@@ -63,10 +63,12 @@ These are hard rules. Do not deviate.
 1. **Badge is strong signal.** Long/Short/Exit badges are structural markers added by traders to indicate a trade. Badge + symbol = trade unless proven otherwise by one of the exceptions below.
 2. **Futures (/ES, /NQ, /RTY, /YM, /CL, /GC) are always isTrade: false** because the system does not trade futures contracts. They cannot be executed.
 3. **Paper trades are always isTrade: false** because the system only copies real-money trades.
-4. **Commentary with symbols but no badge and no action verbs is isTrade: false.** "NVDA rw persistent selling" is market observation, not a trade entry.
+4. **Commentary with symbols but no badge AND no action verbs is isTrade: false.** "NVDA rw persistent selling" is market observation, not a trade entry. "No badge" alone is NEVER sufficient to skip — you must ALSO verify there is no first-person action verb (see rule 4a).
+4a. **Explicit action verbs override the "no badge" heuristic.** Even without any badge, a message is `isTrade: true` when it contains a first-person trade verb ("bought", "sold", "short", "shorting", "long", "longed", "added", "trimmed", "exited", "exiting", "sold to close", "bought to cover", "entered", "closing", "opening", "filled", "taking profits on", "taking the loss on X and {verb}ing Y") AND either a dollar price OR a share/contract count OR both. This is the "TXN reversal" pattern: `"Doing a rare reversal trade, taking the loss on TXN long (-$8.40) and shorting it at $199.06 , 1,000 Shares"` — no badge, but `shorting + $199.06 + 1,000 Shares` unambiguously = OPEN SHORT STOCK TXN. Do not label "commentary about TXN" when the trader has named a price and a size.
+4b. **Mixed retrospective + forward action is still a trade.** A message that opens with retrospective narration ("taking the loss on X long", "got stopped out of Y", "that was rough") but then adds a new forward action ("and now shorting Z at $P") produces ONE trade row for the new action (and a separate CLOSE row for the retrospective action when it has enough structure to stand on its own). Do not discard the whole message as narration because the first clause is a past reference.
 5. **Pre-market bulletins (starting with "PRE-OPEN MARKET COMMENTS" or similar) are always isTrade: false** regardless of how many tickers they mention.
-6. **Hypotheticals ("if I was", "I would consider") are isTrade: false.** No execution happened.
-7. **Position updates ("still holding", "looking for a sell off") are isTrade: false.** No new action.
+6. **Hypotheticals ("if I was", "I would consider", "would look at", "tempted to", "thinking about") are isTrade: false.** No execution happened.
+7. **Position updates without a new action ("still holding", "looking for a sell off", "waiting for a bounce") are isTrade: false.** No new action.
 
 ### Signal field rules
 8. **A stated dollar price implies STOCK unless options language is present.** "Long TSLA $311.83" with a badge and a dollar price but no strikes, expiry, or options words (calls/puts/spread/credit/debit) -> `strategy: "STOCK"`. "Long TSLA 1,000 Shares" -> `strategy: "STOCK"`. "Long TSLA $330 Call" -> `strategy: "CALL"`. Only use `strategy: null` when there is NO price AND no instrument clues (bare "Long MP" with nothing else).
@@ -78,11 +80,18 @@ These are hard rules. Do not deviate.
 12. **Partial exits use TRIM action with exitPercent.** "took 2/3 off" -> `action: "TRIM", exitPercent: 0.67`. "half out" -> `action: "TRIM", exitPercent: 0.5`. The fraction numerals (2, 3) are NOT strikes — never put them in the strikes array.
 
 ### Spread and options mapping
-13. **PCS (Put Credit Spread)** = bullish, sold puts -> `strategy: "PCS", strikes: [high, low]`
-14. **PDS (Put Debit Spread)** = bearish, bought puts -> `strategy: "PDS", strikes: [high, low]`
-15. **CDS (Call Debit Spread)** = bullish, bought calls -> `strategy: "CDS", strikes: [low, high]`
-16. **CCS (Call Credit Spread)** = bearish, sold calls -> `strategy: "CCS", strikes: [low, high]`
+
+**Direction for all options/spreads comes from the badge, not from inferring "which side the trader bought".** `Long` badge → `direction: "LONG"`. `Short` badge → `direction: "SHORT"`. This matches the orchestrator's input contract — the execution pipeline derives leg sides from `strategy` deterministically (`buildSpreadOptionLegs`), so the `direction` field in labels is the trader's stated market view.
+
+13. **PCS (Put Credit Spread)** = bullish trader view, sold puts -> `strategy: "PCS", strikes: [high, low]`, direction from badge.
+14. **PDS (Put Debit Spread)** = bearish trader view, bought puts -> `strategy: "PDS", strikes: [high, low]`, direction from badge (typically `SHORT`).
+15. **CDS (Call Debit Spread)** = bullish trader view, bought calls -> `strategy: "CDS", strikes: [low, high]`, direction from badge (typically `LONG`).
+16. **CCS (Call Credit Spread)** = bearish trader view, sold calls -> `strategy: "CCS", strikes: [low, high]`, direction from badge (typically `SHORT`).
 17. **Sold puts (Pete's style)** = bullish, selling puts for premium -> `strategy: "PUT", statedPrice: <premium>, direction: "LONG"`. "Long OKLO sold Oct (17) $95 put @ $4.70" is opening a new position, NOT closing.
+17a. **Strategy abbreviations can be attached to strikes.** "99/101CDS", "135/140PDS", "68/67PCS" — the strategy marker runs together with the strike pair. Parse the strategy off the end and the strikes from the numeric prefix. Do NOT classify these as plain CALL/PUT.
+17b. **Strangle = one trade, two legs.** Per rule 8 (self-check), a strangle is one outer array entry with TWO inner Signal entries: one `strategy: "CALL"` leg + one `strategy: "PUT"` leg, different strikes. "Long Short SPY strangle 679/683" → outer=1, inner=[CALL 683, PUT 679]. Never flatten a strangle into a single CALL or PUT signal.
+17c. **Straddle = one trade, two legs, SAME strike.** Same shape as a strangle but both legs share one strike. "Long Short SPY Straddle $685" → outer=1, inner=[CALL 685, PUT 685].
+17d. **Never use a badge word as a symbol.** If the message has no extractable ticker (empty `symbols` array, no ticker letters in `clean_text`), the symbol is genuinely unknown — it is a follow-up/reply to a prior message. Do NOT substitute "LONG", "SHORT", "EXIT", "BUY", "SELL", or similar badge/action words into `symbol`. Either mark `isTrade: false` with reasoning "ticker not discoverable in isolation", or flag as `confidence: LOW` if you're sure it's a trade but can't identify the ticker. One-letter real tickers (like C for Citigroup) do exist — parse them from `$ C` / `$C` patterns before concluding the symbol is unknown.
 </constraints>
 
 ## How to Reason Through a Message
@@ -286,6 +295,53 @@ These show the expected classification for real message patterns. Study the reas
   "isTrade": false,
   "confidence": "HIGH",
   "trades": []
+}
+</label>
+</example>
+
+<example>
+<message>badges: [], symbols: ["TXN"], clean_text: "Doing a rare reversal trade, taking the loss on TXN long (-$8.40) and shorting it at $199.06 , 1,000 Shares"</message>
+<label>
+{
+  "reasoning": "No badge, but explicit first-person action verb 'shorting' with stated price ($199.06) and size (1,000 Shares). Rule 4a: action verb + price + size overrides the 'no badge' heuristic. The '(-$8.40)' clause is a retrospective reference to a prior TXN long position; the forward clause 'shorting it at $199.06 , 1,000 Shares' is a new OPEN SHORT STOCK trade. Not commentary.",
+  "isTrade": true,
+  "confidence": "HIGH",
+  "trades": [[{
+    "action": "OPEN", "symbol": "TXN", "direction": "SHORT",
+    "strategy": "STOCK", "strikes": null, "expiry": null,
+    "statedPrice": 199.06, "quantity": 1000
+  }]]
+}
+</label>
+</example>
+
+<example>
+<message>badges: ["Long","Short"], symbols: ["SPY"], clean_text: "Long Short SPY strangle 679/683 mar 04 for 4.74"</message>
+<label>
+{
+  "reasoning": "Long + Short badges with single ticker = strangle. Two strikes (679/683). Per rule 17b, strangle = one outer trade with 2 inner Signal legs (CALL + PUT). Higher strike (683) = CALL leg, lower strike (679) = PUT leg by convention. Premium 4.74 applies to the whole package. Expiry 'mar 04'.",
+  "isTrade": true,
+  "confidence": "HIGH",
+  "trades": [[
+    { "action": "OPEN", "symbol": "SPY", "direction": null, "strategy": "CALL", "strikes": [683], "expiry": "mar 04", "statedPrice": 4.74, "quantity": null },
+    { "action": "OPEN", "symbol": "SPY", "direction": null, "strategy": "PUT",  "strikes": [679], "expiry": "mar 04", "statedPrice": 4.74, "quantity": null }
+  ]]
+}
+</label>
+</example>
+
+<example>
+<message>badges: ["Exit","Long"], symbols: ["NFLX"], clean_text: "Exit Long NFLX 99/101CDS for .53"</message>
+<label>
+{
+  "reasoning": "Exit Long badges + NFLX. '99/101CDS' = CDS (Call Debit Spread) with strikes 99 and 101 — the CDS abbreviation is attached to the strike pair (rule 17a). CDS is bullish, strikes ordered low/high: [99, 101]. Closing at $0.53.",
+  "isTrade": true,
+  "confidence": "HIGH",
+  "trades": [[{
+    "action": "CLOSE", "symbol": "NFLX", "direction": "LONG",
+    "strategy": "CDS", "strikes": [99, 101], "expiry": null,
+    "statedPrice": 0.53, "quantity": null
+  }]]
 }
 </label>
 </example>

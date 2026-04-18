@@ -15,7 +15,7 @@
  * present, falling back to current `legs.length` for trades without LEG_OFF.
  *
  * Stock min/max is applied per side (not per ticket). Negligible difference since
- * most users will use $0.00 for stocks (TradeStation is commission-free for equities).
+ * most users will use $0.00 for stocks.
  */
 
 import type { CommissionSchedule } from '../db/schema.js';

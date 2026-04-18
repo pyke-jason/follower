@@ -14,7 +14,7 @@ import type { TickCacheDB } from './tick-cache-db.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from '../lib/occ-symbology.js';
 import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
-import { QuoteResolutionError } from '../lib/errors.js';
+import { QuoteResolutionError, QuoteUnavailableError } from '../lib/errors.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('MarketData');
@@ -176,10 +176,9 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const fetchCtx = meta
       ? `Fetch: status=${meta.status} bytes=${meta.bytes} records=${meta.records}${meta.requestId ? ` req=${meta.requestId}` : ''}`
       : 'No fetch metadata found — check QuoteTape logs above.';
-    throw new Error(
-      `[MarketData] No Databento data for "${symbol}" at or before ${at.toISOString()} ` +
-      `(checked ${lastCheckedMins || optionCap} min lookback).\n` +
-      `  ${fetchCtx}`,
+    throw new QuoteUnavailableError(
+      symbol,
+      `No Databento data at or before ${at.toISOString()} (checked ${lastCheckedMins || optionCap} min lookback). ${fetchCtx}`,
     );
   }
 

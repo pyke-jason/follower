@@ -91,7 +91,6 @@ function SecretActions({
 // ── Group classification ─────────────────────────────────────────
 
 function getGroup(key: string): string {
-  if (key.startsWith('TS_')) return 'TradeStation';
   if (key.startsWith('IBKR_')) return 'Interactive Brokers';
   if (key.startsWith('ONE_OP_')) return 'OneOption';
   if (key.includes('API_KEY') || key.includes('ANTHROPIC') || key.includes('DATABENTO')) return 'API Keys';

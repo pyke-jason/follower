@@ -2,7 +2,7 @@
  * IBKR BrokerService implementation.
  *
  * Talks to the Java sidecar (localhost:8090) which bridges to IB Gateway
- * via the TWS API. Implements the same BrokerService interface as TradeStation.
+ * via the TWS API.
  */
 
 import type { OptionType } from '@/lib/enums.js';

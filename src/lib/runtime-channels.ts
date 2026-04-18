@@ -1,6 +1,6 @@
-import { ibkrChannel, tradestationChannel } from './channel.js';
+import { ibkrChannel } from './channel.js';
 
-export type RuntimeBrokerName = 'ibkr' | 'tradestation';
+export type RuntimeBrokerName = 'ibkr';
 
 export type RuntimeChannelDefinition = {
   channelId: string;
@@ -55,17 +55,6 @@ function buildKnownRuntimeChannelsFromEnv(): RuntimeChannelDefinition[] {
       label: `IBKR Paper ${ibkrPaperAccount}`,
       sidecarUrl: process.env.IBKR_PAPER_SIDECAR_URL ?? 'http://localhost:8090/api',
       sidecarWsUrl: process.env.IBKR_PAPER_SIDECAR_WS ?? 'ws://localhost:8090/events',
-    });
-  }
-
-  const tradestationAccount = process.env.TS_ACCOUNT_ID;
-  if (tradestationAccount) {
-    appendIfMissing(defs, {
-      channelId: tradestationChannel('live', tradestationAccount),
-      brokerName: 'tradestation',
-      mode: 'live',
-      accountId: tradestationAccount,
-      label: `TradeStation Live ${tradestationAccount}`,
     });
   }
 

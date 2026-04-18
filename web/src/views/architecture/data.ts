@@ -95,17 +95,15 @@ export const groups: GroupDef[] = [
     ],
   },
   {
-    id: 'brokers', label: 'Brokers', subtitle: 'Interface → IBKR / TS / Sim',
+    id: 'brokers', label: 'Brokers', subtitle: 'Interface → IBKR / Sim',
     color: palette.pipeline, position: { x: 340, y: 980 }, expanded: { w: 400, h: 145 },
     children: [
       { id: 'brk-iface', label: 'Interface', desc: 'abstract contract', pos: { x: 145, y: 40 } },
-      { id: 'brk-ibkr', label: 'IBKR', desc: 'Java sidecar :8090', pos: { x: 10, y: 95 } },
-      { id: 'brk-ts', label: 'TradeStation', desc: 'REST + OAuth', pos: { x: 145, y: 95 } },
-      { id: 'brk-sim', label: 'SimBroker', desc: 'backtest fills', pos: { x: 280, y: 95 } },
+      { id: 'brk-ibkr', label: 'IBKR', desc: 'Java sidecar :8090', pos: { x: 80, y: 95 } },
+      { id: 'brk-sim', label: 'SimBroker', desc: 'backtest fills', pos: { x: 220, y: 95 } },
     ],
     edges: [
       { source: 'brk-iface', target: 'brk-ibkr', sh: 'bottom', th: 'top' },
-      { source: 'brk-iface', target: 'brk-ts', sh: 'bottom', th: 'top' },
       { source: 'brk-iface', target: 'brk-sim', sh: 'bottom', th: 'top' },
     ],
   },

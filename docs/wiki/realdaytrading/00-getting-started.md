@@ -94,7 +94,7 @@ Fundamental analysis is for long-term investing (months to years). The two are n
 
 **Step 0 -- Mental Preparation.** Humble yourself. Unlearn your assumptions. Accept the 2-year timeline. This is a career decision on par with going to law school.
 
-**Step 1 -- Choose a Broker.** Use a desktop platform (not mobile-only). ThinkerSwim, Interactive Brokers, TradeStation, or Fidelity. Must support real-time paper trading. Compare fees -- 100 trades/month of commissions adds up. This choice is sticky; you will likely stay with your first broker.
+**Step 1 -- Choose a Broker.** Use a desktop platform (not mobile-only). ThinkerSwim, Interactive Brokers, or Fidelity. Must support real-time paper trading. Compare fees -- 100 trades/month of commissions adds up. This choice is sticky; you will likely stay with your first broker.
 
 **Step 2 -- Learn.** Read the books. Take the free broker courses. Core reading list:
 - *Technical Analysis of the Financial Markets* -- John Murphy

@@ -2,31 +2,28 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     ".": {
-      "entry": [
-        "src/index.ts",
-        "src/db/migrate.ts",
-        "src/db/seed.ts",
-        "src/local-api/server.ts",
-        "src/backtest/launch.ts",
-        "src/lib/secrets/manage.ts",
-        "scripts/dev-up.ts",
-        "scripts/eval-orchestrator.ts"
-      ],
-      "project": ["src/**/*.ts", "scripts/**/*.ts"]
+      "entry": ["scripts/eval-orchestrator.ts"]
     },
     "web": {
-      "entry": [
-        "src/main.tsx",
-        "src/components/ui/**/*.{ts,tsx}"
-      ],
-      "project": ["src/**/*.{ts,tsx}"],
+      "entry": ["src/components/ui/**/*.{ts,tsx}"],
       "ignoreDependencies": [
-        "tailwindcss",
-        "tw-animate-css",
-        "shadcn",
         "@eslint/js",
         "eslint-plugin-paths"
       ]
     }
+  },
+  "rules": {
+    "files": "error",
+    "dependencies": "error",
+    "devDependencies": "error",
+    "unlisted": "error",
+    "unresolved": "error",
+    "binaries": "error",
+    "exports": "warn",
+    "types": "warn",
+    "nsExports": "warn",
+    "nsTypes": "warn",
+    "duplicates": "warn",
+    "enumMembers": "warn"
   }
 }

@@ -6,10 +6,6 @@ const TIMEOUT_MS = 5_000;
 
 /** All keys we expect to find in the keychain. */
 export const SECRET_KEYS = [
-  'TS_CLIENT_ID',
-  'TS_CLIENT_SECRET',
-  'TS_ACCOUNT_ID',
-  'TS_REFRESH_TOKEN',
   'ENABLED_CHANNEL_IDS',
   'IBKR_LIVE_ACCOUNT_ID',
   'IBKR_PAPER_ACCOUNT_ID',

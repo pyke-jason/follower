@@ -1,9 +1,8 @@
 /**
  * IBKR contract symbology: OCC symbol → conId resolution via sidecar.
  *
- * IBKR uses OCC format natively, so no format conversion is needed (unlike
- * TradeStation). We just parse OCC fields and resolve to a numeric conId
- * via the sidecar's /api/contracts/resolve endpoint.
+ * IBKR uses OCC format natively. We parse OCC fields and resolve to a
+ * numeric conId via the sidecar's /api/contracts/resolve endpoint.
  */
 
 import { parseOccSymbol, isOccOptionSymbol } from '@/lib/occ-symbology.js';

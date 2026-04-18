@@ -27,32 +27,12 @@ export class XAIAgent implements Agent {
   }
 
   async run(opts: AgentRunOptions): Promise<AgentResult> {
-    const steps: AgentStep[] = [];
-    let capturedResult: unknown | null = null;
-
     const toolSet: Record<string, ReturnType<typeof dynamicTool>> = {};
     for (const def of opts.tools) {
       toolSet[def.name] = dynamicTool({
         description: def.description,
         inputSchema: def.input,
-        execute: async (input) => {
-          const typedInput = input as Record<string, unknown>;
-          const t0 = Date.now();
-          const output = await def.execute(typedInput);
-          const durationMs = Date.now() - t0;
-          const inSummary = summarizeToolInput(def.name, typedInput);
-          const callSig = inSummary ? `${def.name}(${inSummary})` : def.name;
-          const reasoning = `${callSig} → ${summarizeToolOutput(def.name, output)}`;
-          steps.push({ tool: def.name, input: typedInput, output, reasoning, durationMs });
-          log.debug(`  ${reasoning} (${durationMs}ms)`);
-
-          if (opts.onToolCall) {
-            const intercepted = opts.onToolCall(def.name, typedInput, output);
-            if (intercepted != null) capturedResult = intercepted;
-          }
-
-          return output;
-        },
+        execute: (input) => def.execute(input as Record<string, unknown>),
       });
     }
 
@@ -69,17 +49,32 @@ export class XAIAgent implements Agent {
       ...(opts.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
     });
 
-    // Accumulate reasoning text from every step. Tool call/result pairs are
-    // already recorded by the dynamicTool execute wrapper above.
+    // Walk steps once: extract reasoning text, tool calls paired with their
+    // results, and fire onToolCall interception. Single telemetry path.
+    const steps: AgentStep[] = [];
+    let capturedResult: unknown | null = null;
     for (const step of result.steps) {
-      if (step.text) {
-        steps.push({ reasoning: step.text });
+      if (step.text) steps.push({ reasoning: step.text });
+      for (const call of step.toolCalls) {
+        const resultPart = step.toolResults.find((r) => r.toolCallId === call.toolCallId);
+        const input = call.input as Record<string, unknown>;
+        const output = resultPart?.output;
+        const inSummary = summarizeToolInput(call.toolName, input);
+        const callSig = inSummary ? `${call.toolName}(${inSummary})` : call.toolName;
+        const reasoning = `${callSig} → ${summarizeToolOutput(call.toolName, output)}`;
+        steps.push({ tool: call.toolName, input, output, reasoning });
+        log.debug(`  ${reasoning}`);
+
+        if (opts.onToolCall) {
+          const intercepted = opts.onToolCall(call.toolName, input, output);
+          if (intercepted != null) capturedResult = intercepted;
+        }
       }
     }
 
     // Grok fallback: when the model emits a tool call as prose instead of a
-    // structured tool_call, the dynamicTool execute wrapper never fires. Parse
-    // the final text and synthesize a call via onToolCall.
+    // structured tool_call, no toolCall is present in steps. Parse the final
+    // text and synthesize a call.
     if (capturedResult == null && result.text) {
       const recovered = recoverToolCallsFromText(result.text);
       for (const rec of recovered) {

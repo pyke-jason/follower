@@ -2,9 +2,8 @@
  * Channel ID helpers.
  *
  * Runtime format: `<broker>:<mode>:<accountId>`
- *   - `ibkr:live:<accountId>`         — e.g. ibkr:live:U14368257
- *   - `ibkr:paper:<accountId>`        — e.g. ibkr:paper:DU12345
- *   - `tradestation:live:<accountId>` — e.g. tradestation:live:12345678
+ *   - `ibkr:live:<accountId>`  — e.g. ibkr:live:U14368257
+ *   - `ibkr:paper:<accountId>` — e.g. ibkr:paper:DU12345
  *
  * Backtest format: `bt:<runId>` — e.g. bt:myopic-tuna
  *
@@ -30,7 +29,7 @@ export function assertSafeRunId(runId: string): void {
   }
 }
 
-export type RuntimeBroker = 'ibkr' | 'tradestation';
+export type RuntimeBroker = 'ibkr';
 export type RuntimeMode = 'live' | 'paper';
 
 export function runtimeChannel(
@@ -43,10 +42,6 @@ export function runtimeChannel(
 
 export function ibkrChannel(mode: RuntimeMode, accountId: string): string {
   return runtimeChannel('ibkr', mode, accountId);
-}
-
-export function tradestationChannel(mode: RuntimeMode, accountId: string): string {
-  return runtimeChannel('tradestation', mode, accountId);
 }
 
 export function liveChannel(accountId: string): string {

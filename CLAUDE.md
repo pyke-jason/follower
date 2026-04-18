@@ -37,8 +37,10 @@ npm run build            # Build web frontend
 
 **Quality gates (must pass before declaring done):**
 ```bash
-npx tsc --noEmit && npm test && npm --prefix web run check
+npx tsc --noEmit && npm test && npm --prefix web run check && npx knip
 ```
+
+`knip` fails on orphan files and unused dependencies. New orphans = not done. Don't silence it with `ignore` entries — fix the cruft. See `knip.json` for config.
 
 ## Key references
 
@@ -101,5 +103,3 @@ After every implementation session (new features, bugs, schema changes), create 
 - Sections: Problem, Decision, Key Files, Watch Out
 - Plain text, flat, scannable
 
-### Landing the plane
-Do not make commits. The user handles all git operations.
