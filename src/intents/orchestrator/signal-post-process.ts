@@ -52,13 +52,28 @@ const MY_PUTS_RE = /\bmy\s+puts?\b/i;
 
 // ── Rules ───────────────────────────────────────────────────────────────────
 
-/** SKILL rule 8: "A stated dollar price implies STOCK unless options language is present." */
+/**
+ * SKILL rule 8 (relaxed): "A stated dollar price implies STOCK unless options
+ * language is present." Extended: if a signal has NO option markers in the
+ * message at all, default strategy=STOCK (matches label convention for bare
+ * exits like "Exit Long UNH took nice profits" — no options words → STOCK).
+ */
 function rule_dollarPriceImpliesStock(sig: Signal, text: string): Signal {
   if (sig.strategy != null) return sig;
-  if (sig.statedPrice == null) return sig;
   // Only fire when no option markers anywhere
   if (OPTION_WORD_RE.test(text) || OPTION_NC_NP_RE.test(text)) return sig;
   return { ...sig, strategy: 'STOCK' };
+}
+
+/**
+ * exitPercent=1 on CLOSE → strip to undefined. Label convention on
+ * "Exit SYM at $X" messages (full close, no partial qualifier) is to leave
+ * exitPercent unset. The LLM sometimes emits 1 to signal "full exit" — drop it.
+ */
+function rule_strip_exitpct_1_on_close(sig: Signal, _text: string): Signal {
+  if (sig.action !== 'CLOSE') return sig;
+  if (sig.exitPercent !== 1) return sig;
+  return { ...sig, exitPercent: undefined };
 }
 
 /**
@@ -196,6 +211,7 @@ function rule_strip_pl_miscoded_as_price(sig: Signal, text: string): Signal {
 const RULES: Array<(sig: Signal, text: string) => Signal> = [
   rule_dollarPriceImpliesStock,
   rule_partialExitIsTrim,
+  rule_strip_exitpct_1_on_close,
   rule_strip_pl_miscoded_as_exitpct,
   rule_strip_pl_miscoded_as_price,
   rule_covered_short_direction,

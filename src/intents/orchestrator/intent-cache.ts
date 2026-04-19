@@ -21,7 +21,7 @@ const log = createLogger('IntentCache');
  * Bump when NLU_SYSTEM_PROMPT, tool schemas, parser logic, or prompt
  * construction changes. Invalidates all cached results.
  */
-export const INTENT_VERSION = 36;
+export const INTENT_VERSION = 38;
 
 export type IntentRoute = 'hard-skip' | 'deterministic' | 'llm';
 
