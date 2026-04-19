@@ -63,8 +63,6 @@ export type BacktestReport = {
     openAtEnd: number;
     totalCommissions?: number;
     netPnl?: number;
-    /** Sum of LLM cost across all classifications in this run (USD). */
-    totalCostUsd?: number;
   };
   byTrader: Record<string, TraderStats>;
   byStrategy: Record<string, StrategyStats>;
