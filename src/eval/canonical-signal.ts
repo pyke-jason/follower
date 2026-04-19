@@ -34,14 +34,17 @@ export function canonicalExpiry(raw: string | null | undefined): string | null {
     const d = parseInt(us[2], 10);
     return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
   }
-  // "21 nov" / "21 November" / "Nov 21" / "November 21"
+  // "21 nov" / "21 November" / "Nov 21" / "November 21" / "Oct (10)" / "Oct(10)" / "oct 10"
   const lower = s.toLowerCase();
   const dayMonth = /^(\d{1,2})\s+([a-z]+)$/.exec(lower);
-  const monthDay = /^([a-z]+)\s+(\d{1,2})$/.exec(lower);
+  const monthDay = /^([a-z]+)\s*(?:\(\s*(\d{1,2})\s*\)|\s+(\d{1,2}))$/.exec(lower);
   let m: number | null = null;
   let d: number | null = null;
   if (dayMonth && MONTH_MAP[dayMonth[2]]) { d = parseInt(dayMonth[1], 10); m = MONTH_MAP[dayMonth[2]]; }
-  else if (monthDay && MONTH_MAP[monthDay[1]]) { m = MONTH_MAP[monthDay[1]]; d = parseInt(monthDay[2], 10); }
+  else if (monthDay && MONTH_MAP[monthDay[1]]) {
+    m = MONTH_MAP[monthDay[1]];
+    d = parseInt(monthDay[2] ?? monthDay[3], 10);
+  }
   if (m != null && d != null) return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
   // Normalize common keyword variants
   if (/^tomorrow'?s?\s*$/i.test(s)) return 'tomorrow';

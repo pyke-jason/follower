@@ -32,6 +32,7 @@ import { lookupIntent, writeIntent, INTENT_VERSION } from './intent-cache.js';
 import type { IntentStep } from '@/db/schema.js';
 import { canonicalizeSignals } from '@/eval/canonical-signal.js';
 import { synthesizeDeterministicSignals } from './classifier-signals.js';
+import { postProcessSignals } from './signal-post-process.js';
 
 const log = createLogger('Orchestrator:LLM');
 
@@ -296,16 +297,20 @@ export async function resolveLLMPath(
   // Canonicalize at the write boundary (expiry → ISO, strikes sorted, symbol uppercased)
   // so downstream equality comparisons don't need normalization.
   // Also back-fill direction/strategy from the deterministic parse when LLM drops them.
-  const rawSignals: Signal[] = canonicalizeSignals(taskResult.signals ?? []).map((s) => {
-    const next = { ...s };
-    if (next.direction == null && parse.direction != null && parse.symbol === next.symbol) {
-      next.direction = parse.direction;
-    }
-    if (next.strategy == null && parse.strategy != null && parse.symbol === next.symbol) {
-      next.strategy = parse.strategy;
-    }
-    return next;
-  });
+  const messageTextForRules = ctx.message.cleanText;
+  const rawSignals: Signal[] = postProcessSignals(
+    canonicalizeSignals(taskResult.signals ?? []).map((s) => {
+      const next = { ...s };
+      if (next.direction == null && parse.direction != null && parse.symbol === next.symbol) {
+        next.direction = parse.direction;
+      }
+      if (next.strategy == null && parse.strategy != null && parse.symbol === next.symbol) {
+        next.strategy = parse.strategy;
+      }
+      return next;
+    }),
+    messageTextForRules,
+  );
 
   if (taskResult.decision === 'SKIP') {
     return { outcome: 'SKIP', reason: taskResult.reasoning, usage, classifierSignals: rawSignals };
@@ -339,7 +344,7 @@ async function resolveFromCached(
 ): Promise<OrchestratorResult> {
   // Cache hit = no network call = $0 additional cost for this resolution.
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUsd: 0 };
-  const rawSignals: Signal[] = canonicalizeSignals(signals ?? []);
+  const rawSignals: Signal[] = postProcessSignals(canonicalizeSignals(signals ?? []), ctx.message.cleanText);
 
   if (decision === 'SKIP') {
     return { outcome: 'SKIP', reason: reasoning ?? 'cached skip', usage, classifierSignals: rawSignals };
