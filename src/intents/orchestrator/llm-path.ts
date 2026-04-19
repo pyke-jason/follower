@@ -310,6 +310,7 @@ export async function resolveLLMPath(
       return next;
     }),
     messageTextForRules,
+    ctx.message.badges,
   );
 
   if (taskResult.decision === 'SKIP') {
@@ -344,7 +345,7 @@ async function resolveFromCached(
 ): Promise<OrchestratorResult> {
   // Cache hit = no network call = $0 additional cost for this resolution.
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUsd: 0 };
-  const rawSignals: Signal[] = postProcessSignals(canonicalizeSignals(signals ?? []), ctx.message.cleanText);
+  const rawSignals: Signal[] = postProcessSignals(canonicalizeSignals(signals ?? []), ctx.message.cleanText, ctx.message.badges);
 
   if (decision === 'SKIP') {
     return { outcome: 'SKIP', reason: reasoning ?? 'cached skip', usage, classifierSignals: rawSignals };

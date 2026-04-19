@@ -53,16 +53,47 @@ const MY_PUTS_RE = /\bmy\s+puts?\b/i;
 // ── Rules ───────────────────────────────────────────────────────────────────
 
 /**
- * SKILL rule 8 (relaxed): "A stated dollar price implies STOCK unless options
- * language is present." Extended: if a signal has NO option markers in the
- * message at all, default strategy=STOCK (matches label convention for bare
- * exits like "Exit Long UNH took nice profits" — no options words → STOCK).
+ * SKILL rule 8: "A stated dollar price implies STOCK unless options language
+ * is present." Only fires when there's a concrete stock indicator in the
+ * text — a $price, a "shares"/"stock" word, or a post-ticker decimal that
+ * looks like a stock price. Do NOT default to STOCK on bare prose exits
+ * like "Exit ADBE until market figures out direction" — label convention
+ * leaves those null.
  */
+const STOCK_CUE_RE = /\b(?:shares?|stock)s?\b|\$\d|@\s*\$?\d|\bat\s+\$?\d+(?:\.\d+)?\b|\b\d+\.\d+\b/i;
 function rule_dollarPriceImpliesStock(sig: Signal, text: string): Signal {
   if (sig.strategy != null) return sig;
-  // Only fire when no option markers anywhere
   if (OPTION_WORD_RE.test(text) || OPTION_NC_NP_RE.test(text)) return sig;
+  if (!STOCK_CUE_RE.test(text)) return sig;
   return { ...sig, strategy: 'STOCK' };
+}
+
+/**
+ * Strip LLM's guessed direction on bare Exit-only badge messages. Per the
+ * user's direction semantics: exit direction must come from prior position
+ * context, not a default. When the message has no Long/Short badge and no
+ * buy/sell verb, direction should be null (label convention).
+ */
+const BUY_SELL_VERB_RE = /\b(?:bought|buying|sold|selling|shorted|shorting|short\s+to\s+open|wrote|writing|covered|covering|long\s+exit|short\s+exit|exit\s+long|exit\s+short)\b/i;
+function rule_strip_guessed_exit_direction(sig: Signal, text: string, badges: readonly string[]): Signal {
+  if (sig.action !== 'CLOSE' && sig.action !== 'TRIM' && sig.action !== 'LEG_OFF') return sig;
+  if (sig.direction == null) return sig;
+  const hasLong = badges.includes('Long');
+  const hasShort = badges.includes('Short');
+  if (hasLong || hasShort) return sig; // badge gave the direction — keep
+  if (BUY_SELL_VERB_RE.test(text)) return sig;
+  // Bare Exit badge + no buy/sell verb → direction was a guess. Strip.
+  return { ...sig, direction: null };
+}
+
+/**
+ * On TRIM with explicit partial qualifier but no exitPercent set, fill 0.5.
+ */
+function rule_fill_exitpct_on_trim(sig: Signal, text: string): Signal {
+  if (sig.action !== 'TRIM') return sig;
+  if (sig.exitPercent != null) return sig;
+  if (!EXPLICIT_PARTIAL_RE.test(text)) return sig;
+  return { ...sig, exitPercent: 0.5 };
 }
 
 /**
@@ -208,9 +239,12 @@ function rule_strip_pl_miscoded_as_price(sig: Signal, text: string): Signal {
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
-const RULES: Array<(sig: Signal, text: string) => Signal> = [
+type Rule = (sig: Signal, text: string, badges: readonly string[]) => Signal;
+
+const RULES: Rule[] = [
   rule_dollarPriceImpliesStock,
   rule_partialExitIsTrim,
+  rule_fill_exitpct_on_trim,
   rule_strip_exitpct_1_on_close,
   rule_strip_pl_miscoded_as_exitpct,
   rule_strip_pl_miscoded_as_price,
@@ -219,8 +253,9 @@ const RULES: Array<(sig: Signal, text: string) => Signal> = [
   rule_my_options_direction,
   rule_overnight_expiry,
   rule_strip_phantom_quantity,
+  rule_strip_guessed_exit_direction,
 ];
 
-export function postProcessSignals(signals: Signal[], messageText: string): Signal[] {
-  return signals.map((sig) => RULES.reduce((s, rule) => rule(s, messageText), sig));
+export function postProcessSignals(signals: Signal[], messageText: string, badges: readonly string[] = []): Signal[] {
+  return signals.map((sig) => RULES.reduce((s, rule) => rule(s, messageText, badges), sig));
 }
