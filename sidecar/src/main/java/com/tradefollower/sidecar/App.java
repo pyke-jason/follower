@@ -59,7 +59,7 @@ public class App {
 
         // TwsException thrown directly (defensive)
         app.exception(TwsException.class, (e, ctx) -> {
-            int status = e.isNoSecurityDef() ? 422 : e.isValidationError() ? 400 : 500;
+            int status = twsStatus(e);
             ctx.status(status).json(Map.of("error", e.getMessage(), "twsCode", e.getErrorCode()));
         });
 
@@ -67,8 +67,7 @@ public class App {
         app.exception(java.util.concurrent.ExecutionException.class, (e, ctx) -> {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof TwsException twsErr) {
-                int status = twsErr.isNoSecurityDef() ? 422 : twsErr.isValidationError() ? 400 : 500;
-                ctx.status(status).json(Map.of("error", twsErr.getMessage(), "twsCode", twsErr.getErrorCode()));
+                ctx.status(twsStatus(twsErr)).json(Map.of("error", twsErr.getMessage(), "twsCode", twsErr.getErrorCode()));
             } else {
                 String msg = cause.getMessage();
                 ctx.status(500).json(Map.of("error", msg != null ? msg : "Internal error"));
@@ -102,6 +101,17 @@ public class App {
             log.error("Failed to connect to IB Gateway: {}", e.getMessage());
             log.info("Sidecar running — will retry connection when Gateway becomes available");
         }
+    }
+
+    /**
+     * Map a TwsException to the HTTP status the route should return.
+     * 402 signals a missing live market-data subscription — permanent, needs human action.
+     */
+    private static int twsStatus(TwsException e) {
+        if (e.isNoMarketData()) return 402;
+        if (e.isNoSecurityDef()) return 422;
+        if (e.isValidationError()) return 400;
+        return 500;
     }
 
     /**

@@ -299,8 +299,10 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
       }
     }
 
-    log('orch', 'Starting IB Gateway...');
-    spawnService('gateway', 'bash', ['-c', '~/ibc/gatewaystartmacos.sh -inline']);
+    log('orch', `Starting IB Gateway (${mode} mode)...`);
+    // The IBC wrapper's path-based mode detection uses a stale absolute path
+    // and otherwise defaults TRADING_MODE=live, which rejects paper credentials.
+    spawnService('gateway', 'bash', ['-c', `TRADING_MODE=${mode} ~/ibc/gatewaystartmacos.sh -inline`]);
 
     // Give gateway time to initialize
     await new Promise((r) => setTimeout(r, 5_000));

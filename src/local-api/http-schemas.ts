@@ -352,6 +352,7 @@ export const ClassifyDecisionRowSchema = z.object({
 export type ClassifyDecisionRow = z.infer<typeof ClassifyDecisionRowSchema>;
 
 export const ClassifyLabelRowSchema = z.object({
+  id: z.string(),
   messageId: z.string(),
   label: z.custom<EvalLabelData>(),
   humanLabel: z.custom<EvalLabelData>().nullable(),

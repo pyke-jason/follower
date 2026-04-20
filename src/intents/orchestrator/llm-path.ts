@@ -33,6 +33,7 @@ import type { IntentStep } from '@/db/schema.js';
 import { canonicalizeSignals } from '@/eval/canonical-signal.js';
 import { synthesizeDeterministicSignals } from './classifier-signals.js';
 import { postProcessSignals } from './signal-post-process.js';
+import { validateSignals } from './signal-validator.js';
 
 const log = createLogger('Orchestrator:LLM');
 
@@ -67,6 +68,7 @@ Walk through these checks in order. The FIRST one that matches wins.
 4. Is it SELF-REFLECTION or RULE-SETTING? "banning myself from day trades", "everything I enter will be a swing", "I always hold overnight" → SKIP, even if tickers are mentioned as examples.
 5. Is it a HYPOTHETICAL or EDUCATIONAL example? "if I were looking to…", "you could sell the 220p for 1.0" → SKIP.
 6. Is it EXPIRED-WORTHLESS commentary? "NVDA 170p expired worthless", "those calls went to zero" → SKIP. No broker action.
+6a. Is it POST-TRADE COMMENTARY? A message with NO badges, NO explicit buy/sell verb on this line, that *explains* or *reflects on* a trade the author has already announced ("For [symbol] I was watching X ... I took the gain", "That is why I sold puts", "That is why I took gains in [symbol]") is commentary — SKIP. The actual trade was in a different, earlier message; this one is reasoning. If the badges say a trade, trust the badges; if there are no badges and the action verbs are past-tense references inside an analytical sentence, it's SKIP.
 7. Is it a PAPER trade, FUTURES (ES, NQ, RTY, YM), or explicitly flagged as sim / demo? → SKIP.
 8. Is it a FOLLOW-TRADE with no details ("@Dave same trade", "ty Hari", "in with you", "following")? Call get_recent_chat (optionally filtered by the referenced author), find the most recent trade they announced, and mirror it as the signal.
 9. Otherwise: it IS a trade. Emit one or more signals and EXECUTE.
@@ -78,9 +80,9 @@ Each signal in signals[] must match this shape. Omit fields you cannot determine
 - action: one of OPEN | ADD | CLOSE | TRIM | LEG_OFF (required)
 - symbol: uppercase ticker from the pre-parsed symbols list (required)
 - direction: LONG | SHORT. REQUIRED for OPEN/ADD on STOCK, CALL, PUT. Optional hint on exits. NEVER emit null direction on an OPEN with strategy STOCK/CALL/PUT.
-- strategy: STOCK | CALL | PUT | CDS | PDS | PCS | CCS. REQUIRED for OPEN. There is no STRANGLE strategy — a strangle or straddle becomes TWO signals (one CALL and one PUT).
-- strikes: array of numbers explicitly stated in the message. [332.5] for a single, [190, 192.5] for a spread. Omit if not stated.
-- expiry: expiry string as written ("Oct", "Nov 14", "next week", "0DTE", "5/23"). Omit if not stated.
+- strategy: STOCK | CALL | PUT | CDS | PDS | PCS | CCS. REQUIRED for OPEN. For bare EXITS ("Exit Long ZM took profits") where the text has no instrument cue, call get_recent_chat and inherit strategy from the author's most-recent prior open on this ticker — "Long ZM" (bare stock) → STOCK; "Long C $96 lotto puts" → PUT. There is no STRANGLE strategy — a strangle or straddle becomes TWO signals (one CALL and one PUT).
+- strikes: array of numbers describing the TRADE. Prefer strikes stated in the current message. When the current message is a bare exit ("Exit Long CENX took small profits") and the AUTHOR'S prior open message on the same ticker had an explicit strike (e.g. "Long CENX $27 calls"), inherit those strikes via get_recent_chat — the exit is on that same position. Single option: [332.5]. Spread: [190, 192.5]. Omit if no strike is derivable from the message or recent history.
+- expiry: expiry string as written — INCLUDING any parenthetical day ("Oct (10)", "Sept (19)"). If the message says "Oct (10)" preserve the "(10)"; do NOT strip to just "Oct". Other valid forms: "Nov 14", "next week", "0DTE", "5/23". Omit if not stated.
 - statedPrice: the dollar price the author fills at. MUST be strictly positive. If the only number you see is 0 or a stripped ".63", emit 0.63 or OMIT the field — never emit 0.
 - quantity: shares or contracts when stated. "1,000 shares" → quantity=1000, NOT statedPrice.
 - exitPercent: 0.0–1.0 for TRIM only. "half" → 0.5, "1/3" → 0.333, "25%" → 0.25, "75%" → 0.75.
@@ -96,6 +98,8 @@ Direction semantics:
 
 <rules>
 1. Trust the pre-parsed \`Symbols detected\` list. Real tickers collide with English words: OPEN (Opendoor), SEE, M, C, V, Z, A, F, T, X, ALL, KEY, ON, LOW. If the symbols list contains one of these, that IS the ticker — do not reject the message as "no ticker". "Long OPEN at 8.50" with symbols=["OPEN"] is an OPEN LONG STOCK trade on Opendoor.
+
+1b. **Bare badge + ticker IS a trade.** "Long AMZN", "Short PLTR", "Long OPEN" — a directional badge with a ticker and no other content is a COMPLETE trade announcement. Emit action=OPEN, strategy=STOCK (the default when no options language present), direction from the badge. Do NOT SKIP these for "missing price" or "missing detail" — the convention is that badges confirm the trade happened; price is optional. Only SKIP if the TEXT content itself disqualifies it (analysis, conditional, third-party, etc.).
 2. The English verb "put" ("put myself back in", "put on a hedge", "put together") is NOT the PUT option strategy. Strategy=PUT requires explicit option language ("puts", "185p", "put credit spread").
 3. Numbers stuck to a ticker ARE the entry price, not part of the symbol. "Short RKLB 45.96" → symbol=RKLB, statedPrice=45.96. "Long NVO55" → symbol=NVO, statedPrice=55. "Short CVNA at 362" → statedPrice=362. Only exclude a number if it is obviously a quantity ("1,000 shares"), a P&L amount ("$2 profit"), a risk budget ("$500 risk"), or an alert threshold.
 4. Exit badge language is a trade. [EXIT BADGE] + [LONG BADGE]/[SHORT BADGE] + ticker means the author closed a position. Emit CLOSE (or TRIM if a partial size is stated) even without an explicit price.
@@ -232,9 +236,26 @@ export async function resolveLLMPath(
 
   const userPrompt = buildNLUPrompt(parse, ctx);
 
-  const tools = createIntentTools(async (author, limit) => {
-    return ctx.chatHistory.getRecentMessages(author, limit);
-  });
+  // Validator is invoked from INSIDE submit_decision — the LLM sees any
+  // concerns as tool output and retries within the same agent loop.
+  const tools = createIntentTools(
+    async (author, limit) => ctx.chatHistory.getRecentMessages(author, limit),
+    async (draft) => {
+      if (!draft.signals || draft.signals.length === 0) return [];
+      const processed = postProcessSignals(
+        canonicalizeSignals(draft.signals),
+        ctx.message.cleanText,
+        ctx.message.badges,
+      );
+      return validateSignals({
+        signals: processed,
+        messageText: ctx.message.cleanText,
+        badges: ctx.message.badges,
+        author: ctx.message.author,
+        history: ctx.chatHistory,
+      });
+    },
+  );
 
   let agentResult: AgentResult;
   try {
@@ -243,7 +264,7 @@ export async function resolveLLMPath(
       userPrompt,
       tools,
       onToolCall: intentOnToolCall,
-      maxTurns: 5,
+      maxTurns: 6, // +1 for a validator-triggered retry
     });
   } catch (err) {
     log.error('LLM path agent loop failed:', err);

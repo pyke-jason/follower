@@ -92,6 +92,20 @@ These are hard rules. Do not deviate.
 17b. **Strangle = one trade, two legs.** Per rule 8 (self-check), a strangle is one outer array entry with TWO inner Signal entries: one `strategy: "CALL"` leg + one `strategy: "PUT"` leg, different strikes. "Long Short SPY strangle 679/683" → outer=1, inner=[CALL 683, PUT 679]. Never flatten a strangle into a single CALL or PUT signal.
 17c. **Straddle = one trade, two legs, SAME strike.** Same shape as a strangle but both legs share one strike. "Long Short SPY Straddle $685" → outer=1, inner=[CALL 685, PUT 685].
 17d. **Never use a badge word as a symbol.** If the message has no extractable ticker (empty `symbols` array, no ticker letters in `clean_text`), the symbol is genuinely unknown — it is a follow-up/reply to a prior message. Do NOT substitute "LONG", "SHORT", "EXIT", "BUY", "SELL", or similar badge/action words into `symbol`. Either mark `isTrade: false` with reasoning "ticker not discoverable in isolation", or flag as `confidence: LOW` if you're sure it's a trade but can't identify the ticker. One-letter real tickers (like C for Citigroup) do exist — parse them from `$ C` / `$C` patterns before concluding the symbol is unknown.
+
+### Inferring fields from the author's prior context
+
+Labels describe the **actual trade that happened**, not just a literal transcription of the current message. When the current message is a bare exit with no explicit instrument details, infer the missing fields from the author's most-recent prior open on the same ticker.
+
+18. **Strategy inherits from the author's prior open on the same ticker.** "Exit Long CENX took small profits again" has no instrument cue in the text, but Pete's prior open was "Long CENX $27 calls again for .93" — the exit IS on that CALL position. Label: `strategy: "CALL"`. Do NOT default to `strategy: null` when prior context makes the instrument unambiguous. Same for Pete's C lotto puts series — exits that reference "Exit Short C lottos" inherit `strategy: "PUT"` from the opener.
+
+18a. **Strikes inherit from the author's prior open.** If the exit doesn't re-state the strike but the prior open had `strikes: [27]`, the exit label also carries `strikes: [27]`. The exit is closing that same position. Never put in strikes that contradict the prior open.
+
+18b. **Only look backwards.** Use the author's most-recent OPEN (or ADD) of an unclosed position. Do not pull from commentary ("GPRO uoa apr 17 $2 calls 37k contracts" is a third-party observation, not the author's trade) and do not reach across other tickers.
+
+18c. **Commentary explaining a prior exit is NOT a new trade.** If the author already announced an exit ("Exit Short MSTR $324.17 for $1.02 gain on last leg" at 18:33), a later message 1-5 minutes later like "For MSTR I was watching Bitcoin... I took the gain" is commentary explaining WHY they exited. Label: `isTrade: false`. Signal: "took the gain" refers to the prior 18:33 exit, not a new action. Same pattern: Pete's "that is why I sold puts" on a symbol he already announced selling puts on hours earlier = commentary.
+
+19. **Direction on exits comes from the badge, not from inferring "which side was the position".** `[Short][Exit]` on a message that exits a `LONG PUT` position (where the trader bought puts earlier) still labels with `direction: SHORT` — the badge wins. The execution pipeline doesn't use this direction field for options; it derives from leg sides. For stock exits with only `[Exit]` (no Long/Short badge), direction can be `null` — do NOT infer from "my shares" or prior position; badge is authoritative.
 </constraints>
 
 ## How to Reason Through a Message

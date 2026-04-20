@@ -55,8 +55,11 @@ export type Signal = z.infer<typeof SignalSchema>;
 // --- submit_decision tool input / agent decision ---
 
 export const SubmitDecisionObject = z.object({
+  // Reasoning first: forces the model to think through classification before
+  // committing to a decision/signals (classic CoT pattern). Field order in
+  // the tool schema determines generation order for most tool-calling models.
+  reasoning: z.string().describe('Walk through the decision rubric step by step. State which rubric step fired and why. Reference exact phrases from the message. Think before you commit to the decision below. Keep under 300 chars.'),
   decision: DecisionOutcomeSchema,
-  reasoning: z.string().describe('Why you made this decision'),
   signals: z.array(SignalSchema).optional().describe('Trade signals (required for EXECUTE)'),
 });
 

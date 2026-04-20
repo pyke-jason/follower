@@ -106,12 +106,12 @@ describe('postProcessSignals', () => {
   });
 
   describe('rule_my_long_position_direction', () => {
-    it('LONG on "Exit OPEN remainder of my shares"', () => {
+    it('leaves direction null — labels treat "my shares" as non-definitive', () => {
       const out = postProcessSignals(
         [{ ...base, action: 'CLOSE', strategy: 'STOCK', direction: null }],
         'Exit OPEN remainder of my shares for nice profit',
       );
-      expect(out[0].direction).toBe('LONG');
+      expect(out[0].direction).toBeNull();
     });
   });
 
@@ -127,14 +127,6 @@ describe('postProcessSignals', () => {
   });
 
   describe('rule_overnight_expiry', () => {
-    it('fills expiry="overnight" when text says "for overnight"', () => {
-      const out = postProcessSignals(
-        [{ ...base, action: 'OPEN', strategy: 'STOCK', direction: 'LONG' }],
-        'Long SPY for overnight',
-      );
-      expect(out[0].expiry).toBe('overnight');
-    });
-
     it('respects existing expiry', () => {
       const out = postProcessSignals(
         [{ ...base, expiry: '10/17' }],

@@ -46,12 +46,20 @@ export async function loadSecrets(): Promise<void> {
   }
 
   let loaded = 0;
+  // When ANTHROPIC_USE_SUBSCRIPTION=1, the claude-agent-sdk must route through
+  // the local CLI (Max plan). Setting ANTHROPIC_API_KEY even from keychain
+  // redirects the SDK to Console API billing instead. Skip it in that mode.
+  const subscriptionMode = process.env.ANTHROPIC_USE_SUBSCRIPTION === '1';
   for (const [key, value] of Object.entries(merged)) {
+    if (subscriptionMode && key === 'ANTHROPIC_API_KEY') continue;
     // Never overwrite explicitly set env vars
     if (process.env[key] === undefined) {
       process.env[key] = value;
       loaded++;
     }
+  }
+  if (subscriptionMode) {
+    delete process.env.ANTHROPIC_API_KEY;
   }
 
   console.log(`[secrets] Loaded ${loaded} secret(s) from ${providers.map((p) => p.name).join(' + ')}`);

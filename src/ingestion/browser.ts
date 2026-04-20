@@ -76,15 +76,15 @@ export async function launchBrowser(): Promise<{ page: Page; crashed: Promise<vo
 /**
  * If the page is the chat policies agreement gate, tick the "I understand"
  * checkbox and submit. The form POSTs to /chat/acceptpolicies and redirects
- * back to /chat. Safe to call on any page — no-ops when not on the gate.
+ * back to /chat. Safe to call on any page — no-ops when the gate is absent.
  * Returns true iff the gate was present and accepted.
  */
 async function acceptPoliciesIfNeeded(p: Page): Promise<boolean> {
-  if (!p.url().includes('/chat/policies/agreement')) return false;
+  const checkbox = p.locator('input#understand');
+  if ((await checkbox.count()) === 0) return false;
 
   console.log('[Browser] Chat policies agreement gate detected — accepting');
   try {
-    const checkbox = p.locator('input#understand');
     await checkbox.waitFor({ state: 'visible', timeout: 10_000 });
     if (!(await checkbox.isChecked())) {
       await checkbox.check();
@@ -189,6 +189,9 @@ export async function attemptLogin(): Promise<boolean> {
       page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }),
       page.click('button[type="submit"], input[type="submit"]'),
     ]);
+
+    // New accounts land on the policies gate after the first successful login.
+    await acceptPoliciesIfNeeded(page);
 
     authState = await checkAuth(page);
     if (authState === 'authenticated') {

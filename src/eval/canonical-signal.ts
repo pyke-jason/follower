@@ -52,7 +52,10 @@ export function canonicalExpiry(raw: string | null | undefined): string | null {
   if (/^expiring\s+tomorrow$/i.test(s)) return 'tomorrow';
   if (/^this\s+week$/i.test(s)) return 'this week';
   if (/^next\s+week$/i.test(s)) return 'next week';
-  if (/^0\s*dte$/i.test(s)) return '0dte';
+  // Labels use "today" for same-day expiry; "0dte" and "expiring today" fold
+  // into "today" for comparability.
+  if (/^0\s*dte$/i.test(s)) return 'today';
+  if (/^expiring\s+today$/i.test(s)) return 'today';
   return lower;
 }
 

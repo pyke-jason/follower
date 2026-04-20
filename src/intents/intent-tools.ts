@@ -15,7 +15,10 @@ import {
   FlagForReviewInput,
   GetRecentChatInput,
   SubmitDecisionInput,
+  SubmitDecisionObject,
 } from '../agent/schemas.js';
+import type { ValidatorIssue } from './orchestrator/signal-validator.js';
+import type { z } from 'zod';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('IntentTools');
@@ -23,8 +26,15 @@ const log = createLogger('IntentTools');
 /** Callback for the get_recent_chat tool. */
 export type ChatLookup = (author: string | undefined, limit: number) => Promise<string>;
 
+/**
+ * Validator called from inside submit_decision. If it returns any issues,
+ * the tool rejects the draft; the LLM sees the concerns in its next turn
+ * and retries within the same agent loop.
+ */
+export type ValidateFn = (draft: TaskResult) => Promise<ValidatorIssue[]>;
+
 /** Create the standard intent extraction tools with a pluggable chat lookup. */
-export function createIntentTools(chat: ChatLookup): ToolDef[] {
+export function createIntentTools(chat: ChatLookup, validate?: ValidateFn): ToolDef[] {
   const getRecentChat: ToolDef<typeof GetRecentChatInput> = {
     name: 'get_recent_chat',
     description: 'Get recent chat room messages before this message. Use to resolve follow-trades: when a trader references another trader ("following Dave", "@spectre", "ty Hari") or posts a bare entry that might follow someone else\'s call. Optionally filter by author.',
@@ -34,7 +44,43 @@ export function createIntentTools(chat: ChatLookup): ToolDef[] {
       return chat(input.author, limit);
     },
   };
-  return [flagForReviewTool(), submitDecisionTool(), getRecentChat];
+  // If a validator was provided, wrap submit_decision. Validator fires ONCE
+  // per agent run; if the LLM's first draft raises concerns, the tool returns
+  // a rejection and the LLM retries within the same loop. On the retry, the
+  // validator auto-accepts — preventing infinite LLM↔validator disagreement
+  // loops that waste turns (per April 2026 SOTA: max 1 repair call).
+  const base = submitDecisionTool();
+  const submit: ToolDef<typeof SubmitDecisionObject> = validate
+    ? (() => {
+        let rejectionCount = 0;
+        return {
+          name: base.name,
+          description: base.description,
+          input: base.input,
+          execute: async (input: z.infer<typeof SubmitDecisionObject>) => {
+            SubmitDecisionInput.parse(input);
+            if (input.decision !== 'EXECUTE' || !input.signals || input.signals.length === 0) {
+              return { accepted: true };
+            }
+            if (rejectionCount >= 2) return { accepted: true }; // cap at 2 repair attempts
+            const issues = await validate({ decision: input.decision, reasoning: input.reasoning ?? '', signals: input.signals });
+            if (issues.length === 0) return { accepted: true };
+            rejectionCount++;
+            return {
+              accepted: false,
+              reason: 'Verification concerns — please reconsider and call submit_decision again with any corrections. If a concern is unfounded, explain briefly in reasoning and proceed.',
+              issues: issues.map((i) => ({
+                signalIndex: i.signalIndex,
+                field: i.field,
+                evidence: i.evidence,
+                concern: i.concern,
+              })),
+            };
+          },
+        };
+      })()
+    : base;
+  return [flagForReviewTool(), submit, getRecentChat];
 }
 
 function coerceSignal(sig: unknown): unknown {
@@ -86,8 +132,13 @@ function coerceDecision(input: Record<string, unknown>): Record<string, unknown>
 }
 
 /** Shared onToolCall handler for submit_decision and flag_for_review. */
-export function intentOnToolCall(name: string, input: Record<string, unknown>): TaskResult | null {
+export function intentOnToolCall(name: string, input: Record<string, unknown>, output?: unknown): TaskResult | null {
   if (name === 'submit_decision') {
+    // If the tool's execute rejected the draft (validator found issues),
+    // DO NOT capture as final — the LLM sees the rejection output and retries.
+    if (output && typeof output === 'object' && (output as Record<string, unknown>).accepted === false) {
+      return null;
+    }
     const coerced = coerceDecision(input);
     const parsed = SubmitDecisionInput.safeParse(coerced);
     if (parsed.success) return parsed.data satisfies TaskResult;

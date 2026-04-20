@@ -25,12 +25,10 @@ public class TwsBridge extends DefaultEWrapper {
     private static final Logger log = LoggerFactory.getLogger(TwsBridge.class);
     private static final ZoneId ET = ZoneId.of("America/New_York");
     private static final long RECONNECT_DELAY_MS = 5000;
-    static final long REQUEST_TIMEOUT_SECONDS = 5;
+    static final long REQUEST_TIMEOUT_SECONDS = 15;
 
     // Informational codes — log at debug, don't push to WS
-    // 10089/10091: "market data requires subscription" — benign when delayed data (type=3) is active
-    // 10167: "Displaying delayed market data" — confirms delayed ticks will follow
-    private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2107, 2158, 10089, 10091, 10167);
+    private static final Set<Integer> INFORMATIONAL_CODES = Set.of(2104, 2106, 2107, 2158);
     // Connection codes — trigger reconnect + WS event
     private static final Set<Integer> CONNECTION_CODES = Set.of(520, 1100, 1101, 1102, 504);
     // Order error codes — push WS event
@@ -368,11 +366,14 @@ public class TwsBridge extends DefaultEWrapper {
         wsHandler.broadcastConnected();
         startHeartbeat();
 
-        // Enable delayed market data for paper trading (no real-time subscription needed)
-        if (port == 4002) {
-            log.info("Paper mode (port 4002) — requesting delayed market data (type=3)");
-            client.reqMarketDataType(3);
+        // IBKR fires managedAccounts before nextValidId on (re)connect, so reqAccountUpdates
+        // must start here — calling it from managedAccounts would race with connected=false
+        // and silently drop, leaving accountSubscriptionActive stuck false forever.
+        if (accountId != null && !accountSubscriptionActive) {
+            client.reqAccountUpdates(true, accountId);
+            log.info("Started reqAccountUpdates subscription for {}", accountId);
         }
+
         if (reaperTask != null) reaperTask.cancel(false);
         reaperTask = reaper.scheduleAtFixedRate(this::evictStaleEntries, 30, 30, TimeUnit.MINUTES);
     }
@@ -599,10 +600,8 @@ public class TwsBridge extends DefaultEWrapper {
         if (accounts != null && !accounts.isEmpty()) {
             this.accountId = accounts.split(",")[0].trim();
             log.info("Managed account: {}", this.accountId);
-            if (connected && !accountSubscriptionActive) {
-                client.reqAccountUpdates(true, this.accountId);
-                log.info("Started reqAccountUpdates subscription for {}", this.accountId);
-            }
+            // reqAccountUpdates is started from nextValidId once the connection is fully up —
+            // this callback only captures the accountId for that downstream call.
         }
     }
 

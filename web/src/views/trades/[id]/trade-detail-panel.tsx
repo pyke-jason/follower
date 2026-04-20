@@ -7,96 +7,12 @@ import { Badge as UiBadge } from '@/components/ui/badge';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { X, CircleCheck, XCircle, AlertTriangle } from 'lucide-react';
-import { ReactionBadges } from '@/components/reaction-badges';
-import type { Message, RunDecision, Trade } from '@src/db/schema';
+import type { RunDecision, Trade } from '@src/db/schema';
 import type { TradeLabel } from '@src/local-api/http-schemas';
 import { formatLegsSummary } from '@src/lib/trade';
 import { ExecutionTrace } from './execution-trace';
 import { Button } from '@/components/ui/button';
-
-function NearbyMessages({
-  messages,
-  associatedMessageIds,
-}: {
-  messages: Message[];
-  /** IDs of messages directly associated with the trade (source, close, intermediates). */
-  associatedMessageIds: Set<string>;
-}) {
-  const [showOlder, setShowOlder] = useState(false);
-  const [showNewer, setShowNewer] = useState(false);
-
-  if (messages.length === 0) return null;
-
-  // Find the index range of associated messages within the sorted list
-  let firstIdx = -1;
-  let lastIdx = -1;
-  for (let i = 0; i < messages.length; i++) {
-    if (associatedMessageIds.has(messages[i].id)) {
-      if (firstIdx === -1) firstIdx = i;
-      lastIdx = i;
-    }
-  }
-
-  // Fallback: if no associated messages found in the list, show all
-  if (firstIdx === -1) {
-    firstIdx = 0;
-    lastIdx = messages.length - 1;
-  }
-
-  const before = messages.slice(0, firstIdx);
-  const inRange = messages.slice(firstIdx, lastIdx + 1);
-  const after = messages.slice(lastIdx + 1);
-
-  return (
-    <div className="space-y-0.5">
-      {before.length > 0 && !showOlder && (
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => setShowOlder(true)}
-          className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground"
-        >
-          Show {before.length} older
-        </Button>
-      )}
-      {showOlder && before.map((m) => (
-        <MessageRow key={m.id} message={m} isAssociated={false} />
-      ))}
-      {inRange.map((m) => (
-        <MessageRow key={m.id} message={m} isAssociated={associatedMessageIds.has(m.id)} />
-      ))}
-      {after.length > 0 && !showNewer && (
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => setShowNewer(true)}
-          className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground"
-        >
-          Show {after.length} newer
-        </Button>
-      )}
-      {showNewer && after.map((m) => (
-        <MessageRow key={m.id} message={m} isAssociated={false} />
-      ))}
-    </div>
-  );
-}
-
-function MessageRow({ message: m, isAssociated }: { message: Message; isAssociated: boolean }) {
-  return (
-    <div
-      className={`flex items-baseline gap-2 text-xs px-2 py-1 rounded ${isAssociated ? 'bg-accent/40 border-l-2 border-l-foreground/30' : ''}`}
-    >
-      <span className="text-[10px] text-muted-foreground/50 shrink-0 tabular-nums">
-        {formatDate(m.timestamp)}
-      </span>
-      <span className={`truncate ${isAssociated ? 'text-foreground' : 'text-muted-foreground/70'}`}>
-        {m.cleanText}
-      </span>
-      <ReactionBadges reactions={m.reactions} className="inline-flex gap-1 shrink-0" />
-    </div>
-  );
-}
+import { NearbyMessages } from '@/views/messages/nearby-messages';
 
 function narrowDecision(d: RunDecision | null) {
   if (!d?.outcome) return null;

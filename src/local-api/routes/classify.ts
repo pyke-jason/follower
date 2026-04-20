@@ -99,6 +99,7 @@ app.get('/classify/:id', async (c) => {
     ? []
     : await db
       .select({
+        id: schema.evalLabels.id,
         messageId: schema.evalLabels.messageId,
         label: schema.evalLabels.label,
         humanLabel: schema.evalLabels.humanLabel,

@@ -11,7 +11,6 @@ import { Separator } from '@/components/ui/separator';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Progress } from '@/components/ui/progress';
 import { DataTable } from '@/components/data-table';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,8 +33,10 @@ import type {
   ClassifyDecisionRow,
   ClassifyLabelRow,
 } from '@src/local-api/http-schemas';
-import type { Signal } from '@src/agent/schemas';
-import { FieldDiffTable, DiffSummaryBadge, computeDiffSummary } from './diff-cell';
+import { DiffSummaryBadge, computeDiffSummary } from './diff-cell';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { ContextPanel, getLabelSignals } from './context-panel';
 
 const OUTCOMES = ['ALL', 'EXECUTE', 'SKIP', 'MANUAL_REVIEW', 'ERROR'] as const;
 
@@ -75,10 +76,30 @@ function ClassifyDetailContent({ data, id }: {
   const summary = run.summary;
   const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
 
+  const [mismatchOnly, setMismatchOnly] = useSearchParam('mismatch');
+
   const filtered = useMemo(() => {
-    if (outcomeFilter === 'ALL' || !outcomeFilter) return decisions;
-    return decisions.filter((d) => d.decision.outcome === outcomeFilter);
-  }, [decisions, outcomeFilter]);
+    let rows = decisions;
+    if (outcomeFilter && outcomeFilter !== 'ALL') {
+      rows = rows.filter((d) => d.decision.outcome === outcomeFilter);
+    }
+    if (mismatchOnly === '1') {
+      rows = rows.filter((d) => {
+        const label = d.decision.messageId ? labelsByMessageId[d.decision.messageId] : undefined;
+        const { isTrade, trade } = getLabelSignals(label);
+        const classifier = getClassifierSignalsFromSnapshot(d.decision.snapshot);
+        if (isTrade == null) return false;
+        const classifierIsTrade = classifier.length > 0;
+        if (isTrade !== classifierIsTrade) return true;
+        if ((trade?.length ?? 0) !== classifier.length) return true;
+        const labelSignal = trade?.[0] ?? null;
+        const classifierSignal = classifier[0] ?? null;
+        const summary = computeDiffSummary(labelSignal, classifierSignal);
+        return summary != null && summary.mismatchedFields > 0;
+      });
+    }
+    return rows;
+  }, [decisions, outcomeFilter, mismatchOnly, labelsByMessageId]);
 
   const progressPct = (() => {
     const total = run.progressTotal ?? 0;
@@ -204,12 +225,23 @@ function ClassifyDetailContent({ data, id }: {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
+          <Separator orientation="vertical" className="!h-5 mx-1" />
+          <ToggleGroup
+            type="single"
+            value={mismatchOnly === '1' ? 'mismatch' : 'all'}
+            onValueChange={(v) => setMismatchOnly(v === 'mismatch' ? '1' : null)}
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="all" className="text-xs">All</ToggleGroupItem>
+            <ToggleGroupItem value="mismatch" className="text-xs">Mismatches only</ToggleGroupItem>
+          </ToggleGroup>
           <span className="ml-auto text-xs text-muted-foreground tabular-nums">
             {formatInteger(filtered.length)} decision{filtered.length === 1 ? '' : 's'}
           </span>
         </div>
 
-        <DecisionsTable rows={filtered} labelsByMessageId={labelsByMessageId} />
+        <DecisionsTable rows={filtered} labelsByMessageId={labelsByMessageId} runId={id} />
       </div>
 
       <LogViewer backtestRunId={id} isRunning={isRunning} defaultCollapsed />
@@ -250,20 +282,14 @@ function Metric({ label, value, color, muted }: {
   );
 }
 
-/** Resolve the label's first trade (Signal[]) — prefers humanLabel when reviewed. */
-function getLabelSignals(label: ClassifyLabelRow | undefined): { isTrade: boolean | null; trade: Signal[] | null } {
-  if (!label) return { isTrade: null, trade: null };
-  const active = label.humanLabel ?? label.label;
-  if (!active) return { isTrade: null, trade: null };
-  const isTrade = !!active.isTrade;
-  const trade = active.trades?.[0] ?? null;
-  return { isTrade, trade };
-}
-
-function DecisionsTable({ rows, labelsByMessageId }: {
+function DecisionsTable({ rows, labelsByMessageId, runId }: {
   rows: ClassifyDecisionRow[];
   labelsByMessageId: Record<string, ClassifyLabelRow>;
+  runId: string;
 }) {
+  const [selectedRow, setSelectedRow] = useState<ClassifyDecisionRow | null>(null);
+  const selectedLabel = selectedRow?.decision.messageId ? labelsByMessageId[selectedRow.decision.messageId] : undefined;
+
   const columns: Column<ClassifyDecisionRow>[] = [
     {
       key: 'timestamp',
@@ -308,20 +334,11 @@ function DecisionsTable({ rows, labelsByMessageId }: {
         const classifierSignal = classifier[0] ?? null;
         const summary = computeDiffSummary(labelSignal, classifier.length > 0 ? classifierSignal : null);
         return (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button type="button" className="hover:bg-accent/40 rounded px-2 py-0.5 -mx-2 transition-colors">
-                <DiffSummaryBadge
-                  summary={summary}
-                  labelIsTrade={isTrade}
-                  classifierIsTrade={classifier.length > 0}
-                />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent side="left" align="start" className="w-[520px] p-2">
-              <DiffPopoverBody label={labelSignal} classifier={classifierSignal} labelTrade={trade} classifierSignals={classifier} />
-            </PopoverContent>
-          </Popover>
+          <DiffSummaryBadge
+            summary={summary}
+            labelIsTrade={isTrade}
+            classifierIsTrade={classifier.length > 0}
+          />
         );
       },
     },
@@ -362,36 +379,31 @@ function DecisionsTable({ rows, labelsByMessageId }: {
     return summary && summary.mismatchedFields > 0 ? 'bg-loss/5' : '';
   };
 
+  const rowClassNameWithSelect = (row: ClassifyDecisionRow): string => {
+    const base = rowClassName(row);
+    const selected = selectedRow?.decision.id === row.decision.id;
+    return `cursor-pointer ${base} ${selected ? 'bg-accent/40' : ''}`;
+  };
+
   return (
-    <DataTable
-      columns={columns}
-      data={rows}
-      rowClassName={rowClassName}
-      getRowKey={(row) => row.decision.messageId ?? row.decision.id}
-      className="flex-1 min-h-[400px]"
-    />
+    <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 rounded-lg border bg-card overflow-hidden">
+      <ResizablePanel defaultSize={60} minSize={35}>
+        <DataTable
+          columns={columns}
+          data={rows}
+          rowClassName={rowClassNameWithSelect}
+          onRowClick={(row) => setSelectedRow(row)}
+          getRowKey={(row) => row.decision.messageId ?? row.decision.id}
+          className="h-full"
+        />
+      </ResizablePanel>
+      <ResizableHandle withHandle />
+      <ResizablePanel defaultSize={40} minSize={25}>
+        <ScrollArea className="h-full">
+          <ContextPanel row={selectedRow} label={selectedLabel} runId={runId} onClose={() => setSelectedRow(null)} />
+        </ScrollArea>
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }
 
-function DiffPopoverBody({ label, classifier, labelTrade, classifierSignals }: {
-  label: Signal | null;
-  classifier: Signal | null;
-  labelTrade: Signal[] | null;
-  classifierSignals: Signal[];
-}) {
-  const labelCount = labelTrade?.length ?? 0;
-  const classifierCount = classifierSignals.length;
-  const countMismatch = labelCount !== classifierCount;
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>Label signals: <span className="font-mono">{labelCount}</span></span>
-        <span>Classifier signals: <span className="font-mono">{classifierCount}</span></span>
-      </div>
-      {countMismatch && (
-        <div className="text-[11px] text-loss font-mono">signal count mismatch</div>
-      )}
-      <FieldDiffTable label={label} classifier={classifier} />
-    </div>
-  );
-}

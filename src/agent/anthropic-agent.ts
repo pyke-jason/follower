@@ -15,11 +15,24 @@ const log = createLogger('AnthropicAgent');
 
 const MCP_SERVER_NAME = 'trade-follower';
 
+/**
+ * When ANTHROPIC_USE_SUBSCRIPTION=1, the SDK routes through the locally
+ * logged-in `claude` CLI (Max plan) instead of the Console API key. Must
+ * unset ANTHROPIC_API_KEY at process level so the SDK doesn't pick it up.
+ * Idempotent — safe to call from every constructor.
+ */
+function configureSubscriptionModeIfEnabled(): void {
+  if (process.env.ANTHROPIC_USE_SUBSCRIPTION === '1') {
+    delete process.env.ANTHROPIC_API_KEY;
+  }
+}
+
 export class AnthropicAgent implements Agent {
   readonly identity: ModelIdentity;
 
   constructor(identity: ModelIdentity) {
     this.identity = identity;
+    configureSubscriptionModeIfEnabled();
   }
 
   async run(opts: AgentRunOptions): Promise<AgentResult> {

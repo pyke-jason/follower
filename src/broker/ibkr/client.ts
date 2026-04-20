@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { QuoteUnavailableError } from '@/lib/errors.js';
 import { resolveContract, resolveStockContract, isOccOptionSymbol, occToIBKR } from './symbology.js';
 import { formatOccSymbol } from '@/lib/occ-symbology.js';
+import { sendSystemAlert } from '@/lib/alert.js';
 import {
   QuoteResponseSchema,
   OrderResponseSchema,
@@ -59,7 +60,8 @@ function ibkrClassify(err: unknown): ErrorCategory {
   if (httpMatch) {
     const status = parseInt(httpMatch[1], 10);
     if (status === 503) return 'transient';
-    if (status === 504) return 'transient';
+    if (status === 504) return 'permanent'; // quote/TWS future timed out — retrying won't fix a missing permission
+    if (status === 402) return 'permanent'; // live market data subscription missing
     if (status === 400 || status === 422) return 'permanent';
   }
 
@@ -105,7 +107,8 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
   switch (ibkrStatus) {
     case 'PreSubmitted':
     case 'Submitted':
-    case 'Inactive': // GTC orders outside RTH — not rejected, just waiting for market open
+      return 'OPEN';
+    case 'Inactive': // GTC outside RTH — queued, not actively working
       return 'PENDING';
     case 'Filled':
       return 'FILLED';
@@ -121,42 +124,58 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
 
 // ── BrokerService Implementation ────────────────────────────────────
 
+const alertedMissingSubscription = new Set<string>();
+
 async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
-  return withRetry(async (signal) => {
-    let body: Record<string, unknown>;
+  try {
+    return await withRetry(async (signal) => {
+      let body: Record<string, unknown>;
 
-    if (isOccOptionSymbol(symbol)) {
-      const { conId } = await resolveContract(symbol, runtime.sidecarUrl);
-      body = { conId };
-    } else {
-      body = { symbol, secType: 'STK' };
+      if (isOccOptionSymbol(symbol)) {
+        const { conId } = await resolveContract(symbol, runtime.sidecarUrl);
+        body = { conId };
+      } else {
+        body = { symbol, secType: 'STK' };
+      }
+
+      const data = await sidecar(runtime.sidecarUrl, '/market-data/snapshot', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal,
+      });
+
+      const quote = parseSidecarResponse(
+        QuoteResponseSchema,
+        data,
+        `POST /api/market-data/snapshot (${symbol})`,
+      );
+
+      if (quote.bid == null || quote.ask == null) {
+        throw new QuoteUnavailableError(symbol, 'IBKR sidecar returned null bid/ask');
+      }
+
+      return {
+        symbol,
+        bid: quote.bid,
+        ask: quote.ask,
+        last: quote.last ?? quote.close ?? quote.bid ?? quote.ask,
+        volume: quote.volume ?? 0,
+        timestamp: new Date().toISOString(),
+      };
+    }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/IBKR sidecar 402:/.test(msg) && !alertedMissingSubscription.has(symbol)) {
+      alertedMissingSubscription.add(symbol);
+      void sendSystemAlert({
+        title: 'IBKR: live market data subscription missing',
+        message: `getQuote(${symbol}) failed — paper account ${runtime.accountId} has no live market data for this symbol. Verify subscription sharing at IBKR Client Portal (propagation can take 24h).`,
+        severity: 'critical',
+        fields: [{ name: 'error', value: msg }],
+      });
     }
-
-    const data = await sidecar(runtime.sidecarUrl, '/market-data/snapshot', {
-      method: 'POST',
-      body: JSON.stringify(body),
-      signal,
-    });
-
-    const quote = parseSidecarResponse(
-      QuoteResponseSchema,
-      data,
-      `POST /api/market-data/snapshot (${symbol})`,
-    );
-
-    if (quote.bid == null || quote.ask == null) {
-      throw new QuoteUnavailableError(symbol, 'IBKR sidecar returned null bid/ask');
-    }
-
-    return {
-      symbol,
-      bid: quote.bid,
-      ask: quote.ask,
-      last: quote.last ?? quote.close ?? quote.bid ?? quote.ask,
-      volume: quote.volume ?? 0,
-      timestamp: new Date().toISOString(),
-    };
-  }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
+    throw err;
+  }
 }
 
 async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<OrderResult> {
