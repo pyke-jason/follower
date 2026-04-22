@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronsUpDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { createFilterParams } from '@/hooks/use-filter-params';
 import { TRADE_FLAGS } from '@src/db/schema';
 import type { Trade, TradeFlag } from '@src/db/schema';
@@ -30,9 +31,10 @@ const FLAG_LABELS: Partial<Record<TradeFlag, string>> = {
 
 export type LabelBucket = 'tp' | 'fp' | 'unlabeled';
 
-type MultiFilterKey = 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags' | 'labelBuckets';
+type MultiFilterKey = 'statuses' | 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags' | 'labelBuckets';
 
 export interface TradeFilterValues {
+  statuses: string[];
   traders: string[];
   symbols: string[];
   strategies: string[];
@@ -48,6 +50,7 @@ export function applyTradeFilters(
   labelsByTradeId?: Record<string, { bucket: string }>,
 ): Trade[] {
   return trades.filter((t) => {
+    if (filters.statuses.length > 0 && !filters.statuses.includes(t.status)) return false;
     if (filters.traders.length > 0 && !filters.traders.includes(t.trader)) return false;
     if (filters.symbols.length > 0 && !filters.symbols.includes(t.symbol)) return false;
     if (filters.strategies.length > 0 && !filters.strategies.includes(t.strategy)) return false;
@@ -67,6 +70,7 @@ export function applyTradeFilters(
 // ── URL-synced filter params ───────────────────────────────────────
 
 const useTradeFilterParams = createFilterParams({
+  statuses:     { type: 'string[]' },
   traders:      { type: 'string[]' },
   symbols:      { type: 'string[]' },
   strategies:   { type: 'string[]' },
@@ -80,6 +84,7 @@ const useTradeFilterParams = createFilterParams({
 interface TradeFilterContextValue {
   filters: TradeFilterValues;
   toggle: (key: MultiFilterKey, value: string) => void;
+  setStatuses: (statuses: string[] | null) => void;
   clearKey: (key: MultiFilterKey) => void;
   clearFilters: () => void;
   hasFilters: boolean;
@@ -105,18 +110,20 @@ export function TradeFilterProvider({
   const params = useTradeFilterParams();
 
   const filters: TradeFilterValues = useMemo(() => ({
+    statuses: params.statuses,
     traders: params.traders,
     symbols: params.symbols,
     strategies: params.strategies,
     directions: params.directions,
     flags: params.flags as TradeFlag[],
     labelBuckets: params.labelBuckets as LabelBucket[],
-  }), [params.traders, params.symbols, params.strategies, params.directions, params.flags, params.labelBuckets]);
+  }), [params.statuses, params.traders, params.symbols, params.strategies, params.directions, params.flags, params.labelBuckets]);
 
   const toggle = useCallback((key: MultiFilterKey, value: string) => {
     const arr = filters[key] as string[];
     const next = arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value];
     const setters: Record<MultiFilterKey, (v: string[] | null) => void> = {
+      statuses: params.setStatuses,
       traders: params.setTraders,
       symbols: params.setSymbols,
       strategies: params.setStrategies,
@@ -125,10 +132,11 @@ export function TradeFilterProvider({
       labelBuckets: params.setLabelBuckets,
     };
     setters[key](next);
-  }, [filters, params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags, params.setLabelBuckets]);
+  }, [filters, params.setStatuses, params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags, params.setLabelBuckets]);
 
   const clearKey = useCallback((key: MultiFilterKey) => {
     const setters: Record<MultiFilterKey, (v: string[] | null) => void> = {
+      statuses: params.setStatuses,
       traders: params.setTraders,
       symbols: params.setSymbols,
       strategies: params.setStrategies,
@@ -137,7 +145,7 @@ export function TradeFilterProvider({
       labelBuckets: params.setLabelBuckets,
     };
     setters[key](null);
-  }, [params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags, params.setLabelBuckets]);
+  }, [params.setStatuses, params.setTraders, params.setSymbols, params.setStrategies, params.setDirections, params.setFlags, params.setLabelBuckets]);
 
   const hasFilters = params.hasFilters;
   const clearFilters = params.clearFilters;
@@ -158,8 +166,19 @@ export function TradeFilterProvider({
   }, [flagsByTradeId]);
 
   const value = useMemo(
-    () => ({ filters, toggle, clearKey, clearFilters, hasFilters, allTrades: trades, filteredTrades, availableFlags, labelsByTradeId }),
-    [filters, toggle, clearKey, clearFilters, hasFilters, trades, filteredTrades, availableFlags, labelsByTradeId],
+    () => ({
+      filters,
+      toggle,
+      setStatuses: params.setStatuses,
+      clearKey,
+      clearFilters,
+      hasFilters,
+      allTrades: trades,
+      filteredTrades,
+      availableFlags,
+      labelsByTradeId,
+    }),
+    [filters, toggle, params.setStatuses, clearKey, clearFilters, hasFilters, trades, filteredTrades, availableFlags, labelsByTradeId],
   );
 
   return <TradeFilterContext value={value}>{children}</TradeFilterContext>;
@@ -271,18 +290,50 @@ const LABEL_BUCKET_LABELS: Record<string, string> = {
   unlabeled: 'No label',
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  OPEN: 'Open',
+  CLOSED: 'Closed',
+  CANCELLED: 'Cancelled',
+};
+
 export function TradeFilters({ className, evalSummary }: { className?: string; evalSummary?: EvalSummary }) {
-  const { filters, toggle, clearKey, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags, labelsByTradeId } = useTradeFilters();
+  const { filters, toggle, setStatuses, clearKey, clearFilters, hasFilters, allTrades, filteredTrades, availableFlags, labelsByTradeId } = useTradeFilters();
 
   const options = useMemo(() => ({
+    statuses: ['OPEN', 'CLOSED', 'CANCELLED'].filter((status) => allTrades.some((t) => t.status === status)),
     traders: [...new Set(allTrades.map((t) => t.trader))].sort(),
     symbols: [...new Set(allTrades.map((t) => t.symbol))].sort(),
     strategies: [...new Set(allTrades.map((t) => t.strategy))].sort(),
     directions: [...new Set(allTrades.map((t) => t.direction))].sort(),
   }), [allTrades]);
 
+  const statusToggleValue = useMemo(() => {
+    if (filters.statuses.length !== 1) return 'ALL';
+    return filters.statuses[0];
+  }, [filters.statuses]);
+
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={statusToggleValue}
+        onValueChange={(value) => {
+          if (!value || value === 'ALL') {
+            setStatuses(null);
+            return;
+          }
+          setStatuses([value]);
+        }}
+      >
+        <ToggleGroupItem value="ALL" className="h-7 text-xs px-2">All</ToggleGroupItem>
+        {options.statuses.map((status) => (
+          <ToggleGroupItem key={status} value={status} className="h-7 text-xs px-2">
+            {STATUS_LABELS[status] ?? status}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
       <MultiSelect selected={filters.traders} onToggle={(v) => toggle('traders', v)} onClear={() => clearKey('traders')} options={options.traders} label="Trader" />
       <MultiSelect selected={filters.symbols} onToggle={(v) => toggle('symbols', v)} onClear={() => clearKey('symbols')} options={options.symbols} label="Symbol" searchable />
       <MultiSelect selected={filters.strategies} onToggle={(v) => toggle('strategies', v)} onClear={() => clearKey('strategies')} options={options.strategies} label="Strategy" />

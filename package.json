@@ -14,6 +14,7 @@
     "web": "cd web && pnpm dev",
     "backtest": "tsx src/backtest/launch.ts",
     "classify": "tsx src/classify/launch.ts",
+    "export:no-badge-trade-corpus": "tsx scripts/export-no-badge-trade-corpus.ts",
     "secrets:import": "tsx src/lib/secrets/manage.ts import",
     "secrets:set": "tsx src/lib/secrets/manage.ts set",
     "secrets:get": "tsx src/lib/secrets/manage.ts get",

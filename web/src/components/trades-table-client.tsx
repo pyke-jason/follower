@@ -1,20 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { SortableHead } from './sortable-head';
 import { useSearchParam } from '@/hooks/use-search-param';
 import { createFilterParams } from '@/hooks/use-filter-params';
 import { Card } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { TradeRow } from './trade-row';
 import { EventSubRows } from './event-sub-rows';
 import { TradeDetailPanel } from '@/views/trades/[id]/trade-detail-panel';
 import { EmptyState } from './empty-state';
 import { useTradesStore } from '@/stores/trades-store';
-import { useChannelId } from '@/hooks/use-channel-id';
-import { api } from '@/lib/api';
-import { buildScopedPath } from '@/lib/channel-scope';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
 type SortColumn = 'pnl' | 'openedAt';
@@ -49,9 +44,6 @@ const useTradeSortParams = createFilterParams({
   sort: { type: 'sort', defaultColumn: 'openedAt', defaultDir: 'desc' },
 });
 
-type LivePosition = { unrealizedPnl: number; marketValue: number | null };
-const EMPTY_POSITIONS: Record<string, LivePosition> = {};
-
 export function TradesTableClient() {
   const trades = useTradesStore((s) => s.trades);
   const eventsByTradeId = useTradesStore((s) => s.eventsByTradeId);
@@ -68,19 +60,9 @@ export function TradesTableClient() {
   const sortDirection = sortParams.sort.dir;
   const setSort = sortParams.setSort;
 
-  const channelId = useChannelId();
-  const isLiveChannel = channelId ? !channelId.startsWith('bt:') : true;
+  const livePositions = useTradesStore((s) => s.livePositionsByTradeId);
 
   const [urlTradeId, setUrlTradeId] = useSearchParam('trade');
-
-  // Poll live broker positions for open trades.
-  const openPnlQuery = useQuery({
-    queryKey: ['open-pnl', channelId],
-    queryFn: () => api<Record<string, LivePosition>>(buildScopedPath('/open-pnl', channelId)),
-    refetchInterval: 10_000,
-    enabled: isLiveChannel,
-  });
-  const livePositions = openPnlQuery.data ?? EMPTY_POSITIONS;
   const unrealizedPnl = useMemo(() => {
     const map: Record<string, number> = {};
     for (const [id, pos] of Object.entries(livePositions)) map[id] = pos.unrealizedPnl;
@@ -136,17 +118,27 @@ export function TradesTableClient() {
   const sort = { column: sortColumn, dir: sortDirection as 'asc' | 'desc' };
 
   return (
-    <Card className="py-0 gap-0 overflow-hidden flex flex-col flex-1 min-h-0">
+    <Card className="py-0 gap-0 flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
-        <ResizablePanel defaultSize={55} minSize={35}>
-          <ScrollArea className="h-full">
-            <div ref={scrollRef}>
-              <Table>
-                <TableHeader>
+        <ResizablePanel defaultSize={55} minSize={35} className="min-h-0 overflow-hidden">
+          <div className="h-full overflow-auto overscroll-none">
+              <Table containerClassName="overflow-visible">
+                <TableHeader className="sticky top-0 z-20 bg-card border-b border-border [&_tr]:border-b-0">
                   <TableRow>
                     <TableHead className="w-6" />
-                    <SortableHead column="openedAt" label="Position" sort={sort} onSort={setSort} />
-                    <SortableHead column="pnl" label="Mark / P&L" sort={sort} onSort={setSort} align="right" />
+                    <SortableHead
+                      column="openedAt"
+                      label="Position"
+                      sort={sort}
+                      onSort={setSort}
+                    />
+                    <SortableHead
+                      column="pnl"
+                      label="Mark / P&L"
+                      sort={sort}
+                      onSort={setSort}
+                      align="right"
+                    />
                     {hasLabels && <TableHead className="w-8 text-center">Label</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -166,20 +158,19 @@ export function TradesTableClient() {
                   );
                 })}
               </Table>
-            </div>
-          </ScrollArea>
+          </div>
         </ResizablePanel>
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel defaultSize={45} minSize={25}>
-          <ScrollArea className="h-full">
+        <ResizablePanel defaultSize={45} minSize={25} className="min-h-0 overflow-hidden">
+          <div className="h-full overflow-auto overscroll-none">
             {selectedTrade ? (
               <TradeDetailPanel onClose={() => setSelectedId(null)} />
             ) : (
               <EmptyState title="Select a trade" hint="Click a row to view details" />
             )}
-          </ScrollArea>
+          </div>
         </ResizablePanel>
       </ResizablePanelGroup>
     </Card>

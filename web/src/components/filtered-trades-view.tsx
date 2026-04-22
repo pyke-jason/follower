@@ -10,6 +10,7 @@ import type { TradeLabel } from '@src/local-api/http-schemas';
 export function FilteredTradesView({
   eventsByTradeId = {},
   flagsByTradeId,
+  livePositionsByTradeId,
   labelsByTradeId,
   channelId,
   commissionSchedule,
@@ -17,6 +18,7 @@ export function FilteredTradesView({
 }: {
   eventsByTradeId?: Record<string, TradeEvent[]>;
   flagsByTradeId: Record<string, TradeFlag[]>;
+  livePositionsByTradeId?: Record<string, { unrealizedPnl: number; marketValue: number | null }>;
   labelsByTradeId?: Record<string, TradeLabel>;
   channelId: string;
   commissionSchedule?: CommissionSchedule;
@@ -30,6 +32,7 @@ export function FilteredTradesView({
     trades: filteredTrades,
     eventsByTradeId,
     flagsByTradeId,
+    livePositionsByTradeId,
     labelsByTradeId,
     commissionSchedule,
     startingEquity,
@@ -43,7 +46,7 @@ export function FilteredTradesView({
 
   useEffect(() => {
     hydrate(hydrationData);
-  }, [filteredTrades, eventsByTradeId, flagsByTradeId, labelsByTradeId, channelId, commissionSchedule, startingEquity, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filteredTrades, eventsByTradeId, flagsByTradeId, livePositionsByTradeId, labelsByTradeId, channelId, commissionSchedule, startingEquity, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (filteredTrades.length === 0 && hasFilters) {
     return (
@@ -59,5 +62,7 @@ export function FilteredTradesView({
     );
   }
 
-  return <TradesTableClient />;
+  return (
+      <TradesTableClient />
+  );
 }

@@ -15,6 +15,7 @@ import classifySpawn from './routes/classify-spawn.js';
 import classifyRoutes from './routes/classify.js';
 import logs from './routes/logs.js';
 import { createTradesRouter } from './routes/trades.js';
+import { createWebOrdersRouter } from './routes/web-orders.js';
 import webQueries from './routes/web-queries.js';
 import webMutations from './routes/web-mutations.js';
 import evalRoutes from './routes/eval.js';
@@ -52,6 +53,7 @@ app.route('/ingest-backfill', ingestBackfill);
 
 app.route('/web', webQueries);
 app.route('/web', webMutations);
+app.route('/web', createWebOrdersRouter(channelBrokerMap));
 app.route('/web', classifyRoutes);
 app.route('/web', evalRoutes);
 app.route('/web', dbBrowser);

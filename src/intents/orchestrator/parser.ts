@@ -1,10 +1,10 @@
 /**
  * Synchronous message parser for the orchestrator.
  *
- * Zero I/O. Uses ONLY structural metadata from the Discord envelope (badges,
- * `symbols[]`) and whole-message canonical-trade template matching. No prose
- * keyword scanning — "these PDSes look good" would mis-classify as a PDS trade,
- * so any field populated by keyword presence alone has been removed.
+ * Zero I/O. Uses structural metadata from the Discord envelope (badges,
+ * `symbols[]`), a narrow no-badge trade-cue gate for LLM routing, and
+ * whole-message canonical-trade template matching. The cue gate only decides
+ * skip vs LLM; it does not populate trade fields from prose.
  *
  * Anything not derivable from structural metadata + a template match stays null
  * and the LLM path handles it.
@@ -18,6 +18,16 @@ import type {
   ComplexityFlag,
 } from './types.js';
 import { matchCanonicalTrade } from './canonical-trade.js';
+
+const NO_BADGE_ACTION_CUE_RE =
+  /\b(?:bought|sold|shorting|short|long|longed|added|adding|add|trim|trimmed|exit|exiting|closed|close|re-?entered|re-?entering|took|taking)\b|\b(?:back\s+in|in\s+since|scal(?:ing|e)\s+out|sclaing\s+out|all\s+out|out\s+of|in\s+them)\b/i;
+const NO_BADGE_SPREAD_CUE_RE =
+  /\b(?:pcs|pds|cds|ccs)\b|\b\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?(?:\s*(?:pcs|pds|cds|ccs))?\b/i;
+const NO_BADGE_OPTION_CUE_RE =
+  /\b\d+(?:\.\d+)?\s*[cp]\b|\b(?:calls?|puts?)\b|\b(?:lotto|yolo)\b/i;
+const NO_BADGE_PRICE_SIZE_CUE_RE =
+  /\$\s*\d|\b\d+(?:\.\d+)?\b\s*@\s*\$?\s*\d|\bavg\b|\bcredit\b|\bdebit\b|\bshares?\b|\bcontracts?\b|\bexp(?:iry|iring)?\b|\b\d{1,2}[/-]\d{1,2}\b/i;
+const NO_BADGE_OPEN_WORD_RE = /\bOPEN\b/i;
 
 export function parseMessage(ctx: OrchestratorContext): ParseResult {
   const { cleanText, badges, symbols } = ctx.message;
@@ -34,6 +44,10 @@ export function parseMessage(ctx: OrchestratorContext): ParseResult {
   const hasTradeBadge = badges.some(b => TRADE_BADGES.has(b));
   if (hasNonTradeBadge && !hasTradeBadge) {
     return hardSkip(`non-trade badge: ${badges.filter(b => !TRADE_BADGES.has(b)).join(', ')}`, complexityFlags);
+  }
+
+  if (!hasTradeBadge && !hasNoBadgeTradeCue(cleanText, symbols)) {
+    return hardSkip('no trade badge or cue', complexityFlags);
   }
 
   // ── Complexity: structural flags only ─────────────────────────────────────
@@ -127,4 +141,16 @@ function hardSkip(reason: string, complexityFlags: Set<ComplexityFlag>): ParseRe
     skipReason: reason,
     complexityFlags,
   };
+}
+
+function hasNoBadgeTradeCue(cleanText: string, symbols: string[]): boolean {
+  if (symbols.length === 0) return false;
+
+  return (
+    NO_BADGE_ACTION_CUE_RE.test(cleanText) ||
+    NO_BADGE_SPREAD_CUE_RE.test(cleanText) ||
+    NO_BADGE_OPTION_CUE_RE.test(cleanText) ||
+    NO_BADGE_PRICE_SIZE_CUE_RE.test(cleanText) ||
+    NO_BADGE_OPEN_WORD_RE.test(cleanText)
+  );
 }

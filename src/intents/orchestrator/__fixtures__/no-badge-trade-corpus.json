@@ -1,0 +1,746 @@
+[
+  {
+    "messageId": "463275",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-02T14:21:15.000Z",
+    "cleanText": "Doing a rare reversal trade, taking the loss on TXN long (-$8.40) and shorting it at $199.06 , 1,000 Shares",
+    "badges": [],
+    "symbols": [
+      "TXN"
+    ]
+  },
+  {
+    "messageId": "463478",
+    "author": "Dave W",
+    "timestamp": "2025-09-02T20:24:56.000Z",
+    "cleanText": "sold shares in GOOGL at 224 to lock in profits on my 210 GOOGL calls",
+    "badges": [],
+    "symbols": [
+      "GOOGL"
+    ]
+  },
+  {
+    "messageId": "463550",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-03T13:45:31.000Z",
+    "cleanText": "Added - $234.83 avg now, 1,500 Shares (AAPL)",
+    "badges": [],
+    "symbols": [
+      "AAPL"
+    ]
+  },
+  {
+    "messageId": "463568",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-03T14:07:25.000Z",
+    "cleanText": "OPEN back into hod",
+    "badges": [],
+    "symbols": [
+      "OPEN"
+    ]
+  },
+  {
+    "messageId": "463662",
+    "author": "Jefftsx",
+    "timestamp": "2025-09-03T16:00:33.000Z",
+    "cleanText": "Added to WDC swing long Avg price for shares 82.71",
+    "badges": [],
+    "symbols": [
+      "WDC"
+    ]
+  },
+  {
+    "messageId": "463699",
+    "author": "tradervik",
+    "timestamp": "2025-09-03T16:34:49.000Z",
+    "cleanText": "RKLB is closing to previous week's low, 20 and 50SMA, 3 major levels of support, so exiting here",
+    "badges": [],
+    "symbols": [
+      "RKLB"
+    ]
+  },
+  {
+    "messageId": "463756",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-03T17:47:35.000Z",
+    "cleanText": "(oh Nicolas is back at Berkeley now but of course he went long AAPL on Friday and closed that trade this morning)",
+    "badges": [],
+    "symbols": [
+      "AAPL"
+    ]
+  },
+  {
+    "messageId": "463934",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-04T13:42:51.000Z",
+    "cleanText": "TSLA sclaing out 25%",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "463944",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-04T13:50:34.000Z",
+    "cleanText": "TSLA adding",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "463966",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-04T14:05:18.000Z",
+    "cleanText": "OPEN scaling out 5.40",
+    "badges": [],
+    "symbols": [
+      "OPEN"
+    ]
+  },
+  {
+    "messageId": "463971",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-04T14:09:44.000Z",
+    "cleanText": "NVDA is now performing the way i want it so going to exit soon TSLA out for 30%",
+    "badges": [],
+    "symbols": [
+      "NVDA",
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "464012",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-04T14:35:34.000Z",
+    "cleanText": "OPEN 5.73 scaling out 3/4 of position now",
+    "badges": [],
+    "symbols": [
+      "OPEN"
+    ]
+  },
+  {
+    "messageId": "464028",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-04T15:03:20.000Z",
+    "cleanText": "OPEN all out 5.45",
+    "badges": [],
+    "symbols": [
+      "OPEN"
+    ]
+  },
+  {
+    "messageId": "464029",
+    "author": "MallowMushroom",
+    "timestamp": "2025-09-04T15:03:31.000Z",
+    "cleanText": "Adding to my AAPL swing avg 233.62 now",
+    "badges": [],
+    "symbols": [
+      "AAPL"
+    ]
+  },
+  {
+    "messageId": "464096",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-04T17:00:33.000Z",
+    "cleanText": "Bought back the short Calls on META holding the long Calls",
+    "badges": [],
+    "symbols": [
+      "META"
+    ]
+  },
+  {
+    "messageId": "464103",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-04T17:15:17.000Z",
+    "cleanText": "Re-entering the TSLA short $333.98 - 1,000 Shares",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "464206",
+    "author": "JYork",
+    "timestamp": "2025-09-04T20:08:38.000Z",
+    "cleanText": "0-1 today. Went short on TSLA at 12:55, right when it decided to wake up for today.",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "464313",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-05T13:59:10.000Z",
+    "cleanText": "QCOM sclaing out for 20%",
+    "badges": [],
+    "symbols": [
+      "QCOM"
+    ]
+  },
+  {
+    "messageId": "464321",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-05T14:04:14.000Z",
+    "cleanText": "QCOM scaling out 33% 3/4 will let the rest ride for a swing",
+    "badges": [],
+    "symbols": [
+      "QCOM"
+    ]
+  },
+  {
+    "messageId": "464411",
+    "author": "GT",
+    "timestamp": "2025-09-05T14:52:39.000Z",
+    "cleanText": "closed remainder of MSFT",
+    "badges": [],
+    "symbols": [
+      "MSFT"
+    ]
+  },
+  {
+    "messageId": "464427",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-05T15:01:27.000Z",
+    "cleanText": "UNH held 310s adding few for a swing",
+    "badges": [],
+    "symbols": [
+      "UNH"
+    ]
+  },
+  {
+    "messageId": "464649",
+    "author": "RogerT",
+    "timestamp": "2025-09-05T19:35:05.000Z",
+    "cleanText": "Sold puts on AEVA for 0.45 for 12.5 strike",
+    "badges": [],
+    "symbols": [
+      "AEVA"
+    ]
+  },
+  {
+    "messageId": "464753",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-08T13:41:39.000Z",
+    "cleanText": "BA 9/12 227.5p swing scaling out for 18%",
+    "badges": [],
+    "symbols": [
+      "BA"
+    ]
+  },
+  {
+    "messageId": "464845",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-08T15:34:35.000Z",
+    "cleanText": "BA scaling out 25% 330c",
+    "badges": [],
+    "symbols": [
+      "BA"
+    ]
+  },
+  {
+    "messageId": "464848",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-08T15:37:14.000Z",
+    "cleanText": "Adding to my TSLA short with a PDS $347.5/$342/5 for $1.94 - 25 Contracts",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "464911",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-08T17:52:53.000Z",
+    "cleanText": "Close to yesterdays high - also OSCR is developing a pattern of popping up, retreating and then heading back to the high",
+    "badges": [],
+    "symbols": [
+      "OSCR"
+    ]
+  },
+  {
+    "messageId": "464956",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-08T19:17:53.000Z",
+    "cleanText": "Added to TSLA short - now 1,500 shares ($338.03 avg) -",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "464960",
+    "author": "tradervik",
+    "timestamp": "2025-09-08T19:33:58.000Z",
+    "cleanText": "DECK short at ATR-Low 116.17, with a little bit of help from market. I want it to continue the drop past ATR, but with just ok RVol, so i feel that push from stock would be missing.",
+    "badges": [],
+    "symbols": [
+      "DECK"
+    ]
+  },
+  {
+    "messageId": "465308",
+    "author": "AZRobert",
+    "timestamp": "2025-09-09T19:58:34.000Z",
+    "cleanText": "Long QMMM at any price, this thing is going to the MOON!Wait, what happened?I'm holding. I know what I own.",
+    "badges": [],
+    "symbols": [
+      "QMMM"
+    ]
+  },
+  {
+    "messageId": "465318",
+    "author": "Tobias",
+    "timestamp": "2025-09-09T20:19:52.000Z",
+    "cleanText": "p.s.: as I didnt want to chase ORCL I bought NVDA",
+    "badges": [],
+    "symbols": [
+      "ORCL",
+      "NVDA"
+    ]
+  },
+  {
+    "messageId": "465520",
+    "author": "Wrentacula",
+    "timestamp": "2025-09-10T15:48:31.000Z",
+    "cleanText": "AAPL PCS 220/215 expiring 10/3 can be had for 1.0",
+    "badges": [],
+    "symbols": [
+      "AAPL"
+    ]
+  },
+  {
+    "messageId": "465734",
+    "author": "Kyle S.",
+    "timestamp": "2025-09-10T20:17:46.000Z",
+    "cleanText": "I'm also banning myself from taking any positions with the intentions of day trading. Everything I enter will be a swing - if I need to exit same day, so be it, but majority should be held overnight. My results are better and I feel less stress swinging, but sometimes I can't help myself if I see strong moves. ABT is a good example today, although I still think it wasn't a bad trade, it had an awful D1 that I'm not willing to hold and I was forced to take the loss. I'd rather have confidence that I can weather out a couple bad days or even weeks.",
+    "badges": [],
+    "symbols": [
+      "ABT"
+    ]
+  },
+  {
+    "messageId": "465942",
+    "author": "GT",
+    "timestamp": "2025-09-11T15:09:11.000Z",
+    "cleanText": "BABA is also a good long; avg'd in so didn't post it",
+    "badges": [],
+    "symbols": [
+      "BABA"
+    ]
+  },
+  {
+    "messageId": "466304",
+    "author": "Dave W",
+    "timestamp": "2025-09-12T14:40:25.000Z",
+    "cleanText": "WBD with uoa jan $20 calls i am in them after closing the dec $15 calls this am for 70% profit it is a spec news trade",
+    "badges": [],
+    "symbols": [
+      "WBD"
+    ]
+  },
+  {
+    "messageId": "466449",
+    "author": "Jim54",
+    "timestamp": "2025-09-15T11:00:44.000Z",
+    "cleanText": "Musk bought a billion dollars of TSLA stock on Friday. Up big in the pre-market! Good Morning!",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "466500",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-15T13:58:47.000Z",
+    "cleanText": "QCOM brekaing out adding more size",
+    "badges": [],
+    "symbols": [
+      "QCOM"
+    ]
+  },
+  {
+    "messageId": "466535",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-15T14:28:25.000Z",
+    "cleanText": "SPY held CRWV add new avg 2.32",
+    "badges": [],
+    "symbols": [
+      "SPY",
+      "CRWV"
+    ]
+  },
+  {
+    "messageId": "466729",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-15T19:41:02.000Z",
+    "cleanText": "Added 500 more shares to OSCR - 7,500 total - $20.21 avg",
+    "badges": [],
+    "symbols": [
+      "OSCR"
+    ]
+  },
+  {
+    "messageId": "466837",
+    "author": "JaxTrader",
+    "timestamp": "2025-09-16T14:22:11.000Z",
+    "cleanText": "Bought TURB at 8 this morning - doesn't fit criteria for this room so didn't post",
+    "badges": [],
+    "symbols": [
+      "TURB"
+    ]
+  },
+  {
+    "messageId": "466854",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-16T14:37:21.000Z",
+    "cleanText": "BABA 180c swing scaling out for 500% gain 1/26/26",
+    "badges": [],
+    "symbols": [
+      "BABA"
+    ]
+  },
+  {
+    "messageId": "467086",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-17T13:57:49.000Z",
+    "cleanText": "NVDA 170p 2.03 9/19",
+    "badges": [],
+    "symbols": [
+      "NVDA"
+    ]
+  },
+  {
+    "messageId": "467299",
+    "author": "Dave W",
+    "timestamp": "2025-09-17T19:48:19.000Z",
+    "cleanText": "i posted that at 2:13 after the fed announcement please look at the candles from 2:05 TO 2:20 what would you call that price action. btw i went long TSLA at 3pm for a nice intraday profit",
+    "badges": [],
+    "symbols": [
+      "TSLA"
+    ]
+  },
+  {
+    "messageId": "467388",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-18T13:45:52.000Z",
+    "cleanText": "AMD 150p add more avg 1.54",
+    "badges": [],
+    "symbols": [
+      "AMD"
+    ]
+  },
+  {
+    "messageId": "467396",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-18T13:57:12.000Z",
+    "cleanText": "Bought back the short Puts on NVDA PDS",
+    "badges": [],
+    "symbols": [
+      "NVDA"
+    ]
+  },
+  {
+    "messageId": "467496",
+    "author": "tradervik",
+    "timestamp": "2025-09-18T15:32:42.000Z",
+    "cleanText": "SMR just rushed to 50SMA, so took profit there, may be a bit early, but i'm ok with it.",
+    "badges": [],
+    "symbols": [
+      "SMR"
+    ]
+  },
+  {
+    "messageId": "467778",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-19T14:02:14.000Z",
+    "cleanText": "Bought back the short Puts on MSFT",
+    "badges": [],
+    "symbols": [
+      "MSFT"
+    ]
+  },
+  {
+    "messageId": "467785",
+    "author": "Whizurd1",
+    "timestamp": "2025-09-19T14:06:15.000Z",
+    "cleanText": "Adding to SOFI $28.70",
+    "badges": [],
+    "symbols": [
+      "SOFI"
+    ]
+  },
+  {
+    "messageId": "467864",
+    "author": "Dave W",
+    "timestamp": "2025-09-19T14:52:11.000Z",
+    "cleanText": "took some WBD calls oct 3 $20 calls otm spec trade on news",
+    "badges": [],
+    "symbols": [
+      "WBD"
+    ]
+  },
+  {
+    "messageId": "467976",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-19T17:55:33.000Z",
+    "cleanText": "Now I just need MSFT to drop into the close",
+    "badges": [],
+    "symbols": [
+      "MSFT"
+    ]
+  },
+  {
+    "messageId": "468123",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-22T13:45:35.000Z",
+    "cleanText": "AMD 3/4 @ 3.70 160c",
+    "badges": [],
+    "symbols": [
+      "AMD"
+    ]
+  },
+  {
+    "messageId": "468128",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-22T13:56:37.000Z",
+    "cleanText": "AMD taking a few more off n letting a ride ride 4.00 of 160c",
+    "badges": [],
+    "symbols": [
+      "AMD"
+    ]
+  },
+  {
+    "messageId": "468234",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-22T15:30:57.000Z",
+    "cleanText": "forgot to put the entry in AMZN 230p 2.93 taking half off at 3.20 would like to hold into the close or nice leg down",
+    "badges": [],
+    "symbols": [
+      "AMZN"
+    ]
+  },
+  {
+    "messageId": "468263",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-22T16:11:11.000Z",
+    "cleanText": "NVDA was a quick day trade 180c 9/26 2.03 sold 3/4 2.50 playing base of news vs PDH",
+    "badges": [],
+    "symbols": [
+      "NVDA"
+    ]
+  },
+  {
+    "messageId": "468290",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-22T16:40:21.000Z",
+    "cleanText": "AMZN 230p 9/26 exit 3.65 ill take it",
+    "badges": [],
+    "symbols": [
+      "AMZN"
+    ]
+  },
+  {
+    "messageId": "468419",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-22T19:59:51.000Z",
+    "cleanText": "Closed GOOGL too early - right trade , wrong exit",
+    "badges": [],
+    "symbols": [
+      "GOOGL"
+    ]
+  },
+  {
+    "messageId": "468475",
+    "author": "SpecRacing",
+    "timestamp": "2025-09-23T13:15:28.000Z",
+    "cleanText": "Short JNJ and KVUE (makers of tylenol) :D",
+    "badges": [],
+    "symbols": [
+      "JNJ",
+      "KVUE"
+    ]
+  },
+  {
+    "messageId": "468511",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-23T13:53:54.000Z",
+    "cleanText": "MARA 1/2 20c 2.15 41%",
+    "badges": [],
+    "symbols": [
+      "MARA"
+    ]
+  },
+  {
+    "messageId": "468699",
+    "author": "ksalomov",
+    "timestamp": "2025-09-23T16:50:57.000Z",
+    "cleanText": "ATAI - had a beautiful breakout. In since $2.80.",
+    "badges": [],
+    "symbols": [
+      "ATAI"
+    ]
+  },
+  {
+    "messageId": "468772",
+    "author": "Jim54",
+    "timestamp": "2025-09-23T18:05:27.000Z",
+    "cleanText": "I bought the QS 7 calls at $6.60",
+    "badges": [],
+    "symbols": [
+      "QS"
+    ]
+  },
+  {
+    "messageId": "468912",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-24T13:41:53.000Z",
+    "cleanText": "Actually, put myself back in the AMD position - I missed the SMA resistance there, so I am back in at $163.09 , if that resistance doesn't hold I will be quickly out of the trade",
+    "badges": [],
+    "symbols": [
+      "AMD"
+    ]
+  },
+  {
+    "messageId": "469083",
+    "author": "GT",
+    "timestamp": "2025-09-24T16:27:12.000Z",
+    "cleanText": "also re-entered TGT short around $87.60",
+    "badges": [],
+    "symbols": [
+      "TGT"
+    ]
+  },
+  {
+    "messageId": "469464",
+    "author": "Izzytrader",
+    "timestamp": "2025-09-25T16:04:30.000Z",
+    "cleanText": "AMD i am long swing 175c 11/7 5.80 working as planned. ER is in 40 days so if we can get some news to come in n retest 165 but my risk is 157s if it does aginst me Same move as it did few days ago failed found its strength relcaim lvls n squeeze Weekly setting up nicely ill be holding",
+    "badges": [],
+    "symbols": [
+      "AMD"
+    ]
+  },
+  {
+    "messageId": "469523",
+    "author": "Dave W",
+    "timestamp": "2025-09-25T17:50:38.000Z",
+    "cleanText": "CRWV pcs oct 17 110/105 for 1.10 credit",
+    "badges": [],
+    "symbols": [
+      "CRWV"
+    ]
+  },
+  {
+    "messageId": "469579",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-25T19:12:16.000Z",
+    "cleanText": "Bought back the short Puts on MSFT - that is no-brainer on this PDS",
+    "badges": [],
+    "symbols": [
+      "MSFT"
+    ]
+  },
+  {
+    "messageId": "469600",
+    "author": "RogerT",
+    "timestamp": "2025-09-25T19:33:40.000Z",
+    "cleanText": "Also went short on MSTR 2 days when it rejected SMA50",
+    "badges": [],
+    "symbols": [
+      "MSTR"
+    ]
+  },
+  {
+    "messageId": "469922",
+    "author": "Dave W",
+    "timestamp": "2025-09-26T19:16:14.000Z",
+    "cleanText": "CRSP lotto",
+    "badges": [],
+    "symbols": [
+      "CRSP"
+    ]
+  },
+  {
+    "messageId": "469928",
+    "author": "spectre",
+    "timestamp": "2025-09-26T19:22:57.000Z",
+    "cleanText": "I’ve added that stock to my BA family tree diagram",
+    "badges": [],
+    "symbols": [
+      "BA"
+    ]
+  },
+  {
+    "messageId": "469975",
+    "author": "Smada",
+    "timestamp": "2025-09-27T20:49:18.000Z",
+    "cleanText": "@Cloud For FTAI, I think it closing below both the 8 & 15EMA on Thursday would have made me exit the trade either right near the end of that day or early Friday morning if it didn't bounce. Did you have a mental stop in place when you took the trade?",
+    "badges": [],
+    "symbols": [
+      "FTAI"
+    ]
+  },
+  {
+    "messageId": "470309",
+    "author": "JaxTrader",
+    "timestamp": "2025-09-30T13:44:35.000Z",
+    "cleanText": "exit GLW none bar ago with profit at $81.30",
+    "badges": [],
+    "symbols": [
+      "GLW"
+    ]
+  },
+  {
+    "messageId": "470310",
+    "author": "Jim54",
+    "timestamp": "2025-09-30T13:46:39.000Z",
+    "cleanText": "What I did with CRWV is sold 5 of 7 $125 calls so I am holding 2 that are free. I have found myself taking profit too early and am trying to curb my enthusiasm. I am not Dave but that is how I handled that move on the open.",
+    "badges": [],
+    "symbols": [
+      "CRWV"
+    ]
+  },
+  {
+    "messageId": "470360",
+    "author": "Jim54",
+    "timestamp": "2025-09-30T14:45:28.000Z",
+    "cleanText": "I am out of CRWV at $21 on my oct 125 calls.. only posting as I had mentioned earlier that I held 2",
+    "badges": [],
+    "symbols": [
+      "CRWV"
+    ]
+  },
+  {
+    "messageId": "470460",
+    "author": "Sapper",
+    "timestamp": "2025-09-30T17:20:58.000Z",
+    "cleanText": "Long SMCI (Joined @Pete). Sold PCS 44/42@0.41 credit. Expiry Oct 17. TY @Pete.",
+    "badges": [],
+    "symbols": [
+      "SMCI"
+    ]
+  },
+  {
+    "messageId": "470483",
+    "author": "theworm",
+    "timestamp": "2025-09-30T17:59:57.000Z",
+    "cleanText": "BE still going but happy that I took profit. Exits are still the most difficult for me to learn. I don't stay in long enough or exit way to early. Profit is profit though.",
+    "badges": [],
+    "symbols": [
+      "BE"
+    ]
+  },
+  {
+    "messageId": "470544",
+    "author": "Hariseldon",
+    "timestamp": "2025-09-30T19:56:37.000Z",
+    "cleanText": "Bought back the short Puts on COST PDS",
+    "badges": [],
+    "symbols": [
+      "COST"
+    ]
+  }
+]

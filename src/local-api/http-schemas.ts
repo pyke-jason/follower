@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { SignalSchema } from '../agent/schemas.js';
-import { DirectionSchema, LegActionSchema, LegTypeSchema } from '../lib/enums.js';
+import {
+  DirectionSchema,
+  LegActionSchema,
+  LegTypeSchema,
+  OrderTypeSchema,
+  StrategySchema,
+} from '../lib/enums.js';
 import { EvalLabelDataSchema } from '../eval/label-schema.js';
+import { defaultTickSize, computeMidpoint } from '../lib/quotes.js';
 import type {
   BacktestRun,
   BacktestRunSummary,
@@ -37,6 +44,43 @@ const ForceExitLegSchema = z.object({
   expiry: z.string(),
   strike: z.number().nonnegative(),
 });
+
+/* ─── Leaf: manual-order status ───────────────────── */
+
+const ManualOrderStatusSchema = z.enum(['PENDING', 'OPEN', 'FILLED', 'CANCELLED', 'REJECTED']);
+
+/* ─── GET /web/quotes/:symbol ─────────────────────── */
+
+export const QuoteDataSchema = z.object({
+  bid: z.number(),
+  ask: z.number(),
+  last: z.number(),
+  mid: z.number(),
+  spread: z.number(),
+  volume: z.number(),
+  timestamp: z.string(),
+});
+
+export type QuoteData = z.infer<typeof QuoteDataSchema>;
+
+export function toQuoteData(raw: {
+  bid: number;
+  ask: number;
+  last: number;
+  volume: number;
+  timestamp: string;
+}): QuoteData {
+  const tickSize = defaultTickSize(raw.ask);
+  return {
+    bid: raw.bid,
+    ask: raw.ask,
+    last: raw.last,
+    mid: computeMidpoint(raw.bid, raw.ask, tickSize),
+    spread: Number((raw.ask - raw.bid).toFixed(4)),
+    volume: raw.volume,
+    timestamp: raw.timestamp,
+  };
+}
 
 /* ─── POST /web/backtests/start ─────────────────────── */
 
@@ -103,6 +147,61 @@ export const ClassifySpawnBodySchema = z.object({
 export const BulkIdsBodySchema = z.object({
   ids: z.array(z.string()),
 });
+
+/* ─── POST /web/orders ─────────────────────────────── */
+
+export const PlaceOrderBodySchema = z.object({
+  tradeId: z.string().min(1),
+  channelId: z.string().min(1),
+  orderType: OrderTypeSchema,
+  limitPrice: z.number().positive().optional(),
+  quantity: z.number().int().positive(),
+}).refine(
+  (d) => d.orderType !== 'LIMIT' || d.limitPrice != null,
+  { message: 'LIMIT orders require limitPrice', path: ['limitPrice'] },
+);
+
+export type PlaceOrderBody = z.infer<typeof PlaceOrderBodySchema>;
+
+/* ─── GET/PUT/DELETE /web/orders/:id ───────────────── */
+
+export const OrderIdParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
+export type OrderIdParams = z.infer<typeof OrderIdParamsSchema>;
+
+/* ─── PUT /web/orders/:id ──────────────────────────── */
+
+export const ModifyOrderBodySchema = z.object({
+  limitPrice: z.number().positive(),
+});
+
+export type ModifyOrderBody = z.infer<typeof ModifyOrderBodySchema>;
+
+/* ─── Manual order response ────────────────────────── */
+
+export const WorkingOrderResponseSchema = z.object({
+  orderId: z.string(),
+  status: ManualOrderStatusSchema,
+  orderType: OrderTypeSchema,
+  symbol: z.string(),
+  strategy: StrategySchema,
+  direction: DirectionSchema,
+  legs: z.array(ForceExitLegSchema),
+  quantity: z.number().int().positive(),
+  limitPrice: z.number().optional(),
+  currentLimitPrice: z.number().optional(),
+  filledPrice: z.number().optional(),
+  filledQuantity: z.number().optional(),
+  commission: z.number().optional(),
+  placedAt: z.string(),
+  filledAt: z.string().optional(),
+  cancelledAt: z.string().optional(),
+  message: z.string().optional(),
+});
+
+export type WorkingOrderResponse = z.infer<typeof WorkingOrderResponseSchema>;
 
 /* ─── POST /trades/force-exit ───────────────────────── */
 

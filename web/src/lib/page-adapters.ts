@@ -25,7 +25,7 @@ type DashboardStats = {
   pendingTasks: number;
 };
 
-export type LivePnlRow = { unrealizedPnl: number; marketValue: number | null };
+export type LivePositionRow = { unrealizedPnl: number; marketValue: number | null };
 
 export type AccountBalanceSnapshot = {
   accountId: string;
@@ -77,7 +77,7 @@ type DashboardApiResponse = {
   risk: DashboardRiskSnapshot;
   dailyBalances: DailyBalance[];
   channelId: string;
-  livePnlByTrade: Record<string, LivePnlRow>;
+  livePositionsByTradeId: Record<string, LivePositionRow>;
   accountBalance: AccountBalanceSnapshot | null;
 };
 
@@ -94,7 +94,7 @@ export type DashboardPageData = {
   signals: DashboardSignalRow[];
   pendingReviews: Task[];
   riskSnapshot: DashboardRiskSnapshot;
-  livePnlByTrade: Record<string, LivePnlRow>;
+  livePositionsByTradeId: Record<string, LivePositionRow>;
   accountBalance: AccountBalanceSnapshot | null;
 };
 
@@ -127,7 +127,7 @@ export async function fetchDashboardPageData(channelId?: string): Promise<Dashbo
     signals,
     pendingReviews,
     riskSnapshot: dashboard.risk,
-    livePnlByTrade: dashboard.livePnlByTrade ?? {},
+    livePositionsByTradeId: dashboard.livePositionsByTradeId ?? {},
     accountBalance: dashboard.accountBalance ?? null,
   };
 }

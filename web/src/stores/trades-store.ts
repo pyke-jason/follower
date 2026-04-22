@@ -34,6 +34,7 @@ export type TradesHydration = {
   trades: Trade[];
   eventsByTradeId: Record<string, TradeEvent[]>;
   flagsByTradeId: Record<string, TradeFlag[]>;
+  livePositionsByTradeId?: Record<string, LivePosition>;
   labelsByTradeId?: Record<string, TradeLabel>;
   commissionSchedule?: CommissionSchedule;
   startingEquity?: number;
@@ -49,7 +50,7 @@ interface TradesState {
   startingEquity: number | undefined;
   channelId: string | undefined;
 
-  unrealizedPnl: Record<string, number>;
+  livePositionsByTradeId: Record<string, LivePosition>;
 
   selectedTradeId: string | null;
   story: TradeStory | null;
@@ -58,7 +59,6 @@ interface TradesState {
   hydrate: (data: TradesHydration) => void;
   selectTrade: (id: string | null) => void;
   loadTradeStory: (tradeId: string) => Promise<void>;
-  setUnrealizedPnl: (pnl: Record<string, number>) => void;
   updateLabel: (tradeId: string, patch: Partial<TradeLabel>) => void;
 }
 
@@ -71,7 +71,7 @@ export const useTradesStore = create<TradesState>((set, get) => ({
   startingEquity: undefined,
   channelId: undefined,
 
-  unrealizedPnl: {},
+  livePositionsByTradeId: {},
 
   selectedTradeId: null,
   story: null,
@@ -86,6 +86,7 @@ export const useTradesStore = create<TradesState>((set, get) => ({
       commissionSchedule: data.commissionSchedule,
       startingEquity: data.startingEquity,
       channelId: data.channelId,
+      livePositionsByTradeId: data.livePositionsByTradeId ?? {},
     }),
 
   selectTrade: (id) => {
@@ -102,8 +103,6 @@ export const useTradesStore = create<TradesState>((set, get) => ({
       set({ story: result, isLoadingStory: false });
     }
   },
-
-  setUnrealizedPnl: (pnl) => set({ unrealizedPnl: pnl }),
 
   updateLabel: (tradeId, patch) => set((state) => ({
     labelsByTradeId: {

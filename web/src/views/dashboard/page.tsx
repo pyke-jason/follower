@@ -32,7 +32,7 @@ function DashboardContent({ data, href, channelId }: {
 }) {
   const {
     openTrades, equityData, pendingReviews, riskSnapshot,
-    stats, livePnlByTrade, accountBalance,
+    stats, livePositionsByTradeId, accountBalance,
   } = data;
 
   return (
@@ -88,7 +88,7 @@ function DashboardContent({ data, href, channelId }: {
 
       {/* ─── Right column: positions watchlist ─── */}
       <aside className="hidden lg:block h-full">
-        <PositionsWatchlist trades={openTrades} livePnlByTrade={livePnlByTrade} />
+        <PositionsWatchlist trades={openTrades} livePositionsByTradeId={livePositionsByTradeId} />
       </aside>
     </div>
   );

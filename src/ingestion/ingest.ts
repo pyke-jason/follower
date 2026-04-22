@@ -38,7 +38,7 @@ function startMessageWatchdog(): void {
       sendSystemAlert({
         title: 'Watchdog: forcing browser restart',
         message: `No messages for ${silenceMin} minutes. Killing browser to trigger reconnect + gap-fill.`,
-        severity: 'critical',
+        severity: 'warning',
       });
       watchdogAlertFired = false;
       // Close browser — the supervision loop's `await crashed` will resolve and restart

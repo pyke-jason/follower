@@ -289,24 +289,24 @@ app.get('/status', async (c) => {
   });
 });
 
-type LivePnlRow = { unrealizedPnl: number; marketValue: number | null };
+type LivePositionRow = { unrealizedPnl: number; marketValue: number | null };
 
 /**
  * Live unrealized P&L across all open trades in a channel, both per-trade and
  * summed. Matches broker positions to trade legs. Returns zero/empty when the
  * broker is unreachable or no runtime broker is registered for the channel.
  */
-async function getChannelLivePnl(
+async function getChannelLivePositionsByTradeId(
   channelId: string,
-): Promise<{ total: number; byTrade: Record<string, LivePnlRow> }> {
+): Promise<{ totalUnrealizedPnl: number; byTradeId: Record<string, LivePositionRow> }> {
   const broker = getRuntimeBrokerMap().get(channelId);
-  if (!broker) return { total: 0, byTrade: {} };
+  if (!broker) return { totalUnrealizedPnl: 0, byTradeId: {} };
 
   let positions: BrokerPosition[];
   try {
     positions = await broker.getPositions();
   } catch {
-    return { total: 0, byTrade: {} };
+    return { totalUnrealizedPnl: 0, byTradeId: {} };
   }
 
   const openTrades = await db
@@ -314,8 +314,8 @@ async function getChannelLivePnl(
     .from(schema.trades)
     .where(and(isOpen, tradeScope(channelId)));
 
-  const byTrade: Record<string, LivePnlRow> = {};
-  let total = 0;
+  const byTradeId: Record<string, LivePositionRow> = {};
+  let totalUnrealizedPnl = 0;
 
   for (const trade of openTrades) {
     let tradePnl = 0;
@@ -349,21 +349,24 @@ async function getChannelLivePnl(
     }
 
     if (matched) {
-      byTrade[trade.id] = {
+      byTradeId[trade.id] = {
         unrealizedPnl: roundCents(tradePnl),
         marketValue: anyMvMissing ? null : roundCents(tradeMV),
       };
-      total += tradePnl;
+      totalUnrealizedPnl += tradePnl;
     }
   }
 
-  return { total: roundCents(total), byTrade };
+  return {
+    totalUnrealizedPnl: roundCents(totalUnrealizedPnl),
+    byTradeId,
+  };
 }
 
 /** Back-compat wrapper used by /status which only needs the total. */
 async function getChannelUnrealizedPnl(channelId: string): Promise<number> {
-  const { total } = await getChannelLivePnl(channelId);
-  return total;
+  const { totalUnrealizedPnl } = await getChannelLivePositionsByTradeId(channelId);
+  return totalUnrealizedPnl;
 }
 
 // ── GET /signals ─────────────────────────────────────
@@ -482,26 +485,26 @@ app.get('/dashboard', async (c) => {
   const channelId = resolveChannelId(c.req.query('channel') || undefined);
   const backtestRunId = await getBacktestRunIdByChannelId(channelId);
 
-  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePnl, accountBalance] = await Promise.all([
+  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePositions, accountBalance] = await Promise.all([
     getStatsInternal(channelId, { useTotalPnl: !!backtestRunId }),
     getOpenTradesInternal(500, channelId),
     getTraderPnlSummaryInternal(channelId),
     getTradeHistorySummaryInternal({ channelId }),
     backtestRunId ? Promise.resolve(null) : getRiskSnapshotInternal(channelId),
     getDailyBalancesInternal(30, channelId),
-    backtestRunId ? Promise.resolve({ total: 0, byTrade: {} }) : getChannelLivePnl(channelId),
+    backtestRunId ? Promise.resolve({ totalUnrealizedPnl: 0, byTradeId: {} }) : getChannelLivePositionsByTradeId(channelId),
     backtestRunId ? Promise.resolve(null) : getChannelAccountBalance(channelId),
   ]);
 
   return c.json({
-    stats: { ...stats, unrealizedPnl: livePnl.total },
+    stats: { ...stats, unrealizedPnl: livePositions.totalUnrealizedPnl },
     openTrades,
     traderPnl,
     historySummary,
     risk,
     dailyBalances,
     channelId,
-    livePnlByTrade: livePnl.byTrade,
+    livePositionsByTradeId: livePositions.byTradeId,
     accountBalance,
   });
 });
@@ -593,6 +596,85 @@ app.get('/trades', async (c) => {
   return c.json({ rows, nextCursor, total, flags });
 });
 
+// ── GET /trades-view ─────────────────────────────────
+// Composed page read-model: persisted trades + runtime live positions.
+app.get('/trades-view', async (c) => {
+  const status = c.req.query('status');
+  const trader = c.req.query('trader') || undefined;
+  const symbol = c.req.query('symbol') || undefined;
+  const strategy = c.req.query('strategy') || undefined;
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+  const channelId = c.req.query('channel') || undefined;
+  const cursor = c.req.query('cursor') || undefined;
+  const sortParam = c.req.query('sort') ?? 'openedAt';
+  const dir = (c.req.query('dir') ?? 'desc') as 'asc' | 'desc';
+
+  const tradeSortColumns: Record<string, string> = {
+    openedAt: 'opened_at',
+    closedAt: 'closed_at',
+    symbol: 'symbol',
+    trader: 'trader',
+    pnl: 'pnl',
+  };
+  const sortCol = tradeSortColumns[sortParam] ?? 'opened_at';
+
+  const conditions: SQL[] = [tradeScope(channelId)];
+  if (status === 'open') conditions.push(isOpen);
+  else if (status === 'closed') conditions.push(isClosed);
+  if (trader) conditions.push(forTrader(trader));
+  if (symbol) conditions.push(forSymbol(symbol));
+  if (strategy) conditions.push(forStrategy(strategy as Strategy));
+  if (cursor) {
+    const parsed = decodeCursor(cursor);
+    if (parsed) conditions.push(cursorWhere(sortCol, 'id', parsed, dir));
+  }
+
+  const whereClause = and(...conditions)!;
+  const orderExpr = dir === 'desc'
+    ? sql.raw(`${sortCol} DESC, id DESC`)
+    : sql.raw(`${sortCol} ASC, id ASC`);
+  const trades = await db
+    .select()
+    .from(schema.trades)
+    .where(whereClause)
+    .orderBy(orderExpr)
+    .limit(limit + 1);
+
+  const filterConditions: SQL[] = [tradeScope(channelId)];
+  if (status === 'open') filterConditions.push(isOpen);
+  else if (status === 'closed') filterConditions.push(isClosed);
+  if (trader) filterConditions.push(forTrader(trader));
+  if (symbol) filterConditions.push(forSymbol(symbol));
+  if (strategy) filterConditions.push(forStrategy(strategy as Strategy));
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(schema.trades)
+    .where(and(...filterConditions));
+
+  const hasMore = trades.length > limit;
+  const rows = hasMore ? trades.slice(0, limit) : trades;
+  const lastRow = rows[rows.length - 1];
+  const nextCursor = hasMore && lastRow
+    ? encodeCursor(String((lastRow as Record<string, unknown>)[sortParam] ?? ''), lastRow.id)
+    : null;
+
+  const flags = buildFlagsByTradeId(rows);
+  const resolvedChannelId = resolveChannelId(channelId);
+  const isBacktestChannel = resolvedChannelId.startsWith('bt:');
+  const livePositions = isBacktestChannel
+    ? { byTradeId: {} as Record<string, LivePositionRow> }
+    : await getChannelLivePositionsByTradeId(resolvedChannelId);
+
+  return c.json({
+    rows,
+    nextCursor,
+    total,
+    flags,
+    livePositionsByTradeId: livePositions.byTradeId,
+  });
+});
+
 // ── GET /trades/:id ──────────────────────────────────
 
 app.get('/trades/:id', async (c) => {
@@ -667,52 +749,11 @@ app.get('/trades/:id/story', async (c) => {
     ? nearbyMessages.filter(m => m.timestamp > openedAt && m.id !== trade.sourceMessageId)
     : [];
 
-  // Live position (open trades, live channel only — getPositions throws or returns [] for backtest)
-  let livePosition: { unrealizedPnl: number; marketValue: number | null } | null = null;
-  if (trade.status === 'OPEN') {
-    const broker = getRuntimeBrokerMap().get(trade.channelId);
-    if (broker) {
-      try {
-        const positions = await broker.getPositions();
-        let totalUnrealized = 0;
-        let totalMarketValue = 0;
-        let matched = false;
-        let anyMvMissing = false;
-        if (trade.strategy === 'STOCK') {
-          const pos = positions.find(p => !p.optionType && p.symbol === trade.symbol);
-          if (pos?.unrealizedPnl != null) {
-            totalUnrealized = pos.unrealizedPnl;
-            matched = true;
-            if (pos.marketValue != null) totalMarketValue += pos.marketValue;
-            else anyMvMissing = true;
-          }
-        } else {
-          for (const leg of trade.legs) {
-            const pos = positions.find(p =>
-              p.optionType === leg.type &&
-              p.strikePrice === leg.strike &&
-              p.expiry === leg.expiry &&
-              (p.optionType ? p.symbol.split(/\s+/)[0] : p.symbol) === trade.symbol
-            );
-            if (pos?.unrealizedPnl != null) {
-              totalUnrealized += pos.unrealizedPnl;
-              matched = true;
-              if (pos.marketValue != null) totalMarketValue += pos.marketValue;
-              else anyMvMissing = true;
-            }
-          }
-        }
-        if (matched) {
-          livePosition = {
-            unrealizedPnl: roundCents(totalUnrealized),
-            marketValue: anyMvMissing ? null : roundCents(totalMarketValue),
-          };
-        }
-      } catch {
-        // broker unreachable — leave livePosition null
-      }
-    }
-  }
+  // Live position for this trade, sourced from canonical channel helper.
+  const livePositions = trade.status === 'OPEN'
+    ? await getChannelLivePositionsByTradeId(trade.channelId)
+    : { byTradeId: {} as Record<string, LivePositionRow> };
+  const livePosition = livePositions.byTradeId[trade.id] ?? null;
 
   // Fetch full decisions for the execution timeline
   const decisions = await getDecisionsForTradeInternal(trade);
@@ -743,83 +784,10 @@ app.get('/trades/by-task/:taskId', async (c) => {
   return c.json(trade ?? null);
 });
 
-// ── GET /open-pnl ────────────────────────────────────
-// Returns unrealized P&L per open trade by matching broker positions to trade legs.
-
 function positionUnderlying(p: BrokerPosition): string {
   if (!p.optionType) return p.symbol;
   return p.symbol.split(/\s+/)[0];
 }
-
-app.get('/open-pnl', async (c) => {
-  const channelId = resolveChannelId(c.req.query('channel') || undefined);
-
-  const broker = getRuntimeBrokerMap().get(channelId);
-  if (!broker) return c.json({});
-
-  let positions: BrokerPosition[];
-  try {
-    positions = await broker.getPositions();
-  } catch {
-    return c.json({});
-  }
-
-  const openTrades = await db
-    .select()
-    .from(schema.trades)
-    .where(and(isOpen, tradeScope(channelId)));
-
-  const result: Record<string, { unrealizedPnl: number; marketValue: number | null }> = {};
-
-  for (const trade of openTrades) {
-    const legs = trade.legs;
-    let totalPnl = 0;
-    let totalMarketValue = 0;
-    let anyMarketValue = false;
-    let matched = false;
-
-    if (trade.strategy === 'STOCK') {
-      const pos = positions.find(
-        (p) => !p.optionType && p.symbol === trade.symbol,
-      );
-      if (pos?.unrealizedPnl != null) {
-        totalPnl = pos.unrealizedPnl;
-        matched = true;
-      }
-      if (pos?.marketValue != null) {
-        totalMarketValue = pos.marketValue;
-        anyMarketValue = true;
-      }
-    } else {
-      for (const leg of legs) {
-        const pos = positions.find(
-          (p) =>
-            p.optionType === leg.type &&
-            p.strikePrice === leg.strike &&
-            p.expiry === leg.expiry &&
-            positionUnderlying(p) === trade.symbol,
-        );
-        if (pos?.unrealizedPnl != null) {
-          totalPnl += pos.unrealizedPnl;
-          matched = true;
-        }
-        if (pos?.marketValue != null) {
-          totalMarketValue += pos.marketValue;
-          anyMarketValue = true;
-        }
-      }
-    }
-
-    if (matched) {
-      result[trade.id] = {
-        unrealizedPnl: roundCents(totalPnl),
-        marketValue: anyMarketValue ? roundCents(totalMarketValue) : null,
-      };
-    }
-  }
-
-  return c.json(result);
-});
 
 // ── GET /tasks ───────────────────────────────────────
 
@@ -1645,12 +1613,10 @@ app.get('/settings/secrets', async (c) => {
 // ── GET /settings/toggles ────────────────────────────
 
 app.get('/settings/toggles', async (c) => {
-  const provider = getProvider();
-  const secrets = await provider.load();
   return c.json({
-    discord: secrets.ALERTS_DISCORD_ENABLED !== '0',
-    pushover: secrets.ALERTS_PUSHOVER_ENABLED !== '0',
-    ingestion: secrets.LIVE_INGESTION_ENABLED !== '0',
+    discord: process.env.ALERTS_DISCORD_ENABLED !== '0',
+    pushover: process.env.ALERTS_PUSHOVER_ENABLED !== '0',
+    ingestion: process.env.LIVE_INGESTION_ENABLED !== '0',
   });
 });
 
@@ -1658,9 +1624,7 @@ app.get('/settings/toggles', async (c) => {
 
 app.get('/settings/risk', async (c) => {
   const { LIVE_RISK_DEFAULTS } = await import('@/config/risk-defaults.js');
-  const provider = getProvider();
-  const secrets = await provider.load();
-  const raw = secrets.LIVE_MAX_TOTAL_POSITIONS;
+  const raw = process.env.LIVE_MAX_TOTAL_POSITIONS;
   const parsed = raw ? parseInt(raw, 10) : NaN;
   const maxTotalPositions = Number.isFinite(parsed) && parsed > 0
     ? parsed
@@ -1878,8 +1842,7 @@ async function getRiskSnapshotInternal(channelId?: string) {
   const tradingBlocked = drawdownPct >= 5 || (dbOnlyAlerts?.count ?? 0) > 0;
 
   const { LIVE_RISK_DEFAULTS } = await import('@/config/risk-defaults.js');
-  const riskSecrets = await getProvider().load();
-  const rawMaxPos = riskSecrets.LIVE_MAX_TOTAL_POSITIONS;
+  const rawMaxPos = process.env.LIVE_MAX_TOTAL_POSITIONS;
   const parsedMaxPos = rawMaxPos ? parseInt(rawMaxPos, 10) : NaN;
   const effectiveMaxPositions = Number.isFinite(parsedMaxPos) && parsedMaxPos > 0
     ? parsedMaxPos

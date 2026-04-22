@@ -80,25 +80,27 @@ export function TopBar() {
 
         {/* Breadcrumbs */}
         {crumbs.length > 0 && (
-          <Breadcrumb>
-            <BreadcrumbList>
-              {crumbs.map((crumb, i) => {
-                const isLast = i === crumbs.length - 1;
-                return (
-                  <BreadcrumbItem key={crumb.href}>
-                    {i > 0 && <BreadcrumbSeparator />}
-                    {isLast ? (
-                      <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink asChild>
-                        <Link to={crumb.href}>{crumb.label}</Link>
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                );
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
+            <Breadcrumb>
+              <BreadcrumbList>
+                {crumbs.map((crumb, i) => {
+                  const isLast = i === crumbs.length - 1;
+                  return [
+                    <BreadcrumbItem key={crumb.href}>
+                      {isLast ? (
+                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink asChild>
+                          <Link to={crumb.href}>{crumb.label}</Link>
+                        </BreadcrumbLink>
+                      )}
+                    </BreadcrumbItem>,
+                    !isLast ? (
+                      <BreadcrumbSeparator key={`${crumb.href}-separator`} />
+                    ) : null,
+                  ];
+                })}
+              </BreadcrumbList>
+            </Breadcrumb>
         )}
 
         <div className="flex-1" />

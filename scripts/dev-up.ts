@@ -276,12 +276,12 @@ const BACKEND_RESTART_DELAYS = [5_000, 10_000, 20_000, 30_000, 60_000]; // cap a
 async function superviseBackend(): Promise<void> {
   let restartCount = 0;
 
-  const startBackend = (): Promise<number | null> => {
+  const startBackend = (): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
     return new Promise((resolve) => {
       const child = spawnService('backend', 'npx', ['tsx', 'src/index.ts'], {
         env: { LOG_PROCESS_NAME: 'backend' },
       });
-      child.on('exit', (code) => resolve(code));
+      child.on('exit', (code, signal) => resolve({ code, signal }));
     });
   };
 
@@ -289,8 +289,16 @@ async function superviseBackend(): Promise<void> {
     const startTime = Date.now();
     log('orch', `Starting backend (attempt ${restartCount + 1})...`);
 
-    const exitCode = await startBackend();
+    const { code: exitCode, signal } = await startBackend();
     if (shuttingDown) break;
+
+    // A clean exit is intentional shutdown, not a crash. Common cases:
+    // - user started a fresh orchestrator, which SIGTERMed the old backend
+    // - the backend handled SIGINT/SIGTERM and exited 0 after draining
+    if (exitCode === 0 || signal === 'SIGTERM' || signal === 'SIGINT') {
+      log('orch', `Backend exited cleanly (${signal ?? `exit code ${exitCode}`}) — not restarting`);
+      return;
+    }
 
     const uptime = Date.now() - startTime;
     const uptimeStr = uptime > 60_000
@@ -314,7 +322,7 @@ async function superviseBackend(): Promise<void> {
     }
 
     const delay = BACKEND_RESTART_DELAYS[Math.min(restartCount - 1, BACKEND_RESTART_DELAYS.length - 1)];
-    const reason = exitCode === 137 ? 'OOM killed' : `exit code ${exitCode}`;
+    const reason = exitCode === 137 ? 'OOM killed' : signal ? `signal ${signal}` : `exit code ${exitCode}`;
     log('orch', `Backend died after ${uptimeStr} (${reason}) — restarting in ${delay / 1000}s (attempt ${restartCount}/${BACKEND_MAX_RESTARTS})`);
 
     sendSystemAlert({

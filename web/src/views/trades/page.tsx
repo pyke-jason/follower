@@ -13,15 +13,18 @@ export default function TradesPage() {
     <QueryBoundary query={trades} skeleton={<TableSkeleton rows={12} cols={7} />}>
       {(data) => (
         <TradeFilterProvider trades={data.rows} flagsByTradeId={data.flags}>
-          <div className="space-y-4 flex flex-col flex-1 min-h-0">
+          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden pb-6">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-foreground">Trades</h2>
               <TradeFilters />
             </div>
-            <FilteredTradesView
-              flagsByTradeId={data.flags}
-              channelId={channelId!}
-            />
+            <div className="mt-4 flex-1 min-h-0 overflow-hidden">
+              <FilteredTradesView
+                flagsByTradeId={data.flags}
+                livePositionsByTradeId={data.livePositionsByTradeId}
+                channelId={channelId!}
+              />
+            </div>
           </div>
         </TradeFilterProvider>
       )}

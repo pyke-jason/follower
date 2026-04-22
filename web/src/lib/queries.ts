@@ -19,6 +19,7 @@ type TradesResponse = {
   nextCursor: string | null;
   total: number;
   flags: Record<string, TradeFlag[]>;
+  livePositionsByTradeId: Record<string, { unrealizedPnl: number; marketValue: number | null }>;
 };
 
 /** Task rows augmented with realized outcome from run_decisions SETTLED. */
@@ -30,7 +31,7 @@ export const queries = {
     list: (channelId: string) => ({
       queryKey: ['trades', channelId] as const,
       queryFn: () =>
-        api<TradesResponse>(buildScopedPath('/trades', channelId, { limit: '200' })),
+        api<TradesResponse>(buildScopedPath('/trades-view', channelId, { limit: '200' })),
     }),
   },
 

@@ -8,7 +8,7 @@ import { safeParseFloat } from '@src/lib/numbers';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { cn } from '@/lib/utils';
 import type { Trade } from '@src/db/schema';
-import type { LivePnlRow } from '@/lib/page-adapters';
+import type { LivePositionRow } from '@/lib/page-adapters';
 
 type WatchlistRow = {
   id: string;
@@ -25,9 +25,9 @@ type WatchlistRow = {
  * open positions along the right edge of the dashboard. Each row is a link to
  * the trade detail page.
  */
-export function PositionsWatchlist({ trades, livePnlByTrade }: {
+export function PositionsWatchlist({ trades, livePositionsByTradeId }: {
   trades: Trade[];
-  livePnlByTrade: Record<string, LivePnlRow>;
+  livePositionsByTradeId: Record<string, LivePositionRow>;
 }) {
   const href = useScopedHref();
   const { pathname } = useLocation();
@@ -39,7 +39,7 @@ export function PositionsWatchlist({ trades, livePnlByTrade }: {
       const mult = contractMultiplier(t.strategy);
       const entry = safeParseFloat(t.avgEntryPrice) || safeParseFloat(t.entryPrice);
       const costBasis = entry ? entry * qty * mult : null;
-      const live = livePnlByTrade[t.id];
+      const live = livePositionsByTradeId[t.id];
       const mark = live?.marketValue != null && qty > 0 ? live.marketValue / (qty * mult) : null;
       const unrealizedPnl = live?.unrealizedPnl ?? null;
       const unrealizedPct = unrealizedPnl != null && costBasis
@@ -59,7 +59,7 @@ export function PositionsWatchlist({ trades, livePnlByTrade }: {
         absPnl: Math.abs(unrealizedPnl ?? 0),
       };
     }).sort((a, b) => b.absPnl - a.absPnl);
-  }, [trades, livePnlByTrade]);
+  }, [trades, livePositionsByTradeId]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

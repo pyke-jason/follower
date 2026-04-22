@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, CircleCheck, CircleX, SkipForward, Loader2, CircleAlert } from 'lucide-react';
 import { Badge } from '@/components/badge';
@@ -25,8 +26,8 @@ export function PositionHero({ trade, task, decision, livePosition, backHref, ac
   task: Task | null;
   decision: RunDecision | null;
   livePosition: LivePosition | null;
-  backHref: string;
-  actions?: React.ReactNode;
+  backHref?: string | null;
+  actions?: ReactNode;
 }) {
   const outcome = resolveOutcome(trade, task, decision);
   const meta = OUTCOME_META[outcome];
@@ -73,54 +74,81 @@ export function PositionHero({ trade, task, decision, livePosition, backHref, ac
   const reason = !hasTrade ? decision?.reasoning ?? null : null;
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-3 text-sm">
-        <Link to={backHref} className="text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {backHref && (
+          <Link to={backHref} className="text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+        )}
         <span className="text-muted-foreground">{hasTrade ? 'Trade' : 'Task'}</span>
         <span className="text-muted-foreground/40">/</span>
         <span className="font-mono text-xs text-muted-foreground/60">
           {(trade?.id ?? task?.id ?? '').slice(0, 8)}
         </span>
+        {trader && <span className="text-xs text-muted-foreground/70">{trader}</span>}
         {actions && <div className="ml-auto">{actions}</div>}
       </div>
 
-      <Card className="py-0 gap-0">
-        <div className="px-5 py-4 space-y-3">
-          <div className="flex items-baseline gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold tracking-tight">
-              {symbol ?? <span className="text-muted-foreground/60">—</span>}
-            </h1>
-            {direction && <Badge label={direction} />}
-            {strategy && <Badge label={strategy} />}
-            <div className={cn('inline-flex items-center gap-1.5 text-sm font-semibold', meta.tone)}>
-              <Icon className={cn('h-4 w-4', spinning && 'animate-spin')} />
-              {meta.label}
+      <Card className="relative gap-0 overflow-hidden rounded-[30px] border-border/70 bg-gradient-to-br from-card via-card to-muted/30 py-0 shadow-sm">
+        <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-r from-emerald-500/12 via-transparent to-amber-500/12" />
+
+        <div className="relative space-y-6 px-5 py-5 md:px-6 md:py-6">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold tracking-[0.22em]', meta.tone, OUTCOME_PILL)}>
+                  <Icon className={cn('h-3.5 w-3.5', spinning && 'animate-spin')} />
+                  {meta.label}
+                </div>
+                {direction && <Badge label={direction} />}
+                {strategy && <Badge label={strategy} />}
+                {flags.map((f) => (
+                  <span
+                    key={f}
+                    className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-warning"
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    {f}
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+                <h1 className="text-4xl font-semibold tracking-[-0.04em] text-foreground">
+                  {symbol ?? <span className="text-muted-foreground/60">—</span>}
+                </h1>
+                {strategy && (
+                  <span className="pb-1 text-sm font-medium text-muted-foreground">
+                    {hasTrade ? 'Live position detail' : 'Signal inspection'}
+                  </span>
+                )}
+              </div>
+
+              {legSummary && strategy !== 'STOCK' && (
+                <p className="text-sm text-muted-foreground tabular-nums font-mono">{legSummary}</p>
+              )}
+
+              {reason && (
+                <p className="max-w-3xl text-sm leading-relaxed text-foreground/80">
+                  {reason}
+                </p>
+              )}
             </div>
-            {flags.map((f) => (
-              <span
-                key={f}
-                className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-warning bg-warning/10 border border-warning/20 rounded px-1.5 py-0.5"
-              >
-                <AlertTriangle className="h-3 w-3" />
-                {f}
-              </span>
-            ))}
-            {trader && <span className="text-xs text-muted-foreground ml-auto">{trader}</span>}
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:w-[360px]">
+              <HeroMetaCard label="Trader">
+                <span className="text-sm font-semibold">{trader ?? '—'}</span>
+              </HeroMetaCard>
+              <HeroMetaCard label={hasTrade ? (isOpen ? 'Opened' : 'Closed') : 'Decision'}>
+                <span className="text-sm font-semibold tabular-nums">
+                  {formatDate((isOpen ? startTs : endTs) ?? startTs)}
+                </span>
+              </HeroMetaCard>
+            </div>
           </div>
 
-          {legSummary && strategy !== 'STOCK' && (
-            <p className="text-sm text-muted-foreground tabular-nums font-mono">{legSummary}</p>
-          )}
-
-          {reason && (
-            <p className="text-sm text-foreground/80 leading-relaxed">
-              {reason}
-            </p>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-x-6 gap-y-3 pt-1">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <Metric label="Qty">
               {qty != null
                 ? <span className="text-base font-semibold tabular-nums">{qty}</span>
@@ -186,7 +214,7 @@ export function PositionHero({ trade, task, decision, livePosition, backHref, ac
           </div>
 
           {costBasis != null && (
-            <div className="pt-2 border-t border-border/40 flex items-center gap-4 text-[11px] text-muted-foreground tabular-nums">
+            <div className="flex flex-wrap items-center gap-4 border-t border-border/50 pt-4 text-[11px] text-muted-foreground tabular-nums">
               <span>Cost basis <span className="font-mono text-foreground/70">{formatCurrency(costBasis)}</span></span>
               {livePosition?.marketValue != null && (
                 <span>Market value <span className="font-mono text-foreground/70">{formatCurrency(livePosition.marketValue)}</span></span>
@@ -207,10 +235,10 @@ export function PositionHero({ trade, task, decision, livePosition, backHref, ac
   );
 }
 
-function Metric({ label, children }: { label: string; children: React.ReactNode }) {
+function Metric({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div>
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">
+    <div className="rounded-2xl border border-border/60 bg-background/80 px-4 py-3 shadow-sm shadow-black/[0.03]">
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
         {label}
       </p>
       {children}
@@ -218,9 +246,22 @@ function Metric({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
+function HeroMetaCard({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-background/75 px-4 py-3 shadow-sm shadow-black/[0.03]">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        {label}
+      </p>
+      <div className="mt-2">{children}</div>
+    </div>
+  );
+}
+
 function Dash() {
   return <span className="text-base font-semibold tabular-nums text-muted-foreground/30">—</span>;
 }
+
+const OUTCOME_PILL = 'border-current/15 bg-background/80 shadow-sm shadow-black/[0.04]';
 
 /** Derive the hero's outcome from the most authoritative source available. */
 function resolveOutcome(trade: Trade | null, task: Task | null, decision: RunDecision | null): OutcomeKind {

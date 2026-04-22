@@ -1,11 +1,10 @@
 import { Link } from 'react-router-dom';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ReactionBadges } from '@/components/reaction-badges';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { MessageSquare } from 'lucide-react';
 import type { Message } from '@src/db/schema';
+import { DetailPanel } from './detail-panel';
 
 /**
  * Messages by the same trader mentioning this trade's symbol that arrived
@@ -23,52 +22,45 @@ export function TraderActivity({ messages, trader, symbol, sourceMessage, closeM
   const href = useScopedHref();
 
   return (
-    <Card className="py-0 gap-0">
-      <CardHeader className="border-b py-3 px-4">
-        <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-          What {trader} said about {symbol}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        {/* Source message pinned */}
-        {sourceMessage && (
-          <div className="px-4 py-3 border-b border-border bg-accent/30">
-            <MessageRow message={sourceMessage} role="source" />
+    <DetailPanel
+      title={`What ${trader} said about ${symbol}`}
+      description="Source message plus later mentions from the same trader, so missed closes or trims are easy to spot."
+      eyebrow="Message Trail"
+      action={(
+        <Link
+          to={href('/messages', { authors: trader })}
+          className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          All messages →
+        </Link>
+      )}
+      contentClassName="p-0"
+    >
+      {sourceMessage && (
+        <div className="border-b border-border/60 bg-amber-500/5 px-5 py-4">
+          <MessageRow message={sourceMessage} role="source" />
+        </div>
+      )}
+
+      <div className="max-h-80 overflow-auto px-3 py-3">
+        {messages.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-border/70 bg-background/70 px-4 py-4 text-xs italic text-muted-foreground/70">
+            No later messages from {trader} about {symbol}.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {messages.map((m) => (
+              <div key={m.id} className="rounded-2xl border border-border/60 bg-background/75 px-4 py-3">
+                <MessageRow
+                  message={m}
+                  role={m.id === closeMessageId ? 'close' : 'subsequent'}
+                />
+              </div>
+            ))}
           </div>
         )}
-
-        {/* Subsequent messages */}
-        <div className="max-h-80 overflow-auto">
-          {messages.length === 0 ? (
-            <p className="px-4 py-4 text-xs text-muted-foreground/60 italic">
-              No later messages from {trader} about {symbol}.
-            </p>
-          ) : (
-            <div className="divide-y divide-border/40">
-              {messages.map((m) => (
-                <div key={m.id} className="px-4 py-2.5">
-                  <MessageRow
-                    message={m}
-                    role={m.id === closeMessageId ? 'close' : 'subsequent'}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Footer link */}
-        <div className="px-4 py-2 border-t border-border/40 bg-muted/20">
-          <Link
-            to={href('/messages', { authors: trader })}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            View all {trader} messages →
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </DetailPanel>
   );
 }
 
