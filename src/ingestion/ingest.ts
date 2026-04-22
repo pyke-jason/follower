@@ -69,15 +69,23 @@ export function stopMessageWatchdog(): void {
   }
 }
 
-// ─── Gap-Fill on Reconnect ───────────────────────────
-// After browser restart, fetch today's messages from the REST API to fill
-// any gap from downtime. Dedup (onConflictDoNothing) prevents duplicates.
+// ─── Gap-Fill ────────────────────────────────────────
+// Startup: fetch last N days (default 30) so the UI has same-day/week/month
+// context on first boot. Reconnect: fetch today only. Prior-run chunk cache
+// in historical.ts makes the wide startup window cheap — only today plus any
+// gap days actually hit the API.
 
-async function gapFill(): Promise<void> {
+const INITIAL_BACKFILL_DAYS = Math.max(0, Number(process.env.INITIAL_BACKFILL_DAYS ?? '30'));
+
+async function gapFill(daysBack: number): Promise<void> {
   try {
-    const today = isoToDateKey(new Date().toISOString());
-    console.log(`[Ingest] Gap-fill: fetching historical for ${today}`);
-    await fetchHistorical({ since: today, until: today });
+    const now = new Date();
+    const until = isoToDateKey(now.toISOString());
+    const sinceDate = new Date(now);
+    sinceDate.setUTCDate(sinceDate.getUTCDate() - daysBack);
+    const since = isoToDateKey(sinceDate.toISOString());
+    console.log(`[Ingest] Gap-fill: fetching historical ${since} to ${until}`);
+    await fetchHistorical({ since, until });
     console.log('[Ingest] Gap-fill complete');
   } catch (err) {
     // Non-fatal — SignalR will catch new messages going forward
@@ -236,10 +244,9 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
 
       const onChatPage = page.url().includes('/chat');
 
-      // Gap-fill: fetch any messages missed during downtime (non-blocking)
-      if (!isFirstBoot) {
-        gapFill().catch(() => {}); // errors already logged inside
-      }
+      // Gap-fill: wide window on first boot, today-only on reconnect (non-blocking)
+      const daysBack = isFirstBoot ? INITIAL_BACKFILL_DAYS : 0;
+      gapFill(daysBack).catch(() => {}); // errors already logged inside
       isFirstBoot = false;
 
       consecutiveFailures = 0;

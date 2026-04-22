@@ -142,7 +142,7 @@ function TraderDetailContent({ data, channelId, decodedName, href }: {
       {closedTrades.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-foreground mb-3">Recent Trades</h3>
-          <TradesTableClient hideTrader />
+          <TradesTableClient />
         </div>
       )}
 

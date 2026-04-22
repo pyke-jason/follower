@@ -6,8 +6,8 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { formatCurrency, formatDate, formatInteger, pnlColor } from '@/lib/format';
 import { safeParseFloat } from '@src/lib/numbers';
 import { formatLegsSummary } from '@src/lib/trade';
-import type { RunDecision, TradeEvent, Message } from '@src/db/schema';
-import { useTradesStore } from '@/stores/trades-store';
+import type { RunDecision, TradeEvent, Message, Trade, MessageIntent } from '@src/db/schema';
+import { LlmReasoning } from './llm-reasoning';
 import {
   ParseResultView, SignalView, SizedView, OrderPlacedView, OrderFilledView,
   OrderCancelledView, SettledView, ErrorView, FallbackJson,
@@ -413,15 +413,23 @@ function computeLegOffCost(
 
 type Entry =
   | { kind: 'decision'; sortKey: string; data: RunDecision }
-  | { kind: 'trade'; sortKey: string; data: TradeEvent };
+  | { kind: 'trade'; sortKey: string; data: TradeEvent }
+  | { kind: 'llm'; sortKey: string; intent: MessageIntent };
 
-export function UnifiedTimeline() {
-  const story = useTradesStore((s) => s.story);
-  if (!story) return null;
-
-  const { decisions, events: tradeEvents, trade, timelineMessages: messages } = story;
-  const closeMessageId = trade.closeMessageId;
-  const tradePnl = trade.pnl;
+export function UnifiedTimeline({
+  trade,
+  decisions,
+  events: tradeEvents,
+  timelineMessages: messages,
+  intent,
+}: {
+  trade: Trade | null;
+  decisions: RunDecision[];
+  events: TradeEvent[];
+  timelineMessages: Message[];
+  intent?: MessageIntent | null;
+}) {
+  const tradePnl = trade?.pnl ?? null;
 
   const msgMap = new Map((messages ?? []).map(m => [m.id, m]));
   const filtered = filterRedundantSettled(decisions);
@@ -460,16 +468,24 @@ export function UnifiedTimeline() {
     fillInfoByMsg.set(d.messageId, existing);
   }
 
+  // 3-digit zero-padded orders with gaps so synthetic entries (LLM reasoning)
+  // can be interleaved at fractional positions without breaking string sort.
   const eventOrder: Record<string, number> = {
-    PARSED: 0, SIGNAL_RESOLVED: 1, SIZED: 2, ORDER_PLACED: 3,
-    ORDER_ADJUSTED: 4, ORDER_CANCELLED: 5, ORDER_FILLED: 5, SETTLED: 6,
-    QUOTE_FAILED: 4, RETRY_LLM: 4,
+    PARSED: 0, SIGNAL_RESOLVED: 20, SIZED: 30, ORDER_PLACED: 40,
+    ORDER_ADJUSTED: 50, ORDER_CANCELLED: 60, ORDER_FILLED: 60, SETTLED: 70,
+    QUOTE_FAILED: 50, RETRY_LLM: 50,
   };
+  const LLM_ORDER = 10; // between PARSED (0) and SIGNAL_RESOLVED (20)
 
   const entries: Entry[] = [];
+  let parsedTs: string | null = null;
 
   for (const d of filtered) {
     const event = d.event ?? 'SETTLED';
+
+    // TRACE isn't a user-facing timeline event — the per-event durations on
+    // each row already communicate performance. Skip the redundant perf bar.
+    if (event === 'TRACE') continue;
 
     // Hide SETTLED FAIL when a more specific event already explains the outcome
     if (event === 'SETTLED' && d.outcome === 'FAIL') {
@@ -494,13 +510,24 @@ export function UnifiedTimeline() {
 
     const msgTs = d.messageId ? msgMap.get(d.messageId)?.timestamp : undefined;
     const baseTs = msgTs ?? d.createdAt ?? '';
-    const order = eventOrder[event] ?? 5;
-    const sortKey = `${baseTs}|0|${String(order).padStart(2, '0')}|${d.signalIndex ?? 0}`;
+    const order = eventOrder[event] ?? 50;
+    const sortKey = `${baseTs}|0|${String(order).padStart(3, '0')}|${d.signalIndex ?? 0}`;
     entries.push({ kind: 'decision', sortKey, data: d });
+
+    if (event === 'PARSED' && parsedTs == null) parsedTs = baseTs;
   }
 
   for (const e of tradeEvents) {
-    entries.push({ kind: 'trade', sortKey: `${e.timestamp}|1|00|0`, data: e });
+    entries.push({ kind: 'trade', sortKey: `${e.timestamp}|1|000|0`, data: e });
+  }
+
+  // Inline agent reasoning between PARSED and SIGNAL_RESOLVED, same baseTs.
+  if (intent?.route === 'llm' && parsedTs) {
+    entries.push({
+      kind: 'llm',
+      sortKey: `${parsedTs}|0|${String(LLM_ORDER).padStart(3, '0')}|0`,
+      intent,
+    });
   }
 
   entries.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
@@ -529,13 +556,27 @@ export function UnifiedTimeline() {
             );
             if (curMsgId) prevMsgId = curMsgId;
 
+            if (entry.kind === 'llm') {
+              return (
+                <div key="llm" className={cn('relative', i > 0 && 'mt-1.5', !isLast && 'pb-2.5')}>
+                  <div
+                    className="absolute w-[11px] h-[11px] rounded-full ring-2 ring-background bg-strategy-pds"
+                    style={{ left: '-23.5px', top: '10px' }}
+                  />
+                  <LlmReasoning intent={entry.intent} />
+                </div>
+              );
+            }
+
             if (entry.kind === 'trade') {
               const ev = entry.data;
               const price = safeParseFloat(ev.price);
               const meta = getEventMeta(ev);
               const trimPnl = meta.trimPnl;
               const legOffPnl = computeLegOffPnl(meta, price, ev.quantity, ev.strategy);
-              const legOffCost = legOffPnl == null ? computeLegOffCost(price, ev.quantity, ev.strategy) : null;
+              const legOffCost = ev.action === 'LEG_OFF' && legOffPnl == null
+                ? computeLegOffCost(price, ev.quantity, ev.strategy)
+                : null;
               const info = ev.messageId ? fillInfoByMsg.get(ev.messageId) : undefined;
               const evLegs = ev.legs;
               const evStrategy = ev.strategy ?? '';
@@ -588,7 +629,7 @@ export function UnifiedTimeline() {
                       </Button>
                     </PopoverTrigger>
                   </div>
-                  <TradeEventPopover ev={ev} fillInfo={info} tradePnl={tradePnl} trade={trade} />
+                  <TradeEventPopover ev={ev} fillInfo={info} tradePnl={tradePnl} trade={trade ?? undefined} />
                 </Popover>
               );
             }
@@ -704,8 +745,10 @@ export function UnifiedTimeline() {
                     </p>
                   )}
 
-                  {/* Message quote for PARSED and SETTLED FAIL events */}
-                  {(event === 'PARSED' || (event === 'SETTLED' && isFail)) && d.messageId && msgMap.has(d.messageId) && (() => {
+                  {/* Message quote for PARSED only — SETTLED FAIL rendered the
+                      message once already, and the source message lives in the
+                      TraderActivity pane. Avoid duplicates. */}
+                  {event === 'PARSED' && d.messageId && msgMap.has(d.messageId) && (() => {
                     const msg = msgMap.get(d.messageId)!;
                     return (
                       <div className="mt-1.5 border-l-2 border-foreground/20 pl-2">

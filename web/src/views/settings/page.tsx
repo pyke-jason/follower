@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { TestButton } from './test-button';
 import { SettingToggle } from './alert-toggle';
 import { SecretsTable } from './secrets-table';
+import { RiskLimits, type RiskSettings } from './risk-limits';
 import { QueryBoundary, TableSkeleton } from '@/components/query-boundary';
 
 type SecretEntry = { key: string; isSet: boolean };
@@ -20,24 +21,37 @@ export default function SettingsPage() {
     queryFn: () => api<ToggleStates>('/settings/toggles'),
   });
 
+  const riskQuery = useQuery({
+    queryKey: ['settings-risk'],
+    queryFn: () => api<RiskSettings>('/settings/risk'),
+  });
+
   const combinedQuery = {
-    data: secretsQuery.data && togglesQuery.data
-      ? { secrets: secretsQuery.data, toggles: togglesQuery.data }
+    data: secretsQuery.data && togglesQuery.data && riskQuery.data
+      ? { secrets: secretsQuery.data, toggles: togglesQuery.data, risk: riskQuery.data }
       : undefined,
-    isLoading: secretsQuery.isLoading || togglesQuery.isLoading,
-    isError: secretsQuery.isError || togglesQuery.isError,
-    error: secretsQuery.error || togglesQuery.error,
-    refetch: () => { secretsQuery.refetch(); togglesQuery.refetch(); },
+    isLoading: secretsQuery.isLoading || togglesQuery.isLoading || riskQuery.isLoading,
+    isError: secretsQuery.isError || togglesQuery.isError || riskQuery.isError,
+    error: secretsQuery.error || togglesQuery.error || riskQuery.error,
+    refetch: () => { secretsQuery.refetch(); togglesQuery.refetch(); riskQuery.refetch(); },
   };
 
   return (
     <QueryBoundary query={combinedQuery} skeleton={<TableSkeleton />}>
-      {(data) => <SettingsContent secrets={data.secrets} toggles={data.toggles} />}
+      {(data) => <SettingsContent secrets={data.secrets} toggles={data.toggles} risk={data.risk} />}
     </QueryBoundary>
   );
 }
 
-function SettingsContent({ secrets, toggles }: { secrets: SecretEntry[]; toggles: ToggleStates }) {
+function SettingsContent({
+  secrets,
+  toggles,
+  risk,
+}: {
+  secrets: SecretEntry[];
+  toggles: ToggleStates;
+  risk: RiskSettings;
+}) {
 
   const discordConfigured = secrets.find((s) => s.key === 'DISCORD_WEBHOOK_URL')?.isSet ?? false;
   const pushoverConfigured =
@@ -69,6 +83,18 @@ function SettingsContent({ secrets, toggles }: { secrets: SecretEntry[]; toggles
           </CardDescription>
           <CardDescription className="text-xs">Changes save automatically.</CardDescription>
         </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Live Risk Limits</CardTitle>
+          <CardDescription>
+            Caps enforced by the live runner. Changes take effect on restart.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RiskLimits settings={risk} />
+        </CardContent>
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2">

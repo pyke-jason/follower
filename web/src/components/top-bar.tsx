@@ -58,10 +58,15 @@ export function TopBar() {
   const statusError = statusQuery.isError ? 'Status unavailable' : null;
   const crumbs = useBreadcrumbs();
 
-  const pnl = status?.todayPnl ?? 0;
-  const pnlSign = pnl >= 0 ? '+' : '';
-  const pnlCls = pnlColor(pnl);
-  const PnlIcon = pnl >= 0 ? TrendingUp : TrendingDown;
+  // Runtime channels: show live unrealized P&L (what the trader cares about intra-day).
+  // Backtest channels: show realized total P&L from closed trades in the run.
+  const isRuntime = status?.channelKind === 'runtime';
+  const primaryPnl = isRuntime ? (status?.unrealizedPnl ?? 0) : (status?.todayPnl ?? 0);
+  const primaryLabel = isRuntime ? 'unrealized' : 'P&L';
+  const realizedToday = isRuntime ? (status?.todayPnl ?? 0) : 0;
+  const pnlSign = primaryPnl >= 0 ? '+' : '';
+  const pnlCls = pnlColor(primaryPnl);
+  const PnlIcon = primaryPnl >= 0 ? TrendingUp : TrendingDown;
 
   const runtimeDegraded = status?.channelKind === 'runtime'
     && (status.circuitOpen || status.brokerHealthy === false);
@@ -109,14 +114,31 @@ export function TopBar() {
         {/* Persistent status metrics */}
         {status && (
           <div className="flex items-center gap-4 animate-in-right">
-            {/* P&L */}
-            <div className="flex items-center gap-1.5">
+            {/* P&L — live unrealized for runtime, realized for backtest */}
+            <div
+              className="flex items-center gap-1.5"
+              title={isRuntime ? 'Unrealized P&L across all open positions (live from broker)' : 'Realized P&L'}
+            >
               <PnlIcon className={`h-3.5 w-3.5 ${pnlCls}`} />
               <span className={`text-sm font-mono font-semibold tabular-nums ${pnlCls}`}>
                 {pnlSign}
-                {formatCurrency(pnl, 0)}
+                {formatCurrency(primaryPnl, 0)}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                {primaryLabel}
               </span>
             </div>
+
+            {/* Realized-today secondary badge for runtime channels */}
+            {isRuntime && (
+              <span
+                className={`text-xs font-mono tabular-nums ${realizedToday === 0 ? 'text-muted-foreground/50' : pnlColor(realizedToday)}`}
+                title="Realized P&L from trades closed today"
+              >
+                {realizedToday > 0 ? '+' : ''}
+                {formatCurrency(realizedToday, 0)} realized
+              </span>
+            )}
 
             {/* Open positions */}
             {status.openTrades > 0 && (

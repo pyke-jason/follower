@@ -6,7 +6,7 @@
  */
 
 import type { OptionType } from '@/lib/enums.js';
-import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance } from '../types.js';
+import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, OrderLeg } from '../types.js';
 import type { BrokerService } from '../interface.js';
 import type { ErrorCategory } from '@/lib/resilient.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '@/lib/resilient.js';
@@ -15,6 +15,7 @@ import { QuoteUnavailableError } from '@/lib/errors.js';
 import { resolveContract, resolveStockContract, isOccOptionSymbol, occToIBKR } from './symbology.js';
 import { formatOccSymbol } from '@/lib/occ-symbology.js';
 import { sendSystemAlert } from '@/lib/alert.js';
+import { isCreditOrderStructural } from '@/pipeline/leg-pricing.js';
 import {
   QuoteResponseSchema,
   OrderResponseSchema,
@@ -39,6 +40,54 @@ export function roundToTick(price: number, minTick: number): number {
   return Math.round(price / minTick) * minTick;
 }
 
+/**
+ * Build the JSON body for a /orders/combo (BAG) submission.
+ *
+ * IBKR convention (matching TWS desktop): parent Order.action is always "BUY" —
+ * ComboLeg.action values are absolute (BUY/SELL the specific leg). The sign of
+ * limitPrice tells TWS whether the combo is a net debit (positive) or net credit
+ * (negative). Using parent action "SELL" with absolute leg actions triggers TWS's
+ * riskless-arbitrage validator because it interprets the combo as inverted and
+ * the limit-price sign no longer matches the economic intent.
+ *
+ * @internal Exported for testing.
+ */
+export function buildComboOrderBody(args: {
+  symbol: string;
+  resolvedLegs: Array<{ leg: OrderLeg; conId: number }>;
+  params: OrderParams;
+  limitPrice: number | undefined;
+  clientOrderRef: string;
+}): Record<string, unknown> {
+  const { symbol, resolvedLegs, params, limitPrice, clientOrderRef } = args;
+
+  const comboLegs = resolvedLegs.map(({ leg, conId }) => ({
+    conId,
+    ratio: 1,
+    action: leg.action,
+    exchange: 'SMART',
+  }));
+
+  const isCredit = isCreditOrderStructural(params.legs) ?? false;
+  const signedLimitPrice = limitPrice != null
+    ? (isCredit ? -limitPrice : limitPrice)
+    : undefined;
+
+  const body: Record<string, unknown> = {
+    symbol,
+    legs: comboLegs,
+    action: 'BUY',
+    orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
+    quantity: params.legs[0].quantity,
+    tif: 'GTC',
+    clientOrderRef,
+  };
+  if (signedLimitPrice != null) {
+    body.limitPrice = signedLimitPrice;
+  }
+  return body;
+}
+
 // ── IBKR Error Classification ───────────────────────────────────────
 
 /**
@@ -61,7 +110,7 @@ function ibkrClassify(err: unknown): ErrorCategory {
     const status = parseInt(httpMatch[1], 10);
     if (status === 503) return 'transient';
     if (status === 504) return 'permanent'; // quote/TWS future timed out — retrying won't fix a missing permission
-    if (status === 402) return 'permanent'; // live market data subscription missing
+    if (status === 402) return 'permanent'; // subscription missing or competing session (TWS 10197) — retry won't help
     if (status === 400 || status === 422) return 'permanent';
   }
 
@@ -78,6 +127,12 @@ function ibkrClassify(err: unknown): ErrorCategory {
 
   return classifyError(err);
 }
+
+// Tracks whether each placed combo order is a credit (negative limit sign).
+// Needed so modifyOrder can preserve the sign convention — the sidecar's
+// modify endpoint writes lmtPrice verbatim, and OrderManager passes positive
+// chase prices that must be re-signed for credit combos.
+const creditComboOrderIds = new Set<string>();
 
 // ── HTTP helper ─────────────────────────────────────────────────────
 
@@ -167,9 +222,14 @@ async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
     const msg = err instanceof Error ? err.message : String(err);
     if (/IBKR sidecar 402:/.test(msg) && !alertedMissingSubscription.has(symbol)) {
       alertedMissingSubscription.add(symbol);
+      const isCompetingSession = /"twsCode"\s*:\s*10197/.test(msg);
       void sendSystemAlert({
-        title: 'IBKR: live market data subscription missing',
-        message: `getQuote(${symbol}) failed — paper account ${runtime.accountId} has no live market data for this symbol. Verify subscription sharing at IBKR Client Portal (propagation can take 24h).`,
+        title: isCompetingSession
+          ? 'IBKR: competing session — market data suspended'
+          : 'IBKR: live market data subscription missing',
+        message: isCompetingSession
+          ? `getQuote(${symbol}) failed — TWS 10197: another TWS/IB Gateway session is connected and has taken market data priority. Close the competing session to restore data.`
+          : `getQuote(${symbol}) failed — paper account ${runtime.accountId} has no live market data for this symbol. Verify subscription sharing at IBKR Client Portal (propagation can take 24h).`,
         severity: 'critical',
         fields: [{ name: 'error', value: msg }],
       });
@@ -233,31 +293,13 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
       });
     } else {
       // Multi-leg combo (spread) order — BAG contract
-      const comboLegs = resolvedLegs.map(({ leg, conId }) => ({
-        conId,
-        ratio: 1,
-        action: leg.action,
-        exchange: 'SMART',
-      }));
-
-      // Combo action: the direction of the spread order as a whole.
-      // BUY for opening longs / closing shorts, SELL for the opposite.
-      const comboAction = params.direction === 'LONG'
-        ? (params.isClosing ? 'SELL' : 'BUY')
-        : (params.isClosing ? 'BUY' : 'SELL');
-
-      const comboBody: Record<string, unknown> = {
+      const comboBody = buildComboOrderBody({
         symbol: underlying,
-        legs: comboLegs,
-        action: comboAction,
-        orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
-        quantity: params.legs[0].quantity,
-        tif: 'GTC',
+        resolvedLegs,
+        params,
+        limitPrice,
         clientOrderRef,
-      };
-      if (limitPrice != null) {
-        comboBody.limitPrice = limitPrice;
-      }
+      });
       data = await sidecar(runtime.sidecarUrl, '/orders/combo', {
         method: 'POST',
         body: JSON.stringify(comboBody),
@@ -271,8 +313,13 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
       'POST /api/orders',
     );
 
+    const orderId = String(order.orderId);
+    if (resolvedLegs.length > 1 && (isCreditOrderStructural(params.legs) ?? false)) {
+      creditComboOrderIds.add(orderId);
+    }
+
     return {
-      orderId: String(order.orderId),
+      orderId,
       status: mapIbkrStatus(order.status),
       filledPrice: order.avgFillPrice,
       filledQuantity: order.filledQuantity,
@@ -290,10 +337,13 @@ async function modifyOrder(
     // We don't know the underlying here, but modifyOrder only changes limit price
     // on existing orders. Round conservatively (penny increment is always safe).
     const rounded = Math.round(newLimitPrice * 100) / 100;
+    // Credit combos were placed with a negative lmtPrice (BAG convention) —
+    // chase updates pass positive magnitudes, so re-apply the sign here.
+    const signed = creditComboOrderIds.has(orderId) ? -Math.abs(rounded) : rounded;
 
     const data = await sidecar(runtime.sidecarUrl, `/orders/${encodeURIComponent(orderId)}`, {
       method: 'PUT',
-      body: JSON.stringify({ limitPrice: rounded }),
+      body: JSON.stringify({ limitPrice: signed }),
       signal,
     });
 
@@ -322,6 +372,8 @@ async function cancelOrder(orderId: string, runtime: IbkrRuntime): Promise<Order
       data,
       `DELETE /api/orders/${orderId}`,
     );
+
+    creditComboOrderIds.delete(orderId);
 
     return {
       orderId: String(order.orderId),

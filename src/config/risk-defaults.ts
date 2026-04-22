@@ -10,7 +10,7 @@ export const BACKTEST_RISK_DEFAULTS: RiskCheckConfig = {
 
 export const LIVE_RISK_DEFAULTS: RiskCheckConfig = {
   maxOnSymbol: 5,
-  maxTotalPositions: 20,
+  maxTotalPositions: 100,
   maxDrawdownPct: 5,
   maxNotionalMultiplier: 2,
 };
@@ -21,7 +21,7 @@ export const DEFAULT_SIZING_CONFIG: NotionalSizingConfig = {
 };
 
 export const MAX_CONTRACTS: Record<string, number> = {
-  CALL: 20, PUT: 20, CDS: 20, PDS: 20,
+  CALL: 20, PUT: 20, CDS: 20, PDS: 20, PCS: 20, CCS: 20,
 };
 
 export const DEFAULT_STARTING_EQUITY = 100_000;

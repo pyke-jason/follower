@@ -17,11 +17,12 @@ import {
   ReconciliationResolveBodySchema,
   SettingsSecretBodySchema,
   SettingsTogglesBodySchema,
+  SettingsRiskBodySchema,
   EvalReviewBodySchema,
 } from '../http-schemas.js';
 
 const LOCAL_API_URL = process.env.LOCAL_API_URL ?? 'http://localhost:3791';
-const DEFAULT_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'];
+const DEFAULT_STRATEGIES = ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'CCS', 'PCS'];
 
 const app = new Hono();
 
@@ -494,32 +495,6 @@ app.patch('/traders/:name', async (c) => {
         .where(eq(schema.trackedTraders.name, name));
       break;
     }
-    case 'riskPercent': {
-      const riskPercent = body.value;
-      if (riskPercent == null) {
-        await db
-          .update(schema.trackedTraders)
-          .set({ positionSizingConfig: null })
-          .where(eq(schema.trackedTraders.name, name));
-      } else {
-        const [trader] = await db
-          .select({ positionSizingConfig: schema.trackedTraders.positionSizingConfig })
-          .from(schema.trackedTraders)
-          .where(eq(schema.trackedTraders.name, name));
-        const existing = trader?.positionSizingConfig;
-        const config: import('../../position-sizing/index.js').AtrSizingConfig = {
-          strategy: 'atr',
-          riskPercent,
-          atrMultiplier: (existing?.strategy === 'atr' ? existing.atrMultiplier : 2.0),
-          atrPeriod: existing?.strategy === 'atr' ? existing.atrPeriod : 14,
-        };
-        await db
-          .update(schema.trackedTraders)
-          .set({ positionSizingConfig: config })
-          .where(eq(schema.trackedTraders.name, name));
-      }
-      break;
-    }
   }
 
   return c.json({ ok: true });
@@ -580,17 +555,69 @@ app.post('/traders/bulk', async (c) => {
 
 app.post('/reconciliation/:id/resolve', async (c) => {
   const alertId = c.req.param('id');
-  const { reason } = await validateBody(ReconciliationResolveBodySchema, c);
+  const { decision } = await validateBody(ReconciliationResolveBodySchema, c);
 
-  await db.update(schema.reconciliationAlerts)
-    .set({
-      resolved: true,
-      resolvedAt: new Date().toISOString(),
-      resolvedReason: reason,
-    })
+  const [alert] = await db
+    .select()
+    .from(schema.reconciliationAlerts)
     .where(eq(schema.reconciliationAlerts.id, alertId));
 
-  return c.json({ ok: true });
+  if (!alert) return c.json({ error: 'Alert not found' }, 404);
+  if (alert.resolved) return c.json({ error: 'Alert already resolved' }, 400);
+
+  const now = new Date().toISOString();
+  let reason: string;
+
+  if (decision === 'broker') {
+    if (alert.type === 'DB_ONLY') {
+      if (!alert.tradeId) return c.json({ error: 'Alert missing tradeId' }, 400);
+      const [trade] = await db
+        .select()
+        .from(schema.trades)
+        .where(eq(schema.trades.id, alert.tradeId));
+      if (!trade) return c.json({ error: 'Trade not found' }, 404);
+      await db.update(schema.trades)
+        .set({
+          status: 'CLOSED',
+          closedAt: now,
+          pnl: trade.pnl ?? '0',
+          metadata: { ...trade.metadata, extra: { ...trade.metadata.extra, reconciliationClose: true } },
+        })
+        .where(eq(schema.trades.id, alert.tradeId));
+      reason = 'Accepted broker state — closed DB trade to match flat broker';
+    } else if (alert.type === 'QUANTITY_MISMATCH') {
+      const actual = alert.actual as { brokerQuantity?: number } | null;
+      const expected = alert.expected as { trades?: string[] } | null;
+      const brokerQty = actual?.brokerQuantity;
+      const tradeIds = expected?.trades ?? [];
+      if (brokerQty == null) return c.json({ error: 'Alert missing broker quantity' }, 400);
+      if (tradeIds.length !== 1) {
+        return c.json({ error: 'Cannot auto-adjust: multiple DB trades match. Resolve manually.' }, 400);
+      }
+      await db.update(schema.trades)
+        .set({ quantity: brokerQty })
+        .where(eq(schema.trades.id, tradeIds[0]));
+      reason = `Accepted broker state — set DB quantity to ${brokerQty}`;
+    } else {
+      // BROKER_ONLY: can't synthesize a DB trade without messageId/taskId context — ack drift.
+      reason = 'Accepted broker state — position acknowledged, not tracked in app DB';
+    }
+  } else {
+    // decision === 'app' — no broker orders from UI. Record the decision and move on.
+    if (alert.type === 'BROKER_ONLY') {
+      reason = 'Accepted app state — untracked broker position, flatten manually';
+    } else if (alert.type === 'DB_ONLY') {
+      reason = 'Accepted app state — assumed broker flattened externally';
+    } else {
+      reason = 'Accepted app state — broker has stray units, reconcile manually';
+    }
+  }
+
+  await db.update(schema.reconciliationAlerts)
+    .set({ resolved: true, resolvedAt: now, resolvedReason: reason })
+    .where(eq(schema.reconciliationAlerts.id, alertId));
+
+  return c.json({ ok: true, reason });
 });
 
 // ─── Settings ────────────────────────────────────────
@@ -636,6 +663,18 @@ app.post('/settings/toggles/:id', async (c) => {
   try {
     const provider = getProvider();
     await provider.set(key, enabled ? '1' : '0');
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+app.post('/settings/risk', async (c) => {
+  const { maxTotalPositions } = await validateBody(SettingsRiskBodySchema, c);
+
+  try {
+    const provider = getProvider();
+    await provider.set('LIVE_MAX_TOTAL_POSITIONS', String(maxTotalPositions));
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);

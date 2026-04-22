@@ -127,6 +127,17 @@ const ResultExtras = {
   classifierSignals: z.array(SignalSchema).optional(),
 } as const;
 
+// Orchestrator-emitted skipCategory values. Runners layer on additional values
+// ('pipeline failure', 'no execution', 'unfollowed_exit', 'flagged', 'skip')
+// when building SETTLED events — that's why the column is a loose string.
+const OrchestratorSkipCategorySchema = z.enum([
+  'no_open_position',
+  'parse_missing_symbol',
+  'broker_error',
+  'trim_missing_percent',
+  'legoff_missing_target_strategy',
+]);
+
 export const OrchestratorResultSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('EXECUTE'),
@@ -136,6 +147,7 @@ export const OrchestratorResultSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('SKIP'),
     reason: z.string(),
+    skipCategory: OrchestratorSkipCategorySchema.optional(),
     ...ResultExtras,
   }),
   z.object({

@@ -15,12 +15,15 @@ function EventRow({ event, closeMessageId, extraCells = 0 }: { event: TradeEvent
       {/* Chevron spacer */}
       <TableCell className="w-6" />
 
-      {/* Action (Trade col) */}
+      {/* Action + qty + timestamp — aligns under Position column */}
       <TableCell>
-        <span className="flex items-center gap-1.5">
-          <span className="text-muted-foreground/30 text-[10px] mr-0.5">&middot;</span>
+        <span className="flex items-center gap-2">
+          <span className="text-muted-foreground/30 text-[10px]">&middot;</span>
           <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
             {event.action}
+          </span>
+          <span className="text-[11px] tabular-nums text-muted-foreground/60">
+            {qtyPrefix}{event.quantity}
           </span>
           {event.action === 'CLOSE' && (
             <span className="text-[10px] text-muted-foreground/40 italic">
@@ -32,33 +35,25 @@ function EventRow({ event, closeMessageId, extraCells = 0 }: { event: TradeEvent
               &rarr; {targetStrategy}
             </span>
           )}
+          <span className="text-[10px] text-muted-foreground/40 ml-auto">
+            {formatDate(event.timestamp)}
+          </span>
         </span>
       </TableCell>
 
-      {/* Trader — empty */}
-      <TableCell />
-
-      {/* Qty */}
-      <TableCell className="text-right tabular-nums text-xs text-muted-foreground/60">
-        {qtyPrefix}{event.quantity}
+      {/* Price + event P&L — aligns under Mark / P&L column */}
+      <TableCell className="text-right">
+        <div className="font-mono tabular-nums text-xs text-muted-foreground/70">
+          {formatCurrency(price)}
+        </div>
+        {trimPnl != null && (
+          <div className={`font-mono tabular-nums text-[10px] ${pnlColor(trimPnl)}`}>
+            {formatCurrency(trimPnl)}
+          </div>
+        )}
       </TableCell>
 
-      {/* Price (Entry col) */}
-      <TableCell className="text-right tabular-nums text-xs text-muted-foreground/60">
-        {formatCurrency(price)}
-      </TableCell>
-
-      {/* P&L — show for TRIM */}
-      <TableCell className={`text-right tabular-nums text-xs font-medium ${trimPnl != null ? pnlColor(trimPnl) : ''}`}>
-        {trimPnl != null ? formatCurrency(trimPnl) : ''}
-      </TableCell>
-
-      {/* Timestamp */}
-      <TableCell className="text-muted-foreground/40 text-xs">
-        {formatDate(event.timestamp)}
-      </TableCell>
-
-      {/* Extra trailing cells for alignment (e.g. Exec, Label) */}
+      {/* Extra trailing cells for alignment (e.g. Label) */}
       {Array.from({ length: extraCells }, (_, i) => (
         <TableCell key={`extra-${i}`} />
       ))}

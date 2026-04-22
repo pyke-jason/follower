@@ -1,6 +1,7 @@
 import { loadSecrets } from './lib/secrets/index.js';
 await loadSecrets();
 
+import { installProcessErrorHandlers } from './lib/log-safety.js';
 import { startIngestion, stopIngestion, closeBrowser } from './ingestion/ingest.js';
 import { initRunner, submitTask, stopRunner, awaitDrain, destroyOrderManager } from './live/runner.js';
 import { createTasksFromMessage } from './live/factory.js';
@@ -15,6 +16,12 @@ import { PATHS } from './lib/paths.js';
 import { sendSystemAlert } from './lib/alert.js';
 
 const LOCK_PATH = PATHS.lockFile;
+
+installProcessErrorHandlers({
+  onFatal: () => {
+    try { releaseLock(LOCK_PATH); } catch { /* best effort */ }
+  },
+});
 
 let reconSchedulers: ReconciliationScheduler[] = [];
 let fillSweeps: FillSweep[] = [];
@@ -146,12 +153,6 @@ function parseArgs() {
 }
 
 const flags = parseArgs();
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
-  releaseLock(LOCK_PATH);
-  process.exit(1);
-});
 
 if (flags['fetch-historical']) {
   const since = flags['since'];

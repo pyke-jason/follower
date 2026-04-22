@@ -4,7 +4,7 @@ import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, in
 import type { SQL } from 'drizzle-orm';
 import type { Trade, TradeFlag, CommissionSchedule, EvalLabelData, EvalLabelRow } from '@/db/schema.js';
 import type { Signal } from '@/agent/schemas.js';
-import type { BrokerPosition } from '@/broker/types.js';
+import type { BrokerPosition, AccountBalance } from '@/broker/types.js';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '@/lib/enriched-message.js';
 import type { Strategy } from '@/lib/enums.js';
 import { btChannel } from '@/lib/channel.js';
@@ -261,18 +261,21 @@ app.get('/status', async (c) => {
     const brief = await getBacktestRunBrief(backtestRunId);
     return c.json({
       ...stats,
+      unrealizedPnl: 0,
       channelId,
       channelKind: 'backtest',
       channelBrief: brief ?? undefined,
     });
   }
 
-  const [risk, health] = await Promise.all([
+  const [risk, health, unrealizedPnl] = await Promise.all([
     getRiskSnapshotInternal(channelId),
     getRuntimeHealthInternal(channelId),
+    getChannelUnrealizedPnl(channelId),
   ]);
   return c.json({
     ...stats,
+    unrealizedPnl,
     channelId,
     channelKind: 'runtime',
     tradingBlocked: risk.tradingBlocked,
@@ -285,6 +288,83 @@ app.get('/status', async (c) => {
     }),
   });
 });
+
+type LivePnlRow = { unrealizedPnl: number; marketValue: number | null };
+
+/**
+ * Live unrealized P&L across all open trades in a channel, both per-trade and
+ * summed. Matches broker positions to trade legs. Returns zero/empty when the
+ * broker is unreachable or no runtime broker is registered for the channel.
+ */
+async function getChannelLivePnl(
+  channelId: string,
+): Promise<{ total: number; byTrade: Record<string, LivePnlRow> }> {
+  const broker = getRuntimeBrokerMap().get(channelId);
+  if (!broker) return { total: 0, byTrade: {} };
+
+  let positions: BrokerPosition[];
+  try {
+    positions = await broker.getPositions();
+  } catch {
+    return { total: 0, byTrade: {} };
+  }
+
+  const openTrades = await db
+    .select()
+    .from(schema.trades)
+    .where(and(isOpen, tradeScope(channelId)));
+
+  const byTrade: Record<string, LivePnlRow> = {};
+  let total = 0;
+
+  for (const trade of openTrades) {
+    let tradePnl = 0;
+    let tradeMV = 0;
+    let anyMvMissing = false;
+    let matched = false;
+
+    if (trade.strategy === 'STOCK') {
+      const pos = positions.find(p => !p.optionType && p.symbol === trade.symbol);
+      if (pos?.unrealizedPnl != null) {
+        tradePnl = pos.unrealizedPnl;
+        matched = true;
+        if (pos.marketValue != null) tradeMV += pos.marketValue;
+        else anyMvMissing = true;
+      }
+    } else {
+      for (const leg of trade.legs) {
+        const pos = positions.find(p =>
+          p.optionType === leg.type &&
+          p.strikePrice === leg.strike &&
+          p.expiry === leg.expiry &&
+          positionUnderlying(p) === trade.symbol,
+        );
+        if (pos?.unrealizedPnl != null) {
+          tradePnl += pos.unrealizedPnl;
+          matched = true;
+          if (pos.marketValue != null) tradeMV += pos.marketValue;
+          else anyMvMissing = true;
+        }
+      }
+    }
+
+    if (matched) {
+      byTrade[trade.id] = {
+        unrealizedPnl: roundCents(tradePnl),
+        marketValue: anyMvMissing ? null : roundCents(tradeMV),
+      };
+      total += tradePnl;
+    }
+  }
+
+  return { total: roundCents(total), byTrade };
+}
+
+/** Back-compat wrapper used by /status which only needs the total. */
+async function getChannelUnrealizedPnl(channelId: string): Promise<number> {
+  const { total } = await getChannelLivePnl(channelId);
+  return total;
+}
 
 // ── GET /signals ─────────────────────────────────────
 
@@ -402,17 +482,41 @@ app.get('/dashboard', async (c) => {
   const channelId = resolveChannelId(c.req.query('channel') || undefined);
   const backtestRunId = await getBacktestRunIdByChannelId(channelId);
 
-  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances] = await Promise.all([
+  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePnl, accountBalance] = await Promise.all([
     getStatsInternal(channelId, { useTotalPnl: !!backtestRunId }),
-    getOpenTradesInternal(50, channelId),
+    getOpenTradesInternal(500, channelId),
     getTraderPnlSummaryInternal(channelId),
     getTradeHistorySummaryInternal({ channelId }),
     backtestRunId ? Promise.resolve(null) : getRiskSnapshotInternal(channelId),
     getDailyBalancesInternal(30, channelId),
+    backtestRunId ? Promise.resolve({ total: 0, byTrade: {} }) : getChannelLivePnl(channelId),
+    backtestRunId ? Promise.resolve(null) : getChannelAccountBalance(channelId),
   ]);
 
-  return c.json({ stats, openTrades, traderPnl, historySummary, risk, dailyBalances, channelId });
+  return c.json({
+    stats: { ...stats, unrealizedPnl: livePnl.total },
+    openTrades,
+    traderPnl,
+    historySummary,
+    risk,
+    dailyBalances,
+    channelId,
+    livePnlByTrade: livePnl.byTrade,
+    accountBalance,
+  });
 });
+
+/** Live account balance from the runtime broker. Null if unreachable or
+ *  no runtime broker is registered for the channel. */
+async function getChannelAccountBalance(channelId: string): Promise<AccountBalance | null> {
+  const broker = getRuntimeBrokerMap().get(channelId);
+  if (!broker) return null;
+  try {
+    return await broker.getAccountBalance();
+  } catch {
+    return null;
+  }
+}
 
 // ── GET /trades ──────────────────────────────────────
 
@@ -526,8 +630,8 @@ app.get('/trades/:id/story', async (c) => {
       : Promise.resolve(null),
   ]);
 
-  // Nearby messages + run decision
-  const [nearbyMessages, runDecisionRow] = await Promise.all([
+  // Nearby messages + run decision + intent (LLM steps) + recon alerts
+  const [nearbyMessages, runDecisionRow, intent, reconAlerts] = await Promise.all([
     sourceMessage && trade.symbol
       ? db.select().from(schema.messages)
           .where(and(
@@ -543,7 +647,72 @@ app.get('/trades/:id/story', async (c) => {
           taskId: trade.taskId ?? undefined,
         })
       : Promise.resolve(null),
+    trade.sourceMessageId
+      ? db.select().from(schema.messageIntents)
+          .where(eq(schema.messageIntents.messageId, trade.sourceMessageId))
+          .orderBy(desc(schema.messageIntents.version))
+          .limit(1)
+          .then(r => r[0] ?? null)
+      : Promise.resolve(null),
+    db.select().from(schema.reconciliationAlerts)
+      .where(and(
+        eq(schema.reconciliationAlerts.tradeId, tradeId),
+        eq(schema.reconciliationAlerts.resolved, false),
+      )),
   ]);
+
+  // Split nearby into context (<=openedAt) and subsequent (>openedAt)
+  const openedAt = trade.openedAt ?? sourceMessage?.timestamp ?? '';
+  const subsequentMessages = openedAt
+    ? nearbyMessages.filter(m => m.timestamp > openedAt && m.id !== trade.sourceMessageId)
+    : [];
+
+  // Live position (open trades, live channel only — getPositions throws or returns [] for backtest)
+  let livePosition: { unrealizedPnl: number; marketValue: number | null } | null = null;
+  if (trade.status === 'OPEN') {
+    const broker = getRuntimeBrokerMap().get(trade.channelId);
+    if (broker) {
+      try {
+        const positions = await broker.getPositions();
+        let totalUnrealized = 0;
+        let totalMarketValue = 0;
+        let matched = false;
+        let anyMvMissing = false;
+        if (trade.strategy === 'STOCK') {
+          const pos = positions.find(p => !p.optionType && p.symbol === trade.symbol);
+          if (pos?.unrealizedPnl != null) {
+            totalUnrealized = pos.unrealizedPnl;
+            matched = true;
+            if (pos.marketValue != null) totalMarketValue += pos.marketValue;
+            else anyMvMissing = true;
+          }
+        } else {
+          for (const leg of trade.legs) {
+            const pos = positions.find(p =>
+              p.optionType === leg.type &&
+              p.strikePrice === leg.strike &&
+              p.expiry === leg.expiry &&
+              (p.optionType ? p.symbol.split(/\s+/)[0] : p.symbol) === trade.symbol
+            );
+            if (pos?.unrealizedPnl != null) {
+              totalUnrealized += pos.unrealizedPnl;
+              matched = true;
+              if (pos.marketValue != null) totalMarketValue += pos.marketValue;
+              else anyMvMissing = true;
+            }
+          }
+        }
+        if (matched) {
+          livePosition = {
+            unrealizedPnl: roundCents(totalUnrealized),
+            marketValue: anyMvMissing ? null : roundCents(totalMarketValue),
+          };
+        }
+      } catch {
+        // broker unreachable — leave livePosition null
+      }
+    }
+  }
 
   // Fetch full decisions for the execution timeline
   const decisions = await getDecisionsForTradeInternal(trade);
@@ -556,7 +725,11 @@ app.get('/trades/:id/story', async (c) => {
   const timelineMessages = [sourceMessage, closeMessage, ...intermediateMessages]
     .filter((m): m is NonNullable<typeof m> => m != null);
 
-  return c.json({ trade, events, task, sourceMessage, closeMessage, nearbyMessages, decision: runDecisionRow, decisions, timelineMessages });
+  return c.json({
+    trade, events, task, sourceMessage, closeMessage, nearbyMessages,
+    decision: runDecisionRow, decisions, timelineMessages,
+    subsequentMessages, intent, reconAlerts, livePosition,
+  });
 });
 
 // ── GET /trades/by-task/:taskId ──────────────────────
@@ -596,11 +769,13 @@ app.get('/open-pnl', async (c) => {
     .from(schema.trades)
     .where(and(isOpen, tradeScope(channelId)));
 
-  const result: Record<string, number> = {};
+  const result: Record<string, { unrealizedPnl: number; marketValue: number | null }> = {};
 
   for (const trade of openTrades) {
     const legs = trade.legs;
     let totalPnl = 0;
+    let totalMarketValue = 0;
+    let anyMarketValue = false;
     let matched = false;
 
     if (trade.strategy === 'STOCK') {
@@ -610,6 +785,10 @@ app.get('/open-pnl', async (c) => {
       if (pos?.unrealizedPnl != null) {
         totalPnl = pos.unrealizedPnl;
         matched = true;
+      }
+      if (pos?.marketValue != null) {
+        totalMarketValue = pos.marketValue;
+        anyMarketValue = true;
       }
     } else {
       for (const leg of legs) {
@@ -624,11 +803,18 @@ app.get('/open-pnl', async (c) => {
           totalPnl += pos.unrealizedPnl;
           matched = true;
         }
+        if (pos?.marketValue != null) {
+          totalMarketValue += pos.marketValue;
+          anyMarketValue = true;
+        }
       }
     }
 
     if (matched) {
-      result[trade.id] = roundCents(totalPnl);
+      result[trade.id] = {
+        unrealizedPnl: roundCents(totalPnl),
+        marketValue: anyMarketValue ? roundCents(totalMarketValue) : null,
+      };
     }
   }
 
@@ -667,12 +853,38 @@ app.get('/tasks', async (c) => {
     ? sql.raw(`${sortCol} DESC, id DESC`)
     : sql.raw(`${sortCol} ASC, id ASC`);
 
-  const tasks = await db
+  const taskRows = await db
     .select()
     .from(schema.tasks)
     .where(whereClause)
     .orderBy(orderExpr)
     .limit(limit + 1);
+
+  // Join realized outcome from run_decisions SETTLED per task.
+  // tasks.result was removed — this is the source of truth for "what happened".
+  const taskIds = taskRows.map((t) => t.id);
+  const outcomeMap = new Map<string, string>();
+  if (taskIds.length > 0) {
+    const settled = await db
+      .select({
+        taskId: schema.runDecisions.taskId,
+        outcome: schema.runDecisions.outcome,
+        createdAt: schema.runDecisions.createdAt,
+      })
+      .from(schema.runDecisions)
+      .where(and(
+        inArray(schema.runDecisions.taskId, taskIds),
+        eq(schema.runDecisions.event, 'SETTLED'),
+        isNotNull(schema.runDecisions.outcome),
+      ))
+      .orderBy(desc(schema.runDecisions.createdAt));
+    for (const s of settled) {
+      // Keep the latest SETTLED per task (desc order + first-wins)
+      if (s.taskId && s.outcome && !outcomeMap.has(s.taskId)) {
+        outcomeMap.set(s.taskId, s.outcome);
+      }
+    }
+  }
 
   // Total count (without cursor)
   const filterConditions: SQL[] = [taskScope(channelId)];
@@ -683,8 +895,9 @@ app.get('/tasks', async (c) => {
     .from(schema.tasks)
     .where(and(...filterConditions));
 
-  const hasMore = tasks.length > limit;
-  const rows = hasMore ? tasks.slice(0, limit) : tasks;
+  const hasMore = taskRows.length > limit;
+  const sliced = hasMore ? taskRows.slice(0, limit) : taskRows;
+  const rows = sliced.map((t) => ({ ...t, realizedOutcome: outcomeMap.get(t.id) ?? null }));
   const lastRow = rows[rows.length - 1];
   const nextCursor = hasMore && lastRow
     ? encodeCursor(String((lastRow as Record<string, unknown>)[sortParam] ?? ''), lastRow.id)
@@ -703,19 +916,29 @@ app.get('/tasks/:id', async (c) => {
     .where(eq(schema.tasks.id, id));
   if (!task) return c.json({ error: 'Task not found' }, 404);
 
-  // If this task produced a trade, redirect to the trade detail page
+  // If this task produced a trade, redirect to the trade detail page.
+  // Match by taskId first, then fall back to sourceMessageId — live runs
+  // sometimes record trade.taskId against a different task in the same message's
+  // lifecycle (e.g. execute_trade vs classify), and the user still wants the
+  // trade view when the message produced a position.
   const [linkedTrade] = await db
     .select({ id: schema.trades.id, channelId: schema.trades.channelId })
     .from(schema.trades)
-    .where(eq(schema.trades.taskId, id));
+    .where(or(
+      eq(schema.trades.taskId, id),
+      task.messageId ? eq(schema.trades.sourceMessageId, task.messageId) : sql`0`,
+    )!)
+    .orderBy(desc(schema.trades.openedAt))
+    .limit(1);
   if (linkedTrade) {
     return c.json({
       redirect: `/trades/${linkedTrade.id}?channel=${encodeURIComponent(linkedTrade.channelId)}`,
     });
   }
 
-  // Fetch related data in parallel
-  const [sourceMessage, runDecisionRow] = await Promise.all([
+  // Orphan task path: no trade was created. Return the same story shape as
+  // /trades/:id/story with trade=null so the UI can render one layout.
+  const [sourceMessage, runDecisionRow, intent] = await Promise.all([
     task.messageId
       ? db.select().from(schema.messages).where(eq(schema.messages.id, task.messageId)).then(r => r[0] ?? null)
       : Promise.resolve(null),
@@ -725,30 +948,62 @@ app.get('/tasks/:id', async (c) => {
           taskId: task.id,
         })
       : Promise.resolve(null),
+    task.messageId
+      ? db.select().from(schema.messageIntents)
+          .where(eq(schema.messageIntents.messageId, task.messageId))
+          .orderBy(desc(schema.messageIntents.version))
+          .limit(1)
+          .then(r => r[0] ?? null)
+      : Promise.resolve(null),
   ]);
 
-  // Fetch nearby messages by the same author with matching symbols
+  // All decisions for this task — used by the timeline
+  const decisions = task.messageId
+    ? await db.select().from(schema.runDecisions)
+        .where(and(
+          eq(schema.runDecisions.channelId, task.channelId),
+          eq(schema.runDecisions.messageId, task.messageId),
+        ))
+        .orderBy(asc(schema.runDecisions.createdAt))
+    : [];
+
+  // Subsequent messages (same trader + symbol, after the source message)
   const context = task.context as Record<string, unknown> | null;
   const author = sourceMessage?.author ?? (context?.author as string | undefined);
   const symbols = (context?.symbols as string[] | undefined) ?? [];
   const firstSymbol = symbols[0];
 
-  const nearbyMessages = (sourceMessage && author && firstSymbol)
+  const allMatchingMessages = (sourceMessage && author && firstSymbol)
     ? await db.select().from(schema.messages)
         .where(and(
           eq(schema.messages.author, author),
           sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${firstSymbol})`,
         ))
-        .orderBy(desc(schema.messages.timestamp))
-        .limit(20)
+        .orderBy(asc(schema.messages.timestamp))
+        .limit(100)
     : [];
 
+  const sourceTs = sourceMessage?.timestamp ?? '';
+  const subsequentMessages = sourceTs
+    ? allMatchingMessages.filter(m => m.timestamp > sourceTs && m.id !== task.messageId)
+    : [];
+
+  const timelineMessages = sourceMessage ? [sourceMessage] : [];
+
   return c.json({
+    trade: null,
+    events: [],
     task,
     sourceMessage,
-    runDecision: runDecisionRow,
-    nearbyMessages,
-    channelId: task.channelId,
+    closeMessage: null,
+    nearbyMessages: allMatchingMessages,
+    decision: runDecisionRow,
+    decisions,
+    timelineMessages,
+    subsequentMessages,
+    intent,
+    reconAlerts: [],
+    livePosition: null,
   });
 });
 
@@ -1372,12 +1627,17 @@ const TOGGLE_KEYS: Record<string, string> = {
   LIVE_INGESTION_ENABLED: 'LIVE_INGESTION_ENABLED',
 };
 
+const NON_SECRET_SETTING_KEYS = new Set<string>([
+  ...Object.keys(TOGGLE_KEYS),
+  'LIVE_MAX_TOTAL_POSITIONS',
+]);
+
 app.get('/settings/secrets', async (c) => {
   const provider = getProvider();
   const setKeys = await provider.list();
   const setKeySet = new Set(setKeys);
   const secrets = SECRET_KEYS
-    .filter((key) => !(key in TOGGLE_KEYS))
+    .filter((key) => !NON_SECRET_SETTING_KEYS.has(key))
     .map((key) => ({ key, isSet: setKeySet.has(key) }));
   return c.json(secrets);
 });
@@ -1391,6 +1651,24 @@ app.get('/settings/toggles', async (c) => {
     discord: secrets.ALERTS_DISCORD_ENABLED !== '0',
     pushover: secrets.ALERTS_PUSHOVER_ENABLED !== '0',
     ingestion: secrets.LIVE_INGESTION_ENABLED !== '0',
+  });
+});
+
+// ── GET /settings/risk ───────────────────────────────
+
+app.get('/settings/risk', async (c) => {
+  const { LIVE_RISK_DEFAULTS } = await import('@/config/risk-defaults.js');
+  const provider = getProvider();
+  const secrets = await provider.load();
+  const raw = secrets.LIVE_MAX_TOTAL_POSITIONS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  const maxTotalPositions = Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : LIVE_RISK_DEFAULTS.maxTotalPositions;
+  return c.json({
+    maxTotalPositions,
+    defaultMaxTotalPositions: LIVE_RISK_DEFAULTS.maxTotalPositions,
+    overridden: Number.isFinite(parsed) && parsed > 0,
   });
 });
 
@@ -1599,11 +1877,19 @@ async function getRiskSnapshotInternal(channelId?: string) {
 
   const tradingBlocked = drawdownPct >= 5 || (dbOnlyAlerts?.count ?? 0) > 0;
 
+  const { LIVE_RISK_DEFAULTS } = await import('@/config/risk-defaults.js');
+  const riskSecrets = await getProvider().load();
+  const rawMaxPos = riskSecrets.LIVE_MAX_TOTAL_POSITIONS;
+  const parsedMaxPos = rawMaxPos ? parseInt(rawMaxPos, 10) : NaN;
+  const effectiveMaxPositions = Number.isFinite(parsedMaxPos) && parsedMaxPos > 0
+    ? parsedMaxPos
+    : LIVE_RISK_DEFAULTS.maxTotalPositions;
+
   return {
     equity: currentEquity,
     buyingPower: latestBalance ? parseFloat(latestBalance.buyingPower ?? '0') : 0,
     openPositions: totalOpen?.count ?? 0,
-    maxPositions: 20,
+    maxPositions: effectiveMaxPositions,
     positionsBySymbol: openPositions,
     drawdownPct: Math.round(drawdownPct * 100) / 100,
     maxDrawdownPct: 5,
@@ -1661,6 +1947,12 @@ async function getBacktestRunBrief(id: string) {
   };
 }
 
+/**
+ * Returns the authoritative realized outcome for a message: the latest
+ * SETTLED run_decision. Falls back to any row for the message if no SETTLED
+ * exists (shouldn't happen in normal operation but we avoid returning null
+ * just because only pre-settlement events were recorded).
+ */
 async function getRunDecisionForTaskInternal(
   messageId: string,
   opts?: { channelId?: string; taskId?: string },
@@ -1669,16 +1961,30 @@ async function getRunDecisionForTaskInternal(
   const taskId = opts?.taskId;
 
   if (channelId) {
-    const [decision] = await db
+    // Prefer SETTLED (realized outcome). Latest first if multiple.
+    const [settled] = await db
       .select()
       .from(schema.runDecisions)
-      .where(
-        and(
-          eq(schema.runDecisions.messageId, messageId),
-          eq(schema.runDecisions.channelId, channelId),
-        )
-      );
-    return decision ?? null;
+      .where(and(
+        eq(schema.runDecisions.messageId, messageId),
+        eq(schema.runDecisions.channelId, channelId),
+        eq(schema.runDecisions.event, 'SETTLED'),
+      ))
+      .orderBy(desc(schema.runDecisions.createdAt))
+      .limit(1);
+    if (settled) return settled;
+
+    // No SETTLED yet — return any decision for context (e.g. pending task).
+    const [any] = await db
+      .select()
+      .from(schema.runDecisions)
+      .where(and(
+        eq(schema.runDecisions.messageId, messageId),
+        eq(schema.runDecisions.channelId, channelId),
+      ))
+      .orderBy(desc(schema.runDecisions.createdAt))
+      .limit(1);
+    return any ?? null;
   }
 
   if (taskId) {
@@ -1686,12 +1992,13 @@ async function getRunDecisionForTaskInternal(
       .select({ rd: schema.runDecisions })
       .from(schema.runDecisions)
       .innerJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
-      .where(
-        and(
-          eq(schema.runDecisions.messageId, messageId),
-          eq(schema.trades.taskId, taskId),
-        )
-      );
+      .where(and(
+        eq(schema.runDecisions.messageId, messageId),
+        eq(schema.trades.taskId, taskId),
+        eq(schema.runDecisions.event, 'SETTLED'),
+      ))
+      .orderBy(desc(schema.runDecisions.createdAt))
+      .limit(1);
     return decision?.rd ?? null;
   }
 

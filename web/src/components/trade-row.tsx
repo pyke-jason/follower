@@ -3,11 +3,10 @@ import { ChevronRight, Timer, Scissors, TrendingDown, Plus, ArrowLeftRight, XCir
 import { TableRow, TableCell } from '@/components/ui/table';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, pnlColor } from '@/lib/format';
-import { fmtMs } from './decision-shared';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { safeParseFloat } from '@src/lib/numbers';
 import { computeTradeCommission } from '@src/lib/commission';
-import { formatLegsSummary } from '@src/lib/trade';
+import { formatLegsSummary, contractMultiplier, tradeQty } from '@src/lib/trade';
 import type { TradeFlag } from '@src/db/schema';
 import { useTradesStore } from '@/stores/trades-store';
 import { getTradeMeta, getEventMeta } from '@/lib/snapshot-accessors';
@@ -51,14 +50,14 @@ export function TradeRow({
   tradeId,
   onExpand,
   isExpanded,
-  hideTrader,
   showLabel,
+  livePosition,
 }: {
   tradeId: string;
   onExpand?: () => void;
   isExpanded?: boolean;
-  hideTrader?: boolean;
   showLabel?: boolean;
+  livePosition?: { unrealizedPnl: number; marketValue: number | null };
 }) {
   const trade = useTradesStore((s) => s.trades.find((t) => t.id === tradeId));
   const events = useTradesStore((s) => s.eventsByTradeId[tradeId]) ?? [];
@@ -72,12 +71,22 @@ export function TradeRow({
 
   const grossPnl = trade.pnl != null ? safeParseFloat(trade.pnl) : null;
   const comm = commissionSchedule ? computeTradeCommission(trade, commissionSchedule) : 0;
-  const pnl = grossPnl != null ? grossPnl - comm : null;
+  const realizedPnl = grossPnl != null ? grossPnl - comm : null;
+  const isOpen = trade.status === 'OPEN';
+  const pnl = realizedPnl ?? (isOpen && livePosition ? livePosition.unrealizedPnl : null);
+  const pnlIsLive = realizedPnl == null && pnl != null;
 
   // Entry price for % return calc
   const entry = trade.entryPrice != null ? safeParseFloat(trade.entryPrice) : null;
   const pnlPct = pnl != null && entry != null && entry !== 0 && trade.quantity
     ? (pnl / (entry * trade.quantity)) * 100
+    : null;
+
+  // Mark price — derived from live broker market value per contract
+  const qty = tradeQty(trade.quantity);
+  const mult = contractMultiplier(trade.strategy);
+  const markPrice = isOpen && livePosition?.marketValue != null && qty > 0
+    ? livePosition.marketValue / (qty * mult)
     : null;
 
   // Row border — the ONE use of color to encode outcome
@@ -121,10 +130,13 @@ export function TradeRow({
     const steps = getEventMeta(e).chaseSteps;
     return sum + (typeof steps === 'number' ? steps : 0);
   }, 0);
-  const chaseSeverity = flags.includes('chaseDanger') ? 'danger' : flags.includes('chaseWarn') ? 'warn' : 'muted';
 
   // Active flags (excluding chase which is handled separately)
   const activeFlags = flags.filter(f => f !== 'chaseWarn' && f !== 'chaseDanger' && FLAG_ICONS[f]);
+
+  const subLabel = trade.strategy === 'STOCK'
+    ? `${qty} sh · ${trade.direction}`
+    : `${qty}× ${trade.strategy} · ${trade.direction}`;
 
   return (
     <TableRow
@@ -133,38 +145,36 @@ export function TradeRow({
       onClick={onExpand}
     >
       {/* Expand chevron */}
-      <TableCell className="w-6 pr-0">
+      <TableCell className="w-6 pr-0 align-top pt-2.5">
         {onExpand ? (
           <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground/40 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
         ) : null}
       </TableCell>
 
-      {/* Trade: LONG AAPL 230C 9/12 */}
-      <TableCell>
-        <span className="inline-flex items-center gap-3">
+      {/* Identity — symbol + legs, sub-label, warning icons */}
+      <TableCell className="py-2">
+        <div className="flex items-center gap-2 min-w-0">
           <Link
             to={href(`/trades/${trade.id}`, { from: pathname })}
-            className="text-foreground font-medium text-sm hover:underline underline-offset-2 decoration-muted-foreground/30"
+            className="text-foreground font-semibold text-sm tracking-tight hover:underline underline-offset-2 decoration-muted-foreground/30 truncate"
             onClick={(e) => e.stopPropagation()}
           >
-            {trade.direction} {trade.symbol}{legsSummary ? ` ${legsSummary}` : isOption ? ` ${trade.strategy}` : ''}
+            {trade.symbol}{legsSummary ? ` ${legsSummary}` : isOption ? ` ${trade.strategy}` : ''}
           </Link>
 
-          {/* Flag icons */}
           {activeFlags.length > 0 && (
-            <span className="inline-flex items-center gap-1">
+            <span className="inline-flex items-center gap-1 shrink-0">
               {activeFlags.map((f) => (
                 <FlagIcon key={f} flag={f} tooltip={f === 'slippage' ? slippageTooltip : undefined} />
               ))}
             </span>
           )}
 
-          {/* Chase icon + slippage */}
           {(chaseSteps > 0 || hasSlippage) && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span
-                  className={`inline-flex items-center gap-0.5 transition-colors ${slippageEmphasis > 0 ? 'rounded-sm px-1' : ''}`}
+                  className={`inline-flex items-center gap-0.5 shrink-0 transition-colors ${slippageEmphasis > 0 ? 'rounded-sm px-1' : ''}`}
                   style={hasSlippage && slippageIntensity > 0
                     ? {
                         color: `color-mix(in oklab, var(--destructive) ${Math.round(slippageIntensity * 100)}%, var(--muted-foreground))`,
@@ -203,71 +213,50 @@ export function TradeRow({
               </TooltipContent>
             </Tooltip>
           )}
-        </span>
+        </div>
+        <p className="text-[10px] text-muted-foreground/70 tabular-nums truncate mt-0.5">
+          {subLabel} · {formatDate(trade.openedAt)}
+        </p>
       </TableCell>
 
-      {/* Trader */}
-      {!hideTrader && (
-        <TableCell>
-          <Link
-            to={href(`/traders/${encodeURIComponent(trade.trader)}`)}
-            className="text-muted-foreground text-xs hover:text-foreground hover:underline underline-offset-2 decoration-muted-foreground/30 transition-colors"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {trade.trader}
-          </Link>
-        </TableCell>
-      )}
-
-      {/* Qty */}
-      <TableCell className="text-right font-mono tabular-nums text-xs text-muted-foreground">
-        {trade.quantity ?? 1}
-      </TableCell>
-
-      {/* Entry → Exit */}
-      <TableCell className="text-right font-mono tabular-nums text-xs">
-        <span className="whitespace-nowrap">
-          <span className="text-muted-foreground">{formatCurrency(trade.entryPrice)}</span>
-          {trade.exitPrice != null && (
-            <>
-              <span className="text-muted-foreground/30 mx-0.5">&rarr;</span>
-              <span className="text-muted-foreground">{formatCurrency(trade.exitPrice)}</span>
-            </>
-          )}
-        </span>
-      </TableCell>
-
-      {/* P&L — the star column */}
-      <TableCell className="text-right font-mono tabular-nums">
+      {/* Price + P&L — stacked: mark on top, pnl + % on bottom */}
+      <TableCell className="text-right py-2">
+        <div className="font-mono tabular-nums text-sm">
+          {markPrice != null
+            ? <span className="text-foreground">{formatCurrency(markPrice)}</span>
+            : trade.exitPrice != null
+              ? <span className="text-muted-foreground">{formatCurrency(trade.exitPrice)}</span>
+              : <span className="text-muted-foreground/40">--</span>}
+        </div>
         {pnl != null ? (
-          <div className="whitespace-nowrap">
-            <span className={`font-medium text-sm ${pnlColor(pnl)}`}>
-              {formatCurrency(pnl)}
-            </span>
-            {pnlPct != null && (
-              <span className="text-[10px] text-muted-foreground/50 ml-1">
-                {pnlPct > 0 ? '+' : ''}{pnlPct.toFixed(0)}%
-              </span>
-            )}
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="inline-flex items-center gap-1 justify-end mt-0.5 whitespace-nowrap">
+                {pnlIsLive && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-info animate-pulse" aria-hidden />
+                )}
+                <span className={`font-mono text-[11px] font-medium tabular-nums ${pnlColor(pnl)}`}>
+                  {formatCurrency(pnl)}
+                </span>
+                {pnlPct != null && (
+                  <span className={`font-mono text-[10px] tabular-nums ${pnlColor(pnl)} opacity-70`}>
+                    ({pnlPct > 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+                  </span>
+                )}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {pnlIsLive ? 'Unrealized P&L (live broker quote)' : 'Realized P&L (net of commission)'}
+            </TooltipContent>
+          </Tooltip>
         ) : (
-          <span className="text-muted-foreground/40">--</span>
+          <div className="text-muted-foreground/40 font-mono text-[10px] mt-0.5">--</div>
         )}
-      </TableCell>
-
-      {/* Opened */}
-      <TableCell className="text-muted-foreground/60 text-xs">
-        {formatDate(trade.openedAt)}
-      </TableCell>
-
-      {/* Execution time */}
-      <TableCell className="text-right font-mono tabular-nums text-[10px] text-muted-foreground/50">
-        {meta.executionMs != null ? fmtMs(meta.executionMs) : null}
       </TableCell>
 
       {/* Label — eval accuracy */}
       {showLabel && (
-        <TableCell className="text-center w-8">
+        <TableCell className="text-center w-8 align-top pt-2.5">
           <LabelIcon label={label} />
         </TableCell>
       )}

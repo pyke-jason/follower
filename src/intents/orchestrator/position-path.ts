@@ -269,8 +269,9 @@ export async function resolvePositionPath(
   // Step 1: Validate required fields
   if (parse.symbol === null) {
     return {
-      outcome: 'MANUAL_REVIEW',
+      outcome: 'SKIP',
       reason: 'position path requires a symbol but none was parsed',
+      skipCategory: 'parse_missing_symbol',
     };
   }
 
@@ -295,8 +296,9 @@ export async function resolvePositionPath(
   } catch (err) {
     log.error('getPositions failed for', symbol, err);
     return {
-      outcome: 'MANUAL_REVIEW',
+      outcome: 'SKIP',
       reason: `failed to fetch positions for ${symbol}: ${err instanceof Error ? err.message : String(err)}`,
+      skipCategory: 'broker_error',
     };
   }
 
@@ -304,6 +306,14 @@ export async function resolvePositionPath(
   const matchResult = matchPosition(positions, parse);
 
   if ('flagReason' in matchResult) {
+    // Skip cleanly when the trader doesn't hold this symbol; route ambiguous matches to review.
+    if (matchResult.flagReason.startsWith('no open position found')) {
+      return {
+        outcome: 'SKIP',
+        reason: matchResult.flagReason,
+        skipCategory: 'no_open_position',
+      };
+    }
     return { outcome: 'MANUAL_REVIEW', reason: matchResult.flagReason };
   }
 
@@ -326,8 +336,9 @@ export async function resolvePositionPath(
   } else if (action === 'TRIM') {
     if (parse.exitPercent === null || parse.exitPercent === undefined) {
       return {
-        outcome: 'MANUAL_REVIEW',
+        outcome: 'SKIP',
         reason: 'TRIM without explicit exit percentage',
+        skipCategory: 'trim_missing_percent',
       };
     }
     trimExitPercent = parse.exitPercent;
@@ -340,8 +351,9 @@ export async function resolvePositionPath(
     // LEG_OFF
     if (parse.targetStrategy === null) {
       return {
-        outcome: 'MANUAL_REVIEW',
+        outcome: 'SKIP',
         reason: 'LEG_OFF requires knowing which leg to keep (targetStrategy is null)',
+        skipCategory: 'legoff_missing_target_strategy',
       };
     }
     const result = buildLegOffLegs(position, symbol, parse.targetStrategy);

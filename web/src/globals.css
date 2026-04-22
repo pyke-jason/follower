@@ -66,6 +66,12 @@
   --color-strategy-stock: var(--strategy-stock);
   --color-strategy-stock-fg: var(--strategy-stock-fg);
   --color-strategy-stock-border: var(--strategy-stock-border);
+  --color-strategy-ccs: var(--strategy-ccs);
+  --color-strategy-ccs-fg: var(--strategy-ccs-fg);
+  --color-strategy-ccs-border: var(--strategy-ccs-border);
+  --color-strategy-pcs: var(--strategy-pcs);
+  --color-strategy-pcs-fg: var(--strategy-pcs-fg);
+  --color-strategy-pcs-border: var(--strategy-pcs-border);
   --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
   --font-serif: Georgia, "Times New Roman", ui-serif, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -138,6 +144,12 @@
   --strategy-stock:        oklch(0.68 0.15 230); /* sky 500 */
   --strategy-stock-fg:     oklch(0.38 0.14 230); /* sky 800 */
   --strategy-stock-border: oklch(0.76 0.13 230); /* sky 400 */
+  --strategy-ccs:        oklch(0.70 0.12 200);   /* teal 500 */
+  --strategy-ccs-fg:     oklch(0.38 0.10 200);   /* teal 800 */
+  --strategy-ccs-border: oklch(0.78 0.10 200);   /* teal 400 */
+  --strategy-pcs:        oklch(0.65 0.23 330);   /* fuchsia 500 */
+  --strategy-pcs-fg:     oklch(0.38 0.18 330);   /* fuchsia 800 */
+  --strategy-pcs-border: oklch(0.73 0.20 330);   /* fuchsia 400 */
 }
 
 /* ── Dark mode (shadcn default neutral) ──────────────────────────── */
@@ -206,6 +218,12 @@
   --strategy-stock:        oklch(0.68 0.15 230); /* sky 500 */
   --strategy-stock-fg:     oklch(0.84 0.12 230); /* sky 300 */
   --strategy-stock-border: oklch(0.76 0.13 230); /* sky 400/40 */
+  --strategy-ccs:        oklch(0.70 0.12 200);   /* teal 500 */
+  --strategy-ccs-fg:     oklch(0.84 0.10 200);   /* teal 300 */
+  --strategy-ccs-border: oklch(0.78 0.10 200);   /* teal 400/40 */
+  --strategy-pcs:        oklch(0.65 0.23 330);   /* fuchsia 500 */
+  --strategy-pcs-fg:     oklch(0.82 0.14 330);   /* fuchsia 300 */
+  --strategy-pcs-border: oklch(0.73 0.20 330);   /* fuchsia 400/40 */
 }
 
 @layer base {

@@ -19,11 +19,18 @@ export type ReconciliationAlertInput = {
   actual: unknown;
 };
 
+type DbTrade = typeof schema.trades.$inferSelect;
+
 /**
- * Auto-resolve stale reconciliation alerts that are no longer valid.
- * Runs before the comparison logic using the already-fetched broker positions.
+ * Auto-resolve alerts whose current broker+DB state no longer matches the
+ * original discrepancy. Called with the same symbol maps the scan uses so
+ * "is the alert still valid right now?" is a direct lookup.
  */
-async function autoResolveAlerts(brokerPositions: BrokerPosition[], channelId: string): Promise<void> {
+async function autoResolveAlerts(
+  brokerBySymbol: Map<string, BrokerPosition[]>,
+  dbBySymbol: Map<string, DbTrade[]>,
+  channelId: string,
+): Promise<void> {
   const unresolved = await db.select()
     .from(schema.reconciliationAlerts)
     .where(and(
@@ -33,37 +40,35 @@ async function autoResolveAlerts(brokerPositions: BrokerPosition[], channelId: s
 
   if (unresolved.length === 0) return;
 
-  const brokerSymbols = new Set(brokerPositions.map(p => extractUnderlying(p.symbol)));
   const now = new Date().toISOString();
 
   for (const alert of unresolved) {
+    const brokerPos = brokerBySymbol.get(alert.symbol) ?? [];
+    const dbTrades = dbBySymbol.get(alert.symbol) ?? [];
     let reason: string | null = null;
 
     if (alert.type === 'DB_ONLY') {
-      // Trade in DB, not at broker — blocks all trading
       if (alert.tradeId) {
-        const trades = await db.select()
-          .from(schema.trades)
-          .where(eq(schema.trades.id, alert.tradeId))
-          .limit(1);
-        const trade = trades[0];
-
-        if (trade && trade.status !== 'OPEN') {
-          reason = `Trade status changed to ${trade.status}`;
-        } else if (brokerSymbols.has(alert.symbol)) {
+        const trade = dbTrades.find((t) => t.id === alert.tradeId);
+        if (!trade || trade.status !== 'OPEN') {
+          reason = `Trade status changed to ${trade?.status ?? 'missing'}`;
+        } else if (brokerPos.length > 0) {
           reason = `Broker position now exists for ${alert.symbol}`;
         }
       }
     } else if (alert.type === 'BROKER_ONLY') {
-      // Position at broker, not in DB
-      if (!brokerSymbols.has(alert.symbol)) {
+      if (brokerPos.length === 0) {
         reason = 'Broker position no longer exists';
+      } else if (dbTrades.length > 0) {
+        reason = 'DB now has matching open trade(s)';
       }
     } else if (alert.type === 'QUANTITY_MISMATCH') {
-      // Auto-resolve after 24 hours (will be re-raised if still relevant)
-      const alertAge = Date.now() - new Date(alert.createdAt!).getTime();
-      if (alertAge > 24 * 60 * 60 * 1000) {
-        reason = 'Alert expired (will be re-raised if still relevant)';
+      if (brokerPos.length === 0 || dbTrades.length === 0) {
+        reason = 'No longer both-sided';
+      } else {
+        const dbQty = dbTrades.reduce((s, t) => s + tradeQty(t.quantity), 0);
+        const brokerQty = brokerPos.reduce((s, p) => s + Math.abs(p.quantity), 0);
+        if (dbQty === brokerQty) reason = 'Quantities now match';
       }
     }
 
@@ -81,21 +86,15 @@ async function autoResolveAlerts(brokerPositions: BrokerPosition[], channelId: s
  * for any discrepancies.
  */
 export async function runReconciliation(broker: BrokerService, channelId: string): Promise<ReconciliationAlertInput[]> {
-  const brokerPositions = await broker.getPositions();
-
-  // Auto-resolve stale alerts before running comparison
-  await autoResolveAlerts(brokerPositions, channelId);
+  const allBrokerPositions = await broker.getPositions();
+  const brokerPositions = allBrokerPositions.filter((p) => p.quantity !== 0);
 
   const dbTrades = await db.select()
     .from(schema.trades)
     .where(and(isOpen, forChannel(channelId)));
 
-  const alerts: ReconciliationAlertInput[] = [];
-
-  // Build lookup maps by underlying symbol
   const brokerBySymbol = new Map<string, BrokerPosition[]>();
   for (const pos of brokerPositions) {
-    // Extract underlying symbol (e.g. from OCC option symbol or direct)
     const underlying = extractUnderlying(pos.symbol);
     const existing = brokerBySymbol.get(underlying) ?? [];
     existing.push(pos);
@@ -108,6 +107,10 @@ export async function runReconciliation(broker: BrokerService, channelId: string
     existing.push(trade);
     dbBySymbol.set(trade.symbol, existing);
   }
+
+  await autoResolveAlerts(brokerBySymbol, dbBySymbol, channelId);
+
+  const alerts: ReconciliationAlertInput[] = [];
 
   // Check for DB_ONLY: trades we think are open but broker has no position
   for (const [symbol, trades] of dbBySymbol) {
@@ -156,19 +159,40 @@ export async function runReconciliation(broker: BrokerService, channelId: string
     }
   }
 
-  // Persist alerts to DB
-  if (alerts.length > 0) {
+  const existingUnresolved = await db.select({
+    type: schema.reconciliationAlerts.type,
+    symbol: schema.reconciliationAlerts.symbol,
+    tradeId: schema.reconciliationAlerts.tradeId,
+  })
+    .from(schema.reconciliationAlerts)
+    .where(and(
+      eq(schema.reconciliationAlerts.channelId, channelId),
+      eq(schema.reconciliationAlerts.resolved, false),
+    ));
+
+  const dedupKey = (type: string, symbol: string, tradeId: string | null) =>
+    `${type}|${symbol}|${tradeId ?? ''}`;
+  const existingKeys = new Set(existingUnresolved.map((a) => dedupKey(a.type, a.symbol, a.tradeId)));
+
+  const newAlerts = alerts.filter((a) => !existingKeys.has(dedupKey(a.type, a.symbol, a.tradeId ?? null)));
+  const suppressed = alerts.length - newAlerts.length;
+
+  if (newAlerts.length > 0) {
     await db.insert(schema.reconciliationAlerts).values(
-      alerts.map((a) => ({ channelId, ...a, tradeId: a.tradeId ?? null })),
+      newAlerts.map((a) => ({ channelId, ...a, tradeId: a.tradeId ?? null })),
     );
 
-    for (const alert of alerts) {
+    for (const alert of newAlerts) {
       log.warn(`${alert.type}: ${alert.symbol}`, alert);
     }
 
-    // Send Discord notification (non-blocking, non-fatal)
-    sendDiscordAlert(alerts).catch((err) => log.warn('Discord alert failed:', err));
-  } else {
+    sendDiscordAlert(newAlerts).catch((err) => log.warn('Discord alert failed:', err));
+  }
+
+  if (suppressed > 0) {
+    log.info(`Suppressed ${suppressed} duplicate alert(s) already unresolved`);
+  }
+  if (alerts.length === 0) {
     log.info('No discrepancies found');
   }
 

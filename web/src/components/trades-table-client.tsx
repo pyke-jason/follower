@@ -44,74 +44,15 @@ function getEffectivePnl(
   return null;
 }
 
-// ── FLIP animation ─────────────────────────────────────
-// Tracks Y positions of [data-trade-group] elements across renders.
-// When order changes, animates each group from old → new position via WAAPI.
-function useFlipAnimation(
-  containerRef: React.RefObject<HTMLDivElement | null>,
-  deps: unknown[],
-) {
-  const prevRectsRef = useRef(new Map<string, number>());
-
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const groups = container.querySelectorAll<HTMLElement>('[data-trade-group]');
-    if (groups.length === 0) return;
-
-    // Cancel ALL running animations FIRST so getBoundingClientRect()
-    // returns true layout positions, not mid-transform animated ones.
-    groups.forEach((el) => {
-      el.getAnimations().forEach((a) => a.cancel());
-    });
-
-    // Read new positions — container-relative and scroll-stable
-    const containerTop = container.getBoundingClientRect().top;
-    const scrollTop = container.scrollTop;
-    const newRects = new Map<string, number>();
-
-    groups.forEach((el) => {
-      const id = el.dataset.tradeGroup!;
-      newRects.set(id, el.getBoundingClientRect().top - containerTop + scrollTop);
-    });
-
-    if (prevRectsRef.current.size > 0) {
-      groups.forEach((el) => {
-        const id = el.dataset.tradeGroup!;
-        const prevY = prevRectsRef.current.get(id);
-        const newY = newRects.get(id);
-        if (prevY == null || newY == null) return;
-
-        const delta = prevY - newY;
-        if (Math.abs(delta) < 2) return;
-
-        el.animate(
-          [
-            { transform: `translateY(${delta}px)` },
-            { transform: 'translateY(0)' },
-          ],
-          {
-            duration: 500,
-            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-            fill: 'none',
-          },
-        );
-      });
-    }
-
-    prevRectsRef.current = newRects;
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
-}
-
 // ── URL-synced sort params ──────────────────────────────
 const useTradeSortParams = createFilterParams({
   sort: { type: 'sort', defaultColumn: 'openedAt', defaultDir: 'desc' },
 });
 
-const EMPTY_PNL: Record<string, number> = {};
+type LivePosition = { unrealizedPnl: number; marketValue: number | null };
+const EMPTY_POSITIONS: Record<string, LivePosition> = {};
 
-export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {}) {
+export function TradesTableClient() {
   const trades = useTradesStore((s) => s.trades);
   const eventsByTradeId = useTradesStore((s) => s.eventsByTradeId);
   const labelsByTradeId = useTradesStore((s) => s.labelsByTradeId);
@@ -132,15 +73,19 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
 
   const [urlTradeId, setUrlTradeId] = useSearchParam('trade');
 
-  // Poll unrealized P&L for live channels. Read the query `data` directly —
-  // `select` must be pure, so we do not call any setters inside it.
+  // Poll live broker positions for open trades.
   const openPnlQuery = useQuery({
     queryKey: ['open-pnl', channelId],
-    queryFn: () => api<Record<string, number>>(buildScopedPath('/open-pnl', channelId)),
+    queryFn: () => api<Record<string, LivePosition>>(buildScopedPath('/open-pnl', channelId)),
     refetchInterval: 10_000,
     enabled: isLiveChannel,
   });
-  const unrealizedPnl = openPnlQuery.data ?? EMPTY_PNL;
+  const livePositions = openPnlQuery.data ?? EMPTY_POSITIONS;
+  const unrealizedPnl = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const [id, pos] of Object.entries(livePositions)) map[id] = pos.unrealizedPnl;
+    return map;
+  }, [livePositions]);
 
   // Sync URL → store
   useEffect(() => {
@@ -179,8 +124,6 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
     return arr;
   }, [trades, sortColumn, sortDirection, unrealizedPnl, commissionSchedule]);
 
-  // FLIP animate trade groups when order changes
-  useFlipAnimation(scrollRef, [sortedTrades]);
 
   const selectedTrade = selectedTradeId
     ? trades.find((t) => t.id === selectedTradeId) ?? null
@@ -202,13 +145,8 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-6" />
-                    <TableHead>Trade</TableHead>
-                    {!hideTrader && <TableHead>Trader</TableHead>}
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead className="text-right">Entry / Exit</TableHead>
-                    <SortableHead column="pnl" label="P&L" sort={sort} onSort={setSort} align="right" />
-                    <SortableHead column="openedAt" label="Opened" sort={sort} onSort={setSort} />
-                    <TableHead className="text-right">Exec</TableHead>
+                    <SortableHead column="openedAt" label="Position" sort={sort} onSort={setSort} />
+                    <SortableHead column="pnl" label="Mark / P&L" sort={sort} onSort={setSort} align="right" />
                     {hasLabels && <TableHead className="w-8 text-center">Label</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -220,8 +158,8 @@ export function TradesTableClient({ hideTrader }: { hideTrader?: boolean } = {})
                         tradeId={t.id}
                         onExpand={() => setSelectedId(t.id)}
                         isExpanded={selectedTradeId === t.id}
-                        hideTrader={hideTrader}
                         showLabel={hasLabels}
+                        livePosition={livePositions[t.id]}
                       />
                       <EventSubRows events={events} closeMessageId={t.closeMessageId} extraCells={hasLabels ? 1 : 0} />
                     </TableBody>

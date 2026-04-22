@@ -1,11 +1,11 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex, customType } from 'drizzle-orm/sqlite-core';
+  import { sqliteTable, text, integer, real, index, uniqueIndex, customType } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
-import type { DecisionOutcome, Direction, Strategy } from '../lib/enums.js';
+import type { Direction, Strategy } from '../lib/enums.js';
 // Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
 // relative imports (its CJS bundler can't handle them).
 const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
@@ -61,7 +61,6 @@ export const tasks = sqliteTable('tasks', {
   assignee:    text('assignee').notNull().default('agent'),
   priority:    integer('priority').default(0),
   context:     typedJson<TaskContext>('context').notNull().default({}),
-  result:      typedJson<{ outcome: string }>('result'),
   createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:   text('started_at'),
   completedAt: text('completed_at'),
@@ -179,8 +178,6 @@ export const runDecisions = sqliteTable('run_decisions', {
   inputTokens:    integer('input_tokens'),          // LLM input tokens (null for deterministic skips)
   outputTokens:   integer('output_tokens'),         // LLM output tokens (null for deterministic skips)
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
-  path:           text('path'),                    // LEGACY
-  decision:       text('decision'),                // LEGACY
   skipCategory:   text('skip_category'),
 }, (table) => [
   index('idx_run_decisions_channel').on(table.channelId),
@@ -453,12 +450,6 @@ export const TaskContextSchema = z.object({
 }).passthrough();
 
 export type TaskContext = z.infer<typeof TaskContextSchema>;
-
-export type TaskResult = {
-  decision: DecisionOutcome;
-  reasoning: string;
-  signals?: Signal[];
-};
 
 export type TradeMetadata = {
   slippage?: number;

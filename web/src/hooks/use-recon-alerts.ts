@@ -30,15 +30,15 @@ export function useReconAlerts(filterResolved?: boolean) {
     queryFn: () => api<ReconStats>(href('/recon-alerts/stats')),
   });
 
-  const resolveMut = useApiMutation<{ alertId: string; reason: string }>(
+  const resolveMut = useApiMutation<{ alertId: string; decision: 'broker' | 'app' }>(
     'POST',
     (v) => `/reconciliation/${v.alertId}/resolve`,
-    { body: (v) => ({ reason: v.reason }), invalidate: [['recon-alerts'], ['recon-stats']] },
+    { body: (v) => ({ decision: v.decision }), invalidate: [['recon-alerts'], ['recon-stats']] },
   );
 
   const resolve = useCallback(
-    (alertId: string, reason: string) => resolveMut.mutate({ alertId, reason }),
-    [resolveMut.mutate],
+    (alertId: string, decision: 'broker' | 'app') => resolveMut.mutateAsync({ alertId, decision }),
+    [resolveMut.mutateAsync],
   );
 
   return {

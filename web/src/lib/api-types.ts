@@ -30,7 +30,11 @@ export const statusResponseSchema = z.object({
   channelId: z.string(),
   channelKind: channelKindSchema,
   openTrades: z.number(),
+  /** Realized P&L from trades closed today (live) or total realized (backtest). */
   todayPnl: z.number(),
+  /** Live unrealized P&L across all open positions, summed from the broker.
+   *  0 when broker is unreachable or for backtest channels. */
+  unrealizedPnl: z.number(),
   pendingTasks: z.number(),
   tradingBlocked: z.boolean().optional(),
   unresolvedAlertCount: z.number().optional(),

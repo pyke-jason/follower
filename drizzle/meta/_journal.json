@@ -64,6 +64,13 @@
       "when": 1776552685667,
       "tag": "0008_flippant_millenium_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1776793495595,
+      "tag": "0009_drop_legacy_task_and_decision_fields",
+      "breakpoints": true
     }
   ]
 }

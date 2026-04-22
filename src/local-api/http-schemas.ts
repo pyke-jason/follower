@@ -128,7 +128,6 @@ export const TraderPatchBodySchema = z.discriminatedUnion('field', [
   z.object({ field: z.literal('enabled'), value: z.boolean() }),
   z.object({ field: z.literal('strategies'), value: z.array(z.string()) }),
   z.object({ field: z.literal('notes'), value: z.string().nullable() }),
-  z.object({ field: z.literal('riskPercent'), value: z.number().nullable() }),
 ]);
 
 /* ─── POST /web/traders/bulk ────────────────────────── */
@@ -147,7 +146,7 @@ export const TradersBulkBodySchema = z.discriminatedUnion('action', [
 /* ─── POST /web/reconciliation/:id/resolve ──────────── */
 
 export const ReconciliationResolveBodySchema = z.object({
-  reason: z.string().min(1, 'Reason required'),
+  decision: z.enum(['broker', 'app']),
 });
 
 /* ─── POST /web/settings/secrets ────────────────────── */
@@ -161,6 +160,12 @@ export const SettingsSecretBodySchema = z.object({
 
 export const SettingsTogglesBodySchema = z.object({
   enabled: z.boolean(),
+});
+
+/* ─── POST /web/settings/risk ───────────────────────── */
+
+export const SettingsRiskBodySchema = z.object({
+  maxTotalPositions: z.number().int().min(1).max(1000),
 });
 
 /* ─── POST /web/eval/review/:id ─────────────────────── */

@@ -268,7 +268,9 @@ async function classifyMessage(
   } else {
     const outcome = resolved.outcome === 'MANUAL_REVIEW' ? 'MANUAL_REVIEW' : 'SKIP';
     summary.byOutcome[outcome]++;
-    const skipCategory = outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
+    const skipCategory = resolved.outcome === 'SKIP' && resolved.skipCategory
+      ? resolved.skipCategory
+      : outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
     await emitter.emit(
       'SETTLED',
       {

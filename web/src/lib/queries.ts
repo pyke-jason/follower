@@ -21,7 +21,9 @@ type TradesResponse = {
   flags: Record<string, TradeFlag[]>;
 };
 
-type TasksResponse = CursorResponse<Task>;
+/** Task rows augmented with realized outcome from run_decisions SETTLED. */
+type TaskListRow = Task & { realizedOutcome: string | null };
+type TasksResponse = CursorResponse<TaskListRow>;
 
 export const queries = {
   trades: {

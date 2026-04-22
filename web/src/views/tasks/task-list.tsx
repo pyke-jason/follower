@@ -16,7 +16,10 @@ type Task = {
   taskType: string;
   status: string;
   context: TaskContext | null;
-  result: { outcome: string } | null;
+  /** Realized outcome from run_decisions SETTLED — the truth, not the agent's
+   *  intent. Null for tasks that haven't produced a SETTLED row yet (pending/
+   *  in-progress or legacy data before the schema cleanup). */
+  realizedOutcome: string | null;
   createdAt: string | null;
   error: string | null;
 };
@@ -53,11 +56,11 @@ function useTaskColumns(): Column<Task>[] {
     },
     {
       key: 'decision',
-      label: 'Decision',
-      render: (t) => {
-        const decision = t.result?.outcome;
-        return decision ? <Badge label={decision} /> : <span className="text-muted-foreground/20">&ndash;</span>;
-      },
+      label: 'Outcome',
+      render: (t) =>
+        t.realizedOutcome
+          ? <Badge label={t.realizedOutcome} />
+          : <span className="text-muted-foreground/20">&ndash;</span>,
     },
     {
       key: 'status',

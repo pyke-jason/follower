@@ -496,6 +496,7 @@ async function processMessage(
         result.parseResult?.symbol ?? null,
       );
       if (isUnfollowed) return 'unfollowed_exit';
+      if (result.outcome === 'SKIP' && result.skipCategory) return result.skipCategory;
       return result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
     },
     onResult: async (result, emitter) => {
@@ -536,7 +537,11 @@ async function processMessage(
           result.parseResult?.action ?? null,
           result.parseResult?.symbol ?? null,
         );
-        const category = isUnfollowed ? 'unfollowed_exit' : (result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
+        const category = isUnfollowed
+          ? 'unfollowed_exit'
+          : result.outcome === 'SKIP' && result.skipCategory
+            ? result.skipCategory
+            : result.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip';
         stats.skipped++;
         stats.skipReasons.set(category, (stats.skipReasons.get(category) ?? 0) + 1);
 

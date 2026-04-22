@@ -42,7 +42,7 @@ app.post('/spawn', async (c) => {
     cwd: PROJECT_ROOT,
     stdio: ['ignore', logFd, logFd],
     detached: true,
-    env: { ...process.env },
+    env: { ...process.env, LOG_PROCESS_NAME: 'classify' },
   });
 
   const pid = child.pid ?? null;

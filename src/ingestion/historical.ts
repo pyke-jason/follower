@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, gte, ne } from 'drizzle-orm';
 import { fetchJson } from './resilient-fetcher.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
@@ -95,6 +95,23 @@ export async function fetchHistorical(opts: {
       await db.update(schema.historicalFetchRuns)
         .set({ currentDate: date })
         .where(eq(schema.historicalFetchRuns.id, runId));
+
+      // Cross-run cache: skip the API call if another run already completed this date
+      // AFTER end-of-day UTC for that date (so the day was fully settled when fetched).
+      // Today is never cacheable — its end-of-day is in the future.
+      const cached = await findCachedChunk(date, runId);
+      if (cached) {
+        await db.update(schema.historicalFetchChunks)
+          .set({
+            status: 'completed',
+            fetchedCount: cached.fetchedCount ?? 0,
+            savedCount: 0, // dedup on re-fetch would have saved 0 anyway
+          })
+          .where(eq(schema.historicalFetchChunks.id, chunk.id));
+        totalFetched += cached.fetchedCount ?? 0;
+        console.log(`[Historical] ${date}: cached (${cached.fetchedCount ?? 0} messages in prior run)`);
+        continue;
+      }
 
       // Mark chunk in_progress
       await db.update(schema.historicalFetchChunks)
@@ -251,6 +268,32 @@ function mapToSignalRFormat(api: ApiMessage): SignalRMessage {
     Votes: api.Votes ?? 0,
     Reactions: api.Reactions ?? [],
   };
+}
+
+async function findCachedChunk(
+  date: string,
+  excludeRunId: string,
+): Promise<{ fetchedCount: number | null } | null> {
+  const endOfDay = new Date(date + 'T00:00:00Z');
+  endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+  const endOfDayIso = endOfDay.toISOString();
+
+  const [row] = await db
+    .select({ fetchedCount: schema.historicalFetchChunks.fetchedCount })
+    .from(schema.historicalFetchChunks)
+    .innerJoin(
+      schema.historicalFetchRuns,
+      eq(schema.historicalFetchChunks.runId, schema.historicalFetchRuns.id),
+    )
+    .where(and(
+      eq(schema.historicalFetchChunks.date, date),
+      eq(schema.historicalFetchChunks.status, 'completed'),
+      ne(schema.historicalFetchChunks.runId, excludeRunId),
+      gte(schema.historicalFetchRuns.startedAt, endOfDayIso),
+    ))
+    .limit(1);
+
+  return row ?? null;
 }
 
 async function createChunks(runId: string, dates: string[]): Promise<void> {

@@ -39,6 +39,20 @@ let _initialized = false;
 let expiryTimer: ReturnType<typeof setInterval> | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 
+function readRiskOverrides(): Partial<typeof LIVE_RISK_DEFAULTS> {
+  const overrides: Partial<typeof LIVE_RISK_DEFAULTS> = {};
+  const raw = process.env.LIVE_MAX_TOTAL_POSITIONS;
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      overrides.maxTotalPositions = parsed;
+    } else {
+      log.warn({ raw }, 'Ignoring invalid LIVE_MAX_TOTAL_POSITIONS');
+    }
+  }
+  return overrides;
+}
+
 // ─── Lazy agent (single instance reused across tasks) ───
 
 let _agent: Agent | null = null;
@@ -135,7 +149,7 @@ async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> 
       agentIdentity: getDefaultTradeModel(),
       trace,
       onResult: async (result, _emitter) => {
-        await completeTask(task.id, { outcome: result.outcome });
+        await completeTask(task.id);
         console.log(`[Runner ${state.service.channelId}] Task ${task.id} completed: ${result.outcome}`);
       },
     });
@@ -170,6 +184,8 @@ export async function initRunner(): Promise<{ channels: RuntimeChannelService[] 
     throw new Error('No enabled runtime channels found for runner initialization.');
   }
 
+  const riskConfig = { ...LIVE_RISK_DEFAULTS, ...readRiskOverrides() };
+
   for (const service of channelServices) {
     const bundle = buildPipelineDeps({
       broker: service.broker,
@@ -179,7 +195,7 @@ export async function initRunner(): Promise<{ channels: RuntimeChannelService[] 
         sendAlert: sendSystemAlert,
       },
       config: {
-        riskConfig: { ...LIVE_RISK_DEFAULTS },
+        riskConfig,
         agentIdentity: getDefaultTradeModel(),
         isBacktestScope: false,
         requireExplicitTimestamps: false,

@@ -126,10 +126,13 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
       reason: resolved.reason,
       parseResult: resolved.parseResult,
       usage: resolved.usage,
+      ...(resolved.outcome === 'SKIP' && resolved.skipCategory ? { skipCategory: resolved.skipCategory } : {}),
     } as Extract<ProcessTaskResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>;
 
     const mappedOutcome = resolved.outcome === 'MANUAL_REVIEW' ? 'SKIP' : resolved.outcome;
+    const deterministicSkipCategory = resolved.outcome === 'SKIP' ? resolved.skipCategory : undefined;
     const skipCategory = env.classifySkip?.(result)
+      ?? deterministicSkipCategory
       ?? (resolved.outcome === 'MANUAL_REVIEW' ? 'flagged' : 'skip');
 
     await emitter.emit('SETTLED',

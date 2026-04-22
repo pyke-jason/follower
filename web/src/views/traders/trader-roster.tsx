@@ -6,6 +6,7 @@ import {
   useCallback,
   useMemo,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Search, X, Plus, ListPlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -45,6 +46,8 @@ import type { Column } from '@/lib/api-types';
 import type { TrackedTrader } from '@src/db/schema';
 import { api } from '@/lib/api';
 
+const TRADERS_KEY = ['traders'] as const;
+
 const quickAdd = (name: string) =>
   api('/traders', { method: 'POST', body: JSON.stringify({ name }) });
 const removeTrader = (name: string) =>
@@ -64,11 +67,6 @@ const setNotes = (name: string, notes: string | null) =>
     method: 'PATCH',
     body: JSON.stringify({ field: 'notes', value: notes }),
   });
-const setRiskPercent = (name: string, riskPercent: number | null) =>
-  api(`/traders/${encodeURIComponent(name)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ field: 'riskPercent', value: riskPercent }),
-  });
 const bulkAdd = (names: string[]) =>
   api('/traders/bulk', { method: 'POST', body: JSON.stringify({ action: 'add', names }) });
 const bulkRemove = (names: string[]) =>
@@ -76,7 +74,7 @@ const bulkRemove = (names: string[]) =>
 const bulkToggleStrategy = (names: string[], strategy: string, enable: boolean) =>
   api('/traders/bulk', { method: 'POST', body: JSON.stringify({ action: 'toggleStrategy', names, strategy, enable }) });
 
-const ALL_STRATEGIES = ['CDS', 'PDS', 'CALL', 'PUT', 'STOCK'] as const;
+const ALL_STRATEGIES = ['STOCK', 'CALL', 'PUT', 'CDS', 'PDS', 'CCS', 'PCS'] as const;
 type Strategy = (typeof ALL_STRATEGIES)[number];
 
 // Strategy-themed toggle item. `data-[state=on]:` selectors match the base
@@ -87,11 +85,13 @@ const strategyToggleVariants = cva(
   {
     variants: {
       strategy: {
-        CDS: 'data-[state=on]:bg-strategy-cds/15 data-[state=on]:text-strategy-cds-fg',
-        PDS: 'data-[state=on]:bg-strategy-pds/15 data-[state=on]:text-strategy-pds-fg',
+        STOCK: 'data-[state=on]:bg-strategy-stock/15 data-[state=on]:text-strategy-stock-fg',
         CALL: 'data-[state=on]:bg-strategy-call/15 data-[state=on]:text-strategy-call-fg',
         PUT: 'data-[state=on]:bg-strategy-put/15 data-[state=on]:text-strategy-put-fg',
-        STOCK: 'data-[state=on]:bg-strategy-stock/15 data-[state=on]:text-strategy-stock-fg',
+        CDS: 'data-[state=on]:bg-strategy-cds/15 data-[state=on]:text-strategy-cds-fg',
+        PDS: 'data-[state=on]:bg-strategy-pds/15 data-[state=on]:text-strategy-pds-fg',
+        CCS: 'data-[state=on]:bg-strategy-ccs/15 data-[state=on]:text-strategy-ccs-fg',
+        PCS: 'data-[state=on]:bg-strategy-pcs/15 data-[state=on]:text-strategy-pcs-fg',
       },
     },
   },
@@ -102,11 +102,13 @@ const strategyBulkButtonVariants = cva(
   {
     variants: {
       strategy: {
-        CDS: 'bg-strategy-cds/15 text-strategy-cds-fg border-strategy-cds-border',
-        PDS: 'bg-strategy-pds/15 text-strategy-pds-fg border-strategy-pds-border',
+        STOCK: 'bg-strategy-stock/15 text-strategy-stock-fg border-strategy-stock-border',
         CALL: 'bg-strategy-call/15 text-strategy-call-fg border-strategy-call-border',
         PUT: 'bg-strategy-put/15 text-strategy-put-fg border-strategy-put-border',
-        STOCK: 'bg-strategy-stock/15 text-strategy-stock-fg border-strategy-stock-border',
+        CDS: 'bg-strategy-cds/15 text-strategy-cds-fg border-strategy-cds-border',
+        PDS: 'bg-strategy-pds/15 text-strategy-pds-fg border-strategy-pds-border',
+        CCS: 'bg-strategy-ccs/15 text-strategy-ccs-fg border-strategy-ccs-border',
+        PCS: 'bg-strategy-pcs/15 text-strategy-pcs-fg border-strategy-pcs-border',
       },
     },
   },
@@ -147,8 +149,7 @@ type OptAction =
       names: string[];
       strategy: string;
       enable: boolean;
-    }
-  | { type: 'riskPercent'; name: string; riskPercent: number | null };
+    };
 
 export function TraderRoster({
   traders,
@@ -157,6 +158,12 @@ export function TraderRoster({
   traders: TrackedTrader[];
   authors: string[];
 }) {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: TRADERS_KEY }),
+    [qc],
+  );
+
   const [addOpen, setAddOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [, startTransition] = useTransition();
@@ -213,21 +220,6 @@ export function TraderRoster({
               : current.filter((s) => s !== action.strategy);
             return { ...t, strategies };
           });
-        case 'riskPercent':
-          return state.map((t) =>
-            t.name === action.name
-              ? {
-                  ...t,
-                  positionSizingConfig: action.riskPercent != null
-                    ? {
-                        strategy: 'atr',
-                        riskPercent: action.riskPercent,
-                        atrMultiplier: (t.positionSizingConfig?.strategy === 'atr' ? t.positionSizingConfig.atrMultiplier : 2.0),
-                      }
-                    : null,
-                }
-              : t,
-          );
       }
     },
   );
@@ -284,6 +276,8 @@ export function TraderRoster({
         toast.success('Trader added');
       } catch {
         toast.error('Failed to add trader');
+      } finally {
+        invalidate();
       }
     });
   }
@@ -298,6 +292,8 @@ export function TraderRoster({
         toast.success(`${available.length} traders added`);
       } catch {
         toast.error('Failed to add traders');
+      } finally {
+        invalidate();
       }
     });
   }
@@ -318,6 +314,8 @@ export function TraderRoster({
                     await quickAdd(name);
                   } catch {
                     toast.error('Failed to undo removal');
+                  } finally {
+                    invalidate();
                   }
                 });
               },
@@ -325,10 +323,12 @@ export function TraderRoster({
           });
         } catch {
           toast.error('Failed to remove trader');
+        } finally {
+          invalidate();
         }
       });
     },
-    [addOptimistic, startTransition],
+    [addOptimistic, startTransition, invalidate],
   );
 
   function doRemoveSelected() {
@@ -343,6 +343,8 @@ export function TraderRoster({
         toast.success(`${names.length} trader${names.length === 1 ? '' : 's'} removed`);
       } catch {
         toast.error('Failed to remove traders');
+      } finally {
+        invalidate();
       }
     });
   }
@@ -360,6 +362,8 @@ export function TraderRoster({
         toast.success(`All ${names.length} traders removed`);
       } catch {
         toast.error('Failed to remove traders');
+      } finally {
+        invalidate();
       }
     });
   }
@@ -372,10 +376,12 @@ export function TraderRoster({
           await toggleEnabled(name, enabled);
         } catch {
           toast.error('Failed to toggle trader');
+        } finally {
+          invalidate();
         }
       });
     },
-    [addOptimistic, startTransition],
+    [addOptimistic, startTransition, invalidate],
   );
 
   const doStrategiesChange = useCallback(
@@ -386,24 +392,12 @@ export function TraderRoster({
           await setStrategies(name, strategies);
         } catch {
           toast.error('Failed to update strategies');
+        } finally {
+          invalidate();
         }
       });
     },
-    [addOptimistic, startTransition],
-  );
-
-  const doRiskPercentChange = useCallback(
-    (name: string, riskPercent: number | null) => {
-      startTransition(async () => {
-        addOptimistic({ type: 'riskPercent', name, riskPercent });
-        try {
-          await setRiskPercent(name, riskPercent);
-        } catch {
-          toast.error('Failed to update risk percent');
-        }
-      });
-    },
-    [addOptimistic, startTransition],
+    [addOptimistic, startTransition, invalidate],
   );
 
   function doBulkStrategy(strategy: string, enable: boolean) {
@@ -414,6 +408,8 @@ export function TraderRoster({
         await bulkToggleStrategy(names, strategy, enable);
       } catch {
         toast.error('Failed to update strategies');
+      } finally {
+        invalidate();
       }
     });
   }
@@ -503,26 +499,10 @@ export function TraderRoster({
       ),
     },
     {
-      key: 'riskPercent',
-      label: 'Risk %',
-      className: 'w-[70px]',
-      render: (t) => {
-        const riskPercent = t.positionSizingConfig?.strategy === 'atr' ? t.positionSizingConfig.riskPercent : null;
-        return (
-          <RiskPercentCell
-            key={`${t.name}:${riskPercent ?? 'null'}`}
-            name={t.name}
-            riskPercent={riskPercent}
-            onChange={doRiskPercentChange}
-          />
-        );
-      },
-    },
-    {
       key: 'notes',
       label: 'Notes',
       render: (t) => (
-        <NotesCell key={`${t.name}:${t.notes ?? ''}`} name={t.name} notes={t.notes} />
+        <NotesCell key={`${t.name}:${t.notes ?? ''}`} name={t.name} notes={t.notes} invalidate={invalidate} />
       ),
     },
     {
@@ -541,7 +521,7 @@ export function TraderRoster({
         </Button>
       ),
     },
-  ], [active, allSelected, someSelected, toggleSelectAll, toggleSelect, href, doToggle, doStrategiesChange, doRiskPercentChange, doRemove]);
+  ], [active, allSelected, someSelected, toggleSelectAll, toggleSelect, href, doToggle, doStrategiesChange, doRemove, invalidate]);
 
   const rowClassName = useCallback(
     (t: TrackedTrader) =>
@@ -768,67 +748,16 @@ export function TraderRoster({
   );
 }
 
-/* ── Inline risk % cell ─────────────────────────────── */
-
-const DEFAULT_RISK_PCT = 5.0; // matches buildPositionSizer default of 0.05
-
-function RiskPercentCell({
-  name,
-  riskPercent,
-  onChange,
-}: {
-  name: string;
-  riskPercent: number | null;
-  onChange: (name: string, riskPercent: number | null) => void;
-}) {
-  const displayVal = riskPercent != null ? (riskPercent * 100).toFixed(1) : '';
-  const [value, setValue] = useState(displayVal);
-
-  function save() {
-    const trimmed = value.trim();
-    if (trimmed === displayVal) return;
-    if (trimmed === '') {
-      onChange(name, null);
-    } else {
-      const parsed = parseFloat(trimmed);
-      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
-        onChange(name, parsed / 100);
-      } else {
-        setValue(displayVal); // revert invalid input
-      }
-    }
-  }
-
-  return (
-    <Input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={save}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          e.currentTarget.blur();
-        }
-        if (e.key === 'Escape') {
-          setValue(displayVal);
-          e.currentTarget.blur();
-        }
-      }}
-      autoComplete="off"
-      placeholder={String(DEFAULT_RISK_PCT)}
-      className="h-auto border-0 border-b border-transparent focus-visible:border-ring focus-visible:ring-0 rounded-none bg-transparent text-xs p-0 text-muted-foreground focus:text-foreground placeholder:text-muted-foreground/40 font-mono tabular-nums text-right w-full max-w-[50px]"
-    />
-  );
-}
-
 /* ── Inline notes cell ───────────────────────────────── */
 
 function NotesCell({
   name,
   notes,
+  invalidate,
 }: {
   name: string;
   notes: string | null;
+  invalidate: () => void;
 }) {
   const [value, setValue] = useState(notes ?? '');
   const [, startTransition] = useTransition();
@@ -836,7 +765,13 @@ function NotesCell({
   function save() {
     const trimmed = value.trim();
     if (trimmed !== (notes ?? '')) {
-      startTransition(() => { setNotes(name, trimmed || null); });
+      startTransition(async () => {
+        try {
+          await setNotes(name, trimmed || null);
+        } finally {
+          invalidate();
+        }
+      });
     }
   }
 

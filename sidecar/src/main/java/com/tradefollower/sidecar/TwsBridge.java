@@ -497,7 +497,6 @@ public class TwsBridge extends DefaultEWrapper {
     public void tickSnapshotEnd(int reqId) {
         Map<String, Object> data = tickAccumulators.remove(reqId);
         completeRequest(reqId, data != null ? data : Map.of());
-        client.cancelMktData(reqId);
     }
 
     // --- Order status ---

@@ -1,6 +1,9 @@
 import { loadSecrets } from '../lib/secrets/index.js';
 await loadSecrets();
 
+import { installProcessErrorHandlers } from '../lib/log-safety.js';
+installProcessErrorHandlers();
+
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';

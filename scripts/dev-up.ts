@@ -12,13 +12,30 @@
  */
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
-import { readFileSync, unlinkSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendSystemAlert } from '../src/lib/alert.js';
+import { startBatteryMonitor } from '../src/lib/battery-monitor.js';
+import { createRollingFileStream } from '../src/lib/log-rotation.js';
+import { PATHS } from '../src/lib/paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
+
+const LOG_RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS ?? '14', 10);
+
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, '');
+}
+
+const terminalLog = createRollingFileStream({ dir: PATHS.logs, prefix: 'terminal' });
+
+function writeTerminalLine(line: string): void {
+  const ts = new Date().toISOString();
+  terminalLog.write(`${ts} ${stripAnsi(line)}\n`);
+}
 
 // ─── Args ────────────────────────────────────────────
 
@@ -41,6 +58,7 @@ const RESET = '\x1b[0m';
 function log(tag: string, msg: string): void {
   const color = COLORS[tag] ?? '';
   console.log(`${color}[${tag}]${RESET} ${msg}`);
+  writeTerminalLine(`[${tag}] ${msg}`);
 }
 
 // ─── Process management ──────────────────────────────
@@ -133,6 +151,47 @@ async function shutdown(): Promise<void> {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+process.on('uncaughtException', (err) => {
+  writeTerminalLine(`[orch] uncaughtException ${err.stack ?? err.message}`);
+  console.error('Uncaught exception:', err);
+  shutdown();
+});
+process.on('unhandledRejection', (reason) => {
+  const r = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+  writeTerminalLine(`[orch] unhandledRejection ${r}`);
+  console.error('Unhandled rejection:', reason);
+});
+
+// ─── Log retention ───────────────────────────────────
+
+function pruneOldLogs(maxAgeDays: number): void {
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  let freedBytes = 0;
+  try {
+    for (const name of readdirSync(PATHS.logs)) {
+      const p = join(PATHS.logs, name);
+      try {
+        const st = statSync(p);
+        if (!st.isFile()) continue;
+        if (st.mtimeMs < cutoff) {
+          freedBytes += st.size;
+          unlinkSync(p);
+          removed++;
+        }
+      } catch {
+        // entry vanished between readdir and stat — ignore
+      }
+    }
+  } catch {
+    // no .logs dir yet — nothing to prune
+    return;
+  }
+  if (removed > 0) {
+    log('orch', `Pruned ${removed} log file(s) older than ${maxAgeDays}d (${(freedBytes / 1024 / 1024).toFixed(1)} MB)`);
+  }
+}
+
 // ─── Health checks ───────────────────────────────────
 
 async function waitForHealth(
@@ -219,7 +278,9 @@ async function superviseBackend(): Promise<void> {
 
   const startBackend = (): Promise<number | null> => {
     return new Promise((resolve) => {
-      const child = spawnService('backend', 'npx', ['tsx', 'src/index.ts']);
+      const child = spawnService('backend', 'npx', ['tsx', 'src/index.ts'], {
+        env: { LOG_PROCESS_NAME: 'backend' },
+      });
       child.on('exit', (code) => resolve(code));
     });
   };
@@ -310,7 +371,7 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
     const gwPort = mode === 'paper' ? '4002' : '4001';
     log('orch', `Starting IBKR Sidecar (${mode} mode, gateway port ${gwPort})...`);
     spawnService('sidecar', 'bash', [resolve(ROOT, 'sidecar/scripts/start-sidecar.sh')], {
-      env: { IBKR_GATEWAY_PORT: gwPort },
+      env: { IBKR_GATEWAY_PORT: gwPort, LOG_DIR: PATHS.logs },
     });
 
     // Wait up to 30s for sidecar to connect
@@ -418,6 +479,8 @@ async function main(): Promise<void> {
   console.log();
 
   killExisting();
+  pruneOldLogs(LOG_RETENTION_DAYS);
+  startBatteryMonitor();
 
   const channels = await detectChannels();
 
@@ -436,7 +499,9 @@ async function main(): Promise<void> {
   // ── Step 1: Local API (start immediately) ──
 
   log('orch', 'Starting local-api...');
-  spawnService('api', 'npx', ['tsx', 'watch', 'src/local-api/server.ts']);
+  spawnService('api', 'npx', ['tsx', 'watch', 'src/local-api/server.ts'], {
+    env: { LOG_PROCESS_NAME: 'api' },
+  });
 
   await waitForHealth('local-api', 'http://localhost:3791/health', {
     timeoutMs: 15_000,

@@ -9,14 +9,10 @@
 import { db, schema } from '../db/client.js';
 import { eq } from 'drizzle-orm';
 
-export async function completeTask(
-  taskId: string,
-  result: { outcome: string },
-): Promise<void> {
+export async function completeTask(taskId: string): Promise<void> {
   await db.update(schema.tasks)
     .set({
       status: 'COMPLETED',
-      result,
       completedAt: new Date().toISOString(),
     })
     .where(eq(schema.tasks.id, taskId));

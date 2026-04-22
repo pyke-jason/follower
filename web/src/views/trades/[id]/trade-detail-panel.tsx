@@ -108,7 +108,13 @@ export function TradeDetailPanel({ onClose }: { onClose: () => void }) {
             {/* Execution Timeline */}
             {(story.events.length > 0 || story.decisions.length > 0) && (
               <section>
-                <UnifiedTimeline />
+                <UnifiedTimeline
+                  trade={story.trade}
+                  decisions={story.decisions}
+                  events={story.events}
+                  timelineMessages={story.timelineMessages}
+                  intent={story.intent}
+                />
               </section>
             )}
 

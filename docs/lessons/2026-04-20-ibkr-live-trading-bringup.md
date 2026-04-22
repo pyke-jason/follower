@@ -101,15 +101,17 @@ Keep LLM ambiguity paths (`"LLM did not call a decision tool"`) as `MANUAL_REVIE
 
 ---
 
-## 7. ASTS PCS combo rejected by TWS as "riskless" (OPEN)
+## 7. ASTS PCS combo rejected by TWS as "riskless" (FIXED — awaiting live confirmation)
 
 **Problem:** Michael_L signal `Sold PCS 72/69 May for $0.70` routed through the combo path and was rejected by TWS: `201: Order rejected - reason:Riskless combination orders are not allowed.` — on a legitimate 3-wide put credit spread that is demonstrably not riskless (max loss $2.35, max gain $0.65).
 
-**Hypothesis:** The combo legs were built with reversed actions (`BUY` the near-strike put and `SELL` the far-strike put instead of the other way round), making TWS's arbitrage check fire. A correctly constructed PCS is sell-high-strike-put + buy-low-strike-put.
+**Root cause:** Leg actions were correct — `buildSpreadOptionLegs()` in open-path produces `[SELL 72P, BUY 69P]` for PCS. The bug was in `src/broker/ibkr/client.ts`: for credit spreads (`params.direction === 'SHORT'`), the combo parent `Order.action` was set to `SELL` while leg actions stayed absolute. TWS's BAG validator treats parent `SELL` as inverting the legs, so the combo was interpreted as `[BUY 72P, SELL 69P]` (a debit spread) being sold for a positive `+0.70` limit — i.e., receive $0.70 on an economically debit trade = guaranteed profit = "riskless." Hence the 201 rejection.
 
-**Status:** Not yet investigated. Reproduce by triggering another ASTS PCS signal or by building the combo body manually and posting to `/api/orders/combo`.
+**Fix:** Introduced `buildComboOrderBody()` that always sends `action: 'BUY'` (matching the canonical IBKR convention where leg actions are absolute), and applies a negative `limitPrice` for structurally-credit combos via `isCreditOrderStructural()`. Also tracks `creditComboOrderIds` so `modifyOrder()` (called from the chase loop) re-signs the new limit price before PUTing it to the sidecar.
 
-**Files to check:** `src/intents/orchestrator/open-path.ts`, spread-leg builder (wherever PCS/CCS legs are constructed), `src/pipeline/execute-resolved.ts` combo path.
+**Status:** Fix is covered by `src/broker/ibkr/client.test.ts` (8 cases: PCS/PDS/CCS/CDS open, PCS close, invariant that parent action is never SELL, ratio=1, MKT path). Cannot fully confirm without a live submission — watch the next live PCS/CCS signal for the sidecar `AUDIT placeOrder` line showing `action=BUY` and negative `limitPrice`, and confirm no 201 rejection.
+
+**Files:** `src/broker/ibkr/client.ts`, `src/broker/ibkr/client.test.ts`
 
 ---
 

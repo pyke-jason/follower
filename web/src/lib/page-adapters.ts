@@ -10,7 +10,6 @@ import type {
 import type { EquityPoint } from '@src/backtest/types';
 import { api } from '@/lib/api';
 import { buildScopedPath } from '@/lib/channel-scope';
-import type { Metric } from '@/components/metric-strip';
 
 function toNumber(value: string | number | null | undefined): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -21,8 +20,24 @@ function toNumber(value: string | number | null | undefined): number {
 
 type DashboardStats = {
   todayPnl: number;
+  unrealizedPnl: number;
   openTrades: number;
   pendingTasks: number;
+};
+
+export type LivePnlRow = { unrealizedPnl: number; marketValue: number | null };
+
+export type AccountBalanceSnapshot = {
+  accountId: string;
+  cashBalance: number;
+  buyingPower: number;
+  equity: number;
+  marketValue: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  maintenanceMargin?: number;
+  cushion?: number;
+  timestamp: string;
 };
 
 type DashboardHistorySummary = {
@@ -62,6 +77,8 @@ type DashboardApiResponse = {
   risk: DashboardRiskSnapshot;
   dailyBalances: DailyBalance[];
   channelId: string;
+  livePnlByTrade: Record<string, LivePnlRow>;
+  accountBalance: AccountBalanceSnapshot | null;
 };
 
 export type DashboardSignalRow = {
@@ -74,10 +91,11 @@ export type DashboardPageData = {
   openTrades: Trade[];
   equityData: Array<{ date: string; equity: number }>;
   traderData: Array<{ trader: string; pnl: number; trades: number; winRate: number }>;
-  metrics: Metric[];
   signals: DashboardSignalRow[];
   pendingReviews: Task[];
   riskSnapshot: DashboardRiskSnapshot;
+  livePnlByTrade: Record<string, LivePnlRow>;
+  accountBalance: AccountBalanceSnapshot | null;
 };
 
 export async function fetchDashboardPageData(channelId?: string): Promise<DashboardPageData> {
@@ -101,24 +119,16 @@ export async function fetchDashboardPageData(channelId?: string): Promise<Dashbo
     winRate: row.tradeCount > 0 ? (row.wins / row.tradeCount) * 100 : 0,
   }));
 
-  const metrics: Metric[] = [
-    { label: 'P&L', value: dashboard.stats.todayPnl, format: 'currency', colorBySign: true },
-    { label: 'Open Trades', value: dashboard.stats.openTrades, format: 'integer' },
-    { label: 'Pending Tasks', value: dashboard.stats.pendingTasks, format: 'integer' },
-    { label: 'Trades', value: dashboard.historySummary.totalTrades, format: 'integer' },
-    { label: 'Win Rate', value: dashboard.historySummary.winRate / 100, format: 'percent' },
-    { label: 'Slippage', value: Math.abs(dashboard.historySummary.totalSlippage), format: 'currency' },
-  ];
-
   return {
     stats: dashboard.stats,
     openTrades: dashboard.openTrades,
     equityData,
     traderData,
-    metrics,
     signals,
     pendingReviews,
     riskSnapshot: dashboard.risk,
+    livePnlByTrade: dashboard.livePnlByTrade ?? {},
+    accountBalance: dashboard.accountBalance ?? null,
   };
 }
 

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from '@ta
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { TruncationTooltip } from '@/components/truncation-tooltip';
 import { App } from './router';
 import './globals.css';
 
@@ -45,6 +46,7 @@ createRoot(document.getElementById('root')!).render(
         <BrowserRouter>
           <App />
         </BrowserRouter>
+        <TruncationTooltip />
       </TooltipProvider>
       <Toaster richColors />
     </QueryClientProvider>

@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { AnimatedNumber } from './animated-number';
 import { Sparkline } from './sparkline';
+import { pnlColor } from '@/lib/format';
 
 export interface Metric {
   label: string;
@@ -11,6 +12,8 @@ export interface Metric {
   sparklineData?: number[];
   prefix?: string;
   suffix?: string;
+  /** Small secondary line below the main value — e.g. "today realized: +$120". */
+  secondary?: { label: string; value: number; format?: Metric['format']; colorBySign?: boolean };
 }
 
 interface MetricStripProps {
