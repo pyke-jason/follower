@@ -25,7 +25,7 @@ import {
   parseSidecarResponse,
 } from './schemas.js';
 
-export type IbkrServiceOptions = {
+type IbkrServiceOptions = {
   sidecarUrl: string;
   accountId: string;
 };
@@ -36,7 +36,7 @@ type IbkrRuntime = {
 };
 
 /** Round a price to the nearest valid tick using the contract's actual minTick from IBKR. */
-export function roundToTick(price: number, minTick: number): number {
+function roundToTick(price: number, minTick: number): number {
   return Math.round(price / minTick) * minTick;
 }
 

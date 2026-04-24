@@ -17,7 +17,7 @@ function nextEditorId(prefix: 'sig' | 'trade'): string {
   return `${prefix}-${++_editorIdCounter}`;
 }
 
-export function keySignal(s: Signal): KeyedSignal {
+function keySignal(s: Signal): KeyedSignal {
   return { ...s, _id: nextEditorId('sig') };
 }
 

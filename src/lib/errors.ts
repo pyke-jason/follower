@@ -25,6 +25,24 @@ export class BrokerTransientError extends Error {
   }
 }
 
+type DependencyKind = 'llm' | 'quotes';
+
+/**
+ * Transient outage talking to an external dependency.
+ *
+ * Backtests use this to pause in place until the operator resumes the run.
+ */
+export class DependencyUnavailableError extends Error {
+  constructor(
+    public readonly dependency: DependencyKind,
+    message: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'DependencyUnavailableError';
+  }
+}
+
 /**
  * Thrown when a quote request succeeds but bid/ask data is missing.
  * The symbol is valid and the broker is reachable, but no market data

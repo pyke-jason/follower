@@ -4,9 +4,9 @@ import { roundCents } from '../lib/numbers.js';
 
 // ─── Result Types ────────────────────────────────────
 
-export type CreditDebitConfidence = 'STRUCTURAL' | 'QUOTE_BASED';
+type CreditDebitConfidence = 'STRUCTURAL' | 'QUOTE_BASED';
 
-export type CreditDebitResult = {
+type CreditDebitResult = {
   /** true = net credit (you receive premium), false = net debit (you pay premium). */
   isCredit: boolean;
   /** How the determination was made. */
@@ -272,7 +272,7 @@ export async function isCreditOrder(
  * Use this for order placement where you want belt-and-suspenders
  * validation. Skip it for hot-path UI where you just need the sign.
  */
-export async function isCreditOrderWithValidation(
+async function isCreditOrderWithValidation(
   broker: BrokerService,
   legs: OrderLeg[],
 ): Promise<CreditDebitResult> {

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { TraderCombobox } from '@/components/trader-combobox';
 import {
   Select,
   SelectContent,
@@ -25,10 +26,18 @@ const MODELS_BY_PROVIDER: Record<string, string[]> = {
   ],
 };
 
-export function ClassifyForm({ defaultTraders }: { defaultTraders: string }) {
+export function ClassifyForm({
+  traderOptions,
+  defaultTraders,
+}: {
+  traderOptions: string[];
+  defaultTraders: string[];
+}) {
   const navigate = useNavigate();
   const [provider, setProvider] = useState('xai');
   const [model, setModel] = useState(MODELS_BY_PROVIDER.xai[1]);
+  const [traders, setTraders] = useState(defaultTraders);
+  const [traderError, setTraderError] = useState<string | null>(null);
 
   const startMut = useApiMutation<Record<string, unknown>, { id: string }>('POST', '/classify/start', {
     onSuccess: (data) => navigate(`/classify/${data.id}`),
@@ -41,12 +50,17 @@ export function ClassifyForm({ defaultTraders }: { defaultTraders: string }) {
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (traders.length === 0) {
+      setTraderError('Select at least one trader');
+      return;
+    }
+
     const fd = new FormData(e.currentTarget);
 
     const body: Record<string, unknown> = {
       startDate: fd.get('startDate') as string,
       endDate: fd.get('endDate') as string,
-      traders: (fd.get('traders') as string).split(',').map((t) => t.trim()).filter(Boolean),
+      traders,
       agentProvider: provider,
       agentModel: model,
     };
@@ -96,15 +110,18 @@ export function ClassifyForm({ defaultTraders }: { defaultTraders: string }) {
 
         <div className="mt-4">
           <Label className="text-xs text-muted-foreground mb-1">
-            Traders (comma-separated) <span className="text-destructive">*</span>
+            Traders <span className="text-destructive">*</span>
           </Label>
-          <Input
-            name="traders"
-            required
-            placeholder="Dave W, Hariseldon, Pete"
-            defaultValue={defaultTraders}
-            className="h-9"
+          <TraderCombobox
+            options={traderOptions}
+            value={traders}
+            onChange={(nextTraders) => {
+              setTraders(nextTraders);
+              setTraderError(null);
+            }}
+            placeholder="Select traders..."
           />
+          {traderError && <p className="mt-1 text-xs text-destructive">{traderError}</p>}
         </div>
       </fieldset>
 

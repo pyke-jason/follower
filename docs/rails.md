@@ -105,24 +105,24 @@ Everything is client-side -- no server components, no `'use client'`.
 
 ## Database
 
-### SQLite + Drizzle ORM
+### Postgres + Drizzle ORM
 
-- `src/db/schema.ts` is the single source of truth for all table definitions
-- Prices stored as text (SQLite has no decimal type), timestamps as ISO 8601
-- WAL mode enabled -- don't delete `.db-shm`/`.db-wal` while the backend runs
-- Foreign keys enabled on every process connection
+- `src/db/schema.ts` is the single source of truth for all app table definitions
+- JSON columns use `jsonb().$type<T>()`; prices remain text and timestamps remain ISO 8601 strings
+- `POSTGRES_DATABASE_URL` is the app database URL; `TICK_CACHE_DATABASE_URL` is the Databento cache database URL
+- Tests use `TEST_POSTGRES_DATABASE_URL` with isolated per-file schemas
 
 ### Schema Changes
 
 1. Edit `src/db/schema.ts`
 2. `npm run db:generate` -- generates migration + snapshot
-3. `npm run db:migrate` -- applies via better-sqlite3 migrator
+3. `npm run db:migrate` -- applies via the Postgres Drizzle migrator
 
 For data-only or table-rebuild migrations: `npm run db:generate -- --custom --name=<name>`. Don't hand-write `.sql` files in `drizzle/` -- they corrupt the snapshot chain. Detail in `.claude/rules/database-trades.md`.
 
 ### JSON Columns
 
-JSON columns use `typedJson<T>()` via `customType` in `src/db/schema.ts`. The TS type is baked into the column definition and propagates through `select()` -- no manual casts needed. If you find yourself casting the same JSON column repeatedly, extract a helper.
+JSON columns use `typedJson<T>()` backed by Postgres JSONB in `src/db/schema.ts`. The TS type is baked into the column definition and propagates through `select()` -- no manual casts needed. If you find yourself casting the same JSON column repeatedly, extract a helper.
 
 ### Channel Scoping
 
@@ -134,7 +134,7 @@ Helpers in `src/lib/channel.ts`. Composable query filters in `src/trades/filters
 
 ### Transactions
 
-`runTx()` from `src/db/client.ts` for multi-statement writes. better-sqlite3 is synchronous -- use `.run()` and `.all()`, not async/await.
+`runTx()` from `src/db/client.ts` for multi-statement writes. Transactions are async: `await runTx(async (tx) => { ... })`. Use normal Drizzle awaits and `returning()` when a mutation needs the written row.
 
 ## API Contract
 
@@ -179,7 +179,7 @@ npm --prefix web run check        # Frontend typecheck + build
 ### Backend
 
 - Prefer deterministic pipeline paths over LLM calls (faster and free)
-- Databento charges per byte -- don't delete valid cache entries in `tick-cache.db`
+- Databento charges per byte -- don't delete valid rows from the Postgres tick-cache database
 
 ## Code Review Checklist
 

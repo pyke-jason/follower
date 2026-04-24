@@ -2,7 +2,14 @@ import { Hono } from 'hono';
 import { db, schema } from '@/db/client.js';
 import { eq, and, desc, sql, isNull, count, asc, lt, gte, lte, or, isNotNull, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import type { Trade, TradeFlag, CommissionSchedule, EvalLabelData, EvalLabelRow } from '@/db/schema.js';
+import type {
+  BacktestRunSummary,
+  Trade,
+  TradeFlag,
+  CommissionSchedule,
+  EvalLabelData,
+  EvalLabelRow,
+} from '@/db/schema.js';
 import type { Signal } from '@/agent/schemas.js';
 import type { BrokerPosition, AccountBalance } from '@/broker/types.js';
 import type { EnrichedMessage, TradeOutcome, MessageDecision } from '@/lib/enriched-message.js';
@@ -17,6 +24,7 @@ import { tradeQty } from '@/lib/trade.js';
 import { getProvider, SECRET_KEYS } from '@/lib/secrets/index.js';
 import { getRuntimeBrokerMap } from '@/broker/select.js';
 import { upsertRuntimeHealth } from '@/live/runtime-health.js';
+import { withLiveBacktestMtmSnapshot } from '@/local-api/backtest-mtm.js';
 
 const app = new Hono();
 
@@ -48,6 +56,228 @@ function buildFlagsByTradeId(trades: Trade[]): Record<string, TradeFlag[]> {
   return result;
 }
 
+function getBacktestMessagesEndDate(params: {
+  status: string;
+  lastProcessedMessageTs?: string | null;
+  configEndDate: string;
+}): string {
+  const lastProcessedTs = params.status !== 'COMPLETED'
+    ? params.lastProcessedMessageTs ?? null
+    : null;
+  return lastProcessedTs
+    ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString()
+    : params.configEndDate;
+}
+
+async function getBacktestLiveUpdate(id: string) {
+  const [run] = await db
+    .select({
+      id: schema.backtestRuns.id,
+      status: schema.backtestRuns.status,
+      config: schema.backtestRuns.config,
+      startedAt: schema.backtestRuns.startedAt,
+      completedAt: schema.backtestRuns.completedAt,
+      error: schema.backtestRuns.error,
+      summary: schema.backtestRuns.summary,
+      liveMetrics: schema.backtestRuns.liveMetrics,
+    })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, id));
+  if (!run) return null;
+
+  const [counts] = await db
+    .select({
+      processedMessages: sql<number>`COUNT(DISTINCT ${schema.runDecisions.messageId})`,
+    })
+    .from(schema.runDecisions)
+    .where(and(
+      eq(schema.runDecisions.channelId, btChannel(id)),
+      isNotNull(schema.runDecisions.messageId),
+    ));
+
+  return {
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    error: run.error,
+    summary: run.summary,
+    liveMetrics: run.liveMetrics,
+    messagesEndDate: getBacktestMessagesEndDate({
+      status: run.status,
+      lastProcessedMessageTs: run.liveMetrics?.lastProcessedMessageTs,
+      configEndDate: run.config.endDate,
+    }),
+    liveRuntime: {
+      processedMessages: Number(counts?.processedMessages ?? 0),
+    },
+  };
+}
+
+async function getBacktestTradeStreamState(id: string) {
+  const [run] = await db
+    .select({
+      status: schema.backtestRuns.status,
+      config: schema.backtestRuns.config,
+      summary: schema.backtestRuns.summary,
+      liveMetrics: schema.backtestRuns.liveMetrics,
+    })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, id));
+  if (!run) return null;
+
+  const channelId = btChannel(id);
+  const [decisions, allTrades, mtmSnapshots] = await Promise.all([
+    db.select({
+      decision: schema.runDecisions,
+      message: schema.messages,
+      trade: {
+        id: schema.trades.id,
+        symbol: schema.trades.symbol,
+        taskId: schema.trades.taskId,
+        pnl: schema.trades.pnl,
+      },
+    })
+    .from(schema.runDecisions)
+    .innerJoin(schema.messages, eq(schema.runDecisions.messageId, schema.messages.id))
+    .leftJoin(schema.trades, eq(schema.runDecisions.tradeId, schema.trades.id))
+    .where(eq(schema.runDecisions.channelId, channelId))
+    .orderBy(desc(schema.runDecisions.createdAt)),
+
+    db.select().from(schema.trades)
+      .where(eq(schema.trades.channelId, channelId))
+      .orderBy(desc(schema.trades.closedAt)),
+
+    db.select({
+      date: schema.backtestMtmSnapshots.date,
+      unrealizedPnl: schema.backtestMtmSnapshots.unrealizedPnl,
+    })
+    .from(schema.backtestMtmSnapshots)
+    .where(eq(schema.backtestMtmSnapshots.channelId, channelId))
+    .orderBy(asc(schema.backtestMtmSnapshots.date)),
+  ]);
+
+  const tradeIds = allTrades.map((trade) => trade.id);
+  const eventRows = tradeIds.length > 0
+    ? await db.select()
+      .from(schema.tradeEvents)
+      .where(inArray(schema.tradeEvents.tradeId, tradeIds))
+      .orderBy(asc(schema.tradeEvents.timestamp))
+    : [];
+
+  const eventsByTradeId: Record<string, typeof eventRows> = {};
+  for (const row of eventRows) {
+    (eventsByTradeId[row.tradeId] ??= []).push(row);
+  }
+
+  const flagsByTradeId = buildFlagsByTradeId(allTrades);
+
+  const tradeMessageIds = allTrades
+    .map((trade) => trade.sourceMessageId)
+    .filter((messageId): messageId is string => messageId != null);
+  const skipDecisionMessageIds = decisions
+    .filter((row) => row.decision.outcome === 'SKIP' && row.decision.messageId)
+    .map((row) => row.decision.messageId)
+    .filter((messageId): messageId is string => messageId != null);
+  const allMessageIdsForLabels = [...new Set([...tradeMessageIds, ...skipDecisionMessageIds])];
+
+  const evalLabelRows = allMessageIdsForLabels.length > 0
+    ? await db
+      .select()
+      .from(schema.evalLabels)
+      .where(and(
+        inArray(schema.evalLabels.messageId, allMessageIdsForLabels),
+        eq(schema.evalLabels.version, 2),
+      ))
+    : [];
+
+  const labelByMessageId = new Map(evalLabelRows.map((row) => [row.messageId, row]));
+  const labelsByTradeId: Record<string, TradeLabel> = {};
+  for (const trade of allTrades) {
+    labelsByTradeId[trade.id] = computeTradeLabel(
+      trade,
+      trade.sourceMessageId ? (labelByMessageId.get(trade.sourceMessageId) ?? null) : null,
+    );
+  }
+
+  let fnCount = 0;
+  let tnCount = 0;
+  for (const row of decisions) {
+    if (row.decision.outcome !== 'SKIP' || !row.decision.messageId) continue;
+    const labelRow = labelByMessageId.get(row.decision.messageId);
+    if (!labelRow) continue;
+    const labelData = labelRow.humanLabel ?? labelRow.label;
+    if (labelData.isTrade) {
+      fnCount++;
+    } else {
+      tnCount++;
+    }
+  }
+
+  const evalSummary = computeEvalSummary(Object.values(labelsByTradeId), fnCount, tnCount);
+  const backtestEnd = isoToDateKey(run.config.endDate);
+  const clampedTrades = allTrades.map((trade) => {
+    if (!trade.closedAt || isoToDateKey(trade.closedAt) <= backtestEnd) return trade;
+    return { ...trade, closedAt: `${backtestEnd}T16:00:00.000Z` };
+  });
+  const displayMtmSnapshots = withLiveBacktestMtmSnapshot({
+    status: run.status,
+    liveMetrics: run.liveMetrics,
+    mtmSnapshots,
+  });
+
+  const computeResult = computeFromTrades(
+    clampedTrades,
+    decisions,
+    displayMtmSnapshots,
+    run.config.commissionSchedule,
+    run.summary
+      ? {
+          totalMessages: run.summary.totalMessages,
+          tradedMessages: run.summary.tradedMessages,
+        }
+      : undefined,
+  );
+  const llmCost = await computeBacktestLlmCost(decisions, run.config.agentModel);
+
+  return {
+    status: run.status,
+    snapshot: {
+      allTrades,
+      eventsByTradeId,
+      flagsByTradeId,
+      mtmSnapshots: displayMtmSnapshots,
+      ...computeResult,
+      llmCost,
+      messagesEndDate: getBacktestMessagesEndDate({
+        status: run.status,
+        lastProcessedMessageTs: run.liveMetrics?.lastProcessedMessageTs,
+        configEndDate: run.config.endDate,
+      }),
+      evalSummary,
+      labelsByTradeId,
+    },
+  };
+}
+
+async function computeBacktestLlmCost(
+  decisions: { decision: { messageId: string | null } }[],
+  agentModel?: string | null,
+): Promise<number> {
+  const messageIds = Array.from(new Set(
+    decisions.map((row) => row.decision.messageId).filter((messageId): messageId is string => !!messageId),
+  ));
+  if (messageIds.length === 0) return 0;
+  const where = agentModel
+    ? and(inArray(schema.messageIntents.messageId, messageIds), eq(schema.messageIntents.model, agentModel))
+    : inArray(schema.messageIntents.messageId, messageIds);
+  const [row] = await db
+    .select({ total: sql<number>`COALESCE(SUM(${schema.messageIntents.costUsd}), 0)` })
+    .from(schema.messageIntents)
+    .where(where);
+  return Number(row?.total ?? 0);
+}
+
 // ── Eval Accuracy Types & Helpers ─────────────────────
 
 type Mismatch = { path: string; expected: string; got: string };
@@ -75,7 +305,18 @@ type EvalSummary = {
 /** Flatten EvalLabelData.trades (Signal[][]) to Signal[]. */
 function flattenLabelSignals(data: EvalLabelData): Signal[] {
   if (!data.trades || !Array.isArray(data.trades)) return [];
-  return data.trades.flat();
+  return data.trades.flat().map(normalizeLabelSignal);
+}
+
+function normalizeLabelSignal(signal: Signal): Signal {
+  const entries = Object.entries(signal).filter(([key, value]) => {
+    if (key === 'exitPercent') return value != null;
+    if (key === 'targetStrategy') return value != null && value !== '';
+    return true;
+  });
+  // SAFETY: eval label JSON may contain legacy blank optional fields. Dropping
+  // those blanks restores the canonical Signal shape without changing required fields.
+  return Object.fromEntries(entries) as Signal;
 }
 
 /**
@@ -391,7 +632,7 @@ app.get('/signals', async (c) => {
     .where(
       or(
         isNotNull(schema.messages.actionHint),
-        sql`json_array_length(${schema.messages.symbols}) > 0`,
+        sql`jsonb_array_length(${schema.messages.symbols}) > 0`,
       )!
     )
     .orderBy(desc(schema.messages.timestamp))
@@ -416,7 +657,7 @@ app.get('/backtest-runs', async (c) => {
   };
   const sortCol = btSortColumns[sortParam] ?? 'created_at';
 
-  const defaultStatuses = ['COMPLETED', 'RUNNING', 'CANCELLED'] as const;
+  const defaultStatuses = ['COMPLETED', 'RUNNING', 'PAUSED', 'CANCELLED'] as const;
   const conditions: SQL[] = [
     statusFilter
       ? eq(schema.backtestRuns.status, statusFilter)
@@ -718,7 +959,7 @@ app.get('/trades/:id/story', async (c) => {
       ? db.select().from(schema.messages)
           .where(and(
             eq(schema.messages.author, sourceMessage.author),
-            sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${trade.symbol})`,
+            sql`${schema.messages.symbols} @> ${JSON.stringify([trade.symbol])}::jsonb`,
           ))
           .orderBy(asc(schema.messages.timestamp))
           .limit(100)
@@ -945,7 +1186,7 @@ app.get('/tasks/:id', async (c) => {
     ? await db.select().from(schema.messages)
         .where(and(
           eq(schema.messages.author, author),
-          sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${firstSymbol})`,
+          sql`${schema.messages.symbols} @> ${JSON.stringify([firstSymbol])}::jsonb`,
         ))
         .orderBy(asc(schema.messages.timestamp))
         .limit(100)
@@ -1062,7 +1303,7 @@ app.get('/messages/nearby', async (c) => {
   if (author) conditions.push(eq(schema.messages.author, author));
   if (symbol) {
     conditions.push(
-      sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${symbol})`,
+      sql`${schema.messages.symbols} @> ${JSON.stringify([symbol])}::jsonb`,
     );
   }
 
@@ -1102,7 +1343,7 @@ app.get('/messages/:id/related', async (c) => {
   if (sourceSymbols.length === 0) return c.json({ messages: [source], sourceSymbols });
 
   const symbolConditions = sourceSymbols.map(
-    (s) => sql`EXISTS (SELECT 1 FROM json_each(${schema.messages.symbols}) WHERE json_each.value = ${s})`,
+    (s) => sql`${schema.messages.symbols} @> ${JSON.stringify([s])}::jsonb`,
   );
   const messages = await db
     .select()
@@ -1280,12 +1521,11 @@ app.get('/backtests/:id', async (c) => {
   if (!run) return c.json({ error: 'Backtest not found' }, 404);
 
   const config = run.config;
-  const lastProcessedTs = run.status !== 'COMPLETED'
-    ? run.liveMetrics?.lastProcessedMessageTs ?? null
-    : null;
-  const messagesEndDate = lastProcessedTs
-    ? new Date(new Date(lastProcessedTs).getTime() + 3600_000).toISOString()
-    : config.endDate;
+  const messagesEndDate = getBacktestMessagesEndDate({
+    status: run.status,
+    lastProcessedMessageTs: run.liveMetrics?.lastProcessedMessageTs,
+    configEndDate: config.endDate,
+  });
 
   const [decisions, allTrades, mtmSnapshots] = await Promise.all([
     db.select({
@@ -1396,24 +1636,28 @@ app.get('/backtests/:id', async (c) => {
 
   // computeFromTrades
   const commissionSchedule = config.commissionSchedule;
-  const computeResult = computeFromTrades(clampedTrades, decisions, mtmSnapshots, commissionSchedule);
+  const displayMtmSnapshots = withLiveBacktestMtmSnapshot({
+    status: run.status,
+    liveMetrics: run.liveMetrics,
+    mtmSnapshots,
+  });
+
+  const computeResult = computeFromTrades(
+    clampedTrades,
+    decisions,
+    displayMtmSnapshots,
+    commissionSchedule,
+    run.summary
+      ? {
+          totalMessages: run.summary.totalMessages,
+          tradedMessages: run.summary.tradedMessages,
+        }
+      : undefined,
+  );
 
   // Cost lives on `message_intents` (per-classification), not `run_decisions`.
   // Sum across this run's messages for the configured agent model.
-  const llmCost = await (async () => {
-    const messageIds = Array.from(new Set(
-      decisions.map((d) => d.decision.messageId).filter((x): x is string => !!x),
-    ));
-    if (messageIds.length === 0) return 0;
-    const where = config.agentModel
-      ? and(inArray(schema.messageIntents.messageId, messageIds), eq(schema.messageIntents.model, config.agentModel))
-      : inArray(schema.messageIntents.messageId, messageIds);
-    const [row] = await db
-      .select({ total: sql<number>`COALESCE(SUM(${schema.messageIntents.costUsd}), 0)` })
-      .from(schema.messageIntents)
-      .where(where);
-    return Number(row?.total ?? 0);
-  })();
+  const llmCost = await computeBacktestLlmCost(decisions, config.agentModel);
 
   // Build labelByTradeId for the response
   const labelByTradeId: Record<string, TradeLabel> = {};
@@ -1427,12 +1671,195 @@ app.get('/backtests/:id', async (c) => {
     allTrades,
     eventsByTradeId,
     flagsByTradeId,
-    mtmSnapshots,
+    mtmSnapshots: displayMtmSnapshots,
     ...computeResult,
     llmCost,
     messagesEndDate,
     evalSummary,
     labelsByTradeId: labelByTradeId,
+    liveRuntime: {
+      processedMessages: new Set(decisions.map((row) => row.message.id)).size,
+    },
+  });
+});
+
+app.get('/backtests/:id/events', async (c) => {
+  const id = c.req.param('id');
+  const initial = await getBacktestLiveUpdate(id);
+  if (!initial) return c.json({ error: 'Backtest not found' }, 404);
+
+  const ACTIVE_STATUSES = new Set(['RUNNING', 'PENDING', 'PAUSED']);
+  const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+  const encoder = new TextEncoder();
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let interval: ReturnType<typeof setInterval> | null = null;
+  let stopped = false;
+  let inFlight = false;
+  let lastPayload = JSON.stringify(initial);
+  let lastHeartbeatAt = Date.now();
+
+  const cleanup = () => {
+    if (stopped) return;
+    stopped = true;
+    if (interval) clearInterval(interval);
+    interval = null;
+    if (controllerRef) {
+      try {
+        controllerRef.close();
+      } catch {
+        // Stream is already closed.
+      }
+    }
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controllerRef = controller;
+      controller.enqueue(encoder.encode(`data: ${lastPayload}\n\n`));
+
+      if (!ACTIVE_STATUSES.has(initial.status)) {
+        cleanup();
+        return;
+      }
+
+      const tick = async () => {
+        if (stopped || inFlight) return;
+        inFlight = true;
+        try {
+          const next = await getBacktestLiveUpdate(id);
+          if (!next) {
+            cleanup();
+            return;
+          }
+
+          const nextPayload = JSON.stringify(next);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            lastHeartbeatAt = Date.now();
+            controller.enqueue(encoder.encode(`data: ${nextPayload}\n\n`));
+          } else if (Date.now() - lastHeartbeatAt >= 15_000) {
+            lastHeartbeatAt = Date.now();
+            controller.enqueue(encoder.encode(': keep-alive\n\n'));
+          }
+
+          if (TERMINAL_STATUSES.has(next.status)) {
+            cleanup();
+          }
+        } catch {
+          cleanup();
+        } finally {
+          inFlight = false;
+        }
+      };
+
+      interval = setInterval(() => {
+        void tick();
+      }, 1000);
+
+      c.req.raw.signal.addEventListener('abort', cleanup, { once: true });
+    },
+    cancel() {
+      cleanup();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
+app.get('/backtests/:id/trades/events', async (c) => {
+  const id = c.req.param('id');
+  const initial = await getBacktestTradeStreamState(id);
+  if (!initial) return c.json({ error: 'Backtest not found' }, 404);
+
+  const ACTIVE_STATUSES = new Set(['RUNNING', 'PENDING', 'PAUSED']);
+  const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+  const encoder = new TextEncoder();
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let interval: ReturnType<typeof setInterval> | null = null;
+  let stopped = false;
+  let inFlight = false;
+  let lastPayload = JSON.stringify(initial.snapshot);
+  let lastHeartbeatAt = Date.now();
+
+  const cleanup = () => {
+    if (stopped) return;
+    stopped = true;
+    if (interval) clearInterval(interval);
+    interval = null;
+    if (controllerRef) {
+      try {
+        controllerRef.close();
+      } catch {
+        // Stream is already closed.
+      }
+    }
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controllerRef = controller;
+      controller.enqueue(encoder.encode(`data: ${lastPayload}\n\n`));
+
+      if (!ACTIVE_STATUSES.has(initial.status)) {
+        cleanup();
+        return;
+      }
+
+      const tick = async () => {
+        if (stopped || inFlight) return;
+        inFlight = true;
+        try {
+          const next = await getBacktestTradeStreamState(id);
+          if (!next) {
+            cleanup();
+            return;
+          }
+
+          const nextPayload = JSON.stringify(next.snapshot);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            lastHeartbeatAt = Date.now();
+            controller.enqueue(encoder.encode(`data: ${nextPayload}\n\n`));
+          } else if (Date.now() - lastHeartbeatAt >= 15_000) {
+            lastHeartbeatAt = Date.now();
+            controller.enqueue(encoder.encode(': keep-alive\n\n'));
+          }
+
+          if (TERMINAL_STATUSES.has(next.status)) {
+            cleanup();
+          }
+        } catch {
+          cleanup();
+        } finally {
+          inFlight = false;
+        }
+      };
+
+      interval = setInterval(() => {
+        void tick();
+      }, 1000);
+
+      c.req.raw.signal.addEventListener('abort', cleanup, { once: true });
+    },
+    cancel() {
+      cleanup();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
   });
 });
 
@@ -1519,8 +1946,8 @@ app.get('/recon-alerts/stats', async (c) => {
   const [totals] = await db
     .select({
       total: count(),
-      unresolved: sql<number>`SUM(CASE WHEN ${schema.reconciliationAlerts.resolved} = 0 THEN 1 ELSE 0 END)`,
-      resolved: sql<number>`SUM(CASE WHEN ${schema.reconciliationAlerts.resolved} = 1 THEN 1 ELSE 0 END)`,
+      unresolved: sql<number>`SUM(CASE WHEN ${schema.reconciliationAlerts.resolved} IS FALSE THEN 1 ELSE 0 END)`,
+      resolved: sql<number>`SUM(CASE WHEN ${schema.reconciliationAlerts.resolved} IS TRUE THEN 1 ELSE 0 END)`,
     })
     .from(schema.reconciliationAlerts)
     .where(eq(schema.reconciliationAlerts.channelId, channelId));
@@ -1644,7 +2071,7 @@ app.get('/channels', async (c) => {
   const runs = await db
     .select()
     .from(schema.backtestRuns)
-    .where(inArray(schema.backtestRuns.status, ['COMPLETED', 'RUNNING', 'CANCELLED']))
+    .where(inArray(schema.backtestRuns.status, ['COMPLETED', 'RUNNING', 'PAUSED', 'CANCELLED']))
     .orderBy(desc(schema.backtestRuns.createdAt))
     .limit(30);
 
@@ -1700,7 +2127,7 @@ async function getStatsInternal(
     .from(schema.trades)
     .where((opts.useTotalPnl ?? false)
       ? and(isClosed, tradeScope(scopedChannelId))
-      : and(isClosed, tradeScope(scopedChannelId), sql`closed_at >= date('now')`)
+      : and(isClosed, tradeScope(scopedChannelId), sql`${schema.trades.closedAt} >= CURRENT_DATE::text`)
     );
 
   const [pendingTasksResult] = await db
@@ -1757,8 +2184,8 @@ async function getTradeHistorySummaryInternal(opts: {
       bestTrade: sql<string>`MAX(CAST(${schema.trades.pnl} AS REAL))`,
       worstTrade: sql<string>`MIN(CAST(${schema.trades.pnl} AS REAL))`,
       totalSlippage: sql<string>`COALESCE(SUM(
-        (COALESCE(json_extract(${schema.trades.metadata}, '$.entrySlippage'), 0)
-         + COALESCE(json_extract(${schema.trades.metadata}, '$.exitSlippage'), 0))
+        (COALESCE((${schema.trades.metadata}->>'entrySlippage')::double precision, 0)
+         + COALESCE((${schema.trades.metadata}->>'exitSlippage')::double precision, 0))
         * COALESCE(${schema.trades.quantity}, 1)
         * CASE WHEN ${schema.trades.strategy} != 'STOCK' THEN 100 ELSE 1 END
       ), 0)`,
@@ -1813,7 +2240,7 @@ async function getRiskSnapshotInternal(channelId?: string) {
       total: sql<string>`COALESCE(SUM(CAST(pnl AS REAL)), 0)`,
     })
     .from(schema.trades)
-    .where(and(tradeScope(scopedChannelId), sql`closed_at >= date('now')`));
+    .where(and(tradeScope(scopedChannelId), sql`${schema.trades.closedAt} >= CURRENT_DATE::text`));
 
   const balances = await db
     .select({ equity: schema.dailyBalances.equity })
@@ -2123,8 +2550,8 @@ async function getMessagesInternal(opts: {
     conditions.push(
       or(
         isNotNull(schema.messages.actionHint),
-        sql`json_array_length(${schema.messages.symbols}) > 0`,
-        sql`json_array_length(${schema.messages.badges}) > 0`,
+        sql`jsonb_array_length(${schema.messages.symbols}) > 0`,
+        sql`jsonb_array_length(${schema.messages.badges}) > 0`,
       )!
     );
   }
@@ -2256,6 +2683,7 @@ function computeFromTrades(
   decisions: { decision: { phase: string | null; outcome: string | null } }[],
   mtmSnapshots?: { date: string; unrealizedPnl: number }[],
   commissionSchedule?: CommissionSchedule,
+  messageCounts?: Pick<BacktestRunSummary, 'totalMessages' | 'tradedMessages'>,
 ) {
   const { summary: core, byTrader, byStrategy, equityCurve, sortedClosed } = computeCoreStats(allTrades, mtmSnapshots, commissionSchedule);
 
@@ -2263,7 +2691,14 @@ function computeFromTrades(
   const agentTrades = decisions.filter((d) => d.decision.phase === 'agent' && d.decision.outcome === 'EXECUTE').length;
   const skipped = decisions.filter((d) => d.decision.outcome === 'SKIP').length;
 
-  const summary = { ...core, totalMessages: 0, tradedMessages: 0, agentCallsUsed, agentTrades, skipped };
+  const summary = {
+    ...core,
+    totalMessages: messageCounts?.totalMessages ?? 0,
+    tradedMessages: messageCounts?.tradedMessages ?? 0,
+    agentCallsUsed,
+    agentTrades,
+    skipped,
+  };
 
   const netPnlOf = (t: TradeRow) => safeParseFloat(t.pnl) - computeTradeCommission(t, commissionSchedule);
 

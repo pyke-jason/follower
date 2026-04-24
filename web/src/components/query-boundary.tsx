@@ -79,7 +79,7 @@ export function MetricStripSkeleton({ count = 6 }: { count?: number }) {
 }
 
 /** Skeleton that mirrors a card with a chart inside */
-export function ChartCardSkeleton({ height = 180 }: { height?: number }) {
+function ChartCardSkeleton({ height = 180 }: { height?: number }) {
   return (
     <div className="rounded-md border bg-card p-0 overflow-hidden">
       <div className="px-4 py-3 border-b">
@@ -113,7 +113,7 @@ export function TableSkeleton({ rows = 8, cols = 5 }: { rows?: number; cols?: nu
 }
 
 /** Skeleton that mirrors a list of items (positions, signals) */
-export function ListSkeleton({ rows = 5 }: { rows?: number }) {
+function ListSkeleton({ rows = 5 }: { rows?: number }) {
   return (
     <div className="rounded-md border bg-card overflow-hidden">
       <div className="px-4 py-3 border-b">

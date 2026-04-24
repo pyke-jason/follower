@@ -145,7 +145,7 @@ export function parseDateKey(day: string): Date {
 // ── Market Open / Close as UTC Dates ─────────────────────────────────
 
 /** Market open (9:30 ET) as a UTC Date. DST-aware. */
-export function marketOpenUTC(d: Date): Date {
+function marketOpenUTC(d: Date): Date {
   const { start } = dayBoundsUTC(toDateKeyET(d));
   return new Date(start.getTime() + MARKET_OPEN_MINUTE * 60 * 1000);
 }

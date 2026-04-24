@@ -24,14 +24,14 @@ import { createLogger } from '../lib/logger.js';
 const log = createLogger('IntentTools');
 
 /** Callback for the get_recent_chat tool. */
-export type ChatLookup = (author: string | undefined, limit: number) => Promise<string>;
+type ChatLookup = (author: string | undefined, limit: number) => Promise<string>;
 
 /**
  * Validator called from inside submit_decision. If it returns any issues,
  * the tool rejects the draft; the LLM sees the concerns in its next turn
  * and retries within the same agent loop.
  */
-export type ValidateFn = (draft: TaskResult) => Promise<ValidatorIssue[]>;
+type ValidateFn = (draft: TaskResult) => Promise<ValidatorIssue[]>;
 
 /** Create the standard intent extraction tools with a pluggable chat lookup. */
 export function createIntentTools(chat: ChatLookup, validate?: ValidateFn): ToolDef[] {

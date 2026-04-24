@@ -1,56 +1,51 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import pg from 'pg';
 import * as schema from './schema.js';
-import { PATHS } from '../lib/paths.js';
 import { runStartupMaintenance } from './startup-maintenance.js';
 
-const dbPath = process.env.DATABASE_URL?.replace(/^file:/, '') ?? PATHS.db;
+const DEFAULT_DATABASE_URL = 'postgres://jason@127.0.0.1:5432/trade_follower';
+const databaseUrl = process.env.POSTGRES_DATABASE_URL ?? process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;
 
-const sqlite = new Database(dbPath);
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('busy_timeout = 30000');
-sqlite.pragma('foreign_keys = ON');
-
-const foreignKeysEnabled = sqlite.pragma('foreign_keys', { simple: true });
-if (foreignKeysEnabled !== 1) {
-  throw new Error('SQLite foreign_keys pragma did not enable successfully.');
+if (databaseUrl.startsWith('file:')) {
+  throw new Error('Postgres is required. Set POSTGRES_DATABASE_URL or DATABASE_URL to a postgres:// URL.');
 }
 
-const maintenance = runStartupMaintenance(sqlite);
+export const pgPool = new pg.Pool({ connectionString: databaseUrl });
+export const db = drizzle(pgPool, { schema });
+
+const maintenance = await runStartupMaintenance(db);
 const repairedRows = Object.values(maintenance).reduce((sum, count) => sum + count, 0);
 if (repairedRows > 0) {
   console.warn(`[db] Startup maintenance repaired ${repairedRows} row(s)`, maintenance);
 }
 
-export const db = drizzle(sqlite, { schema });
 export { schema };
-export { sqlite as sqliteClient };
 
-/** Synchronous transaction via better-sqlite3's native `.transaction()`. */
-export function runTx<T>(cb: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => T): T {
+export function runTx<T>(
+  cb: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
+): Promise<T> {
   return db.transaction(cb);
 }
 
 /**
- * Retry wrapper for SQLITE_BUSY errors with jittered exponential backoff.
- *
- * With better-sqlite3 + busy_timeout=30000, SQLite handles contention
- * internally (waits up to 30s before throwing SQLITE_BUSY). This retry
- * wrapper is a safety net for edge cases where even 30s isn't enough.
+ * Retry transient database failures with jittered exponential backoff.
+ * PostgreSQL can report serialization/deadlock/lock contention as SQLSTATEs.
  */
-export async function withBusyRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+export async function withDbRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  const retryableCodes = new Set(['40001', '40P01', '55P03']);
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await fn();
-    } catch (error: any) {
-      const code = error?.code ?? error?.cause?.code;
-      if (code === 'SQLITE_BUSY' && attempt < retries - 1) {
-        const delay = Math.min(100 * Math.pow(2, attempt), 5000) + Math.random() * 200;
-        await new Promise((r) => setTimeout(r, delay));
+    } catch (error: unknown) {
+      const code = (error as { code?: string; cause?: { code?: string } })?.code
+        ?? (error as { cause?: { code?: string } })?.cause?.code;
+      if (code && retryableCodes.has(code) && attempt < retries - 1) {
+        const delay = Math.min(100 * 2 ** attempt, 5_000) + Math.random() * 200;
+        await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
       throw error;
     }
   }
-  throw new Error('withBusyRetry: unreachable');
+  throw new Error('withDbRetry: unreachable');
 }

@@ -45,12 +45,49 @@ export type ResolvedPendingContext = {
   taskId?: string;
   tradeId?: string;
   signalIndex?: number;
+  resume: PendingResumeData;
   recordFill: (fill: { filledPrice: number; filledAt: Date; adjustmentCount: number }) => Promise<RecordTradeResult | null>;
+};
+
+type PendingFill = { filledPrice: number; filledAt: Date; adjustmentCount: number };
+
+export type PendingResumeData = {
+  kind: 'OPEN';
+  action: Extract<ResolvedSignal['action'], 'OPEN' | 'ADD'>;
+  symbol: string;
+  trader: string;
+  direction: Direction;
+  strategy: Strategy;
+  quantity: number;
+  legs: OrderLeg[];
+  messageId?: string;
+  taskId?: string;
+  tradeId?: string;
+  signalIndex?: number;
+  limitPrice: number;
+  isCredit: boolean;
+} | {
+  kind: 'REDUCE';
+  action: 'CLOSE' | 'TRIM';
+  symbol: string;
+  trader: string;
+  direction: Direction;
+  strategy: Strategy;
+  quantity: number;
+  legs: OrderLeg[];
+  messageId?: string;
+  taskId?: string;
+  tradeId?: string;
+  signalIndex?: number;
+  closeMid: number;
+  closeIsCredit: boolean;
+  exitPercent?: number;
 };
 
 export type ResolvedPipelineDeps = {
   broker: BrokerService;
   orderManager: OrderManager;
+  sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info' }) => Promise<void> | void;
   calculatePositionSize: (input: {
     trader: string;
     symbol: string;
@@ -88,7 +125,7 @@ export type ExecuteEnv = {
 // ─── Chase profiles ─────────────────────────────────
 
 /** @internal Exported for testing. */
-export type ChaseProfile = {
+type ChaseProfile = {
   pctPerStep: number;        // % of signal price per step
   minStep: number;           // absolute minimum step ($)
   maxStep: number;           // absolute maximum step ($)
@@ -98,7 +135,7 @@ export type ChaseProfile = {
 };
 
 /** @internal Exported for testing. */
-export const CHASE_PROFILES = {
+const CHASE_PROFILES = {
   OPTION_OPEN_SELL:  { pctPerStep: 0.02, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.30, intervalSec: 5, cancelAfterSec: 45 },
   OPTION_OPEN_BUY:   { pctPerStep: 0.04, minStep: 0.02, maxStep: 0.25, maxSlippagePct: 0.50, intervalSec: 5, cancelAfterSec: 60 },
   OPTION_CLOSE:      { pctPerStep: 0.005, minStep: 0.01, maxStep: 0.10, maxSlippagePct: 0.80, intervalSec: 5 },
@@ -118,7 +155,7 @@ type ResolvedChaseParams = {
 };
 
 /** @internal Exported for testing. */
-export function resolveChaseParams(profile: ChaseProfile, signalPrice: number, isBuy: boolean): ResolvedChaseParams {
+function resolveChaseParams(profile: ChaseProfile, signalPrice: number, isBuy: boolean): ResolvedChaseParams {
   const rawStep = signalPrice * profile.pctPerStep;
   const stepAmount = floorCents(Math.min(profile.maxStep, Math.max(profile.minStep, rawStep)));
 
@@ -133,7 +170,7 @@ export function resolveChaseParams(profile: ChaseProfile, signalPrice: number, i
 }
 
 /** @internal Exported for testing. */
-export function selectChaseProfile(strategy: Strategy, isPositionReducing: boolean, isBuy: boolean): ChaseProfile {
+function selectChaseProfile(strategy: Strategy, isPositionReducing: boolean, isBuy: boolean): ChaseProfile {
   if (strategy === 'STOCK') {
     return isPositionReducing ? CHASE_PROFILES.STOCK_CLOSE : CHASE_PROFILES.STOCK_OPEN;
   }
@@ -298,6 +335,98 @@ type PricingContext = {
   isCredit: boolean;
 };
 
+function buildChaseFlags(adjustmentCount: number): TradeFlag[] {
+  if (adjustmentCount >= 10) return ['chaseDanger'];
+  if (adjustmentCount >= 5) return ['chaseWarn'];
+  return [];
+}
+
+function createRecordFillFromResume(
+  resume: PendingResumeData,
+  recordTrade: ResolvedPipelineDeps['recordTrade'],
+): (fill: PendingFill) => Promise<RecordTradeResult | null> {
+  return async (fill) => {
+    const chaseFlags = buildChaseFlags(fill.adjustmentCount);
+    if (resume.kind === 'OPEN') {
+      const isBuy = resume.strategy === 'STOCK' ? resume.direction === 'LONG' : !resume.isCredit;
+      const entrySlippage = isBuy
+        ? roundCents(fill.filledPrice - resume.limitPrice)
+        : roundCents(resume.limitPrice - fill.filledPrice);
+      const entrySlippagePct = resume.limitPrice > 0 ? round(entrySlippage / resume.limitPrice, 4) : 0;
+      const fillMetadata: TradeMetadata = {
+        ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
+        ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
+        entrySlippage,
+        entrySlippagePct,
+      };
+      return recordTrade({
+        action: resume.action,
+        symbol: resume.symbol,
+        trader: resume.trader,
+        direction: resume.direction,
+        strategy: resume.strategy,
+        entryPrice: fill.filledPrice,
+        quantity: resume.quantity,
+        legs: resume.legs,
+        openedAt: fill.filledAt.toISOString(),
+        sourceMessageId: resume.messageId,
+        ...(resume.tradeId ? { tradeId: resume.tradeId } : {}),
+        metadata: fillMetadata,
+      });
+    }
+
+    const closeBuy = resume.strategy === 'STOCK' ? resume.direction !== 'LONG' : !resume.closeIsCredit;
+    const exitSlippage = closeBuy
+      ? roundCents(fill.filledPrice - resume.closeMid)
+      : roundCents(resume.closeMid - fill.filledPrice);
+    const exitSlippagePct = resume.closeMid > 0 ? round(exitSlippage / resume.closeMid, 4) : 0;
+    const fillMetadata: TradeMetadata = {
+      ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
+      ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
+      exitSlippage,
+      exitSlippagePct,
+    };
+    return recordTrade({
+      action: resume.action,
+      tradeId: resume.tradeId,
+      symbol: resume.symbol,
+      trader: resume.trader,
+      direction: resume.direction,
+      strategy: resume.strategy,
+      exitPrice: fill.filledPrice,
+      quantity: resume.quantity,
+      ...(resume.exitPercent != null && resume.exitPercent < 1 && {
+        closeQuantity: resume.quantity,
+        exitPercent: resume.exitPercent,
+      }),
+      legs: resume.legs,
+      closedAt: fill.filledAt.toISOString(),
+      closeMessageId: resume.messageId,
+      metadata: fillMetadata,
+    });
+  };
+}
+
+export function createPendingContextFromResume(
+  resume: PendingResumeData,
+  recordTrade: ResolvedPipelineDeps['recordTrade'],
+): ResolvedPendingContext {
+  return {
+    symbol: resume.symbol,
+    trader: resume.trader,
+    direction: resume.direction,
+    strategy: resume.strategy,
+    quantity: resume.quantity,
+    legs: resume.legs,
+    messageId: resume.messageId,
+    taskId: resume.taskId,
+    tradeId: resume.tradeId,
+    signalIndex: resume.signalIndex,
+    resume,
+    recordFill: createRecordFillFromResume(resume, recordTrade),
+  };
+}
+
 // ─── Place order ────────────────────────────────────
 
 async function placeOrder(
@@ -401,7 +530,9 @@ async function executeResolvedSignal(
 
     // 4. Place and record
     let tradeId: string | undefined;
-    const result = await traced(trace, 'placeOrder', 'broker', () => placeOrder(deps, params, {
+    const openResume: PendingResumeData = {
+      kind: 'OPEN',
+      action: signalAction === 'ADD' ? 'ADD' : 'OPEN',
       symbol,
       trader,
       direction,
@@ -410,42 +541,26 @@ async function executeResolvedSignal(
       legs: orderLegs,
       messageId,
       signalIndex,
-      recordFill: async (fill) => {
-        // Build chase metadata from fill (moved from caller)
-        const chaseFlags: TradeFlag[] = [];
-        if (fill.adjustmentCount >= 10) chaseFlags.push('chaseDanger');
-        else if (fill.adjustmentCount >= 5) chaseFlags.push('chaseWarn');
-        // Chase slippage: how much worse the fill was vs initial limit.
-        // BUY (debit): slippage = paid more. SELL (credit): slippage = received less.
-        const isBuy = strategy === 'STOCK' ? direction === 'LONG' : !isCredit;
-        const entrySlippage = isBuy
-          ? roundCents(fill.filledPrice - limitPrice)
-          : roundCents(limitPrice - fill.filledPrice);
-        const entrySlippagePct = limitPrice > 0 ? round(entrySlippage / limitPrice, 4) : 0;
-        const fillMetadata: TradeMetadata = {
-          ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
-          ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
-          entrySlippage,
-          entrySlippagePct,
-        };
-        const recorded = await deps.recordTrade({
-          action: signalAction,
-          symbol,
-          trader,
-          direction,
-          strategy,
-          entryPrice: fill.filledPrice,
-          quantity: size.quantity,
-          legs: orderLegs,
-          openedAt: fill.filledAt.toISOString(),
-          sourceMessageId: messageId,
-          ...(signal.tradeId && { tradeId: signal.tradeId }),
-          metadata: fillMetadata,
-        });
-        if (recorded) tradeId = recorded.tradeId;
-        return recorded;
-      },
-    }, emitter, signalIndex, { sigPrice, mid, isCredit }));
+      ...(signal.tradeId ? { tradeId: signal.tradeId } : {}),
+      limitPrice,
+      isCredit,
+    };
+    const openPending = createPendingContextFromResume(openResume, deps.recordTrade);
+    const openRecordFill = openPending.recordFill;
+    openPending.recordFill = async (fill) => {
+      const recorded = await openRecordFill(fill);
+      if (recorded) tradeId = recorded.tradeId;
+      return recorded;
+    };
+
+    const result = await traced(trace, 'placeOrder', 'broker', () => placeOrder(
+      deps,
+      params,
+      openPending,
+      emitter,
+      signalIndex,
+      { sigPrice, mid, isCredit },
+    ));
 
     if (result.status === 'REJECTED') {
       return { signal, executed: false, reason: result.message ?? 'Order rejected' };
@@ -469,7 +584,12 @@ async function executeResolvedSignal(
 
   let tradeId: string | undefined;
   const quantity = orderLegs[0]?.quantity ?? 1;
-  const result = await traced(trace, 'placeOrder', 'broker', () => placeOrder(deps, params, {
+  const reduceAction = signal.exitPercent != null && signal.exitPercent < 1
+    ? 'TRIM' as const
+    : 'CLOSE' as const;
+  const reduceResume: PendingResumeData = {
+    kind: 'REDUCE',
+    action: reduceAction,
     symbol,
     trader,
     direction,
@@ -479,47 +599,26 @@ async function executeResolvedSignal(
     messageId,
     tradeId: signal.tradeId,
     signalIndex,
-    recordFill: async (fill) => {
-      const chaseFlags: TradeFlag[] = [];
-      if (fill.adjustmentCount >= 10) chaseFlags.push('chaseDanger');
-      else if (fill.adjustmentCount >= 5) chaseFlags.push('chaseWarn');
-      // Chase slippage on exit: same sign convention as entry (positive = worse).
-      const closeBuy = strategy === 'STOCK' ? direction !== 'LONG' : !closeIsCredit;
-      const exitSlippage = closeBuy
-        ? roundCents(fill.filledPrice - closeMid)
-        : roundCents(closeMid - fill.filledPrice);
-      const exitSlippagePct = closeMid > 0 ? round(exitSlippage / closeMid, 4) : 0;
-      const fillMetadata: TradeMetadata = {
-        ...(fill.adjustmentCount > 0 ? { chaseSteps: fill.adjustmentCount } : {}),
-        ...(chaseFlags.length > 0 ? { flags: chaseFlags } : {}),
-        exitSlippage,
-        exitSlippagePct,
-      };
-      const action = signal.exitPercent != null && signal.exitPercent < 1
-        ? 'TRIM' as const
-        : 'CLOSE' as const;
-      const recorded = await deps.recordTrade({
-        action,
-        tradeId: signal.tradeId,
-        symbol,
-        trader,
-        direction,
-        strategy,
-        exitPrice: fill.filledPrice,
-        quantity,
-        ...(signal.exitPercent != null && signal.exitPercent < 1 && {
-          closeQuantity: quantity,
-          exitPercent: signal.exitPercent,
-        }),
-        legs: orderLegs,
-        closedAt: fill.filledAt.toISOString(),
-        closeMessageId: messageId,
-        metadata: fillMetadata,
-      });
-      if (recorded) tradeId = recorded.tradeId;
-      return recorded;
-    },
-  }, emitter, signalIndex, { sigPrice: closeMid, mid: closeMid, isCredit: closeIsCredit }));
+    closeMid,
+    closeIsCredit,
+    ...(signal.exitPercent != null ? { exitPercent: signal.exitPercent } : {}),
+  };
+  const reducePending = createPendingContextFromResume(reduceResume, deps.recordTrade);
+  const reduceRecordFill = reducePending.recordFill;
+  reducePending.recordFill = async (fill) => {
+    const recorded = await reduceRecordFill(fill);
+    if (recorded) tradeId = recorded.tradeId;
+    return recorded;
+  };
+
+  const result = await traced(trace, 'placeOrder', 'broker', () => placeOrder(
+    deps,
+    params,
+    reducePending,
+    emitter,
+    signalIndex,
+    { sigPrice: closeMid, mid: closeMid, isCredit: closeIsCredit },
+  ));
 
   if (result.status === 'REJECTED') {
     return { signal, executed: false, reason: result.message ?? 'Order rejected' };

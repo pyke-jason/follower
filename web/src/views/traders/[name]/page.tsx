@@ -1,15 +1,15 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useChannelId } from '@/hooks/use-channel-id';
-import { useEffect } from 'react';
-import { useTradesStore } from '@/stores/trades-store';
 import { queries } from '@/lib/queries';
 import type { TraderDetailResponse } from '@src/local-api/http-schemas';
 import { Badge } from '@/components/badge';
 import { InfoChip } from '@/components/info-chip';
 import { MetricStrip, type Metric } from '@/components/metric-strip';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { TradeFilterProvider } from '@/components/trade-filters';
 import { TradesTableClient } from '@/components/trades-table-client';
+import { TradesViewProvider } from '@/components/trades-view-context';
 import { OverviewEquityCurve } from '@/components/overview-equity-curve';
 import { BarChartComponent } from './bar-chart';
 import { formatCurrency } from '@/lib/format';
@@ -62,12 +62,6 @@ function TraderDetailContent({ data, channelId, decodedName, href }: {
   decodedName: string;
   href: ReturnType<typeof useScopedHref>;
 }) {
-  const hydrate = useTradesStore((s) => s.hydrate);
-
-  useEffect(() => {
-    hydrate({ trades: data.closedTrades, eventsByTradeId: {}, flagsByTradeId: {}, channelId });
-  }, [data, hydrate, channelId]);
-
   const { trader, equityCurve, strategyBreakdown, historySummary, closedTrades } = data;
   const equityData = toEquityChartData(equityCurve);
   const strategyChartData = toStrategyChartData(strategyBreakdown);
@@ -142,7 +136,20 @@ function TraderDetailContent({ data, channelId, decodedName, href }: {
       {closedTrades.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-foreground mb-3">Recent Trades</h3>
-          <TradesTableClient />
+          <TradesViewProvider
+            value={{
+              trades: closedTrades,
+              eventsByTradeId: {},
+              flagsByTradeId: {},
+              labelsByTradeId: {},
+              livePositionsByTradeId: {},
+              channelId,
+            }}
+          >
+            <TradeFilterProvider trades={closedTrades} flagsByTradeId={{}}>
+              <TradesTableClient trades={closedTrades} />
+            </TradeFilterProvider>
+          </TradesViewProvider>
         </div>
       )}
 

@@ -15,6 +15,12 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
+      "@/agent/*": ["../src/agent/*"],
+      "@/db/*": ["../src/db/*"],
+      "@/eval/*": ["../src/eval/*"],
+      "@/lib/*": ["./src/lib/*", "../src/lib/*"],
+      "@/parsing/*": ["../src/parsing/*"],
+      "@/trades/*": ["../src/trades/*"],
       "@/*": ["./src/*"],
       "@src/*": ["../src/*"]
     }

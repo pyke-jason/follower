@@ -8,11 +8,9 @@
  *   parse → route → resolve → ResolvedSignal[] | SKIP | MANUAL_REVIEW
  *
  * Routes (in order of precedence):
- *   1. Hard skip  → SKIP immediately (no I/O)
- *   2. Strangle   → fork into CALL + PUT OPEN signals via open-path
- *   3. OPEN (no complexity flags) → open-path (market data only)
- *   4. CLOSE / TRIM / LEG_OFF (no complexity flags) → position-path (DB only)
- *   5. Complexity flags or action=null → LLM path → then re-route
+ *   1. No badge/cue → hard SKIP immediately (no I/O)
+ *   2. Whole-message canonical trade template → deterministic path
+ *   3. Everything else → LLM path → then re-route
  *
  * See docs/plan-orchestrator-technical.md for the full design.
  */
@@ -28,7 +26,7 @@ import { synthesizeDeterministicSignals } from './classifier-signals.js';
 import { resolveLLMPath } from './llm-path.js';
 import { writeIntent } from './intent-cache.js';
 import type { IntentRoute } from './intent-cache.js';
-import { getRecentChatMessages, formatChatContext } from '../trader-context.js';
+import { buildOrchestratorContext } from './context.js';
 import {
   SerializedParseResultSchema,
   type OrchestratorContext,
@@ -40,10 +38,6 @@ import {
   type Leg,
 } from './types.js';
 
-export type { OrchestratorEnv, OrchestratorResult, ResolvedSignal };
-export type { Leg, OptionLeg, StockLeg } from './types.js';
-export type { OrchestratorMarketDataProvider, PositionProvider, ChatHistoryProvider, TradePosition, SignalEventEmitter } from './types.js';
-export { INTENT_VERSION } from './intent-cache.js';
 
 const log = createLogger('Orchestrator');
 
@@ -65,17 +59,17 @@ export async function resolveOrchestrator(
   opts?: { failureContext?: { error: string } },
 ): Promise<OrchestratorResult> {
   // Build internal context from message + env
-  const ctx = await buildContext(message, env, opts?.failureContext);
+  const ctx = await buildOrchestratorContext(message, env, opts?.failureContext);
   let parse = traced(env.trace, 'parse', 'sync', () => parseMessage(ctx));
 
   log.debug(
     `[${ctx.message.id}] parse: action=${parse.action} symbol=${parse.symbol} ` +
     `strategy=${parse.strategy} direction=${parse.direction} ` +
     `flags=[${Array.from(parse.complexityFlags).join(',')}] ` +
-    `hardSkip=${parse.isHardSkip} strangle=${parse.isStrangle}`,
+    `hardSkip=${parse.isHardSkip} canonical=${parse.hasCanonicalMatch} strangle=${parse.isStrangle}`,
   );
 
-  const serializedParse = serializeParseResult(parse);
+  let serializedParse = serializeParseResult(parse);
 
   // ── 1. Hard skip ────────────────────────────────────────────────────────────
   if (parse.isHardSkip) {
@@ -90,47 +84,44 @@ export async function resolveOrchestrator(
     return result;
   }
 
-  // ── 2. Strangle ─────────────────────────────────────────────────────────────
-  // Strangle/straddle EXIT: close all matching positions for symbol
-  if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
-    log.debug(`[${ctx.message.id}] strangle exit → per-position close`);
-    const r = await traced(env.trace, 'strangleExit', 'db', () => resolveStrangleExit(parse, ctx));
-    const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
-    logResult(ctx, parse, result);
-    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
-    return result;
-  }
-
-  // Strangle/straddle OPEN: decompose into CALL + PUT signals
-  if (parse.isStrangle) {
-    log.debug(`[${ctx.message.id}] strangle → forking into CALL + PUT`);
-    const r = await traced(env.trace, 'strangle', 'market_data', () => resolveStrangle(parse, ctx));
-    const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
-    logResult(ctx, parse, result);
-    await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
-    return result;
-  }
-
-  // ── 3 & 4. Deterministic paths ──────────────────────────────────────────────
-  // Only take the fast path when there are no complexity flags and the action
-  // was unambiguously determined. A failureContext means execution already tried
-  // the deterministic result and got a 422 — force LLM to correct the strike.
-  // Reroute STOCK OPEN→ADD when a same-symbol/strategy/direction position already exists.
-  // The parser is zero-I/O so can't check, but the orchestrator can.
-  if (parse.action === 'OPEN' && parse.strategy === 'STOCK' && parse.symbol) {
-    const existing = await ctx.positions.getPositions(parse.symbol);
-    const duplicate = existing.find(
-      (p) => p.strategy === 'STOCK' && p.direction === parse.direction,
-    );
-    if (duplicate) {
-      log.debug(`[${ctx.message.id}] rerouting STOCK OPEN→ADD for ${parse.symbol} (existing position ${duplicate.id.slice(0, 8)})`);
-      parse = { ...parse, action: 'ADD' };
+  // ── 2. Deterministic path (canonical templates only) ───────────────────────
+  // A failureContext means execution already tried a deterministic result and
+  // got a 422 — force the LLM to correct the strike.
+  if (parse.hasCanonicalMatch && ctx.failureContext == null) {
+    // Strangle/straddle EXIT: close all matching positions for symbol
+    if (parse.isStrangle && parse.action !== 'OPEN' && parse.action !== null) {
+      log.debug(`[${ctx.message.id}] strangle exit → per-position close`);
+      const r = await traced(env.trace, 'strangleExit', 'db', () => resolveStrangleExit(parse, ctx));
+      const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
+      logResult(ctx, parse, result);
+      await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
+      return result;
     }
-  }
 
-  const needsLLM = parse.complexityFlags.size > 0 || parse.action === null || ctx.failureContext != null;
+    // Strangle/straddle OPEN: decompose into CALL + PUT signals
+    if (parse.isStrangle) {
+      log.debug(`[${ctx.message.id}] strangle → forking into CALL + PUT`);
+      const r = await traced(env.trace, 'strangle', 'market_data', () => resolveStrangle(parse, ctx));
+      const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
+      logResult(ctx, parse, result);
+      await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
+      return result;
+    }
 
-  if (!needsLLM) {
+    // Reroute STOCK OPEN→ADD when a same-symbol/strategy/direction position already exists.
+    // The parser is zero-I/O so can't check, but the orchestrator can.
+    if (parse.action === 'OPEN' && parse.strategy === 'STOCK' && parse.symbol) {
+      const existing = await ctx.positions.getPositions(parse.symbol);
+      const duplicate = existing.find(
+        (p) => p.strategy === 'STOCK' && p.direction === parse.direction,
+      );
+      if (duplicate) {
+        log.debug(`[${ctx.message.id}] rerouting STOCK OPEN→ADD for ${parse.symbol} (existing position ${duplicate.id.slice(0, 8)})`);
+        parse = { ...parse, action: 'ADD' };
+        serializedParse = serializeParseResult(parse);
+      }
+    }
+
     if (parse.action === 'ADD') {
       log.debug(`[${ctx.message.id}] → add path`);
       const r = await traced(env.trace, 'addPath', 'market_data', () => resolveAddPath(parse, ctx));
@@ -171,14 +162,44 @@ export async function resolveOrchestrator(
     }
   }
 
-  // ── 5. LLM path ─────────────────────────────────────────────────────────────
+  const followTrade = await tryFollowTradeFromHistory(parse, ctx);
+  if (followTrade && ctx.failureContext == null) {
+    parse = followTrade;
+    serializedParse = serializeParseResult(parse);
+    log.debug(`[${ctx.message.id}] → open path via follow-trade history rule`);
+    const r = await traced(env.trace, 'followTradeHistory', 'db', () => resolveOpenPath(parse, ctx));
+    if (r.outcome !== 'MANUAL_REVIEW') {
+      const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
+      logResult(ctx, parse, result);
+      await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
+      return result;
+    }
+    log.debug(`[${ctx.message.id}] follow-trade history → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
+  }
+
+  const singlePositionExit = await trySinglePositionExit(parse, ctx);
+  if (singlePositionExit && ctx.failureContext == null) {
+    parse = singlePositionExit;
+    serializedParse = serializeParseResult(parse);
+    log.debug(`[${ctx.message.id}] → position path via single-position exit rule`);
+    const r = await traced(env.trace, 'singlePositionExit', 'db', () => resolvePositionPath(parse, ctx));
+    if (r.outcome !== 'MANUAL_REVIEW') {
+      const result = { ...r, parseResult: serializedParse, classifierSignals: synthesizeDeterministicSignals(parse) };
+      logResult(ctx, parse, result);
+      await traced(env.trace, 'emitEvents', 'db', () => emitOrchestratorEvents(env, message, result, serializedParse, 'deterministic'));
+      return result;
+    }
+    log.debug(`[${ctx.message.id}] single-position exit → MANUAL_REVIEW (${r.reason}), escalating to LLM`);
+  }
+
+  // ── 3. LLM path ─────────────────────────────────────────────────────────────
   const flagDetail = ctx.failureContext != null
     ? '422-retry'
-    : parse.complexityFlags.size > 0
-      ? `flags: [${Array.from(parse.complexityFlags).join(', ')}]`
-      : parse.action !== null
-        ? 'position-ambiguity'
-        : 'action=null';
+    : parse.hasCanonicalMatch
+      ? 'canonical-manual-review'
+      : parse.complexityFlags.size > 0
+        ? `non-canonical flags: [${Array.from(parse.complexityFlags).join(', ')}]`
+        : 'non-canonical';
   log.debug(`[${ctx.message.id}] → LLM path (${flagDetail})`);
 
   const r = await traced(env.trace, 'llmPath', 'llm', () => resolveLLMPath(parse, ctx, env.agent));
@@ -188,31 +209,99 @@ export async function resolveOrchestrator(
   return result;
 }
 
-// ── Build internal context ───────────────────────────────────────────────────
+async function tryFollowTradeFromHistory(
+  parse: ParseResult,
+  ctx: OrchestratorContext,
+): Promise<ParseResult | null> {
+  if (!parse.complexityFlags.has('relational')) return null;
+  if (parse.symbol !== null || parse.action !== null) return null;
+  if (!/\b(?:same|same\s+trade|following|with\s+you|in\s+with\s+you)\b/i.test(ctx.message.cleanText)) return null;
 
-async function buildContext(
-  message: Message,
-  env: OrchestratorEnv,
-  failureContext?: { error: string },
-): Promise<OrchestratorContext> {
+  const author = extractReferencedAuthor(ctx.message.cleanText);
+  const history = await ctx.chatHistory.getRecentMessages(author ?? undefined, 20);
+  const hint = parseSimpleFollowTradeHistory(history);
+  if (!hint) return null;
+
   return {
-    message,
-    marketData: {
-      getQuote: (s) => env.broker.getQuote(s),
-      getOptionChain: async () => null,
-      getExpiryDates: async () => [],
-    },
-    positions: {
-      getPositions: env.getPositions,
-    },
-    chatHistory: {
-      getRecentMessages: async (author?: string, limit?: number) => {
-        const msgs = await getRecentChatMessages(message.timestamp, author, limit);
-        return formatChatContext(msgs);
-      },
-    },
-    failureContext,
+    ...parse,
+    action: 'OPEN',
+    symbol: hint.symbol,
+    direction: hint.direction,
+    strategy: hint.strategy,
+    strikes: hint.strikes,
+    premiumHint: hint.statedPrice,
+    expiryHint: null,
+    hasCanonicalMatch: true,
+    ruleId: 'history-loop.follow-trade-simple-option',
+    routeReason: 'follow-trade mirrored structured option trade from recent chat',
   };
+}
+
+function extractReferencedAuthor(cleanText: string): string | null {
+  const mention = /@([A-Za-z][\w .-]{0,40})/.exec(cleanText);
+  if (mention) return mention[1].trim();
+  const following = /\bfollowing\s+([A-Za-z][\w .-]{0,40})/i.exec(cleanText);
+  return following?.[1]?.trim() ?? null;
+}
+
+function parseSimpleFollowTradeHistory(history: string): {
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  strategy: 'CALL' | 'PUT';
+  strikes: number[];
+  statedPrice: number | null;
+} | null {
+  const lines = history.split('\n').reverse();
+  for (const line of lines) {
+    const word = /\bLong\s+([A-Z]{1,6})\s+\$?(\d{1,5}(?:\.\d+)?)\s+(call|put)s?\s+for\s+\$?(\d+(?:\.\d+)?|\.\d+)/i.exec(line);
+    if (word) {
+      return {
+        symbol: word[1].toUpperCase(),
+        direction: 'LONG',
+        strategy: word[3].toLowerCase().startsWith('c') ? 'CALL' : 'PUT',
+        strikes: [Number.parseFloat(word[2])],
+        statedPrice: Number.parseFloat(word[4]),
+      };
+    }
+
+    const compact = /\bLong\s+([A-Z]{1,6})\s+(\d{1,5}(?:\.\d+)?)([cp])\b(?:\s+\S+)?(?:\s+(?:@|for)\s+\$?(\d+(?:\.\d+)?|\.\d+))?/i.exec(line);
+    if (compact) {
+      return {
+        symbol: compact[1].toUpperCase(),
+        direction: 'LONG',
+        strategy: compact[3].toLowerCase() === 'c' ? 'CALL' : 'PUT',
+        strikes: [Number.parseFloat(compact[2])],
+        statedPrice: compact[4] ? Number.parseFloat(compact[4]) : null,
+      };
+    }
+  }
+  return null;
+}
+
+async function trySinglePositionExit(
+  parse: ParseResult,
+  ctx: OrchestratorContext,
+): Promise<ParseResult | null> {
+  if (parse.hasCanonicalMatch || parse.isHardSkip || !parse.symbol) return null;
+  if (parse.action !== 'CLOSE' && parse.action !== 'TRIM') return null;
+  if (parse.complexityFlags.has('multi_ticker')) return null;
+  if (hasExitLoopDisqualifier(ctx.message.cleanText)) return null;
+
+  const positions = await ctx.positions.getPositions(parse.symbol);
+  if (positions.length !== 1) return null;
+
+  const position = positions[0];
+  return {
+    ...parse,
+    strategy: parse.strategy ?? position.strategy,
+    direction: parse.direction ?? position.direction,
+    ruleId: 'history-loop.single-position-exit',
+    routeReason: 'non-canonical exit matched exactly one open position',
+  };
+}
+
+function hasExitLoopDisqualifier(cleanText: string): boolean {
+  return /\b(?:expired?|expire\s+worthless|will\s+expire|offering|trying\s+to|looking\s+to|plan\s+to|would\s+like|if\s+)\b/i.test(cleanText);
 }
 
 // ── Emit orchestrator events ──────────────────────────────────────────────────
@@ -244,8 +333,9 @@ async function emitOrchestratorEvents(
   // Record decision for tracking (LLM path records its own with richer detail)
   if (route !== 'llm') {
     const reason = result.outcome === 'SKIP' || result.outcome === 'MANUAL_REVIEW'
-      ? result.reason : null;
-    writeIntent({
+      ? result.reason
+      : serializedParse.routeReason;
+    await writeIntent({
       messageId: message.id,
       model: env.agent.identity.model,
       route: route as IntentRoute,

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import type { EvalCase, EvalSource } from '../types.js';
 
-export class FixtureSource implements EvalSource {
+class FixtureSource implements EvalSource {
   readonly name = 'fixtures';
 
   constructor(private readonly dir: string) {}

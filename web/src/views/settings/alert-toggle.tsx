@@ -3,7 +3,7 @@ import { useApiMutation } from '@/hooks/use-api-mutation';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 
-export type ToggleId = 'discord' | 'pushover' | 'ingestion';
+type ToggleId = 'discord' | 'pushover' | 'ingestion';
 
 export function SettingToggle({
   id,

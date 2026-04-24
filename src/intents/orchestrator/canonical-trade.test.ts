@@ -8,6 +8,7 @@ describe('matchCanonicalTrade — whole-message templates only', () => {
       expect(r).toEqual({
         action: 'OPEN', direction: null, strategy: 'STOCK',
         strikes: null, expiry: null, statedPrice: 182.38, exitPercent: null,
+        ruleId: 'canonical.stock-bare-price', routeReason: 'STOCK bare price',
       });
     });
     it('@ price: "Short VXX @ 34.20"', () => {
@@ -42,6 +43,7 @@ describe('matchCanonicalTrade — whole-message templates only', () => {
       expect(r).toEqual({
         action: 'OPEN', direction: null, strategy: 'CALL',
         strikes: [175], expiry: '12/21', statedPrice: null, exitPercent: null,
+        ruleId: 'canonical.opt-strike-type-mmdd', routeReason: 'OPT strike+type+MMDD',
       });
     });
     it('strike+type+MMDD+price: "Long NVDA 175c 9/26 2.03"', () => {

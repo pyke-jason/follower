@@ -18,7 +18,7 @@ export const StatusResponseSchema = z.object({
   maintenance: z.boolean(),
 });
 
-export type StatusResponse = z.infer<typeof StatusResponseSchema>;
+type StatusResponse = z.infer<typeof StatusResponseSchema>;
 
 // ── Quote / Market Data ─────────────────────────────────────────────
 // Sidecar returns only ticks that arrived within the 5s window.
@@ -33,7 +33,7 @@ export const QuoteResponseSchema = z.object({
   volume: z.number().optional(),
 });
 
-export type QuoteResponse = z.infer<typeof QuoteResponseSchema>;
+type QuoteResponse = z.infer<typeof QuoteResponseSchema>;
 
 // ── Contract Resolution ─────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ export const ContractResolveResponseSchema = z.object({
   minTick: z.number(),
 });
 
-export type ContractResolveResponse = z.infer<typeof ContractResolveResponseSchema>;
+type ContractResolveResponse = z.infer<typeof ContractResolveResponseSchema>;
 
 // ── Orders ──────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ export const OrderResponseSchema = z.object({
   commission: z.number().optional(),
 });
 
-export type OrderResponse = z.infer<typeof OrderResponseSchema>;
+type OrderResponse = z.infer<typeof OrderResponseSchema>;
 
 // ── Positions ───────────────────────────────────────────────────────
 // Core fields from reqPositions(). marketValue/unrealizedPnl enriched
@@ -75,7 +75,7 @@ export const PositionResponseSchema = z.object({
   unrealizedPnl: z.number().optional(),
 });
 
-export type PositionResponse = z.infer<typeof PositionResponseSchema>;
+type PositionResponse = z.infer<typeof PositionResponseSchema>;
 
 // ── Account Summary ─────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ export const AccountSummaryResponseSchema = z.object({
   excessLiquidity: z.number().optional(),
 });
 
-export type AccountSummaryResponse = z.infer<typeof AccountSummaryResponseSchema>;
+type AccountSummaryResponse = z.infer<typeof AccountSummaryResponseSchema>;
 
 // ── WebSocket Events ────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ const CommissionEventSchema = z.object({
   orderId: z.number(),
 });
 
-export const SidecarEventSchema = z.discriminatedUnion('type', [
+const SidecarEventSchema = z.discriminatedUnion('type', [
   ConnectedEventSchema,
   DisconnectedEventSchema,
   ReconnectedEventSchema,
@@ -143,7 +143,7 @@ export const SidecarEventSchema = z.discriminatedUnion('type', [
   CommissionEventSchema,
 ]);
 
-export type SidecarEvent = z.infer<typeof SidecarEventSchema>;
+type SidecarEvent = z.infer<typeof SidecarEventSchema>;
 
 // ── Validation helper ───────────────────────────────────────────────
 

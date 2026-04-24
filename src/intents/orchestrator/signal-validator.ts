@@ -22,7 +22,7 @@ export type ValidatorIssue = {
   concern: string;
 };
 
-export type ValidatorInput = {
+type ValidatorInput = {
   signals: Signal[];
   messageText: string;
   badges: readonly string[];
@@ -280,7 +280,7 @@ export async function validateSignals(input: ValidatorInput): Promise<ValidatorI
 }
 
 /** Build the user prompt appendix that asks the LLM to reconsider with evidence. */
-export function buildRepairAppendix(draft: Signal[], issues: ValidatorIssue[]): string {
+function buildRepairAppendix(draft: Signal[], issues: ValidatorIssue[]): string {
   const issueLines = issues
     .map((i) => `• [signal ${i.signalIndex} / ${i.field}] ${i.concern}\n  Evidence: ${i.evidence}`)
     .join('\n\n');

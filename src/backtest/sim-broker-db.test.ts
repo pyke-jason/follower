@@ -1,8 +1,8 @@
 /**
  * Property-based tests for SimBroker's DB-touching methods.
  *
- * Uses an in-memory SQLite database (same engine as production) so we get
- * real SQL execution without touching disk or needing a repository pattern.
+ * Uses an isolated Postgres schema so DB-touching methods run against the
+ * same driver semantics as production.
  *
  * Covers: getAccountBalance, closePositionAtPrice, getOpenPositionCount,
  *         forceCloseAll, getUnrealizedPnl, markToMarket, sweepExpired,
@@ -13,18 +13,9 @@ import { describe, test, expect, vi, beforeAll } from 'vitest';
 import fc from 'fast-check';
 import { sql } from 'drizzle-orm';
 
-// Mock db/client with a real in-memory SQLite + drizzle instance.
 vi.mock('../db/client.js', async () => {
-  const Database = (await import('better-sqlite3')).default;
-  const { drizzle } = await import('drizzle-orm/better-sqlite3');
-  const schema = await import('../db/schema.js');
-  const sqlite = new Database(':memory:');
-  const db = drizzle(sqlite, { schema });
-  return {
-    db, schema, sqliteClient: sqlite,
-    runTx: (cb: any) => db.transaction(cb),
-    withBusyRetry: (fn: any) => fn(),
-  };
+  const { createPgTestClient } = await import('../test/pg-test-client.js');
+  return createPgTestClient('sim_broker_db');
 });
 
 import { db, schema } from '../db/client.js';
@@ -49,8 +40,8 @@ import {
 // ── DB setup ─────────────────────────────────────────────────────────
 
 beforeAll(async () => {
-  await db.run(CREATE_TRADES_SQL);
-  await db.run(CREATE_TRADE_EVENTS_SQL);
+  await db.execute(CREATE_TRADES_SQL);
+  await db.execute(CREATE_TRADE_EVENTS_SQL);
 });
 
 const RUN_ID = 'test-run';

@@ -19,7 +19,7 @@ import { contractMultiplier, getSpreadWidth } from '../lib/trade.js';
 
 // ─── Types ──────────────────────────────────────────
 
-export type MarginParams = {
+type MarginParams = {
   strategy: string;
   direction: Direction;
   /** Fill price (net premium for options/spreads, stock price for equities). */
@@ -30,7 +30,7 @@ export type MarginParams = {
   underlyingPrice: number;
 };
 
-export type MarginRequirement = {
+type MarginRequirement = {
   /** Capital required to open the position. */
   initial: number;
   /** Ongoing requirement — equity must exceed this or margin call triggers. */

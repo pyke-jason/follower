@@ -4,16 +4,8 @@ import type { BrokerService } from '@/broker/interface.js';
 import { CREATE_TRADE_EVENTS_SQL, CREATE_TRADES_SQL } from '@/backtest/test-fixtures.js';
 
 vi.mock('../../db/client.js', async () => {
-  const Database = (await import('better-sqlite3')).default;
-  const { drizzle } = await import('drizzle-orm/better-sqlite3');
-  const schema = await import('../../db/schema.js');
-  const sqlite = new Database(':memory:');
-  const db = drizzle(sqlite, { schema });
-  return {
-    db, schema, sqliteClient: sqlite,
-    runTx: (cb: Parameters<typeof db.transaction>[0]) => db.transaction(cb),
-    withBusyRetry: <T>(fn: () => T) => fn(),
-  };
+  const { createPgTestClient } = await import('../../test/pg-test-client.js');
+  return createPgTestClient('web_orders');
 });
 
 import { db, schema } from '../../db/client.js';
@@ -22,13 +14,13 @@ import { createWebOrdersRouter } from './web-orders.js';
 const CHANNEL_ID = 'ibkr:paper:test-account';
 
 beforeAll(async () => {
-  await db.run(CREATE_TRADES_SQL);
-  await db.run(CREATE_TRADE_EVENTS_SQL);
+  await db.execute(CREATE_TRADES_SQL);
+  await db.execute(CREATE_TRADE_EVENTS_SQL);
 });
 
 beforeEach(async () => {
-  await db.run(sql`DELETE FROM trade_events`);
-  await db.run(sql`DELETE FROM trades`);
+  await db.execute(sql`DELETE FROM trade_events`);
+  await db.execute(sql`DELETE FROM trades`);
 });
 
 function makeBroker(fillPrice: number, filledQuantity: number): BrokerService {

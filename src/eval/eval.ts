@@ -11,7 +11,7 @@ import { eq, and, count, sql } from 'drizzle-orm';
 import type { EvalLabelData } from '@/db/schema.js';
 import type { Signal } from '@/agent/schemas.js';
 
-export type EvalFieldName =
+type EvalFieldName =
   | 'isTrade'
   | 'tradeCount'
   | 'signalCount'
@@ -26,16 +26,16 @@ export type EvalFieldName =
   | 'exitPercent'
   | 'targetStrategy';
 
-export type FieldResult = { correct: number; total: number; accuracy: number | null };
+type FieldResult = { correct: number; total: number; accuracy: number | null };
 
-export type ConfusionMatrix = {
+type ConfusionMatrix = {
   truePositive: number;
   falsePositive: number;
   trueNegative: number;
   falseNegative: number;
 };
 
-export type EvalFailure = {
+type EvalFailure = {
   messageId: string;
   cleanText: string;
   field: string;
@@ -44,14 +44,14 @@ export type EvalFailure = {
   reasoning: string;
 };
 
-export type EvalMetricsResult = {
+type EvalMetricsResult = {
   totalVerified: number;
   fields: Record<EvalFieldName, FieldResult>;
   confusion: ConfusionMatrix;
   overallAccuracy: number | null;
 };
 
-export type EvalSummary = {
+type EvalSummary = {
   totalLabels: number;
   humanVerified: number;
   bySource: { agent: number; human: number };
@@ -214,7 +214,7 @@ function labelTrades(label: EvalLabelData): Signal[][] {
   return label.isTrade ? (label.trades ?? []) : [];
 }
 
-export async function computeEvalMetrics(options?: { version?: number }): Promise<EvalMetricsResult> {
+async function computeEvalMetrics(options?: { version?: number }): Promise<EvalMetricsResult> {
   const conditions = [eq(schema.evalLabels.humanVerified, true)];
   if (options?.version != null) {
     conditions.push(eq(schema.evalLabels.version, options.version));
@@ -300,7 +300,7 @@ export async function computeEvalMetrics(options?: { version?: number }): Promis
   };
 }
 
-export async function getEvalFailures(options?: { version?: number; field?: string }): Promise<EvalFailure[]> {
+async function getEvalFailures(options?: { version?: number; field?: string }): Promise<EvalFailure[]> {
   const conditions = [eq(schema.evalLabels.humanVerified, true)];
   if (options?.version != null) {
     conditions.push(eq(schema.evalLabels.version, options.version));
@@ -457,10 +457,10 @@ export async function getEvalFailures(options?: { version?: number; field?: stri
 export async function getEvalSummary(): Promise<EvalSummary> {
   const [stats] = await db.select({
     total: count(),
-    verified: sql<number>`SUM(CASE WHEN human_verified = 1 THEN 1 ELSE 0 END)`,
+    verified: sql<number>`SUM(CASE WHEN ${schema.evalLabels.humanVerified} IS TRUE THEN 1 ELSE 0 END)`,
     agent: sql<number>`SUM(CASE WHEN source = 'agent' THEN 1 ELSE 0 END)`,
     human: sql<number>`SUM(CASE WHEN source = 'human' THEN 1 ELSE 0 END)`,
-    lowConf: sql<number>`SUM(CASE WHEN json_extract(label, '$.confidence') = 'LOW' THEN 1 ELSE 0 END)`,
+    lowConf: sql<number>`SUM(CASE WHEN ${schema.evalLabels.label}->>'confidence' = 'LOW' THEN 1 ELSE 0 END)`,
   }).from(schema.evalLabels);
 
   const verified = Number(stats.verified ?? 0);

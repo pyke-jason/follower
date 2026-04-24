@@ -12,23 +12,12 @@
 
 import { describe, test, expect, vi, beforeAll } from 'vitest';
 import fc from 'fast-check';
-import { sql } from 'drizzle-orm';
-
-// In-memory SQLite — placeOrder's buying power gate needs a real DB.
 vi.mock('../db/client.js', async () => {
-  const Database = (await import('better-sqlite3')).default;
-  const { drizzle } = await import('drizzle-orm/better-sqlite3');
-  const schema = await import('../db/schema.js');
-  const sqlite = new Database(':memory:');
-  const db = drizzle(sqlite, { schema });
-  return {
-    db, schema, sqliteClient: sqlite,
-    runTx: (cb: any) => db.transaction(cb),
-    withBusyRetry: (fn: any) => fn(),
-  };
+  const { createPgTestClient } = await import('../test/pg-test-client.js');
+  return createPgTestClient('sim_broker');
 });
 
-import { db } from '../db/client.js';
+import { db, schema } from '../db/client.js';
 import { computeModelFillPrice, SimBroker } from './sim-broker.js';
 import { SimClock } from './clock.js';
 import { computeTradePnl } from '../lib/pnl.js';
@@ -55,8 +44,8 @@ import {
 const TEST_EQUITY = 100_000;
 
 beforeAll(async () => {
-  await db.run(CREATE_TRADES_SQL);
-  await db.run(CREATE_TRADE_EVENTS_SQL);
+  await db.execute(CREATE_TRADES_SQL);
+  await db.execute(CREATE_TRADE_EVENTS_SQL);
 });
 
 // ── 1. computeModelFillPrice ─────────────────────────────────────────
@@ -593,7 +582,7 @@ describe('working order margin encumbrance', () => {
       fc.asyncProperty(
         arbSpread.filter((s) => s.ask - s.bid > 0.10 && s.ask < 200),
         async (spread) => {
-          await db.run(sql`DELETE FROM trades`);
+          await db.delete(schema.trades);
 
           const quote = makeQuote(spread.bid, spread.ask);
           const runId = `enc-${Date.now()}-${Math.random()}`;

@@ -5,7 +5,7 @@ import { isoToDateKey } from '../lib/et-date.js';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated';
+type AuthState = 'unknown' | 'authenticated' | 'unauthenticated';
 
 export const CHAT_URL = process.env.CHAT_URL || 'https://app.oneoption.com/chat';
 const STORAGE_STATE_PATH = resolve(PATHS.data, 'browser-storage.json');
@@ -18,11 +18,11 @@ let authMonitorTimer: ReturnType<typeof setInterval> | null = null;
 let lastTrialCheckAt = 0;
 let trialRotationTriggered = false;
 
-export function isPageAlive(): boolean {
+function isPageAlive(): boolean {
   return page !== null && !page.isClosed();
 }
 
-export function resetBrowser(): void {
+function resetBrowser(): void {
   stopAuthMonitor();
   page = null;
   context = null;
@@ -290,7 +290,7 @@ export function startAuthMonitor(intervalMs = 30_000): void {
 const TRIAL_CHECK_INTERVAL_MS = 60 * 60_000; // once per hour
 const TRIAL_ROTATE_THRESHOLD_DAYS = 2;
 
-export type TrialStatus = {
+type TrialStatus = {
   daysRemaining: number;
   trialExpiresOn: string | null;
   extensionOffered: boolean;

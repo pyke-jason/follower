@@ -14,7 +14,6 @@ import type { EvalSummary } from '@src/local-api/http-schemas';
 
 // ── Filter values ──────────────────────────────────────────────────
 
-export type { TradeFlag };
 
 const FLAG_LABELS: Partial<Record<TradeFlag, string>> = {
   closeFailed: 'Close failed',
@@ -29,11 +28,11 @@ const FLAG_LABELS: Partial<Record<TradeFlag, string>> = {
   hasUpdate: 'Has update',
 };
 
-export type LabelBucket = 'tp' | 'fp' | 'unlabeled';
+type LabelBucket = 'tp' | 'fp' | 'unlabeled';
 
 type MultiFilterKey = 'statuses' | 'traders' | 'symbols' | 'strategies' | 'directions' | 'flags' | 'labelBuckets';
 
-export interface TradeFilterValues {
+interface TradeFilterValues {
   statuses: string[];
   traders: string[];
   symbols: string[];
@@ -43,7 +42,7 @@ export interface TradeFilterValues {
   labelBuckets: LabelBucket[];
 }
 
-export function applyTradeFilters(
+function applyTradeFilters(
   trades: Trade[],
   filters: TradeFilterValues,
   flagsByTradeId?: Record<string, TradeFlag[]>,

@@ -25,7 +25,7 @@ export const MAX_CONTRACTS: Record<string, number> = {
 };
 
 export const DEFAULT_STARTING_EQUITY = 100_000;
-export const DEFAULT_FILL_MODEL = 'orats' as const;
+const DEFAULT_FILL_MODEL = 'orats' as const;
 export const DEFAULT_COMMISSION_SCHEDULE = {
   option: { perContract: 0.50 },
   stock: { perShare: 0.00 },

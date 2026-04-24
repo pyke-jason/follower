@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import { TraderCombobox } from '@/components/trader-combobox';
 import {
   Select,
   SelectContent,
@@ -17,31 +18,26 @@ import { isoToDateKey } from '@/lib/format';
 import { Link } from 'react-router-dom';
 import type { BacktestRunConfig } from '@src/db/schema';
 import { BACKTEST_RISK_DEFAULTS, DEFAULT_COMMISSION_SCHEDULE } from '@src/config/risk-defaults';
+import { DEFAULT_TRADE_MODEL, TRADE_MODELS_BY_PROVIDER } from '@src/agent/model-defaults';
 
-const MODELS_BY_PROVIDER: Record<string, string[]> = {
-  anthropic: [
-    'claude-sonnet-4-6',
-    'claude-haiku-4-5-20251001',
-    'claude-opus-4-6',
-  ],
-  xai: [
-    'grok-4-1-fast-reasoning',
-    'grok-4-1-fast-non-reasoning',
-  ],
-};
+const MODELS_BY_PROVIDER: Record<string, readonly string[]> = TRADE_MODELS_BY_PROVIDER;
 
 export function BacktestForm({
+  traderOptions,
   defaultTraders,
   defaultConfig,
 }: {
-  defaultTraders: string;
+  traderOptions: string[];
+  defaultTraders: string[];
   defaultConfig?: BacktestRunConfig;
 }) {
   const navigate = useNavigate();
-  const [provider, setProvider] = useState(defaultConfig?.agentProvider ?? 'xai');
+  const defaultProvider = defaultConfig?.agentProvider ?? DEFAULT_TRADE_MODEL.provider;
+  const [provider, setProvider] = useState(defaultProvider);
   const [model, setModel] = useState(
-    defaultConfig?.agentModel ?? MODELS_BY_PROVIDER[defaultConfig?.agentProvider ?? 'xai']?.[1] ?? MODELS_BY_PROVIDER.xai[1],
+    defaultConfig?.agentModel ?? MODELS_BY_PROVIDER[defaultProvider]?.[0] ?? DEFAULT_TRADE_MODEL.model,
   );
+  const [traders, setTraders] = useState(defaultConfig?.traders ?? defaultTraders);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const startMut = useApiMutation<Record<string, unknown>, { id: string }>('POST', '/backtests/start', {
@@ -67,12 +63,17 @@ export function BacktestForm({
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (traders.length === 0) {
+      setErrors((prev) => ({ ...prev, traders: 'Select at least one trader' }));
+      return;
+    }
+
     const fd = new FormData(e.currentTarget);
 
     const body: Record<string, unknown> = {
       startDate: fd.get('startDate') as string,
       endDate: fd.get('endDate') as string,
-      traders: (fd.get('traders') as string).split(',').map((t) => t.trim()).filter(Boolean),
+      traders,
       agentProvider: provider,
       agentModel: model,
       disableRiskLimits: fd.get('disableRiskLimits') === 'on',
@@ -127,14 +128,21 @@ export function BacktestForm({
         </div>
 
         <div className="mt-4">
-          <Label className="text-xs text-muted-foreground mb-1">Traders (comma-separated) <span className="text-destructive">*</span></Label>
-          <Input
-            name="traders"
-            required
-            placeholder="Dave W, Hariseldon, Pete"
-            defaultValue={defaultConfig?.traders?.join(', ') ?? defaultTraders}
-            className="h-9"
+          <Label className="text-xs text-muted-foreground mb-1">Traders <span className="text-destructive">*</span></Label>
+          <TraderCombobox
+            options={traderOptions}
+            value={traders}
+            onChange={(nextTraders) => {
+              setTraders(nextTraders);
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next.traders;
+                return next;
+              });
+            }}
+            placeholder="Select traders..."
           />
+          {errors.traders && <p className="mt-1 text-xs text-destructive">{errors.traders}</p>}
         </div>
       </fieldset>
 

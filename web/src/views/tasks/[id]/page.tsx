@@ -6,7 +6,7 @@ import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary'
 import { useBackHref } from '@/hooks/use-back-href';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { ActivityDetail } from '@/views/trades/[id]/activity-detail';
-import type { TradeStory } from '@/stores/trades-store';
+import type { TradeStory } from '@/lib/trade-story';
 
 /**
  * Response from /tasks/:id. When the task produced a trade, the backend

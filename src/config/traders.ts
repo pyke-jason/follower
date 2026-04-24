@@ -6,7 +6,7 @@ let cachedTraders: Map<string, TrackedTrader> | null = null;
 let cacheTime = 0;
 const CACHE_TTL = 60_000; // refresh every minute
 
-export async function getTrackedTraders(): Promise<Map<string, TrackedTrader>> {
+async function getTrackedTraders(): Promise<Map<string, TrackedTrader>> {
   if (cachedTraders && Date.now() - cacheTime < CACHE_TTL) {
     return cachedTraders;
   }

@@ -18,7 +18,7 @@ export async function completeTask(taskId: string): Promise<void> {
     .where(eq(schema.tasks.id, taskId));
 }
 
-export async function failTask(
+async function failTask(
   taskId: string,
   error: string,
 ): Promise<void> {

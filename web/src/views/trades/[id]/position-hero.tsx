@@ -8,7 +8,7 @@ import { formatLegsSummary, contractMultiplier, tradeQty } from '@src/lib/trade'
 import { safeParseFloat } from '@src/lib/numbers';
 import { cn } from '@/lib/utils';
 import type { Trade, Task, RunDecision } from '@src/db/schema';
-import type { LivePosition } from '@/stores/trades-store';
+import type { LivePosition } from '@/lib/trade-story';
 
 type OutcomeKind = 'OPEN' | 'CLOSED' | 'SKIP' | 'FAIL' | 'MANUAL_REVIEW' | 'PENDING';
 

@@ -61,7 +61,7 @@ function filterRedundantSettled(decisions: RunDecision[]): RunDecision[] {
 
 // ─── Snapshot Dispatch ───────────────────────────────
 
-export function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snapshot: Record<string, unknown>; reasoning?: string | null }) {
+function SnapshotDispatch({ event, snapshot, reasoning }: { event: string; snapshot: Record<string, unknown>; reasoning?: string | null }) {
   switch (event) {
     case 'PARSED':
       return <ParseResultView data={snapshot} />;
@@ -135,7 +135,7 @@ export function SnapshotDispatch({ event, snapshot, reasoning }: { event: string
 
 // ─── Decision Popover ────────────────────────────────
 
-export function DecisionPopover({ d }: { d: RunDecision }) {
+function DecisionPopover({ d }: { d: RunDecision }) {
   const event = d.event ?? 'SETTLED';
   const snapshot = getSnapshot(d);
   const hasContent = d.outcome || d.reasoning || d.skipCategory || d.phase || snapshot;
@@ -591,7 +591,7 @@ export function UnifiedTimeline({
                       style={{ left: '-24.5px', top: '2px' }}
                     />
                     <PopoverTrigger asChild>
-                      <Button variant="ghost" className="flex items-center gap-2 flex-wrap min-w-0 w-full text-left h-auto px-1 py-0 justify-start">
+                      <Button variant="ghost" className="flex w-full min-w-0 flex-wrap items-center justify-start gap-x-2 gap-y-1 text-left h-auto px-1 py-0">
                         <span className="text-[13px] font-bold text-foreground tracking-tight">
                           {ACTION_LABEL[ev.action] ?? ev.action}
                         </span>
@@ -623,7 +623,7 @@ export function UnifiedTimeline({
                             {formatCurrency(-legOffCost)} debit
                           </span>
                         )}
-                        <span className="text-[11px] text-muted-foreground/60 tabular-nums ml-auto shrink-0">
+                        <span className="text-[11px] text-muted-foreground/60 tabular-nums shrink-0">
                           {formatDate(ev.timestamp)}
                         </span>
                       </Button>
@@ -665,7 +665,7 @@ export function UnifiedTimeline({
                       style={{ left: '-24.5px', top: '2px' }}
                     />
                     <PopoverTrigger asChild>
-                      <Button variant="ghost" className="flex items-center gap-2 flex-wrap min-w-0 text-left h-auto px-1 py-0 justify-start">
+                      <Button variant="ghost" className="flex w-full min-w-0 flex-wrap items-center justify-start gap-x-2 gap-y-1 text-left h-auto px-1 py-0">
                         <span className="text-[13px] font-bold text-loss tracking-tight">
                           {label}
                         </span>
@@ -673,7 +673,7 @@ export function UnifiedTimeline({
                           order cancelled{symbol ? ` — ${symbol}` : ''}
                         </span>
                         {cancelTs && (
-                          <span className="text-[11px] text-muted-foreground/60 tabular-nums ml-auto shrink-0">
+                          <span className="text-[11px] text-muted-foreground/60 tabular-nums shrink-0">
                             {formatDate(cancelTs)}
                           </span>
                         )}
@@ -700,7 +700,7 @@ export function UnifiedTimeline({
                   />
 
                   {/* Header: event label (popover trigger) + inline summary + outcome + metrics */}
-                  <div className="flex items-center gap-1.5 min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
                     <PopoverTrigger asChild>
                       <Button variant="ghost" className={cn(
                         'text-[10px] font-bold uppercase tracking-wider shrink-0 hover:underline underline-offset-2 h-auto px-1 py-0',
@@ -711,7 +711,7 @@ export function UnifiedTimeline({
                     </PopoverTrigger>
 
                     {inlineSummary && (
-                      <span className="text-[10px] text-muted-foreground/50 truncate max-w-[200px]">
+                      <span className="min-w-0 max-w-full truncate text-[10px] text-muted-foreground/50">
                         {inlineSummary}
                       </span>
                     )}
@@ -721,7 +721,7 @@ export function UnifiedTimeline({
                       <span className="text-[10px] text-muted-foreground/60 truncate max-w-[180px]">{d.skipCategory}</span>
                     )}
 
-                    <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
                       {/* PnL intentionally not shown here — displayed on the CLOSE trade event instead */}
                       {d.inputTokens != null && d.outputTokens != null && (
                         <span className="text-[10px] text-muted-foreground/50 tabular-nums">{formatInteger(d.inputTokens)}/{formatInteger(d.outputTokens)}</span>

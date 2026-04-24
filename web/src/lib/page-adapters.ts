@@ -159,7 +159,7 @@ export async function fetchBacktestsPageData(): Promise<BacktestsPageData> {
   return { runs, experimentTags };
 }
 
-export type TradersPageData = {
+type TradersPageData = {
   traders: TrackedTrader[];
   authors: string[];
 };

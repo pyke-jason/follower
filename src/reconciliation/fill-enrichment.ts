@@ -12,16 +12,15 @@ import { buildFlags } from '../trades/trade-flags.js';
  * Wrapped in a transaction to prevent read-modify-write races — the fill sweep
  * runs on a 60s interval and can race with recordTrade() updating metadata.
  */
-export function enrichTradeWithFill(
+export async function enrichTradeWithFill(
   tradeId: string,
   fillData: OrderResult,
-): void {
-  runTx((tx) => {
-    const [trade] = tx.select()
+): Promise<void> {
+  await runTx(async (tx) => {
+    const [trade] = await tx.select()
       .from(schema.trades)
       .where(eq(schema.trades.id, tradeId))
-      .limit(1)
-      .all();
+      .limit(1);
 
     if (!trade) return;
 
@@ -48,7 +47,7 @@ export function enrichTradeWithFill(
       }
     }
 
-    tx.update(schema.trades)
+    await tx.update(schema.trades)
       .set({
         brokerFillPrice: fillData.filledPrice != null ? String(fillData.filledPrice) : null,
         brokerFillQty: fillData.filledQuantity ?? null,
@@ -63,7 +62,6 @@ export function enrichTradeWithFill(
           flags: buildFlags(metadata.flags, ...slippageFlags),
         },
       })
-      .where(eq(schema.trades.id, tradeId))
-      .run();
+      .where(eq(schema.trades.id, tradeId));
   });
 }

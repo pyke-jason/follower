@@ -128,7 +128,7 @@ describe('parseMessage no-badge routing', () => {
       name: 'symbol but monitoring prose',
       cleanText: 'Watching NVDA around VWAP here',
       symbols: ['NVDA'],
-      skipReason: 'no trade badge or cue',
+      skipReason: 'watchlist, alert, conditional, or future-intent language',
     },
     {
       name: 'trade-looking shorthand without extracted symbol',

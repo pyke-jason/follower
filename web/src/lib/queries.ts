@@ -54,7 +54,7 @@ export const queries = {
       queryFn: fetchBacktestsPageData,
       refetchInterval: (query: { state: { data?: BacktestsPageData } }) => {
         const runs = query.state.data?.runs;
-        if (runs?.some((r) => r.status === 'RUNNING' || r.status === 'PENDING')) return 3000;
+        if (runs?.some((r) => r.status === 'RUNNING' || r.status === 'PENDING' || r.status === 'PAUSED')) return 3000;
         return false;
       },
     }),
@@ -62,10 +62,7 @@ export const queries = {
     detail: (id: string) => ({
       queryKey: ['backtest', id] as const,
       queryFn: () => api<BacktestDetailResponse>(`/backtests/${id}`),
-      refetchInterval: (query: { state: { data?: BacktestDetailResponse } }) => {
-        const status = query.state.data?.run?.status;
-        return status === 'RUNNING' || status === 'PENDING' ? 3000 : false;
-      },
+      refetchOnWindowFocus: false,
       enabled: id.length > 0,
     }),
   },

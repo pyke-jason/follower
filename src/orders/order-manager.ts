@@ -1,5 +1,6 @@
 import type { BrokerService } from '../broker/interface.js';
 import type { FilledWorkingOrder, OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
+import type { SerializedWorkingOrder } from '../backtest/checkpoint-types.js';
 import { WorkingOrderParamsSchema, OrderResultSchema } from '../broker/order-schemas.js';
 import { createLogger } from '../lib/logger.js';
 import { roundCents } from '../lib/numbers.js';
@@ -199,6 +200,34 @@ export class OrderManager {
 
   getWorkingOrders(): WorkingOrder[] {
     return Array.from(this.workingOrders.values());
+  }
+
+  exportState(): SerializedWorkingOrder[] {
+    return [...this.workingOrders.values()].map((order) => {
+      const { placedAt, lastAdjustedAt, filledAt, cancelledAt, ...rest } = order;
+      return {
+        ...rest,
+        placedAt: placedAt.toISOString(),
+        lastAdjustedAt: lastAdjustedAt.toISOString(),
+        ...(filledAt ? { filledAt: filledAt.toISOString() } : {}),
+        ...(cancelledAt ? { cancelledAt: cancelledAt.toISOString() } : {}),
+      };
+    });
+  }
+
+  restoreState(orders: SerializedWorkingOrder[]): void {
+    this.workingOrders.clear();
+    for (const order of orders) {
+      const { placedAt, lastAdjustedAt, filledAt, cancelledAt, ...rest } = order;
+      this.workingOrders.set(order.orderId, {
+        ...rest,
+        placedAt: new Date(placedAt),
+        lastAdjustedAt: new Date(lastAdjustedAt),
+        ...(filledAt ? { filledAt: new Date(filledAt) } : {}),
+        ...(cancelledAt ? { cancelledAt: new Date(cancelledAt) } : {}),
+      });
+    }
+    this.startTimerIfNeeded();
   }
 
   getExposure(): WorkingOrderExposure {

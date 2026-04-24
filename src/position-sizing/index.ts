@@ -16,7 +16,7 @@ export type AtrSizingConfig = {
 
 export type PositionSizingConfig = NotionalSizingConfig | AtrSizingConfig;
 
-export interface SizingParams {
+interface SizingParams {
   symbol: string;
   strategy: string;
   entryPrice: number;

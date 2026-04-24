@@ -19,7 +19,7 @@ import type {
   TradeEvent,
   TradeFlag,
 } from '../db/schema.js';
-import type { EquityPoint, StrategyStats, TraderStats } from '../backtest/types.js';
+import type { EquityPoint, LiveMetrics, StrategyStats, TraderStats } from '../backtest/types.js';
 
 /* ─── Leaf: commission schedule ─────────────────────── */
 
@@ -61,7 +61,7 @@ export const QuoteDataSchema = z.object({
   timestamp: z.string(),
 });
 
-export type QuoteData = z.infer<typeof QuoteDataSchema>;
+type QuoteData = z.infer<typeof QuoteDataSchema>;
 
 export function toQuoteData(raw: {
   bid: number;
@@ -107,6 +107,7 @@ export const BacktestStartBodySchema = z.object({
 
 export const BacktestSpawnBodySchema = z.object({
   runId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Invalid run id'),
+  resume: z.boolean().optional(),
   startDate: z.string(),
   endDate: z.string(),
   traders: z.array(z.string()),
@@ -161,7 +162,7 @@ export const PlaceOrderBodySchema = z.object({
   { message: 'LIMIT orders require limitPrice', path: ['limitPrice'] },
 );
 
-export type PlaceOrderBody = z.infer<typeof PlaceOrderBodySchema>;
+type PlaceOrderBody = z.infer<typeof PlaceOrderBodySchema>;
 
 /* ─── GET/PUT/DELETE /web/orders/:id ───────────────── */
 
@@ -169,7 +170,7 @@ export const OrderIdParamsSchema = z.object({
   id: z.string().min(1),
 });
 
-export type OrderIdParams = z.infer<typeof OrderIdParamsSchema>;
+type OrderIdParams = z.infer<typeof OrderIdParamsSchema>;
 
 /* ─── PUT /web/orders/:id ──────────────────────────── */
 
@@ -177,7 +178,7 @@ export const ModifyOrderBodySchema = z.object({
   limitPrice: z.number().positive(),
 });
 
-export type ModifyOrderBody = z.infer<typeof ModifyOrderBodySchema>;
+type ModifyOrderBody = z.infer<typeof ModifyOrderBodySchema>;
 
 /* ─── Manual order response ────────────────────────── */
 
@@ -444,8 +445,46 @@ export const BacktestDetailResponseSchema = z.object({
   messagesEndDate: z.string(),
   evalSummary: EvalSummarySchema.optional(),
   labelsByTradeId: z.record(z.string(), TradeLabelSchema).optional(),
+  liveRuntime: z.object({
+    processedMessages: z.number(),
+  }),
 });
 export type BacktestDetailResponse = z.infer<typeof BacktestDetailResponseSchema>;
+
+export const BacktestLiveUpdateSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  error: z.string().nullable(),
+  summary: z.custom<BacktestRunSummary>().nullable(),
+  liveMetrics: z.custom<LiveMetrics>().nullable(),
+  messagesEndDate: z.string(),
+  liveRuntime: z.object({
+    processedMessages: z.number(),
+  }),
+});
+export type BacktestLiveUpdate = z.infer<typeof BacktestLiveUpdateSchema>;
+
+export const BacktestTradeSnapshotSchema = z.object({
+  allTrades: z.array(z.custom<Trade>()),
+  eventsByTradeId: z.record(z.string(), z.array(z.custom<TradeEvent>())),
+  flagsByTradeId: z.record(z.string(), z.array(z.custom<TradeFlag>())),
+  mtmSnapshots: z.array(z.object({ date: z.string(), unrealizedPnl: z.number() })),
+  summary: BacktestDetailResponseSchema.shape.summary,
+  byTrader: BacktestDetailResponseSchema.shape.byTrader,
+  byStrategy: BacktestDetailResponseSchema.shape.byStrategy,
+  equityCurve: BacktestDetailResponseSchema.shape.equityCurve,
+  tradeScatter: BacktestDetailResponseSchema.shape.tradeScatter,
+  rollingWinRate: BacktestDetailResponseSchema.shape.rollingWinRate,
+  strategyEquity: BacktestDetailResponseSchema.shape.strategyEquity,
+  strategies: BacktestDetailResponseSchema.shape.strategies,
+  llmCost: z.number(),
+  messagesEndDate: z.string(),
+  evalSummary: EvalSummarySchema.optional(),
+  labelsByTradeId: z.record(z.string(), TradeLabelSchema).optional(),
+});
+export type BacktestTradeSnapshot = z.infer<typeof BacktestTradeSnapshotSchema>;
 
 /* ─── GET /web/classify/:id response ────────────────── */
 
@@ -484,6 +523,7 @@ const ClassifyRunShapeSchema = z.object({
     processedMessages: z.number(),
     byOutcome: z.record(z.string(), z.number()),
     byRoute: z.record(z.string(), z.number()),
+    byRuleId: z.record(z.string(), z.number()).optional(),
     totalInputTokens: z.number(),
     totalOutputTokens: z.number(),
     totalCostUsd: z.number().optional(),

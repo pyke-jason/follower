@@ -13,7 +13,8 @@ export default function NewClassifyPage() {
 
   if (!trackedTraders) return <Spinner />;
 
-  const defaultTraders = trackedTraders.map((t) => t.name).join(', ');
+  const traderOptions = trackedTraders.map((t) => t.name);
+  const defaultTraders = traderOptions;
 
   return (
     <div className="space-y-4 max-w-2xl mx-auto">
@@ -26,7 +27,7 @@ export default function NewClassifyPage() {
 
       <Card className="py-4 gap-3">
         <CardContent>
-          <ClassifyForm defaultTraders={defaultTraders} />
+          <ClassifyForm traderOptions={traderOptions} defaultTraders={defaultTraders} />
         </CardContent>
       </Card>
     </div>

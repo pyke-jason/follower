@@ -7,14 +7,11 @@ import {
   DatabentoClientError,
 } from './databento-tape.js';
 import type { QuoteTick, TickCacheData } from './databento-tape.js';
-import {
-  readCachedRanges, readCachedTicks, writeCachedTicks,
-} from './tick-cache-db.js';
-import type { TickCacheDB } from './tick-cache-db.js';
+import type { TickCacheStore } from './tick-cache-store.js';
 import { isOccOptionSymbol, parseOccSymbol, buildOccSymbols, formatOccSymbol } from '../lib/occ-symbology.js';
 import { isTradingDay } from '../lib/et-date.js';
 import { createLogger } from '../lib/logger.js';
-import { QuoteResolutionError, QuoteUnavailableError } from '../lib/errors.js';
+import { DependencyUnavailableError, QuoteResolutionError, QuoteUnavailableError } from '../lib/errors.js';
 import { formatLogTimestampET } from '../lib/et-logging.js';
 
 const log = createLogger('MarketData');
@@ -57,7 +54,7 @@ export interface BacktestPriceProvider extends MarketDataProvider {
 /**
  * DatabentoMarketDataProvider: Uses Databento historical data for real market
  * prices. Ticks are fetched in narrow windows (not full days) and cached via
- * an interval-merging SQLite DB + memory cache. All lookups respect the sim clock.
+ * an interval-merging persistent store + memory cache. All lookups respect the sim clock.
  */
 export class DatabentoMarketDataProvider implements BacktestPriceProvider {
   /** symbol -> interval-cached ticks (in-memory on top of DB cache) */
@@ -71,10 +68,11 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
   constructor(
     private apiKey: string,
-    private tickCacheDb: TickCacheDB,
+    private tickCacheStore: TickCacheStore,
     private dataset: string = 'DBEQ.BASIC',
     private refreshCache: boolean = false,
     private optionsDataset: string = 'OPRA.PILLAR',
+    private onDependencyUnavailable?: (err: DependencyUnavailableError) => Promise<void>,
   ) {}
 
   /**
@@ -302,6 +300,11 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
   // ── Private helpers ─────────────────────────────────────────────────
 
+  private async waitForDependency(err: DependencyUnavailableError): Promise<void> {
+    if (!this.onDependencyUnavailable) throw err;
+    await this.onDependencyUnavailable(err);
+  }
+
   /**
    * Ensure ticks for [start, end] are in the interval cache. Checks memory,
    * then DB, then fetches from Databento via fetchTickWindow.
@@ -329,18 +332,12 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       return this.filterTicks(entry.ticks, startMs, endMs);
     }
 
-    // 2. Check DB cache
-    if (!entry) {
-      const [dbRanges, dbTicks] = await Promise.all([
-        readCachedRanges(this.tickCacheDb, dataset, schema, symbol),
-        readCachedTicks(this.tickCacheDb, symbol, schema),
-      ]);
-      if (dbRanges.length > 0 || dbTicks.length > 0) {
-        entry = { ranges: dbRanges, ticks: dbTicks };
-        this.tickCache.set(memKey, entry);
-        if (isRangeCovered(entry.ranges, startMs, endMs)) {
-          return this.filterTicks(entry.ticks, startMs, endMs);
-        }
+    // 2. Refresh from the persistent cache. Even when we already have an in-memory
+    // entry, another earlier run may have written newer ranges.
+    if (!this.refreshCache) {
+      entry = await this.refreshEntryFromDb(memKey, dataset, schema, symbol);
+      if (entry && isRangeCovered(entry.ranges, startMs, endMs)) {
+        return this.filterTicks(entry.ticks, startMs, endMs);
       }
     }
 
@@ -356,25 +353,32 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     // 4. Fetch each gap from API
     for (const [gapStart, gapEnd] of gaps) {
       let newTicks: QuoteTick[];
-      try {
-        newTicks = await fetchTickWindow({
-          apiKey: this.apiKey,
-          dataset,
-          schema,
-          symbols: [symbol],
-          start: new Date(gapStart),
-          end: new Date(gapEnd),
-          stypeIn: isOccOptionSymbol(symbol) ? 'raw_symbol' : undefined,
-        });
-      } catch (err) {
-        if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
-          this.deadSymbols.add(symbol);
-          log.warn(`[MarketData] Blacklisting "${symbol}" after HTTP ${err.status} — won't retry this run`);
-          if (err.status === 422) {
-            throw new QuoteResolutionError(`[ensureRange] Failed to fetch ${symbol}: ${err.message}`, symbol);
+      while (true) {
+        try {
+          newTicks = await fetchTickWindow({
+            apiKey: this.apiKey,
+            dataset,
+            schema,
+            symbols: [symbol],
+            start: new Date(gapStart),
+            end: new Date(gapEnd),
+            stypeIn: isOccOptionSymbol(symbol) ? 'raw_symbol' : undefined,
+          });
+          break;
+        } catch (err) {
+          if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
+            this.deadSymbols.add(symbol);
+            log.warn(`[MarketData] Blacklisting "${symbol}" after HTTP ${err.status} — won't retry this run`);
+            if (err.status === 422) {
+              throw new QuoteResolutionError(`[ensureRange] Failed to fetch ${symbol}: ${err.message}`, symbol);
+            }
           }
+          if (err instanceof DependencyUnavailableError) {
+            await this.waitForDependency(err);
+            continue;
+          }
+          throw new Error(`[ensureRange] Failed to fetch ${symbol} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}: ${err instanceof Error ? err.message : err}`);
         }
-        throw new Error(`[ensureRange] Failed to fetch ${symbol} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}: ${err instanceof Error ? err.message : err}`);
       }
 
       // Skip caching empty results for recent trading days (data may still arrive).
@@ -389,7 +393,13 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       const merged = this.mergeTicks(existing.ticks, newTicks);
       const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
       this.tickCache.set(memKey, updated);
-      writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, newTicks, [gapStart, gapEnd]);
+      const persisted = await this.tickCacheStore.writeCachedTicks(dataset, schema, symbol, newTicks, [gapStart, gapEnd]);
+      if (!persisted) {
+        log.warn(
+          `Tick cache stayed busy; continuing without persisting ` +
+          `${symbol} ${schema} ${new Date(gapStart).toISOString()}..${new Date(gapEnd).toISOString()}`,
+        );
+      }
     }
 
     // 5. Return filtered ticks from (now-updated) cache
@@ -410,31 +420,26 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     end: Date,
     dataset: string,
     stypeIn?: 'raw_symbol',
+    schemaOverride?: string,
   ): Promise<void> {
     const startMs = start.getTime();
     const endMs = end.getTime();
-    const schema = defaultSchemaForDataset(dataset);
+    const schema = schemaOverride ?? defaultSchemaForDataset(dataset);
 
     // Find which symbols need fetching
     const uncached: string[] = [];
     for (const symbol of symbols) {
       if (this.deadSymbols.has(symbol)) continue;
+      const memKey = schemaOverride ? `${symbol}:${schemaOverride}` : symbol;
 
       // Check in-memory
-      const memEntry = this.tickCache.get(symbol);
+      let memEntry = this.tickCache.get(memKey);
       if (memEntry && isRangeCovered(memEntry.ranges, startMs, endMs)) continue;
 
-      // Check DB
-      if (!memEntry) {
-        const [dbRanges, dbTicks] = await Promise.all([
-          readCachedRanges(this.tickCacheDb, dataset, schema, symbol),
-          readCachedTicks(this.tickCacheDb, symbol, schema),
-        ]);
-        if (dbRanges.length > 0 || dbTicks.length > 0) {
-          const dbEntry: TickCacheData = { ranges: dbRanges, ticks: dbTicks };
-          this.tickCache.set(symbol, dbEntry);
-          if (isRangeCovered(dbEntry.ranges, startMs, endMs)) continue;
-        }
+      // Refresh from the persistent cache when memory is stale or incomplete.
+      if (!this.refreshCache) {
+        memEntry = await this.refreshEntryFromDb(memKey, dataset, schema, symbol);
+        if (memEntry && isRangeCovered(memEntry.ranges, startMs, endMs)) continue;
       }
 
       uncached.push(symbol);
@@ -444,26 +449,32 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
     // Single API call for all uncached symbols
     let newTicks: QuoteTick[];
-    try {
-      newTicks = await fetchTickWindow({
-        apiKey: this.apiKey,
-        dataset,
-        schema,
-        symbols: uncached,
-        start,
-        end,
-        stypeIn,
-      });
-    } catch (err) {
-      if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
-        // Batch 4xx: one bad symbol poisons the whole request. Fall back to per-symbol
-        // fetches so good symbols still get cached and bad ones get blacklisted.
-        log.warn(`[ensureRangeBatch] Batch HTTP ${err.status} on ${uncached.length} symbols — falling back to per-symbol fetch`);
-        await Promise.allSettled(uncached.map(sym => this.ensureRange(sym, start, end)));
-        return;
+    while (true) {
+      try {
+        newTicks = await fetchTickWindow({
+          apiKey: this.apiKey,
+          dataset,
+          schema,
+          symbols: uncached,
+          start,
+          end,
+          stypeIn,
+        });
+        break;
+      } catch (err) {
+        if (err instanceof DatabentoClientError && err.status >= 400 && err.status < 500) {
+          // Batch 4xx: one bad symbol poisons the whole request. Fall back to per-symbol
+          // fetches so good symbols still get cached and bad ones get blacklisted.
+          log.warn(`[ensureRangeBatch] Batch HTTP ${err.status} on ${uncached.length} symbols — falling back to per-symbol fetch`);
+          await Promise.allSettled(uncached.map(sym => this.ensureRange(sym, start, end, schemaOverride)));
+          return;
+        }
+        if (err instanceof DependencyUnavailableError) {
+          await this.waitForDependency(err);
+          continue;
+        }
+        throw new Error(`[ensureRangeBatch] Failed for ${uncached.join(', ')}: ${err instanceof Error ? err.message : err}`);
       }
-      log.warn(`[ensureRangeBatch] Failed: ${uncached.join(',')} — ${err instanceof Error ? err.message : err}`);
-      return;
     }
 
     // Bucket by symbol
@@ -477,7 +488,8 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
 
     // Merge each symbol into its cache
     for (const [symbol, symTicks] of bySymbol) {
-      const existing = this.tickCache.get(symbol) ?? { ranges: [], ticks: [] };
+      const memKey = schemaOverride ? `${symbol}:${schemaOverride}` : symbol;
+      const existing = this.tickCache.get(memKey) ?? { ranges: [], ticks: [] };
 
       // Skip caching empty results for recent trading days (data may still arrive).
       // Historical dates (>48h old) are finalized — cache empty to prevent perpetual re-fetches.
@@ -486,10 +498,48 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
       const mergedRanges = mergeRanges(existing.ranges, [startMs, endMs]);
       const merged = this.mergeTicks(existing.ticks, symTicks);
       const updated: TickCacheData = { ranges: mergedRanges, ticks: merged };
-      this.tickCache.set(symbol, updated);
+      this.tickCache.set(memKey, updated);
 
-      writeCachedTicks(this.tickCacheDb, dataset, schema, symbol, symTicks, [startMs, endMs]);
+      const persisted = await this.tickCacheStore.writeCachedTicks(dataset, schema, symbol, symTicks, [startMs, endMs]);
+      if (!persisted) {
+        log.warn(
+          `Tick cache stayed busy; continuing without persisting ` +
+          `${symbol} ${schema} ${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}`,
+        );
+      }
     }
+  }
+
+  private async refreshEntryFromDb(
+    memKey: string,
+    dataset: string,
+    schema: string,
+    symbol: string,
+  ): Promise<TickCacheData | undefined> {
+    const existing = this.tickCache.get(memKey);
+    const [dbRanges, dbTicks] = await Promise.all([
+      this.tickCacheStore.readCachedRanges(dataset, schema, symbol),
+      this.tickCacheStore.readCachedTicks(symbol, schema),
+    ]);
+
+    if (dbRanges.length === 0 && dbTicks.length === 0) {
+      return existing;
+    }
+
+    const merged: TickCacheData = existing
+      ? {
+          ranges: dbRanges.length > 0
+            ? dbRanges.reduce<[number, number][]>(
+                (ranges, range) => mergeRanges(ranges, range),
+                existing.ranges,
+              )
+            : existing.ranges,
+          ticks: dbTicks.length > 0 ? this.mergeTicks(existing.ticks, dbTicks) : existing.ticks,
+        }
+      : { ranges: dbRanges, ticks: dbTicks };
+
+    this.tickCache.set(memKey, merged);
+    return merged;
   }
 
   /** Merge two tick arrays, deduplicate by symbol+timestamp, sort. */
@@ -584,17 +634,25 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     const dayStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
     const dayEnd = new Date(dayStart.getTime() + 2 * 24 * 60 * 60 * 1000);
 
-    const ticks = await fetchTickWindow({
-      apiKey: this.apiKey,
-      dataset: this.optionsDataset,
-      schema: 'ohlcv-1d',
-      symbols: probeSymbols,
-      start: dayStart,
-      end: dayEnd,
-      stypeIn: 'raw_symbol',
-    });
+    await this.ensureRangeBatch(
+      probeSymbols,
+      dayStart,
+      dayEnd,
+      this.optionsDataset,
+      'raw_symbol',
+      'ohlcv-1d',
+    );
 
-    const symbolsWithData = new Set(ticks.map(t => t.symbol));
+    const symbolsWithData = new Set<string>();
+    for (const probeSymbol of probeSymbols) {
+      const entry = this.tickCache.get(`${probeSymbol}:ohlcv-1d`);
+      if (!entry) continue;
+      const hasTick = entry.ticks.some((tick) => {
+        const ts = tick.timestamp.getTime();
+        return ts >= dayStart.getTime() && ts <= dayEnd.getTime();
+      });
+      if (hasTick) symbolsWithData.add(probeSymbol);
+    }
     const validExpiries = new Set<string>();
     for (let i = 0; i < probeSymbols.length; i++) {
       if (symbolsWithData.has(probeSymbols[i])) {
@@ -603,7 +661,7 @@ export class DatabentoMarketDataProvider implements BacktestPriceProvider {
     }
 
     const result = [...validExpiries].sort();
-    log.debug(`getExpiryDates(${symbol}): ${result.length} valid expiries from ${fridays.length} candidates (~${ticks.length} ticks)`);
+    log.debug(`getExpiryDates(${symbol}): ${result.length} valid expiries from ${fridays.length} candidates`);
     return result;
   }
 

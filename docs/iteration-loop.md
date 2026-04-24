@@ -13,7 +13,7 @@ Ground truth lives in `eval_labels` (human-verified rows). Labels themselves may
 These came from the user during iteration. Treat them as binding.
 
 - **ZERO budget. Iterate continuously, all night if needed.** No stopping until classification is 100%. Don't sleep unnecessarily — schedule short wakeups, kick off parallel work while waiting.
-- **Use xAI models.** `grok-4-1-fast-reasoning` (or non-reasoning when user specifies).
+- **Default to Claude Sonnet 4.6.** Use `anthropic / claude-sonnet-4-6` for backtest and listener runs unless the user specifies a different model.
 - **Kill bad runs early.** Don't let a broken backtest chew hours of compute. Monitor for systematic misclassification patterns (`scratchpad/monitor-backtest.ts`) and cancel immediately — fix root cause, relaunch.
 - **Parallelize aggressively.** Use sub-agents (general-purpose) for label audits in parallel batches. Launch multiple backtests on different date windows when the DB contention allows.
 - **Classification is decoupled from execution.** When measuring accuracy, compare parser-orchestrator output to labels — not execution outcome. Risk-blocked / unfollowed-exit / blacklist / no-chain / calendar-spread are policy/execution decisions, not classification errors.
@@ -70,7 +70,7 @@ startDate:   2025-09-01
 endDate:     2025-09-30    # full month once classifier is stable; narrower for fast iteration
 traders:     all from tracked_traders (enabled)
 fillModel:   orats
-agent:       xai / grok-4-1-fast-reasoning
+agent:       anthropic / claude-sonnet-4-6
 logLevel:    debug
 ```
 

@@ -6,15 +6,17 @@
 import { loadSecrets } from '../lib/secrets/index.js';
 await loadSecrets();
 
-import { runBacktest } from './runner.js';
-import { printReport } from './report.js';
 import { setLogLevel, createLogger, LogLevelSchema } from '../lib/logger.js';
 import type { BacktestConfig } from './types.js';
 import { FillModelSchema } from './types.js';
-import { db, schema } from '../db/client.js';
 import { generateRunId, assertSafeRunId } from '../lib/channel.js';
 import { DEFAULT_STARTING_EQUITY, DEFAULT_COMMISSION_SCHEDULE } from '../config/risk-defaults.js';
 
+const [{ runBacktest }, { printReport }, { db, schema }] = await Promise.all([
+  import('./runner.js'),
+  import('./report.js'),
+  import('../db/client.js'),
+]);
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -25,7 +27,7 @@ async function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 3) {
-    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--fill-model orats|midpoint|natural] [--agent-provider NAME] [--agent-model NAME] [--refresh-quote-cache] [--log-level debug|info|warn|error] [--run-id ID] [--disable-risk-limits] [--max-on-symbol N] [--max-total-positions N]');
+    console.error('Usage: tsx src/backtest/launch.ts <start-date> <end-date> <traders> [--fill-model orats|midpoint|natural] [--agent-provider NAME] [--agent-model NAME] [--refresh-quote-cache] [--log-level debug|info|warn|error] [--run-id ID] [--resume] [--disable-risk-limits] [--max-on-symbol N] [--max-total-positions N]');
     process.exit(1);
   }
 
@@ -52,6 +54,7 @@ async function main() {
   const agentModel = parseArg(args, '--agent-model');
   const refreshQuoteCache = args.includes('--refresh-quote-cache');
   const disableRiskLimits = args.includes('--disable-risk-limits');
+  const resume = args.includes('--resume');
 
   const maxOnSymbolArg = parseArg(args, '--max-on-symbol');
   const maxTotalPositionsArg = parseArg(args, '--max-total-positions');
@@ -123,7 +126,7 @@ async function main() {
   log.info(`Starting (run ${runId ?? 'no-id'})...`);
   const startTime = Date.now();
 
-  const report = await runBacktest(config, runId);
+  const report = await runBacktest(config, runId, { resume });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   log.info(`Completed in ${elapsed}s`);

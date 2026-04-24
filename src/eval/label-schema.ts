@@ -9,4 +9,4 @@ export const EvalLabelDataSchema = z.object({
     .describe('outer = trades in message, inner = legs of one trade'),
 });
 
-export type EvalLabelData = z.infer<typeof EvalLabelDataSchema>;
+type EvalLabelData = z.infer<typeof EvalLabelDataSchema>;

@@ -79,7 +79,7 @@ async function sweepStaleRuns() {
       .from(schema.backtestRuns)
       .where(
         and(
-          inArray(schema.backtestRuns.status, ['PENDING', 'RUNNING']),
+          inArray(schema.backtestRuns.status, ['PENDING', 'RUNNING', 'PAUSED']),
           lt(schema.backtestRuns.createdAt, cutoff),
         ),
       );
@@ -95,23 +95,36 @@ async function sweepStaleRuns() {
         }
       }
 
+      const [checkpoint] = await db
+        .select({ runId: schema.backtestCheckpoints.runId })
+        .from(schema.backtestCheckpoints)
+        .where(eq(schema.backtestCheckpoints.runId, run.id));
+
+      if (checkpoint && run.status === 'PAUSED') {
+        continue;
+      }
+
+      const recoverable = checkpoint != null;
       await db
         .update(schema.backtestRuns)
         .set({
-          status: 'FAILED',
-          error: 'Process died without reporting status (detected by stale-run sweeper)',
-          completedAt: new Date().toISOString(),
+          status: recoverable ? 'PAUSED' : 'FAILED',
+          error: recoverable
+            ? 'Paused after process died. Resume will restart from the last committed checkpoint.'
+            : 'Process died without reporting status (detected by stale-run sweeper)',
+          completedAt: recoverable ? null : new Date().toISOString(),
+          pid: null,
         })
         .where(
           and(
             eq(schema.backtestRuns.id, run.id),
-            inArray(schema.backtestRuns.status, ['PENDING', 'RUNNING']),
+            inArray(schema.backtestRuns.status, ['PENDING', 'RUNNING', 'PAUSED']),
           ),
         );
 
       await sendSystemAlert({
         severity: 'warning',
-        title: 'Stale Backtest Detected',
+        title: recoverable ? 'Recoverable Backtest Paused' : 'Stale Backtest Detected',
         message: `Run \`${run.id}\` was stuck in ${run.status} with a dead process (PID ${run.pid ?? 'unknown'})`,
         fields: [
           { name: 'Run ID', value: run.id, inline: true },

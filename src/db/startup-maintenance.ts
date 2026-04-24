@@ -1,6 +1,11 @@
-import Database from 'better-sqlite3';
+import { sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { QueryResult } from 'pg';
+import type * as schema from './schema.js';
 
-export type StartupMaintenanceStats = {
+type AppDatabase = NodePgDatabase<typeof schema>;
+
+type StartupMaintenanceStats = {
   orphanTradeEventsDeleted: number;
   orphanTradeTaskRefsCleared: number;
   orphanRunDecisionTaskRefsCleared: number;
@@ -8,14 +13,30 @@ export type StartupMaintenanceStats = {
   orphanRunDecisionMessageRefsCleared: number;
 };
 
-function runChanges(sqlite: InstanceType<typeof Database>, statement: string): number {
-  return sqlite.prepare(statement).run().changes;
+async function runChanges(db: AppDatabase, statement: string): Promise<number> {
+  const result = await db.execute(sql.raw(statement)) as QueryResult;
+  return result.rowCount ?? 0;
 }
 
-export function runStartupMaintenance(sqlite: InstanceType<typeof Database>): StartupMaintenanceStats {
+async function hasAppTables(db: AppDatabase): Promise<boolean> {
+  const result = await db.execute(sql`SELECT to_regclass('public.trades') AS table_name`) as QueryResult<{ table_name: string | null }>;
+  return result.rows[0]?.table_name != null;
+}
+
+export async function runStartupMaintenance(db: AppDatabase): Promise<StartupMaintenanceStats> {
+  if (!await hasAppTables(db)) {
+    return {
+      orphanTradeEventsDeleted: 0,
+      orphanTradeTaskRefsCleared: 0,
+      orphanRunDecisionTaskRefsCleared: 0,
+      orphanRunDecisionTradeRefsCleared: 0,
+      orphanRunDecisionMessageRefsCleared: 0,
+    };
+  }
+
   return {
-    orphanTradeEventsDeleted: runChanges(
-      sqlite,
+    orphanTradeEventsDeleted: await runChanges(
+      db,
       `
         DELETE FROM trade_events
         WHERE NOT EXISTS (
@@ -25,8 +46,8 @@ export function runStartupMaintenance(sqlite: InstanceType<typeof Database>): St
         )
       `,
     ),
-    orphanTradeTaskRefsCleared: runChanges(
-      sqlite,
+    orphanTradeTaskRefsCleared: await runChanges(
+      db,
       `
         UPDATE trades
         SET task_id = NULL
@@ -38,8 +59,8 @@ export function runStartupMaintenance(sqlite: InstanceType<typeof Database>): St
           )
       `,
     ),
-    orphanRunDecisionTaskRefsCleared: runChanges(
-      sqlite,
+    orphanRunDecisionTaskRefsCleared: await runChanges(
+      db,
       `
         UPDATE run_decisions
         SET task_id = NULL
@@ -51,8 +72,8 @@ export function runStartupMaintenance(sqlite: InstanceType<typeof Database>): St
           )
       `,
     ),
-    orphanRunDecisionTradeRefsCleared: runChanges(
-      sqlite,
+    orphanRunDecisionTradeRefsCleared: await runChanges(
+      db,
       `
         UPDATE run_decisions
         SET trade_id = NULL
@@ -64,8 +85,8 @@ export function runStartupMaintenance(sqlite: InstanceType<typeof Database>): St
           )
       `,
     ),
-    orphanRunDecisionMessageRefsCleared: runChanges(
-      sqlite,
+    orphanRunDecisionMessageRefsCleared: await runChanges(
+      db,
       `
         UPDATE run_decisions
         SET message_id = NULL

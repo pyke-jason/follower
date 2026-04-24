@@ -1,4 +1,9 @@
-import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  tool,
+  createSdkMcpServer,
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+} from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '../lib/logger.js';
 import type {
   Agent,
@@ -78,7 +83,11 @@ export class AnthropicAgent implements Agent {
       prompt: opts.userPrompt,
       options: {
         model: this.identity.model,
-        systemPrompt: opts.systemPrompt,
+        // Mark the entire caller-provided systemPrompt as the static,
+        // cross-session-cacheable prefix. Every trade-classifier call reuses
+        // the same NLU prompt, so this turns ~6K input tokens per message
+        // into cache reads after the first write.
+        systemPrompt: [opts.systemPrompt, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
         mcpServers: { [MCP_SERVER_NAME]: server },
         allowedTools,
         tools: [],
@@ -95,10 +104,6 @@ export class AnthropicAgent implements Agent {
           if (block.type === 'text') {
             steps.push({ reasoning: block.text });
           }
-        }
-        if (capturedResult != null) {
-          q.close();
-          break;
         }
       } else if (msg.type === 'result') {
         const u = msg.usage;

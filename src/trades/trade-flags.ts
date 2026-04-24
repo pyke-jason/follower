@@ -14,20 +14,18 @@ export function buildFlags(existing: TradeFlag[] | undefined, ...newFlags: (Trad
 }
 
 /** Read a trade's metadata, append flags, write back atomically. For async updaters outside recordTrade. */
-export function addTradeFlags(tradeId: string, ...flags: TradeFlag[]): void {
-  runTx((tx) => {
-    const [row] = tx.select({ metadata: schema.trades.metadata })
+export async function addTradeFlags(tradeId: string, ...flags: TradeFlag[]): Promise<void> {
+  await runTx(async (tx) => {
+    const [row] = await tx.select({ metadata: schema.trades.metadata })
       .from(schema.trades)
       .where(eq(schema.trades.id, tradeId))
-      .limit(1)
-      .all();
+      .limit(1);
     if (!row) return;
     const meta = row.metadata;
     const merged = buildFlags(meta.flags, ...flags);
-    tx.update(schema.trades)
+    await tx.update(schema.trades)
       .set({ metadata: { ...meta, flags: merged } satisfies TradeMetadata })
-      .where(eq(schema.trades.id, tradeId))
-      .run();
+      .where(eq(schema.trades.id, tradeId));
   });
 }
 

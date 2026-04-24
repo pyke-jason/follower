@@ -7,7 +7,7 @@ import { createRollingFileStream } from './log-rotation.js';
 import { PATHS } from './paths.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
-export type LogLevel = z.infer<typeof LogLevelSchema>;
+type LogLevel = z.infer<typeof LogLevelSchema>;
 
 const LEVEL_LABEL: Record<number, string> = {
   10: 'trace',
@@ -104,7 +104,7 @@ export function setLogLevel(level: LogLevel): void {
   root.level = level;
 }
 
-export type Logger = {
+type Logger = {
   debug: (...args: unknown[]) => void;
   info: (...args: unknown[]) => void;
   warn: (...args: unknown[]) => void;

@@ -10,7 +10,7 @@ import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { resolve } from 'node:path';
 import { Writable } from 'node:stream';
 
-export type RollingOptions = {
+type RollingOptions = {
   dir: string;
   prefix: string;
 };

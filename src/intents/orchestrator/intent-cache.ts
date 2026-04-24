@@ -21,7 +21,7 @@ const log = createLogger('IntentCache');
  * Bump when NLU_SYSTEM_PROMPT, tool schemas, parser logic, or prompt
  * construction changes. Invalidates all cached results.
  */
-export const INTENT_VERSION = 58;
+export const INTENT_VERSION = 60;
 
 export type IntentRoute = 'hard-skip' | 'deterministic' | 'llm';
 
@@ -37,7 +37,7 @@ const CachedIntentSchema = z.object({
   cacheCreationInputTokens: z.number().nullable(),
   costUsd: z.number().nullable(),
 });
-export type CachedIntent = z.infer<typeof CachedIntentSchema>;
+type CachedIntent = z.infer<typeof CachedIntentSchema>;
 
 /**
  * Look up a cached LLM intent result.
@@ -48,11 +48,11 @@ export type CachedIntent = z.infer<typeof CachedIntentSchema>;
  * logs a warning and returns null — the caller re-runs the LLM and the
  * fresh row overwrites via the unique-index upsert path.
  */
-export function lookupIntent(
+export async function lookupIntent(
   messageId: string,
   model: string,
-): CachedIntent | null {
-  const row = db
+): Promise<CachedIntent | null> {
+  const [row] = await db
     .select({
       decision: messageIntents.decision,
       reasoning: messageIntents.reasoning,
@@ -74,7 +74,7 @@ export function lookupIntent(
         eq(messageIntents.route, 'llm'),
       ),
     )
-    .get() ?? null;
+    .limit(1);
 
   if (!row) return null;
 
@@ -92,7 +92,7 @@ export function lookupIntent(
  * Write an orchestrator decision to the cache. INSERT OR IGNORE — the
  * unique index on (messageId, model, version) handles races naturally.
  */
-export function writeIntent(entry: {
+export async function writeIntent(entry: {
   messageId: string;
   model: string;
   route: IntentRoute;
@@ -107,9 +107,9 @@ export function writeIntent(entry: {
   costUsd?: number | null;
   turns?: number | null;
   steps?: IntentStep[] | null;
-}): void {
+}): Promise<void> {
   try {
-    db.insert(messageIntents)
+    await db.insert(messageIntents)
       .values({
         messageId: entry.messageId,
         model: entry.model,
@@ -127,8 +127,7 @@ export function writeIntent(entry: {
         turns: entry.turns ?? null,
         steps: entry.steps ?? null,
       })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
   } catch (err) {
     log.debug('Failed to write intent cache (non-fatal):', err);
   }

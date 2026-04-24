@@ -6,7 +6,7 @@ import { useChannelId } from '@/hooks/use-channel-id';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { useBackHref } from '@/hooks/use-back-href';
 import { ActivityDetail } from './activity-detail';
-import type { TradeStory } from '@/stores/trades-store';
+import type { TradeStory } from '@/lib/trade-story';
 
 export default function TradeDetailPage() {
   const { id } = useParams<{ id: string }>();

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { InfoChip } from '@/components/info-chip';
-import { formatBytes, formatCurrency, formatDateShort, formatInteger, isoToDateKey } from '@/lib/format';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { formatBytes, formatCurrency, formatDate, formatDateShort, formatInteger, isoToDateKey } from '@/lib/format';
 import type { LiveMetrics } from '@src/backtest/types';
-import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain } from 'lucide-react';
+import { Clock, DollarSign, TrendingUp, TrendingDown, Database, Layers, Brain, Pause } from 'lucide-react';
 
 interface RunProgressProps {
   processedMessages: number;
@@ -14,6 +15,7 @@ interface RunProgressProps {
   completedAt: string | null;
   /** ISO timestamp or YYYY-MM-DD of last processed message */
   lastMessageDate: string | null;
+  currentMessageText?: string | null;
   /** ISO or YYYY-MM-DD config start */
   rangeStart: string;
   /** ISO or YYYY-MM-DD config end */
@@ -29,10 +31,12 @@ export function RunProgress({
   startedAt,
   completedAt,
   lastMessageDate,
+  currentMessageText,
   rangeStart,
   rangeEnd,
 }: RunProgressProps) {
   const isActive = status === 'RUNNING' || status === 'PENDING';
+  const isPaused = status === 'PAUSED';
   const isExtracting = isActive && liveMetrics?.phase === 'EXTRACTING';
   const isCompleted = status === 'COMPLETED';
 
@@ -61,6 +65,10 @@ export function RunProgress({
   const progressLabel = isExtracting
     ? `Extracting ${formatInteger(liveMetrics.extractedMessages)}/${formatInteger(liveMetrics.totalExtractMessages)}`
     : `${formatInteger(processedMessages)}/${formatInteger(totalMessages)} msgs`;
+  const currentDateLabel = lastMessageDate
+    ? lastMessageDate.includes('T') ? formatDate(lastMessageDate) : formatDateShort(lastMessageDate)
+    : null;
+  const currentMessagePreview = currentMessageText ? truncateMessage(currentMessageText) : null;
 
   // Timeline position: where does currentKey sit between start and end?
   const rangeStartMs = new Date(startKey).getTime();
@@ -99,6 +107,7 @@ export function RunProgress({
   // Determine if we have any chip content to show
   const hasChips =
     isExtracting ||
+    isPaused ||
     liveMetrics?.unrealizedPnl != null ||
     (liveMetrics != null && liveMetrics.openPositionCount > 0) ||
     llmCost > 0 ||
@@ -115,6 +124,9 @@ export function RunProgress({
         <div className="flex items-center gap-2 flex-wrap px-4 py-1.5 border-t border-border/50">
           {isExtracting && (
             <InfoChip label="Extracting intents" icon={Brain} />
+          )}
+          {isPaused && (
+            <InfoChip label="Paused" icon={Pause} className="text-warning" />
           )}
           {liveMetrics?.unrealizedPnl != null && (
             <InfoChip
@@ -151,21 +163,45 @@ export function RunProgress({
 
       {/* Thin progress bar flush at bottom — only when not completed */}
       {!isCompleted && (
-        <div className="relative h-1.5 bg-primary/10">
-          <div
-            className="absolute inset-y-0 left-0 bg-primary transition-all duration-300"
-            style={{ width: `${barPct}%` }}
-          />
-          {showCurrentDate && (
+        <Tooltip>
+          <TooltipTrigger asChild>
             <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none"
-              style={{ left: `${timelinePct}%` }}
+              className="relative h-3 cursor-default"
+              aria-label={`${progressLabel}${currentDateLabel ? `, current ${currentDateLabel}` : ''}`}
             >
-              <div className="size-2.5 rounded-full bg-primary ring-2 ring-card" />
+              <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden bg-primary/10">
+                <div
+                  className="absolute inset-y-0 left-0 bg-primary transition-all duration-300"
+                  style={{ width: `${barPct}%` }}
+                />
+              </div>
+              {showCurrentDate && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none"
+                  style={{ left: `${timelinePct}%` }}
+                >
+                  <div className="size-2.5 rounded-full bg-primary ring-2 ring-card" />
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs text-left">
+            <div className="space-y-1">
+              <div className="font-medium">
+                {isExtracting ? 'Extracting intents' : currentDateLabel ?? 'Replay progress'}
+              </div>
+              <div className="font-mono tabular-nums">{progressLabel}</div>
+              {currentMessagePreview && (
+                <div className="text-background/80">{currentMessagePreview}</div>
+              )}
+            </div>
+          </TooltipContent>
+        </Tooltip>
       )}
     </>
   );
+}
+
+function truncateMessage(message: string): string {
+  return message.length > 140 ? `${message.slice(0, 137)}...` : message;
 }

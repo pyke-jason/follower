@@ -575,7 +575,18 @@
         "rawHtml": "<html><head></head><body><div>Actually, put myself back in the <a href=\"/option-stalker/chart/AMD\" target=\"os\" data-symbol=\"AMD\"><b>AMD</b></a> position... back in at $163.09&nbsp;</div></body></html>",
         "author": "Hariseldon",
         "timestamp": "2025-09-24T13:41:00.000Z",
-        "chatContext": "Recent context: Hariseldon had a SHORT STOCK position on AMD at $154.48, exited premarket for a $7/share loss. Now re-entering the short."
+        "chatHistory": [
+          {
+            "rawHtml": "<html><body><span class=\"badge bg-danger\">Short</span>&nbsp;<a data-symbol=\"AMD\"><b>AMD</b></a> $154.48 - 1,000 shares</body></html>",
+            "author": "Hariseldon",
+            "timestamp": "2025-09-24T13:10:00.000Z"
+          },
+          {
+            "rawHtml": "<html><body><span class=\"badge bg-primary\">Exit</span>&nbsp;<span class=\"badge bg-danger\">Short</span>&nbsp;<a data-symbol=\"AMD\"><b>AMD</b></a> premarket for a $7/share loss</body></html>",
+            "author": "Hariseldon",
+            "timestamp": "2025-09-24T13:30:00.000Z"
+          }
+        ]
       },
       "expected": {
         "outcome": "MANUAL_REVIEW"
@@ -918,6 +929,37 @@
       "mustMatch": ["outcome"],
       "tags": ["regressions", "hypothetical", "minimum-hippopotamus"],
       "notes": "Bug from bt:minimum-hippopotamus trade 44be2b59: 'If I were looking to' is subjunctive mood — explicitly hypothetical, educational commentary about strategy. Parser extracted strategy=PUT, strikes=[43], expiryHint='oct 3', premiumHint=1.75, but action=null → LLM classified as EXECUTE. The message opens with 'If I were' which is never a real trade. Fix: HYPOTHETICAL_RE detects ^if I were/was and hard-skips when no badge is present."
+    },
+    {
+      "id": "regression-030",
+      "description": "Follow-trade fixture must expose structured chat history through get_recent_chat",
+      "input": {
+        "rawHtml": "<html><head></head><body><div>@Dave same trade</div></body></html>",
+        "author": "testTrader",
+        "timestamp": "2025-09-05T14:02:00.000Z",
+        "chatHistory": [
+          {
+            "rawHtml": "<html><head></head><body><span class=\"badge bg-success\">Long</span>&nbsp;<a href=\"/option-stalker/chart/MSTR\" target=\"os\" data-symbol=\"MSTR\"><b>MSTR</b></a> $362 calls for 4.20</body></html>",
+            "author": "Dave",
+            "timestamp": "2025-09-05T14:00:00.000Z"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "EXECUTE",
+        "signals": [
+          {
+            "orderType": "SINGLE",
+            "symbol": "MSTR",
+            "legs": [
+              { "side": "BUY", "optionType": "CALL", "strike": 362 }
+            ]
+          }
+        ]
+      },
+      "mustMatch": ["outcome", "signals[0].symbol", "signals[0].orderType", "signals[0].legs[0].side", "signals[0].legs[0].optionType", "signals[0].legs[0].strike"],
+      "tags": ["regressions", "chat-history", "follow-trade"],
+      "notes": "This case only works when fixture evals expose structured history through the same get_recent_chat path used by live/classify replay."
     }
   ]
 }

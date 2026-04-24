@@ -16,7 +16,7 @@ import {
 import { toast } from 'sonner';
 import type { Column } from '@/lib/api-types';
 
-export type SecretEntry = { key: string; isSet: boolean };
+type SecretEntry = { key: string; isSet: boolean };
 
 type FlatSecret = SecretEntry & { group: string };
 

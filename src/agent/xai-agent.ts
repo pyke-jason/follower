@@ -31,7 +31,13 @@ export class XAIAgent implements Agent {
     if (!process.env.XAI_API_KEY) {
       throw new Error('XAI_API_KEY is not set');
     }
-    this.provider = createXai({ apiKey: process.env.XAI_API_KEY });
+    // Using a static conv ID to maximize prompt cache hits for this agent's lifetime.
+    this.provider = createXai({
+      apiKey: process.env.XAI_API_KEY,
+      headers: {
+        'x-grok-conv-id': 'trade-follower-orchestrator-v1',
+      },
+    });
   }
 
   async run(opts: AgentRunOptions): Promise<AgentResult> {
@@ -62,6 +68,14 @@ export class XAIAgent implements Agent {
       temperature,
       ...(opts.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
     });
+
+    const details = result.totalUsage.inputTokenDetails;
+    const cacheRead = details?.cacheReadTokens ?? 0;
+    const cacheWrite = details?.cacheWriteTokens ?? 0;
+    const totalInput = result.totalUsage.inputTokens ?? 0;
+    log.info(
+      `xAI usage: input=${totalInput} (cacheRead=${cacheRead}, cacheWrite=${cacheWrite})`
+    );
 
     // Walk steps once: extract reasoning text, tool calls paired with their
     // results, and fire onToolCall interception. Single telemetry path.
@@ -114,9 +128,6 @@ export class XAIAgent implements Agent {
 
     // Store the non-cached portion in `inputTokens` to match Anthropic semantics
     // (Anthropic's input_tokens excludes cached; xAI's prompt_tokens includes it).
-    const details = result.totalUsage.inputTokenDetails;
-    const cacheRead = details?.cacheReadTokens ?? 0;
-    const totalInput = result.totalUsage.inputTokens ?? 0;
     const noCacheInput = details?.noCacheTokens ?? Math.max(0, totalInput - cacheRead);
 
     // Sum cost_in_usd_ticks across every step (one HTTP round-trip per step).

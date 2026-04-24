@@ -8,7 +8,13 @@ import { safeParseFloat } from '@src/lib/numbers';
 import type { Trade } from '@src/db/schema';
 import { DetailPanel } from './detail-panel';
 
-export function TradeStatusPanel({ trade }: { trade: Trade }) {
+export function TradeStatusPanel({
+  trade,
+  interactive = true,
+}: {
+  trade: Trade;
+  interactive?: boolean;
+}) {
   const isOpen = trade.status === 'OPEN';
   const exitPrice = safeParseFloat(trade.exitPrice);
   const realizedPnl = safeParseFloat(trade.pnl);
@@ -16,12 +22,20 @@ export function TradeStatusPanel({ trade }: { trade: Trade }) {
   if (isOpen) {
     return (
       <DetailPanel
-        title="Exit position"
-        description="One close flow only. Use a limit when you want price control, or switch the order form to market when you just want out."
+        title={interactive ? 'Exit Position' : 'Position Status'}
+        description={interactive
+          ? 'One close flow only. Use a limit when you want price control, or switch the order form to market when you just want out.'
+          : 'This position is still open in the record. In backtests the detail view is read-only, so execution controls stay disabled.'}
         eyebrow="Execution"
         action={<Badge label="OPEN" />}
       >
-        <OrderPanel trade={trade} />
+        {interactive ? (
+          <OrderPanel trade={trade} />
+        ) : (
+          <div className="rounded-2xl border border-border/60 bg-background/80 px-4 py-3 text-sm text-muted-foreground">
+            Backtest trades are inspection-only here. Use the message trail and execution timeline to understand why the position is still open.
+          </div>
+        )}
       </DetailPanel>
     );
   }

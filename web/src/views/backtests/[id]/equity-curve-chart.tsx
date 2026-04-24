@@ -21,7 +21,7 @@ export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
 
   return (
     <ResponsiveContainer width="100%" height={250}>
-      <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 8, right: 12, left: 8, bottom: 0 }}>
         <defs>
           <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={curveColor} stopOpacity={0.25} />
@@ -37,6 +37,7 @@ export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
         />
         <YAxis
           yAxisId="cum"
+          width={82}
           tickFormatter={(v: number) => formatCurrency(v)}
           tick={{ fill: 'var(--color-muted-foreground)', fontSize: 11 }}
           axisLine={false}
@@ -45,6 +46,7 @@ export function EquityCurveChart({ data }: { data: EquityPoint[] }) {
         <YAxis
           yAxisId="daily"
           orientation="right"
+          width={86}
           tickFormatter={(v: number) => formatCurrency(v)}
           tick={{ fill: 'var(--color-muted-foreground)', fontSize: 11 }}
           axisLine={false}

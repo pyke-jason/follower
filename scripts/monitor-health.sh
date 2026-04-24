@@ -6,8 +6,12 @@
 # itself cannot run the queries.
 set -uo pipefail
 
-DB="/Users/jason/Workspace/trade-follower-3/data/trade-follower.db"
+DATABASE_URL="${POSTGRES_DATABASE_URL:-${DATABASE_URL:-postgres://jason@127.0.0.1:5432/trade_follower}}"
 LOCAL_API="http://localhost:3791"
+
+query() {
+  psql "$DATABASE_URL" -P pager=off -x -c "$1"
+}
 
 echo "## Snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 echo
@@ -33,23 +37,23 @@ fi
 echo
 echo "### Runtime health (per channel)"
 echo '```'
-sqlite3 -header -column "$DB" "SELECT channel_id, broker_healthy, circuit_open, substr(last_error,1,80) AS last_error, updated_at FROM runtime_health;"
+query "SELECT channel_id, broker_healthy, circuit_open, left(last_error, 80) AS last_error, updated_at FROM runtime_health;"
 echo '```'
 
 echo
 echo "### Tasks — last 60 min"
 echo '```'
-sqlite3 -header -column "$DB" "SELECT task_type, status, COUNT(*) n FROM tasks WHERE COALESCE(completed_at, created_at) > datetime('now','-60 minutes') GROUP BY 1,2 ORDER BY 1,2;"
+query "SELECT task_type, status, COUNT(*) n FROM tasks WHERE COALESCE(completed_at, created_at)::timestamptz > now() - interval '60 minutes' GROUP BY 1,2 ORDER BY 1,2;"
 echo '```'
 
 echo
 echo "### Most recent failures (last 24h, up to 5)"
 echo '```'
-sqlite3 -header -column "$DB" "SELECT substr(id,1,8) id, task_type, model_provider, substr(error,1,90) error, completed_at FROM tasks WHERE status IN ('FAILED','EXPIRED') AND COALESCE(completed_at, created_at) > datetime('now','-24 hours') ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 5;"
+query "SELECT left(id, 8) id, task_type, model_provider, left(error, 90) error, completed_at FROM tasks WHERE status IN ('FAILED','EXPIRED') AND COALESCE(completed_at, created_at)::timestamptz > now() - interval '24 hours' ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 5;"
 echo '```'
 
 echo
 echo "### Pending / in-progress (live channels only)"
 echo '```'
-sqlite3 -header -column "$DB" "SELECT status, COUNT(*) n, MIN(created_at) oldest FROM tasks WHERE status IN ('PENDING','IN_PROGRESS') AND channel_id LIKE 'ibkr:%' AND created_at > datetime('now','-24 hours') GROUP BY 1;"
+query "SELECT status, COUNT(*) n, MIN(created_at) oldest FROM tasks WHERE status IN ('PENDING','IN_PROGRESS') AND channel_id LIKE 'ibkr:%' AND created_at::timestamptz > now() - interval '24 hours' GROUP BY 1;"
 echo '```'

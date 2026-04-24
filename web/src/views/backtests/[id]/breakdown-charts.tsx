@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom';
 import { formatCurrency } from '@/lib/format';
 import { EmptyState } from '@/components/empty-state';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 type BreakdownEntry = {
   trades: number;
@@ -23,10 +25,14 @@ function BreakdownTable({
   rows,
   maxAbsPnl,
   linkBuilder,
+  selectedName,
+  onSelectName,
 }: {
   rows: RowData[];
   maxAbsPnl: number;
   linkBuilder?: (name: string) => string;
+  selectedName?: string | null;
+  onSelectName?: (name: string) => void;
 }) {
   if (rows.length === 0) {
     return (
@@ -43,10 +49,26 @@ function BreakdownTable({
       {rows.map((row) => {
         const barWidth = maxAbsPnl > 0 ? Math.abs(row.pnl) / maxAbsPnl : 0;
         const isPositive = row.pnl >= 0;
+        const isSelected = row.name === selectedName;
         return (
-          <div key={row.name} className="flex items-center gap-2 text-xs group">
+          <div key={row.name} className={cn(
+            'flex items-center gap-2 text-xs group rounded-sm',
+            isSelected && 'bg-accent/40',
+          )}>
             <div className="w-[90px] truncate shrink-0">
-              {linkBuilder ? (
+              {onSelectName ? (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className={cn(
+                    'h-auto px-0 py-0 text-xs font-normal hover:bg-transparent',
+                    isSelected ? 'text-foreground underline underline-offset-2' : 'text-muted-foreground',
+                  )}
+                  onClick={() => onSelectName(row.name)}
+                >
+                  {row.name}
+                </Button>
+              ) : linkBuilder ? (
                 <Link
                   to={linkBuilder(row.name)}
                   className="text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-dashed"
@@ -87,10 +109,14 @@ export function BreakdownCharts({
   byTrader,
   byStrategy,
   channelId,
+  selectedTrader,
+  onSelectTrader,
 }: {
   byTrader: Record<string, BreakdownEntry> | null;
   byStrategy: Record<string, BreakdownEntry> | null;
   channelId?: string;
+  selectedTrader?: string | null;
+  onSelectTrader?: (name: string) => void;
 }) {
   const traderRows: RowData[] = byTrader
     ? Object.entries(byTrader)
@@ -117,9 +143,8 @@ export function BreakdownCharts({
           <BreakdownTable
             rows={traderRows}
             maxAbsPnl={maxAbsPnl}
-            linkBuilder={(name) =>
-              `/trades?trader=${encodeURIComponent(name)}${channelId ? `&channel=${channelId}` : ''}`
-            }
+            selectedName={selectedTrader}
+            onSelectName={onSelectTrader}
           />
         </CardContent>
       </Card>

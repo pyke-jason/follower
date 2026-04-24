@@ -1,10 +1,11 @@
-  import { sqliteTable, text, integer, real, index, uniqueIndex, customType } from 'drizzle-orm/sqlite-core';
+import { pgTable, text, integer, real, index, uniqueIndex, jsonb, boolean } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PositionSizingConfig } from '../position-sizing/index.js';
 import type { Signal } from '../agent/schemas.js';
 import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
+import type { BacktestCheckpointState } from '../backtest/checkpoint-types.js';
 import type { Direction, Strategy } from '../lib/enums.js';
 // Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
 // relative imports (its CJS bundler can't handle them).
@@ -14,37 +15,29 @@ export type { PositionSizingConfig } from '../position-sizing/index.js';
 export type { Signal } from '../agent/schemas.js';
 
 // ─── Typed JSON Column Helper ────────────────────────
-// Uses customType so the TS type is baked into the column definition and
-// propagates through select(), findFirst(), partial selects, etc.
-// When Drizzle ships $validator(), swap to json().$validator(schema).
 
-const typedJson = <T>(name: string) =>
-  customType<{ data: T; driverData: string }>({
-    dataType() { return 'text'; },
-    toDriver(value: T): string { return JSON.stringify(value); },
-    fromDriver(value: string): T { return JSON.parse(value) as T; },
-  })(name);
-
-// SQLite doesn't have native enums — use text columns with TS types for safety.
+const typedJson = <T>(name: string) => jsonb(name).$type<T>();
+const jsonArrayDefault = sql`'[]'::jsonb`;
+const jsonObjectDefault = sql`'{}'::jsonb`;
 
 // ─── Messages ────────────────────────────────────────
 
-export const messages = sqliteTable('messages', {
+export const messages = pgTable('messages', {
   id:                 text('id').primaryKey(),
   author:             text('author').notNull(),
   timestamp:          text('timestamp').notNull(), // ISO 8601
   rawHtml:            text('raw_html').notNull(),
   cleanText:          text('clean_text').notNull(),
-  badges:             typedJson<string[]>('badges').notNull().default([]),
-  symbols:            typedJson<string[]>('symbols').notNull().default([]),
+  badges:             typedJson<string[]>('badges').notNull().default(jsonArrayDefault),
+  symbols:            typedJson<string[]>('symbols').notNull().default(jsonArrayDefault),
   actionHint:         text('action_hint'),       // OPEN | CLOSE | ADJUST | null
   directionHint:      text('direction_hint'),     // LONG | SHORT | null
-  detectedStrategies: typedJson<DetectedStrategy[]>('detected_strategies').notNull().default([]),
-  isPaperTrade:       integer('is_paper_trade', { mode: 'boolean' }).default(false),
+  detectedStrategies: typedJson<DetectedStrategy[]>('detected_strategies').notNull().default(jsonArrayDefault),
+  isPaperTrade:       boolean('is_paper_trade').default(false),
   confidence:         text('confidence'),          // numeric stored as text (matches pg behavior)
   ingestedAt:         text('ingested_at').$defaultFn(() => new Date().toISOString()),
   contentHash:        text('content_hash'),        // sha256 of normalized clean_text for dedup
-  reactions:          typedJson<MessageReaction[]>('reactions').notNull().default([]),
+  reactions:          typedJson<MessageReaction[]>('reactions').notNull().default(jsonArrayDefault),
 }, (table) => [
   index('idx_messages_author').on(table.author),
   index('idx_messages_timestamp').on(table.timestamp),
@@ -53,14 +46,14 @@ export const messages = sqliteTable('messages', {
 
 // ─── Tasks ───────────────────────────────────────────
 
-export const tasks = sqliteTable('tasks', {
+export const tasks = pgTable('tasks', {
   id:          text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:   text('message_id').references(() => messages.id),
   taskType:    text('task_type').notNull(),       // REVIEW_MESSAGE | EXECUTE_TRADE | CLOSE_POSITION | MANUAL_REVIEW
   status:      text('status').notNull().default('PENDING'), // PENDING | IN_PROGRESS | COMPLETED | FAILED | SKIPPED
   assignee:    text('assignee').notNull().default('agent'),
   priority:    integer('priority').default(0),
-  context:     typedJson<TaskContext>('context').notNull().default({}),
+  context:     typedJson<TaskContext>('context').notNull().default(jsonObjectDefault),
   createdAt:   text('created_at').$defaultFn(() => new Date().toISOString()),
   startedAt:   text('started_at'),
   completedAt: text('completed_at'),
@@ -77,7 +70,7 @@ export const tasks = sqliteTable('tasks', {
 
 // ─── Trades ──────────────────────────────────────────
 
-export const trades = sqliteTable('trades', {
+export const trades = pgTable('trades', {
   id:              text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   taskId:          text('task_id').references(() => tasks.id),
   sourceMessageId: text('source_message_id').references(() => messages.id),
@@ -95,7 +88,7 @@ export const trades = sqliteTable('trades', {
   closedAt:        text('closed_at'),
   closeMessageId:  text('close_message_id').references(() => messages.id),
   channelId:       text('channel_id').notNull(),
-  metadata:        typedJson<TradeMetadata>('metadata').notNull().default({}),
+  metadata:        typedJson<TradeMetadata>('metadata').notNull().default(jsonObjectDefault),
   avgEntryPrice:   text('avg_entry_price'),
   brokerFillPrice: text('broker_fill_price'),
   brokerFillQty:   integer('broker_fill_qty'),
@@ -112,17 +105,17 @@ export const trades = sqliteTable('trades', {
 
 // ─── Trade Events (append-only action log) ──────────
 
-export const tradeEvents = sqliteTable('trade_events', {
+export const tradeEvents = pgTable('trade_events', {
   id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   tradeId:    text('trade_id').references(() => trades.id).notNull(),
   action:     text('action').notNull(),         // OPEN | CLOSE | ADD | TRIM | LEG_OFF
   price:      text('price'),                    // fill price for this action
   quantity:   integer('quantity'),               // contracts/shares involved
-  legs:       typedJson<TradeLeg[]>('legs').notNull().default([]),
+  legs:       typedJson<TradeLeg[]>('legs').notNull().default(jsonArrayDefault),
   strategy:   text('strategy').$type<Strategy>(),                 // strategy at time of event
   direction:  text('direction').$type<Direction>(),                // direction at time of event
   messageId:  text('message_id'),               // source message that triggered this
-  metadata:   typedJson<Record<string, unknown>>('metadata').notNull().default({}),
+  metadata:   typedJson<Record<string, unknown>>('metadata').notNull().default(jsonObjectDefault),
   timestamp:  text('timestamp').notNull(),       // ISO 8601 — when the action happened
   createdAt:  text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -134,7 +127,7 @@ export type TradeEvent = typeof tradeEvents.$inferSelect;
 
 // ─── Backtest Runs ───────────────────────────────────
 
-export const backtestRuns = sqliteTable('backtest_runs', {
+export const backtestRuns = pgTable('backtest_runs', {
   id:              text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   status:          text('status').notNull().default('PENDING'), // PENDING | RUNNING | COMPLETED | FAILED
   config:          typedJson<BacktestRunConfig>('config').notNull(),
@@ -151,7 +144,7 @@ export const backtestRuns = sqliteTable('backtest_runs', {
   // Eval framework columns
   name:            text('name'),                    // human label, e.g. "sonnet baseline sept"
   experimentTag:   text('experiment_tag'),           // groups runs, e.g. "model-comparison-feb"
-  pinned:          integer('pinned', { mode: 'boolean' }).default(false),
+  pinned:          boolean('pinned').default(false),
   extendedMetrics: typedJson<ExtendedMetrics>('extended_metrics'),
   liveMetrics:     typedJson<LiveMetrics>('live_metrics'),
 }, (table) => [
@@ -161,7 +154,7 @@ export const backtestRuns = sqliteTable('backtest_runs', {
 
 // ─── Run Decisions ──────────────────────────────────
 
-export const runDecisions = sqliteTable('run_decisions', {
+export const runDecisions = pgTable('run_decisions', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   channelId:      text('channel_id').notNull(),
   taskId:         text('task_id').references(() => tasks.id),
@@ -189,7 +182,7 @@ export const runDecisions = sqliteTable('run_decisions', {
 
 // ─── Backtest MTM Snapshots ──────────────────────────
 
-export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
+export const backtestMtmSnapshots = pgTable('backtest_mtm_snapshots', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   channelId:      text('channel_id').notNull(),
   date:           text('date').notNull(),           // YYYY-MM-DD (trading day)
@@ -200,19 +193,65 @@ export const backtestMtmSnapshots = sqliteTable('backtest_mtm_snapshots', {
   index('idx_mtm_snapshots_channel_date').on(table.channelId, table.date),
 ]);
 
+// ─── Backtest Checkpoints ────────────────────────────
+
+export const backtestCheckpoints = pgTable('backtest_checkpoints', {
+  runId:     text('run_id').primaryKey().references(() => backtestRuns.id, { onDelete: 'cascade' }),
+  state:     typedJson<BacktestCheckpointState>('state').notNull(),
+  createdAt: text('created_at').$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_backtest_checkpoints_updated').on(table.updatedAt),
+]);
+
+export const backtestMessageProgress = pgTable('backtest_message_progress', {
+  id:           text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  runId:        text('run_id').notNull().references(() => backtestRuns.id, { onDelete: 'cascade' }),
+  channelId:    text('channel_id').notNull(),
+  messageId:    text('message_id').references(() => messages.id),
+  messageIndex: integer('message_index').notNull(),
+  status:       text('status').notNull(), // STARTED | COMMITTED | FAILED
+  phase:        text('phase').notNull().default('REPLAYING'),
+  attempt:      integer('attempt').notNull().default(1),
+  error:        text('error'),
+  startedAt:    text('started_at').notNull(),
+  completedAt:  text('completed_at'),
+}, (table) => [
+  index('idx_backtest_progress_run').on(table.runId),
+  index('idx_backtest_progress_channel').on(table.channelId),
+  uniqueIndex('idx_backtest_progress_run_message').on(table.runId, table.messageId),
+]);
+
+export const backtestAttempts = pgTable('backtest_attempts', {
+  id:          text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  runId:       text('run_id').notNull().references(() => backtestRuns.id, { onDelete: 'cascade' }),
+  attempt:     integer('attempt').notNull(),
+  pid:         integer('pid'),
+  status:      text('status').notNull().default('RUNNING'), // RUNNING | EXITED
+  startedAt:   text('started_at').notNull().$defaultFn(() => new Date().toISOString()),
+  completedAt: text('completed_at'),
+  exitCode:    integer('exit_code'),
+  signal:      text('signal'),
+  error:       text('error'),
+  logTail:     text('log_tail'),
+}, (table) => [
+  index('idx_backtest_attempts_run').on(table.runId),
+  uniqueIndex('idx_backtest_attempts_run_attempt').on(table.runId, table.attempt),
+]);
+
 // ─── Tracked Traders ─────────────────────────────────
 
-export const trackedTraders = sqliteTable('tracked_traders', {
+export const trackedTraders = pgTable('tracked_traders', {
   name:            text('name').primaryKey(),
-  enabled:         integer('enabled', { mode: 'boolean' }).default(true),
-  strategies:      typedJson<string[]>('strategies').notNull().default([]),
+  enabled:         boolean('enabled').default(true),
+  strategies:      typedJson<string[]>('strategies').notNull().default(jsonArrayDefault),
   notes:           text('notes'),
   positionSizingConfig: typedJson<PositionSizingConfig>('position_sizing_config'),
 });
 
 // ─── Daily Balances ─────────────────────────────────
 
-export const dailyBalances = sqliteTable('daily_balances', {
+export const dailyBalances = pgTable('daily_balances', {
   id:            text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   channelId:     text('channel_id').notNull(),
   date:          text('date').notNull(), // YYYY-MM-DD
@@ -233,7 +272,7 @@ export const dailyBalances = sqliteTable('daily_balances', {
 
 export type ReconciliationAlertType = 'BROKER_ONLY' | 'DB_ONLY' | 'QUANTITY_MISMATCH';
 
-export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
+export const reconciliationAlerts = pgTable('reconciliation_alerts', {
   id:         text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   channelId:  text('channel_id').notNull(),
   type:       text('type').notNull().$type<ReconciliationAlertType>(),
@@ -241,7 +280,7 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
   tradeId:    text('trade_id'),
   expected:   typedJson<unknown>('expected'),
   actual:     typedJson<unknown>('actual'),
-  resolved:       integer('resolved', { mode: 'boolean' }).default(false),
+  resolved:       boolean('resolved').default(false),
   resolvedAt:     text('resolved_at'),
   resolvedReason: text('resolved_reason'),
   createdAt:      text('created_at').$defaultFn(() => new Date().toISOString()),
@@ -254,7 +293,7 @@ export const reconciliationAlerts = sqliteTable('reconciliation_alerts', {
 
 // ─── Orphan Fills ─────────────────────────────────────
 
-export const orphanFills = sqliteTable('orphan_fills', {
+export const orphanFills = pgTable('orphan_fills', {
   orderId: text('order_id').primaryKey(),
   symbol: text('symbol').notNull(),
   strategy: text('strategy').notNull(),
@@ -266,19 +305,19 @@ export const orphanFills = sqliteTable('orphan_fills', {
   legs: text('legs'),
   rawOrder: text('raw_order'),
   detectedAt: text('detected_at').notNull(),
-  resolved: integer('resolved').default(0),
+  resolved: boolean('resolved').default(false),
   taskId: text('task_id'),
   channelId: text('channel_id'),
 });
 
 // ─── Historical Fetch Runs ──────────────────────────
 
-export const historicalFetchRuns = sqliteTable('historical_fetch_runs', {
+export const historicalFetchRuns = pgTable('historical_fetch_runs', {
   id:            text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   status:        text('status').notNull().default('pending'), // pending | running | completed | error | cancelled
   since:         text('since').notNull(),         // YYYY-MM-DD
   until:         text('until').notNull(),         // YYYY-MM-DD
-  clearExisting: integer('clear_existing', { mode: 'boolean' }).default(false),
+  clearExisting: boolean('clear_existing').default(false),
   fetchedCount:  integer('fetched_count').default(0),
   savedCount:    integer('saved_count').default(0),
   currentDate:   text('current_date'),            // date chunk currently being fetched
@@ -291,7 +330,7 @@ export const historicalFetchRuns = sqliteTable('historical_fetch_runs', {
 
 // ─── Historical Fetch Chunks ────────────────────────
 
-export const historicalFetchChunks = sqliteTable('historical_fetch_chunks', {
+export const historicalFetchChunks = pgTable('historical_fetch_chunks', {
   id:            text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   runId:         text('run_id').references(() => historicalFetchRuns.id).notNull(),
   date:          text('date').notNull(),           // YYYY-MM-DD
@@ -309,7 +348,7 @@ export const historicalFetchChunks = sqliteTable('historical_fetch_chunks', {
 
 // ─── Message Intents (Phase 1: classification cache) ─
 
-export const messageIntents = sqliteTable('message_intents', {
+export const messageIntents = pgTable('message_intents', {
   id:           text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:    text('message_id').references(() => messages.id).notNull(),
   model:        text('model').notNull(),              // e.g. "grok-4-1-fast-non-reasoning" or "deterministic"
@@ -495,10 +534,10 @@ export type TradeMetadata = {
 
 // ─── Runtime Health ──────────────────────────────────
 
-export const runtimeHealth = sqliteTable('runtime_health', {
+export const runtimeHealth = pgTable('runtime_health', {
   channelId:     text('channel_id').primaryKey(),
-  brokerHealthy: integer('broker_healthy', { mode: 'boolean' }).notNull().default(true),
-  circuitOpen:   integer('circuit_open', { mode: 'boolean' }).notNull().default(false),
+  brokerHealthy: boolean('broker_healthy').notNull().default(true),
+  circuitOpen:   boolean('circuit_open').notNull().default(false),
   lastError:     text('last_error'),
   updatedAt:     text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
@@ -508,21 +547,21 @@ export const runtimeHealth = sqliteTable('runtime_health', {
 export type DiscrepancyVerdict = 'parser_right' | 'label_right' | 'both_wrong' | 'skip';
 export type DiscrepancyCategory = 'false_positive' | 'false_negative' | 'action_mismatch' | 'strategy_mismatch' | 'direction_mismatch';
 
-export const discrepancyReviews = sqliteTable('discrepancy_reviews', {
+export const discrepancyReviews = pgTable('discrepancy_reviews', {
   id:               text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:        text('message_id').references(() => messages.id).notNull(),
   category:         text('category').notNull().$type<DiscrepancyCategory>(),
   // Human verdict
   verdict:          text('verdict').$type<DiscrepancyVerdict>(),
   reason:           text('reason'),
-  reviewed:         integer('reviewed', { mode: 'boolean' }).default(false),
+  reviewed:         boolean('reviewed').default(false),
   reviewedAt:       text('reviewed_at'),
   // Parser output (denormalized — frozen at comparison time)
   parserAction:     text('parser_action'),
   parserStrategy:   text('parser_strategy'),
   parserDirection:  text('parser_direction'),
   parserSkipReason: text('parser_skip_reason'),
-  parserFlags:      typedJson<string[]>('parser_flags').notNull().default([]),
+  parserFlags:      typedJson<string[]>('parser_flags').notNull().default(jsonArrayDefault),
   // Label output (denormalized)
   labelAction:      text('label_action'),
   labelStrategy:    text('label_strategy'),
@@ -534,8 +573,8 @@ export const discrepancyReviews = sqliteTable('discrepancy_reviews', {
   // Message context (denormalized for rendering without JOIN)
   author:           text('author').notNull(),
   cleanText:        text('clean_text').notNull(),
-  badges:           typedJson<string[]>('badges').notNull().default([]),
-  symbols:          typedJson<string[]>('symbols').notNull().default([]),
+  badges:           typedJson<string[]>('badges').notNull().default(jsonArrayDefault),
+  symbols:          typedJson<string[]>('symbols').notNull().default(jsonArrayDefault),
   timestamp:        text('timestamp').notNull(),
   createdAt:        text('created_at').$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -556,7 +595,7 @@ export type EvalLabelData = {
   trades: Signal[][];  // outer = trades in message, inner = legs of one trade
 };
 
-export const evalLabels = sqliteTable('eval_labels', {
+export const evalLabels = pgTable('eval_labels', {
   id:             text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   messageId:      text('message_id').references(() => messages.id).notNull(),
   // The label data (stored as JSON)
@@ -566,7 +605,7 @@ export const evalLabels = sqliteTable('eval_labels', {
   model:          text('model'),                              // model that generated this
   version:        integer('version').notNull().default(2),    // bump when prompt/schema changes
   // Human review
-  humanVerified:  integer('human_verified', { mode: 'boolean' }).default(false),
+  humanVerified:  boolean('human_verified').default(false),
   humanLabel:     typedJson<EvalLabelData>('human_label'),  // human correction (null if agent was right)
   rejectionReason: text('rejection_reason'),                // e.g. NOT_TRADE, MISSED_TRADE, WRONG_SIGNALS, WRONG_ACTION, OTHER
   feedback:       text('feedback'),                          // free-text human feedback
@@ -597,6 +636,9 @@ export type HistoricalFetchRun = typeof historicalFetchRuns.$inferSelect;
 export type HistoricalFetchChunk = typeof historicalFetchChunks.$inferSelect;
 export type RunDecision = typeof runDecisions.$inferSelect;
 export type BacktestMtmSnapshot = typeof backtestMtmSnapshots.$inferSelect;
+export type BacktestCheckpoint = typeof backtestCheckpoints.$inferSelect;
+export type BacktestMessageProgress = typeof backtestMessageProgress.$inferSelect;
+export type BacktestAttempt = typeof backtestAttempts.$inferSelect;
 export type MessageIntent = typeof messageIntents.$inferSelect;
 export type NewMessageIntent = typeof messageIntents.$inferInsert;
 export type RuntimeHealth = typeof runtimeHealth.$inferSelect;
@@ -633,6 +675,7 @@ const ClassifyRunSummarySchema = z.object({
     deterministic: z.number(),
     llm: z.number(),
   }),
+  byRuleId: z.record(z.string(), z.number()).optional(),
   totalInputTokens: z.number(),
   totalOutputTokens: z.number(),
   totalCacheReadInputTokens: z.number().optional(),
@@ -644,7 +687,7 @@ const ClassifyRunSummarySchema = z.object({
 export type ClassifyRunSummary = z.infer<typeof ClassifyRunSummarySchema>;
 export { ClassifyRunSummarySchema };
 
-export const classifyRuns = sqliteTable('classify_runs', {
+export const classifyRuns = pgTable('classify_runs', {
   id:              text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   status:          text('status').notNull().default('PENDING'),
   config:          typedJson<ClassifyRunConfig>('config').notNull(),
@@ -657,7 +700,7 @@ export const classifyRuns = sqliteTable('classify_runs', {
   pid:             integer('pid'),
   name:            text('name'),
   experimentTag:   text('experiment_tag'),
-  pinned:          integer('pinned', { mode: 'boolean' }).default(false),
+  pinned:          boolean('pinned').default(false),
   progressIndex:   integer('progress_index').default(0),
   progressTotal:   integer('progress_total').default(0),
   lastMessageTs:   text('last_message_ts'),

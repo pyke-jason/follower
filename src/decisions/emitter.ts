@@ -5,7 +5,7 @@
  * `snapshot` = the raw event blob for debugging (order objects, signal data, etc.).
  */
 
-import { db, schema, withBusyRetry } from '../db/client.js';
+import { db, schema, withDbRetry } from '../db/client.js';
 
 export type DecisionColumns = {
   signalIndex?: number;
@@ -30,7 +30,7 @@ export function createEmitter(scope: {
   const startMs = Date.now();
   return {
     emit: async (event, columns = {}, snapshot) => {
-      await withBusyRetry(() =>
+      await withDbRetry(() =>
         db.insert(schema.runDecisions).values({
           ...scope,
           ...columns,

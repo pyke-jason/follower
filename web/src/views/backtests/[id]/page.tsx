@@ -6,7 +6,6 @@ import { queries } from '@/lib/queries';
 import { useApiMutation } from '@/hooks/use-api-mutation';
 import { Badge } from '@/components/badge';
 import { RunProgress } from './run-progress';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -23,119 +22,13 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import { formatCurrency, isoToDateKey } from '@/lib/format';
 import { CollapsibleError } from './collapsible-error';
 import { LogViewer } from './log-viewer';
-import { BacktestTabs } from './backtest-tabs';
-import { EquityCurveChart } from './equity-curve-chart';
-import { DrawdownChart } from './drawdown-chart';
-import { BreakdownCharts } from './breakdown-charts';
-import { TradeScatter } from './trade-scatter';
-import { RollingWinRate } from './rolling-win-rate';
-import { ChatRoom } from '@/views/messages/chat-room';
-import { ChatHydrator } from '@/views/messages/chat-hydrator';
-import { TradeFilterProvider, TradeFilters } from '@/components/trade-filters';
-import { FilteredTradesView } from '@/components/filtered-trades-view';
-import { Square, Trash2, Copy, ArrowLeft, RotateCcw } from 'lucide-react';
+import { BacktestStaticTabs } from './backtest-static-tabs';
+import { useBacktestDetailLiveQuery } from './use-backtest-detail-live-query';
+import { Square, Trash2, Copy, ArrowLeft, RotateCcw, Pause, Play } from 'lucide-react';
 import { PROFIT_FACTOR_INF, pctDisplay } from '@src/lib/numbers';
 import { btChannel } from '@src/lib/channel';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
-import type { ChatHydration } from '@/views/messages/chat-hydrator';
-import type { Message, Trade, RunDecision } from '@src/db/schema';
-import type { MessageDecision, TradeOutcome } from '@src/lib/enriched-message';
 import type { BacktestDetailResponse } from '@src/local-api/http-schemas';
-
-type BacktestDecisionJoinRow = {
-  decision: RunDecision;
-  message: Message;
-  trade: { id: string; symbol: string; taskId: string | null; pnl: string | null } | null;
-};
-
-/** Narrowed view of a decision join row used by the chat builder. */
-type BacktestDecisionRow = BacktestDecisionJoinRow;
-
-function buildBacktestChatData({
-  decisions,
-  allTrades,
-  channelId,
-  traders,
-  startDate,
-  endDate,
-  lastProcessedTs,
-}: {
-  decisions: BacktestDecisionRow[];
-  allTrades: Trade[];
-  channelId: string;
-  traders: string[];
-  startDate: string;
-  endDate: string;
-  lastProcessedTs?: string | null;
-}): ChatHydration {
-  const tradeById = new Map(allTrades.map((trade) => [trade.id, trade]));
-  const latestMessageById = new Map<string, Message>();
-  const enrichment: ChatHydration['enrichment'] = {};
-  let executedCount = 0;
-  let skippedCount = 0;
-
-  for (const row of decisions) {
-    if (!latestMessageById.has(row.message.id)) {
-      latestMessageById.set(row.message.id, row.message);
-    }
-
-    const tradeRow = row.trade?.id ? tradeById.get(row.trade.id) : null;
-    const trade: TradeOutcome | null = tradeRow
-      ? {
-          id: tradeRow.id,
-          symbol: tradeRow.symbol,
-          direction: tradeRow.direction,
-          strategy: tradeRow.strategy,
-          entryPrice: tradeRow.entryPrice,
-          exitPrice: tradeRow.exitPrice,
-          pnl: tradeRow.pnl,
-          status: tradeRow.status,
-          quantity: tradeRow.quantity,
-          openedAt: tradeRow.openedAt,
-          closedAt: tradeRow.closedAt,
-        }
-      : null;
-
-    const outcome = row.decision.outcome;
-    const decision: MessageDecision | null =
-      outcome === 'EXECUTE' || outcome === 'SKIP' || outcome === 'FAIL' || outcome === 'PENDING'
-        ? {
-            outcome,
-            reasoning: row.decision.reasoning ?? null,
-            pnl: row.decision.pnl ?? null,
-            phase: row.decision.phase ?? 'agent',
-            durationMs: row.decision.durationMs ?? null,
-            taskId: row.decision.taskId ?? null,
-          }
-        : null;
-
-    if (decision?.outcome === 'EXECUTE') executedCount += 1;
-    if (decision?.outcome === 'SKIP') skippedCount += 1;
-
-    enrichment[row.message.id] = { decision, trade };
-  }
-
-  const messages = [...latestMessageById.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-
-  return {
-    messages,
-    enrichment,
-    nextCursor: null,
-    authors: traders,
-    constraints: {
-      authors: traders,
-      startDate,
-      endDate,
-      channelId,
-      ...(lastProcessedTs ? { lastProcessedTs } : {}),
-    },
-    stableDecisionCounts: {
-      processedCount: executedCount + skippedCount,
-      executedCount,
-      skippedCount,
-    },
-  };
-}
 
 export default function BacktestDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -167,10 +60,21 @@ function BacktestDetailContent({ data, id }: {
 }) {
   const navigate = useNavigate();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const patchTradeLabel = useBacktestDetailLiveQuery(id, data);
 
   const cancelMut = useApiMutation('POST', `/backtests/${id}/cancel`, {
     invalidate: [['backtest', id]],
     onSuccess: () => toast.success('Backtest cancelled'),
+  });
+
+  const pauseMut = useApiMutation('POST', `/backtests/${id}/pause`, {
+    invalidate: [['backtest', id], ['backtests']],
+    onSuccess: () => toast.success('Backtest paused'),
+  });
+
+  const resumeMut = useApiMutation('POST', `/backtests/${id}/resume`, {
+    invalidate: [['backtest', id], ['backtests']],
+    onSuccess: () => toast.success('Backtest resumed'),
   });
 
   const deleteMut = useApiMutation('DELETE', `/backtests/${id}`, {
@@ -186,158 +90,116 @@ function BacktestDetailContent({ data, id }: {
   });
 
   const {
-    run, summary, byTrader, byStrategy,
-    equityCurve, tradeScatter, rollingWinRate,
-    decisions, allTrades, eventsByTradeId, flagsByTradeId,
-    llmCost, messagesEndDate, evalSummary, labelsByTradeId,
+    run,
+    summary,
+    decisions,
+    llmCost,
+    liveRuntime,
   } = data;
   const config = run.config;
 
   const backtestRunId = id;
-  const channelId = btChannel(backtestRunId);
   const liveMetrics = run.liveMetrics ?? null;
-  const chatData = buildBacktestChatData({
-    decisions,
-    allTrades,
-    channelId,
-    traders: config.traders,
-    startDate: config.startDate,
-    endDate: messagesEndDate ?? config.endDate,
-    lastProcessedTs: run.liveMetrics?.lastProcessedMessageTs ?? null,
-  });
-  const isRunning = run.status === 'RUNNING' || run.status === 'PENDING';
-  const hasDrawdown = (summary?.maxDrawdown ?? 0) > 0;
-
-  const noData = (h = 200) => (
-    <div className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: h }}>
-      No data yet
-    </div>
-  );
-
-  // --- Performance Tab content ---
-  const performanceContent = (
-    <div className="space-y-4">
-      {/* Row 1: Equity Curve + Drawdown */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-[3fr_2fr]">
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Equity Curve</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            {equityCurve && equityCurve.length > 0
-              ? <EquityCurveChart data={equityCurve} />
-              : noData(250)}
-          </CardContent>
-        </Card>
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Drawdown</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            {equityCurve && equityCurve.length > 0 && hasDrawdown
-              ? <DrawdownChart data={equityCurve} />
-              : noData(200)}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Row 2: Trade Scatter + Rolling Win Rate */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-[3fr_2fr]">
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Trade Scatter</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            {tradeScatter.length > 0
-              ? <TradeScatter data={tradeScatter} />
-              : noData(280)}
-          </CardContent>
-        </Card>
-        <Card className="py-0 gap-0">
-          <CardHeader className="border-b py-3 px-4">
-            <CardTitle className="text-sm">Rolling Win Rate</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 pb-2 px-2">
-            <RollingWinRate data={rollingWinRate} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Row 3: Breakdown Charts */}
-      <BreakdownCharts byTrader={byTrader} byStrategy={byStrategy} channelId={channelId} />
-    </div>
-  );
-
-  // --- Messages Tab content ---
-  const messagesContent = (
-    <div className="space-y-3 flex flex-col flex-1 min-h-0">
-      <div className="rounded-lg border bg-card overflow-hidden flex flex-col flex-1 min-h-0">
-        <ChatHydrator data={chatData} />
-        <ChatRoom />
-      </div>
-    </div>
-  );
-
-  // --- Trades Tab content ---
-  const tradesContent = (
-    <FilteredTradesView
-      eventsByTradeId={eventsByTradeId}
-      flagsByTradeId={flagsByTradeId}
-      labelsByTradeId={labelsByTradeId}
-      channelId={channelId}
-      commissionSchedule={config.commissionSchedule}
-      startingEquity={config.startingEquity}
-    />
-  );
+  const liveStatus = run.status;
+  const isRunning = liveStatus === 'RUNNING' || liveStatus === 'PENDING';
+  const isPaused = liveStatus === 'PAUSED';
+  const isLive = isRunning || isPaused;
+  const liveError = run.error;
+  const processedMessages = liveRuntime.processedMessages;
+  const totalMessages = summary?.tradedMessages ?? run.summary?.tradedMessages ?? 0;
+  const lastProgressMessage = findProgressMessage(decisions, liveMetrics?.lastProcessedMessageTs);
 
   return (
     <div className="flex flex-col h-full">
       <div className="space-y-4 animate-in-up pb-6 flex-1 flex flex-col min-h-0">
         {/* Header with action toolbar */}
-        <div className="flex items-center gap-3">
-          <Link to="/backtests" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <h2 className="text-lg font-bold text-foreground tracking-tight">Backtest Run</h2>
-          <Badge label={run.status} />
-          {run.name && <span className="text-sm text-muted-foreground">{run.name}</span>}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link to="/backtests" className="shrink-0 text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <h2 className="min-w-0 truncate text-lg font-bold text-foreground tracking-tight">Backtest Run</h2>
+            <Badge label={liveStatus} />
+            {run.name && <span className="min-w-0 truncate text-sm text-muted-foreground">{run.name}</span>}
+          </div>
 
-          <div className="flex items-center gap-1.5 ml-auto">
+          <div className="flex w-full flex-wrap items-center gap-1.5 sm:ml-auto sm:w-auto sm:justify-end">
             <Button variant="ghost" size="xs" asChild>
-              <Link to={`/backtests/new?clone=${backtestRunId}`}>
-                <Copy className="size-3" /> Clone &amp; Edit
+              <Link to={`/backtests/new?clone=${backtestRunId}`} title="Clone & Edit" aria-label="Clone and edit backtest">
+                <Copy className="size-3" /> <span className="max-[420px]:sr-only">Clone &amp; Edit</span>
               </Link>
             </Button>
             <Button
               variant="ghost"
               size="xs"
+              title="Clear intent cache"
+              aria-label="Clear intent cache"
               onClick={() => invalidateCacheMut.mutate()}
               disabled={invalidateCacheMut.isPending}
             >
-              <RotateCcw className="size-3" /> Clear Intent Cache
+              <RotateCcw className="size-3" /> <span className="max-[520px]:sr-only">Clear Intent Cache</span>
             </Button>
             {isRunning && (
               <>
-                <Separator orientation="vertical" className="!h-4 mx-1" />
+                <Separator orientation="vertical" className="!h-4 mx-1 hidden min-[520px]:block" />
                 <Button
                   variant="secondary"
                   size="xs"
+                  title="Pause backtest"
+                  aria-label="Pause backtest"
+                  onClick={() => pauseMut.mutate()}
+                  disabled={pauseMut.isPending}
+                >
+                  <Pause className="size-3" /> <span className="max-[420px]:sr-only">Pause</span>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  title="Cancel backtest"
+                  aria-label="Cancel backtest"
                   onClick={() => cancelMut.mutate()}
                   disabled={cancelMut.isPending}
                 >
-                  <Square className="size-3" /> Cancel
+                  <Square className="size-3" /> <span className="max-[420px]:sr-only">Cancel</span>
                 </Button>
               </>
             )}
-            <Separator orientation="vertical" className="!h-4 mx-1" />
+            {isPaused && (
+              <>
+                <Separator orientation="vertical" className="!h-4 mx-1 hidden min-[520px]:block" />
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  title="Resume backtest"
+                  aria-label="Resume backtest"
+                  onClick={() => resumeMut.mutate()}
+                  disabled={resumeMut.isPending}
+                >
+                  <Play className="size-3" /> <span className="max-[420px]:sr-only">Resume</span>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  title="Cancel backtest"
+                  aria-label="Cancel backtest"
+                  onClick={() => cancelMut.mutate()}
+                  disabled={cancelMut.isPending}
+                >
+                  <Square className="size-3" /> <span className="max-[420px]:sr-only">Cancel</span>
+                </Button>
+              </>
+            )}
+            <Separator orientation="vertical" className="!h-4 mx-1 hidden min-[520px]:block" />
             <Button
               variant="ghost"
               size="xs"
               className="text-loss hover:text-loss/80 hover:bg-loss/5"
+              title="Delete backtest"
+              aria-label="Delete backtest"
               onClick={() => setConfirmDelete(true)}
               disabled={deleteMut.isPending}
             >
-              <Trash2 className="size-3" /> Delete
+              <Trash2 className="size-3" /> <span className="max-[420px]:sr-only">Delete</span>
             </Button>
           </div>
         </div>
@@ -398,43 +260,39 @@ function BacktestDetailContent({ data, id }: {
 
           {/* Progress chips + bar */}
           <RunProgress
-            processedMessages={new Set(decisions.map((d: BacktestDecisionRow) => d.message.id)).size}
-            totalMessages={run.summary?.tradedMessages ?? 0}
+            processedMessages={processedMessages}
+            totalMessages={totalMessages}
             llmCost={llmCost}
             liveMetrics={liveMetrics}
-            status={run.status}
+            status={liveStatus}
             startedAt={run.startedAt}
             completedAt={run.completedAt}
             lastMessageDate={
               liveMetrics?.lastProcessedMessageTs
-              ?? (decisions.length > 0 ? decisions[0].message.timestamp : null)
+                ?? lastProgressMessage?.timestamp
+                ?? null
             }
+            currentMessageText={lastProgressMessage?.cleanText ?? null}
             rangeStart={config.startDate}
             rangeEnd={config.endDate}
           />
         </div>
 
         {/* Error -- only when there is one (hide for cancelled runs) */}
-        {run.error && run.status !== 'CANCELLED' && (
-          <CollapsibleError error={run.error} />
+        {liveStatus === 'PAUSED' && liveError && (
+          <PausedNotice reason={liveError} />
+        )}
+        {liveError && liveStatus !== 'CANCELLED' && liveStatus !== 'PAUSED' && (
+          <CollapsibleError error={liveError} />
         )}
 
-        {/* Tabs -- always in this slot when data exists */}
-        <TradeFilterProvider trades={allTrades} flagsByTradeId={flagsByTradeId} labelsByTradeId={labelsByTradeId}>
-          <BacktestTabs
-            performance={performanceContent}
-            messages={messagesContent}
-            trades={tradesContent}
-            tabBarTrailing={<TradeFilters evalSummary={evalSummary} />}
-            hasMessages={chatData.messages.length > 0}
-          />
-        </TradeFilterProvider>
+        <BacktestStaticTabs id={id} data={data} onLabelPatch={patchTradeLabel} />
       </div>
 
       {/* Anchored log panel -- outside content wrapper so sticky sits flush */}
       <LogViewer
         backtestRunId={backtestRunId}
-        isRunning={isRunning}
+        isRunning={isLive}
         defaultCollapsed
       />
 
@@ -457,6 +315,41 @@ function BacktestDetailContent({ data, id }: {
       </AlertDialog>
     </div>
   );
+}
+
+function PausedNotice({ reason }: { reason: string }) {
+  return (
+    <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-2.5 text-xs font-mono text-warning/80">
+      {reason}
+    </div>
+  );
+}
+
+type BacktestProgressMessage = BacktestDetailResponse['decisions'][number]['message'];
+
+function findProgressMessage(
+  decisions: BacktestDetailResponse['decisions'],
+  lastProcessedTs: string | null | undefined,
+): BacktestProgressMessage | null {
+  if (decisions.length === 0) return null;
+  if (!lastProcessedTs) return decisions[0].message;
+
+  const exact = decisions.find((row) => row.message.timestamp === lastProcessedTs);
+  if (exact) return exact.message;
+
+  const targetMs = new Date(lastProcessedTs).getTime();
+  if (!Number.isFinite(targetMs)) return decisions[0].message;
+
+  let best: BacktestProgressMessage | null = null;
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const row of decisions) {
+    const messageMs = new Date(row.message.timestamp).getTime();
+    if (Number.isFinite(messageMs) && messageMs <= targetMs && messageMs > bestMs) {
+      best = row.message;
+      bestMs = messageMs;
+    }
+  }
+  return best ?? decisions[0].message;
 }
 
 /* ── Traders list with collapsible overflow ── */

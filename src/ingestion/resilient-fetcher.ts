@@ -5,7 +5,7 @@ const INITIAL_DELAY_MS = 100;
 const MAX_DELAY_MS = 30_000;
 const BACKOFF_MULTIPLIER = 2;
 
-export class FetchError extends Error {
+class FetchError extends Error {
   constructor(
     message: string,
     public readonly status: number,

@@ -36,21 +36,17 @@ export function TraderActivity({ messages, trader, symbol, sourceMessage, closeM
       )}
       contentClassName="p-0"
     >
-      {sourceMessage && (
-        <div className="border-b border-border/60 bg-amber-500/5 px-5 py-4">
-          <MessageRow message={sourceMessage} role="source" />
-        </div>
-      )}
+      <div className="max-h-72 overflow-auto">
+        {sourceMessage || messages.length > 0 ? (
+          <div className="space-y-1.5">
+            {sourceMessage && (
+              <div className="border-l-2 border-l-info/70 bg-info/5 px-3 py-2">
+                <MessageRow message={sourceMessage} role="source" />
+              </div>
+            )}
 
-      <div className="max-h-80 overflow-auto px-3 py-3">
-        {messages.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-border/70 bg-background/70 px-4 py-4 text-xs italic text-muted-foreground/70">
-            No later messages from {trader} about {symbol}.
-          </p>
-        ) : (
-          <div className="space-y-2">
             {messages.map((m) => (
-              <div key={m.id} className="rounded-2xl border border-border/60 bg-background/75 px-4 py-3">
+              <div key={m.id} className="border-b border-border/50 px-3 py-2 last:border-b-0">
                 <MessageRow
                   message={m}
                   role={m.id === closeMessageId ? 'close' : 'subsequent'}
@@ -58,6 +54,10 @@ export function TraderActivity({ messages, trader, symbol, sourceMessage, closeM
               </div>
             ))}
           </div>
+        ) : (
+          <p className="rounded-2xl border border-dashed border-border/70 bg-background/70 px-4 py-4 text-xs italic text-muted-foreground/70">
+            No later messages from {trader} about {symbol}.
+          </p>
         )}
       </div>
     </DetailPanel>
@@ -69,23 +69,30 @@ function MessageRow({ message, role }: {
   role: 'source' | 'close' | 'subsequent';
 }) {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-1">
+    <div className="min-w-0">
+      <div className="mb-0.5 flex items-center gap-2 text-[11px]">
+        <span className="truncate font-medium text-foreground">{message.author}</span>
         {role === 'source' && (
-          <span className="text-[9px] font-bold uppercase tracking-wider text-info">
+          <span className="rounded bg-info/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-info">
             Source
           </span>
         )}
         {role === 'close' && (
-          <span className="text-[9px] font-bold uppercase tracking-wider text-warning">
+          <span className="rounded bg-warning/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning">
             Close
           </span>
         )}
-        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+        <span className="truncate text-[10px] text-muted-foreground/70 tabular-nums">
           {formatDate(message.timestamp)}
         </span>
       </div>
-      <p className={cn('text-xs leading-relaxed break-words', role === 'source' ? 'text-foreground' : 'text-foreground/80')}>
+      <p
+        title={message.cleanText}
+        className={cn(
+          'truncate text-sm leading-5',
+          role === 'source' ? 'text-foreground' : 'text-foreground/85',
+        )}
+      >
         {message.cleanText}
       </p>
       {message.reactions.length > 0 && (

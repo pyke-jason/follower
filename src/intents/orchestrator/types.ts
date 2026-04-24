@@ -99,8 +99,11 @@ export const SerializedParseResultSchema = z.object({
   exitPercent: z.number().nullable(),
   isLotto: z.boolean(),
   isStrangle: z.boolean(),
+  hasCanonicalMatch: z.boolean(),
   isHardSkip: z.boolean(),
   skipReason: z.string().nullable(),
+  ruleId: z.string().nullable(),
+  routeReason: z.string().nullable(),
   complexityFlags: z.array(ComplexityFlagSchema),
 });
 export type SerializedParseResult = z.infer<typeof SerializedParseResultSchema>;
@@ -221,6 +224,7 @@ export type OrchestratorEnv = {
   agent: Agent;
   broker: BrokerService;
   emitter: SignalEventEmitter;
+  chatHistory?: ChatHistoryProvider;
   trace?: TraceContext;
 };
 
@@ -259,8 +263,11 @@ export type ParseResult = {
   targetStrategy: Strategy | null; // for LEG_OFF: strategy to keep
   isLotto: boolean;                // true when lotto/yolo detected
   isStrangle: boolean;             // true when strangle/straddle detected
+  hasCanonicalMatch: boolean;      // true when the whole message matched a canonical trade template
   isHardSkip: boolean;             // true when message is definitively not a trade
   skipReason: string | null;
+  ruleId: string | null;           // stable deterministic rule/template identifier for attribution
+  routeReason: string | null;      // human-readable reason used by eval/replay reports
   complexityFlags: Set<ComplexityFlag>;
 };
 

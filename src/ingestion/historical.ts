@@ -198,7 +198,7 @@ export async function fetchHistorical(opts: {
   }
 }
 
-export async function cancelFetch(runId: string): Promise<boolean> {
+async function cancelFetch(runId: string): Promise<boolean> {
   const controller = activeControllers.get(runId);
   if (!controller) return false;
   controller.abort(new Error('Cancelled by user'));
@@ -232,7 +232,7 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
     const contentHash = computeContentHash(normalizedText);
     const reactions = compactReactions(msg.Reactions);
 
-    const result = await db.insert(schema.messages).values({
+    const [row] = await db.insert(schema.messages).values({
       id: msg.Id,
       author: msg.User.Name,
       timestamp: msg.PostTime || new Date().toISOString(),
@@ -250,9 +250,9 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
     }).onConflictDoUpdate({
       target: schema.messages.id,
       set: { reactions },
-    });
+    }).returning({ id: schema.messages.id });
 
-    if (result.changes > 0) saved++;
+    if (row) saved++;
   }
 
   return { fetched: messages.length, saved };
@@ -311,7 +311,7 @@ async function createChunks(runId: string, dates: string[]): Promise<void> {
     status: 'pending' as const,
   }));
 
-  // Insert in batches of 100 to avoid SQLite limits
+  // Keep chunk inserts bounded so large backfills do not create huge SQL statements.
   for (let i = 0; i < values.length; i += 100) {
     await db.insert(schema.historicalFetchChunks).values(values.slice(i, i + 100));
   }

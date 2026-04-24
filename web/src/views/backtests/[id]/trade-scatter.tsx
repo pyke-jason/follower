@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { ScatterPlotChart, type ScatterTooltipProps } from './scatter-chart';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { formatCurrency } from '@/lib/format';
-export type TradeScatterPoint = {
+type TradeScatterPoint = {
   symbol: string;
   pnl: number;
   strategy: string;

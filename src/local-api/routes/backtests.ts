@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { PROJECT_ROOT, PATHS } from '@/lib/paths.js';
 import { db, schema } from '@/db/client.js';
 import { sendSystemAlert } from '@/lib/alert.js';
@@ -34,7 +34,7 @@ const app = new Hono();
 app.post('/spawn', async (c) => {
   const body = await validateBody(BacktestSpawnBodySchema, c);
 
-  const { runId, startDate, endDate, traders, agentProvider, agentModel, refreshQuoteCache, logLevel,
+  const { runId, resume, startDate, endDate, traders, agentProvider, agentModel, refreshQuoteCache, logLevel,
     disableRiskLimits, maxOnSymbol, maxTotalPositions, maxDrawdownPct, maxAgentCalls, startingEquity,
     commissionSchedule } = body;
 
@@ -56,11 +56,15 @@ app.post('/spawn', async (c) => {
     ...(commissionSchedule?.stock?.perShare != null ? ['--commission-stock', String(commissionSchedule.stock.perShare)] : []),
     '--log-level', logLevel ?? 'debug',
     '--run-id', runId,
+    ...(resume ? ['--resume'] : []),
   ];
 
   fs.mkdirSync(PATHS.logs, { recursive: true });
   const logPath = logPathForRun(runId);
-  const logFd = fs.openSync(logPath, 'w');
+  const logFd = fs.openSync(logPath, resume ? 'a' : 'w');
+  if (resume) {
+    fs.writeSync(logFd, `\n\n--- resume attempt ${new Date().toISOString()} ---\n`);
+  }
 
   const child = spawn('npx', ['tsx', 'src/backtest/launch.ts', ...args], {
     cwd: PROJECT_ROOT,
@@ -71,13 +75,38 @@ app.post('/spawn', async (c) => {
 
   const pid = child.pid ?? null;
 
-  child.on('exit', async (code, signal) => {
-    if (code === 0) return; // success handled by runner.ts
+  const [attemptRow] = await db
+    .select({ maxAttempt: sql<number>`COALESCE(MAX(${schema.backtestAttempts.attempt}), 0)` })
+    .from(schema.backtestAttempts)
+    .where(eq(schema.backtestAttempts.runId, runId));
+  const attempt = Number(attemptRow?.maxAttempt ?? 0) + 1;
+  await db.insert(schema.backtestAttempts).values({
+    runId,
+    attempt,
+    pid,
+    status: 'RUNNING',
+  });
 
+  child.on('exit', async (code, signal) => {
     const tail = readLogTail(logPath);
     const exitDesc = code !== null ? `exit code ${code}` : `signal ${signal}`;
 
     try {
+      await db.update(schema.backtestAttempts)
+        .set({
+          status: 'EXITED',
+          completedAt: new Date().toISOString(),
+          exitCode: code,
+          signal,
+          logTail: tail.slice(-4000),
+        })
+        .where(and(
+          eq(schema.backtestAttempts.runId, runId),
+          eq(schema.backtestAttempts.attempt, attempt),
+        ));
+
+      if (code === 0) return; // success handled by runner.ts
+
       const [run] = await db
         .select({ status: schema.backtestRuns.status })
         .from(schema.backtestRuns)
@@ -86,10 +115,22 @@ app.post('/spawn', async (c) => {
       if (!run || (run.status !== 'PENDING' && run.status !== 'RUNNING')) return;
 
       const errorMsg = `Process crashed (${exitDesc}).\n${tail}`.slice(0, 4000);
+      const [checkpoint] = await db
+        .select({ runId: schema.backtestCheckpoints.runId })
+        .from(schema.backtestCheckpoints)
+        .where(eq(schema.backtestCheckpoints.runId, runId));
+      const recoverable = checkpoint != null;
 
       await db
         .update(schema.backtestRuns)
-        .set({ status: 'FAILED', error: errorMsg, completedAt: new Date().toISOString() })
+        .set({
+          status: recoverable ? 'PAUSED' : 'FAILED',
+          error: recoverable
+            ? `Paused after process crash. Resume will restart from the last committed checkpoint.\n${tail}`.slice(0, 4000)
+            : errorMsg,
+          completedAt: recoverable ? null : new Date().toISOString(),
+          pid: null,
+        })
         .where(eq(schema.backtestRuns.id, runId));
 
       await sendSystemAlert({
@@ -129,7 +170,7 @@ app.post('/:id/cancel', async (c) => {
   if (!run) {
     return c.json({ error: 'Run not found' }, 404);
   }
-  if (run.status !== 'RUNNING' && run.status !== 'PENDING') {
+  if (run.status !== 'RUNNING' && run.status !== 'PENDING' && run.status !== 'PAUSED') {
     return c.json({ error: `Run ${runId} is not active` }, 400);
   }
   if (!run.pid) {

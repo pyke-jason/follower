@@ -6,9 +6,9 @@ import { createLogger } from '../lib/logger.js';
 import { toDateKeyET, parseDateKey, isTradingDay, getPreviousTradingDayKey } from '../lib/et-date.js';
 import { formatLogTimeET } from '../lib/et-logging.js';
 import { parseOccSymbol } from '../lib/occ-symbology.js';
-import { loadCachedChain, saveCachedChain } from './tick-cache-db.js';
-import type { TickCacheDB } from './tick-cache-db.js';
+import type { TickCacheStore } from './tick-cache-store.js';
 import type { CallPutAbbrev } from '../lib/enums.js';
+import { DependencyUnavailableError } from '../lib/errors.js';
 
 /** Typed error for Databento 4xx client errors. Identifies deterministic failures
  *  that should not be retried and can safely populate a negative cache. */
@@ -180,6 +180,20 @@ const RETRY_INITIAL_DELAY_MS = 1_000;
 const RETRY_BACKOFF_MULTIPLIER = 2;
 const RETRY_MAX_DELAY_MS = 30_000;
 
+function isRetryableFetchError(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (!(err instanceof Error)) return false;
+  return err.name === 'TimeoutError' || err.name === 'AbortError';
+}
+
+function quoteDependencyError(message: string, err: unknown): DependencyUnavailableError {
+  return new DependencyUnavailableError(
+    'quotes',
+    `${message}: ${err instanceof Error ? err.message : String(err)}`,
+    err,
+  );
+}
+
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
@@ -236,13 +250,13 @@ async function fetchWithRetry(
 
       // Exhausted retries
       const text = await res.text();
-      throw new Error(
-        `Databento ${res.status} after ${RETRY_MAX_ATTEMPTS} retries: ${text.slice(0, 500)}`
+      throw new DependencyUnavailableError(
+        'quotes',
+        `Databento ${res.status} after ${RETRY_MAX_ATTEMPTS} retries: ${text.slice(0, 500)}`,
       );
     } catch (err) {
       // Network errors (TypeError) or 30s fetch timeout (AbortError/TimeoutError) — retryable
-      const isRetryable = err instanceof TypeError ||
-        (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError'));
+      const isRetryable = isRetryableFetchError(err);
       if (isRetryable && attempt < RETRY_MAX_ATTEMPTS) {
         log.warn(
           `Retry ${attempt + 1}/${RETRY_MAX_ATTEMPTS} — ` +
@@ -253,6 +267,9 @@ async function fetchWithRetry(
         await new Promise((r) => setTimeout(r, wait));
         delay *= RETRY_BACKOFF_MULTIPLIER;
         continue;
+      }
+      if (isRetryable) {
+        throw quoteDependencyError(`Databento request failed after ${RETRY_MAX_ATTEMPTS} retries`, err);
       }
       throw err;
     }
@@ -286,18 +303,18 @@ const DefinitionRecord = z.object({
  * Returns metadata for every listed option contract under a parent symbol.
  * ~270KB vs 167MB for the full cbbo-1m parent fetch.
  */
-export async function loadChainDefinitions(params: {
+async function loadChainDefinitions(params: {
   apiKey: string;
   dataset: string;
   parentSymbol: string;   // e.g. "GE.OPT"
   day: string;            // YYYY-MM-DD
   refreshCache?: boolean;
-  db: TickCacheDB;
+  cacheStore: TickCacheStore;
 }): Promise<ChainDefinition[]> {
   const authHeader = 'Basic ' + Buffer.from(`${params.apiKey}:`).toString('base64');
 
   if (!params.refreshCache) {
-    const cached = await loadCachedChain(params.db, params.dataset, params.parentSymbol, params.day);
+    const cached = await params.cacheStore.loadCachedChain(params.dataset, params.parentSymbol, params.day);
     if (cached) {
       log.debug(`definition cache hit: ${params.parentSymbol} ${params.day} (${cached.length} contracts)`);
       return cached;
@@ -309,7 +326,10 @@ export async function loadChainDefinitions(params: {
 
   // Only cache non-empty results — empty may be transient (pre-market, API issues)
   if (definitions.length > 0) {
-    saveCachedChain(params.db, params.dataset, params.parentSymbol, params.day, definitions);
+    const persisted = await params.cacheStore.saveCachedChain(params.dataset, params.parentSymbol, params.day, definitions);
+    if (!persisted) {
+      log.warn(`definition cache busy: skipped persistent write for ${params.parentSymbol} ${params.day}`);
+    }
   }
 
   return definitions;
@@ -359,59 +379,66 @@ async function fetchDefinitionSnapshot(
 
   const reader = Readable.from(res.body as any); // SAFETY: fetch body -> Node Readable compat
 
-  for await (const line of readLines(reader)) {
-    bytesRead += Buffer.byteLength(line) + 1;
-    // No byte limit for definitions — we stream and only keep lightweight metadata.
-    // SPY.OPT is ~19MB raw but yields ~10K small ChainDefinition objects.
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  try {
+    for await (const line of readLines(reader)) {
+      bytesRead += Buffer.byteLength(line) + 1;
+      // No byte limit for definitions — we stream and only keep lightweight metadata.
+      // SPY.OPT is ~19MB raw but yields ~10K small ChainDefinition objects.
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
-    let raw: unknown;
-    try { raw = JSON.parse(trimmed); } catch { continue; }
-    records++;
+      let raw: unknown;
+      try { raw = JSON.parse(trimmed); } catch { continue; }
+      records++;
 
-    const parsed = DefinitionRecord.safeParse(raw);
-    if (!parsed.success) { skipped++; continue; }
+      const parsed = DefinitionRecord.safeParse(raw);
+      if (!parsed.success) { skipped++; continue; }
 
-    const rec = parsed.data;
-    const sym = rec.raw_symbol ?? rec.symbol ?? rec.hd?.symbol;
-    if (!sym) { skipped++; continue; }
+      const rec = parsed.data;
+      const sym = rec.raw_symbol ?? rec.symbol ?? rec.hd?.symbol;
+      if (!sym) { skipped++; continue; }
 
-    // Deduplicate — definition schema may emit multiple records per instrument
-    if (seenSymbols.has(sym)) continue;
-    seenSymbols.add(sym);
+      // Deduplicate — definition schema may emit multiple records per instrument
+      if (seenSymbols.has(sym)) continue;
+      seenSymbols.add(sym);
 
-    const callPut = rec.instrument_class;
-    if (callPut !== 'C' && callPut !== 'P') { skipped++; continue; }
+      const callPut = rec.instrument_class;
+      if (callPut !== 'C' && callPut !== 'P') { skipped++; continue; }
 
-    // Parse expiry from nanosecond epoch
-    let expiry: string | null = null;
-    if (rec.expiration != null && rec.expiration > 0) {
-      const ms = rec.expiration / 1_000_000; // ns → ms
-      const d = new Date(ms);
-      if (!isNaN(d.getTime())) {
-        expiry = d.toISOString().slice(0, 10);
+      // Parse expiry from nanosecond epoch
+      let expiry: string | null = null;
+      if (rec.expiration != null && rec.expiration > 0) {
+        const ms = rec.expiration / 1_000_000; // ns → ms
+        const d = new Date(ms);
+        if (!isNaN(d.getTime())) {
+          expiry = d.toISOString().slice(0, 10);
+        }
       }
-    }
 
-    // Parse strike — Databento definition uses fixed-point (price * 1e9)
-    let strike: number | null = null;
-    if (rec.strike_price != null && rec.strike_price > 0) {
-      strike = rec.strike_price / 1_000_000_000;
-    }
-
-    // Fall back to OCC symbol parsing if fields are missing
-    if (!expiry || !strike) {
-      const occParts = parseOccSymbol(sym);
-      if (occParts) {
-        expiry = expiry ?? occParts.expiration.toISOString().slice(0, 10);
-        strike = strike ?? occParts.strike;
+      // Parse strike — Databento definition uses fixed-point (price * 1e9)
+      let strike: number | null = null;
+      if (rec.strike_price != null && rec.strike_price > 0) {
+        strike = rec.strike_price / 1_000_000_000;
       }
+
+      // Fall back to OCC symbol parsing if fields are missing
+      if (!expiry || !strike) {
+        const occParts = parseOccSymbol(sym);
+        if (occParts) {
+          expiry = expiry ?? occParts.expiration.toISOString().slice(0, 10);
+          strike = strike ?? occParts.strike;
+        }
+      }
+
+      if (!expiry || strike == null) { skipped++; continue; }
+
+      definitions.push({ rawSymbol: sym, expiry, strike, callPut });
     }
-
-    if (!expiry || strike == null) { skipped++; continue; }
-
-    definitions.push({ rawSymbol: sym, expiry, strike, callPut });
+  } catch (err) {
+    if (isRetryableFetchError(err)) {
+      throw quoteDependencyError(`Databento definition stream aborted for ${parentSymbol} ${day}`, err);
+    }
+    throw err;
   }
 
   const durMs = Date.now() - fetchStart;
@@ -483,25 +510,35 @@ export async function fetchTickWindow(params: {
 
   let bytesRead = 0;
   let records = 0;
-  for await (const line of readLines(reader)) {
-    bytesRead += Buffer.byteLength(line) + 1;
-    if (bytesRead > MAX_RESPONSE_BYTES) {
-      throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for tick window ${params.symbols.join(',')} (${bytesRead} bytes)`);
+  try {
+    for await (const line of readLines(reader)) {
+      bytesRead += Buffer.byteLength(line) + 1;
+      if (bytesRead > MAX_RESPONSE_BYTES) {
+        throw new Error(`[QuoteTape] Response exceeded ${MAX_RESPONSE_BYTES / 1024 / 1024}MB limit for tick window ${params.symbols.join(',')} (${bytesRead} bytes)`);
+      }
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let raw: unknown;
+      try { raw = JSON.parse(trimmed); } catch { continue; }
+      records++;
+
+      const recordResult = DatabentoRecord.safeParse(raw);
+      if (!recordResult.success) continue;
+
+      const tick = parseTick(recordResult.data);
+      if (!tick) continue;
+
+      ticks.push(tick);
     }
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    let raw: unknown;
-    try { raw = JSON.parse(trimmed); } catch { continue; }
-    records++;
-
-    const recordResult = DatabentoRecord.safeParse(raw);
-    if (!recordResult.success) continue;
-
-    const tick = parseTick(recordResult.data);
-    if (!tick) continue;
-
-    ticks.push(tick);
+  } catch (err) {
+    if (isRetryableFetchError(err)) {
+      throw quoteDependencyError(
+        `Databento tick stream aborted for ${params.symbols.length} symbol(s) ${params.start.toISOString()}..${params.end.toISOString()}`,
+        err,
+      );
+    }
+    throw err;
   }
 
   const durMs = Date.now() - fetchStart;

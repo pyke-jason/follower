@@ -10,12 +10,12 @@ import type { Strategy } from '../lib/enums.js';
 
 export const isOpen = eq(trades.status, 'OPEN');
 export const isClosed = eq(trades.status, 'CLOSED');
-export const isCancelled = eq(trades.status, 'CANCELLED');
+const isCancelled = eq(trades.status, 'CANCELLED');
 
 export const forChannel = (channelId: string) => eq(trades.channelId, channelId);
 export const forSymbol = (sym: string) => eq(trades.symbol, sym);
 export const forTrader = (trader: string) => eq(trades.trader, trader);
 export const forStrategy = (strategy: Strategy) => eq(trades.strategy, strategy);
-export const forTask = (taskId: string) => eq(trades.taskId, taskId);
+const forTask = (taskId: string) => eq(trades.taskId, taskId);
 
 export type PositionFilters = { symbol?: string; trader?: string; strategy?: Strategy };

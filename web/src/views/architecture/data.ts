@@ -31,7 +31,7 @@ type ExtEdgeDef = { source: string; target: string; label: string; hotPath?: boo
 
 /* ── groups (expandable) ─────────────────────────────────────────── */
 
-export const groups: GroupDef[] = [
+const groups: GroupDef[] = [
   {
     id: 'ingestion', label: 'Ingestion', subtitle: 'Browser → SignalR → Dedup → DB',
     color: palette.pipeline, position: { x: 300, y: 130 }, expanded: { w: 490, h: 95 },
@@ -108,7 +108,7 @@ export const groups: GroupDef[] = [
     ],
   },
   {
-    id: 'datalayer', label: 'Data Layer', subtitle: 'SQLite (WAL) — 10 tables',
+    id: 'datalayer', label: 'Data Layer', subtitle: 'Postgres + Drizzle',
     color: palette.data, position: { x: 950, y: 440 }, expanded: { w: 400, h: 145 },
     children: [
       { id: 'db-msgs', label: 'Messages', desc: 'chat input', pos: { x: 10, y: 40 } },
@@ -161,18 +161,18 @@ export const groups: GroupDef[] = [
 
 /* ── leaves (non-expandable) ─────────────────────────────────────── */
 
-export const leaves: LeafDef[] = [
+const leaves: LeafDef[] = [
   { id: 'chat', label: 'OneOption', subtitle: 'Live trading room', color: palette.external, position: { x: 380, y: 0 } },
   { id: 'runner', label: 'Task Runner', subtitle: 'Per-channel FIFO queue', color: palette.pipeline, position: { x: 380, y: 290 } },
   { id: 'claude', label: 'Claude API', subtitle: 'Anthropic LLM', color: palette.external, position: { x: 840, y: 480 } },
   { id: 'databento', label: 'Databento', subtitle: 'Market data ($$$)', color: palette.external, position: { x: 1000, y: 690 } },
   { id: 'alerts', label: 'Alerts', subtitle: 'Discord + Pushover', color: palette.alert, position: { x: 30, y: 1000 } },
-  { id: 'tickcache', label: 'Tick Cache', subtitle: 'tick-cache.db', color: palette.data, position: { x: 1000, y: 850 } },
+  { id: 'tickcache', label: 'Tick Cache', subtitle: 'Postgres tick cache', color: palette.data, position: { x: 1000, y: 850 } },
 ];
 
 /* ── external edges ──────────────────────────────────────────────── */
 
-export const extEdges: ExtEdgeDef[] = [
+const extEdges: ExtEdgeDef[] = [
   // Hot path (animated)
   { source: 'chat', target: 'ingestion', label: 'raw HTML', hotPath: true },
   { source: 'ingestion', target: 'runner', label: 'Task', hotPath: true },

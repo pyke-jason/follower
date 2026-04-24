@@ -36,7 +36,7 @@
  */
 import type { Direction, Strategy, TradeAction } from '@/lib/enums.js';
 
-export type CanonicalMatch = {
+type CanonicalMatch = {
   action: TradeAction;
   direction: Direction | null;
   strategy: Strategy | null;
@@ -44,6 +44,8 @@ export type CanonicalMatch = {
   expiry: string | null;
   statedPrice: number | null;
   exitPercent: number | null;
+  ruleId: string;
+  routeReason: string;
 };
 
 const MONTH_MAP: Record<string, number> = {
@@ -131,7 +133,10 @@ function stripToCoreText(text: string, symbol: string): string {
 type Template = {
   re: RegExp;
   label: string;
-  map: (m: RegExpMatchArray, action: TradeAction) => CanonicalMatch | null;
+  map: (
+    m: RegExpMatchArray,
+    action: TradeAction,
+  ) => Omit<CanonicalMatch, 'ruleId' | 'routeReason'> | null;
 };
 
 const NUM = String.raw`\d+(?:\.\d+)?`;
@@ -457,7 +462,18 @@ export function matchCanonicalTrade(
     // option-related cues (most often inside stripped parens), bail out —
     // ambiguous, let the LLM handle it.
     if (match.strategy === 'STOCK' && OPTION_CUE_RE.test(rawText)) return null;
-    return match;
+    return {
+      ...match,
+      ruleId: `canonical.${slugifyRuleId(tpl.label)}`,
+      routeReason: tpl.label,
+    };
   }
   return null;
+}
+
+function slugifyRuleId(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }

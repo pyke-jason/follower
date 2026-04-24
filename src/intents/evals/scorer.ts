@@ -3,7 +3,7 @@ import type { OrchestratorResult, ResolvedSignal, OptionLeg, Leg } from '../orch
 import { normalizeExpiry } from '@/lib/occ-symbology.js';
 import { getOptionLegs } from '@/lib/trade.js';
 
-export const PASS_THRESHOLD = 0.8;
+const PASS_THRESHOLD = 0.8;
 
 /** Compare two expiry strings using normalizeExpiry semantics. */
 function compareExpiry(

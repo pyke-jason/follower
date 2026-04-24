@@ -88,7 +88,7 @@ export function getRuntimeChannelDefinitions(): RuntimeChannelDefinition[] {
   return defs;
 }
 
-export function getRuntimeChannelDefinitionMap(): Map<string, RuntimeChannelDefinition> {
+function getRuntimeChannelDefinitionMap(): Map<string, RuntimeChannelDefinition> {
   return new Map(getRuntimeChannelDefinitions().map((d) => [d.channelId, d]));
 }
 

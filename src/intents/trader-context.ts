@@ -12,7 +12,7 @@ import { isoToDateKey } from '../lib/et-date.js';
  * This replaces `get_open_positions` in Phase 1 — the agent reads
  * recent messages like a human would, instead of querying simulated positions.
  */
-export async function getRecentTraderMessages(
+async function getRecentTraderMessages(
   trader: string,
   beforeTimestamp: string,
   limit = 15,
@@ -64,7 +64,7 @@ export async function getRecentChatMessages(
 /**
  * Format recent messages as plain text for injection into the agent prompt.
  */
-export function formatTraderContext(messages: Message[]): string {
+function formatTraderContext(messages: Message[]): string {
   if (messages.length === 0) return 'No recent messages from this trader.';
 
   const lines = messages.map((m) => {

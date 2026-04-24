@@ -34,6 +34,7 @@ import { canonicalizeSignals } from '@/eval/canonical-signal.js';
 import { synthesizeDeterministicSignals } from './classifier-signals.js';
 import { postProcessSignals } from './signal-post-process.js';
 import { validateSignals } from './signal-validator.js';
+import { DependencyUnavailableError } from '@/lib/errors.js';
 
 const log = createLogger('Orchestrator:LLM');
 
@@ -222,7 +223,7 @@ export async function resolveLLMPath(
 
   // ── Cache check (skip for 422 retries — failureContext alters the prompt) ──
   if (!ctx.failureContext) {
-    const cached = lookupIntent(ctx.message.id, model);
+    const cached = await lookupIntent(ctx.message.id, model);
     if (cached) {
       log.debug(
         `LLM cache hit for message ${ctx.message.id} (v${INTENT_VERSION}) → ` +
@@ -258,6 +259,7 @@ export async function resolveLLMPath(
   );
 
   let agentResult: AgentResult;
+  const llmT0 = Date.now();
   try {
     agentResult = await agent.run({
       systemPrompt: NLU_SYSTEM_PROMPT,
@@ -267,6 +269,9 @@ export async function resolveLLMPath(
       maxTurns: 6, // +1 for a validator-triggered retry
     });
   } catch (err) {
+    if (err instanceof DependencyUnavailableError) {
+      throw err;
+    }
     log.error('LLM path agent loop failed:', err);
     return {
       outcome: 'MANUAL_REVIEW',
@@ -290,14 +295,14 @@ export async function resolveLLMPath(
   const taskResult = agentResult.result as TaskResult | null;
 
   // ── Write to cache (fire-and-forget, INSERT OR IGNORE) ──
-  writeIntent({
+  await writeIntent({
     messageId: ctx.message.id,
     model,
     route: 'llm',
     decision: taskResult?.decision ?? 'MANUAL_REVIEW',
     reasoning: taskResult?.reasoning ?? 'LLM did not call a decision tool',
     signals: taskResult?.signals ?? null,
-    durationMs: agentResult.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
+    durationMs: Date.now() - llmT0,
     inputTokens: agentResult.usage.inputTokens,
     outputTokens: agentResult.usage.outputTokens,
     cacheReadInputTokens: cacheRead,
@@ -524,8 +529,11 @@ function signalToParseResult(signal: Signal, originalParse: ParseResult): ParseR
       (signal.targetStrategy as ParseResult['targetStrategy']),
     isLotto: originalParse.isLotto,
     isStrangle: false,
+    hasCanonicalMatch: false,
     isHardSkip: false,
     skipReason: null,
+    ruleId: originalParse.ruleId ?? 'llm.signal',
+    routeReason: originalParse.routeReason ?? 'LLM resolved signal',
     complexityFlags: new Set(), // LLM-resolved signals have no complexity flags
   };
 }

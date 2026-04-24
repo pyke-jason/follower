@@ -50,6 +50,7 @@ const COLORS: Record<string, string> = {
   COMPLETED: TEAL,
   FAILED: CORAL,
   RUNNING: CYAN,
+  PAUSED: AMBER,
   SKIPPED: DIM,
   EXPIRED: DIM,
   CANCELLED: DIM,
@@ -111,9 +112,9 @@ const COLORS: Record<string, string> = {
 
 const DEFAULT = SLATE;
 
-export function Badge({ label }: { label: string }) {
+export function Badge({ label, className }: { label: string; className?: string }) {
   return (
-    <ShadcnBadge className={cn('font-mono text-[10px]', COLORS[label] ?? DEFAULT)}>
+    <ShadcnBadge className={cn('font-mono text-[10px]', COLORS[label] ?? DEFAULT, className)}>
       {label}
     </ShadcnBadge>
   );

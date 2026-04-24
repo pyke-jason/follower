@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import Database from 'better-sqlite3';
+import pg from 'pg';
+import { loadSecrets } from '../src/lib/secrets/index.js';
 
 type CorpusRow = {
   messageId: string;
@@ -12,7 +13,13 @@ type CorpusRow = {
 };
 
 const projectRoot = resolve(import.meta.dirname, '..');
-const dbPath = resolve(projectRoot, 'data', 'trade-follower.db');
+await loadSecrets();
+const databaseUrl = process.env.POSTGRES_DATABASE_URL
+  ?? process.env.DATABASE_URL
+  ?? 'postgres://jason@127.0.0.1:5432/trade_follower';
+if (databaseUrl.startsWith('file:')) {
+  throw new Error('Postgres export requires POSTGRES_DATABASE_URL, not file-backed DATABASE_URL');
+}
 const outputPath = resolve(
   projectRoot,
   'src',
@@ -22,41 +29,38 @@ const outputPath = resolve(
   'no-badge-trade-corpus.json',
 );
 
-const sqlite = new Database(dbPath, { readonly: true });
+const pool = new pg.Pool({ connectionString: databaseUrl, allowExitOnIdle: true });
 
-const rows = sqlite.prepare(`
-  select
-    e.message_id as messageId,
-    m.author as author,
-    m.timestamp as timestamp,
-    m.clean_text as cleanText,
-    m.badges as badges,
-    m.symbols as symbols
-  from eval_labels e
-  inner join messages m on m.id = e.message_id
-  where json_extract(coalesce(e.human_label, e.label), '$.isTrade') = 1
-    and not exists (
-      select 1
-      from json_each(m.badges)
-      where value in ('Long', 'Short', 'Exit')
-    )
-  order by m.timestamp asc, e.message_id asc
-`).all() as Array<{
+const { rows } = await pool.query<{
   messageId: string;
   author: string;
   timestamp: string;
   cleanText: string;
-  badges: string;
-  symbols: string;
-}>;
+  badges: string[];
+  symbols: string[];
+}>(`
+  select
+    e.message_id as "messageId",
+    m.author as author,
+    m.timestamp as timestamp,
+    m.clean_text as "cleanText",
+    m.badges as badges,
+    m.symbols as symbols
+  from eval_labels e
+  inner join messages m on m.id = e.message_id
+  where (coalesce(e.human_label, e.label)->>'isTrade')::boolean is true
+    and not m.badges ?| array['Long', 'Short', 'Exit']
+  order by m.timestamp asc, e.message_id asc
+`);
+await pool.end();
 
 const corpus: CorpusRow[] = rows.map((row) => ({
   messageId: row.messageId,
   author: row.author,
   timestamp: row.timestamp,
   cleanText: row.cleanText,
-  badges: JSON.parse(row.badges) as string[],
-  symbols: JSON.parse(row.symbols) as string[],
+  badges: row.badges,
+  symbols: row.symbols,
 }));
 
 mkdirSync(dirname(outputPath), { recursive: true });

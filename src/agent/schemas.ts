@@ -19,7 +19,7 @@ export const FlagForReviewInput = z.object({
 // `ZodEffects`. `SignalSchema` is the same object plus the cross-field refine,
 // used for runtime `.parse()`.
 
-export const SignalObject = z.object({
+const SignalObject = z.object({
   action: TradeActionSchema,
   symbol: z.string().min(1),
   direction: DirectionSchema.nullable().default(null)
@@ -63,7 +63,7 @@ export const SubmitDecisionObject = z.object({
   signals: z.array(SignalSchema).optional().describe('Trade signals (required for EXECUTE)'),
 });
 
-export const AgentDecisionSchema = SubmitDecisionObject.refine(
+const AgentDecisionSchema = SubmitDecisionObject.refine(
   d => d.decision !== 'EXECUTE' || (d.signals && d.signals.length > 0),
   { message: 'EXECUTE requires at least one signal' },
 );

@@ -48,8 +48,8 @@ export class FillSweep {
       .from(schema.trades)
       .where(and(
         eq(schema.trades.channelId, this.channelId),
-        sql`json_extract(metadata, '$.brokerOrderId') IS NOT NULL`,
-        sql`json_extract(metadata, '$.fillEnriched') IS NOT true`,
+        sql`${schema.trades.metadata} ? 'brokerOrderId'`,
+        sql`coalesce((${schema.trades.metadata}->>'fillEnriched')::boolean, false) is not true`,
       ));
 
     let enriched = 0;
@@ -64,14 +64,13 @@ export class FillSweep {
           enriched++;
         } else if (status.status === 'REJECTED' || status.status === 'CANCELLED') {
           // Re-read metadata inside transaction to avoid stale-spread race
-          runTx((tx) => {
-            const [fresh] = tx.select({ metadata: schema.trades.metadata })
+          await runTx(async (tx) => {
+            const [fresh] = await tx.select({ metadata: schema.trades.metadata })
               .from(schema.trades)
               .where(eq(schema.trades.id, trade.id))
-              .limit(1)
-              .all();
+              .limit(1);
             if (!fresh) return;
-            tx.update(schema.trades)
+            await tx.update(schema.trades)
               .set({
                 status: 'CANCELLED',
                 metadata: {
@@ -81,8 +80,7 @@ export class FillSweep {
                   brokerFinalStatus: status.status,
                 },
               })
-              .where(eq(schema.trades.id, trade.id))
-              .run();
+              .where(eq(schema.trades.id, trade.id));
           });
           sendSystemAlert({
             title: `Order ${status.status}`,

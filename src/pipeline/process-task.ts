@@ -28,11 +28,11 @@ import { stampHasUpdate } from '../trades/trade-flags.js';
 
 // ─── Types ──────────────────────────────────────────
 
-export type ProcessTaskResult =
+type ProcessTaskResult =
   | Extract<OrchestratorResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>
   | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[]; parseResult?: SerializedParseResult };
 
-export type TaskEnv = {
+type TaskEnv = {
   getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
   agent: Agent;
   pipeline: ResolvedPipelineDeps;
@@ -119,6 +119,25 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   );
 
   const symbols = message.symbols;
+  const maybeAlertSkippedHeldSymbols = async (reason: string): Promise<void> => {
+    if (!env.pipeline.sendAlert || !context.author || symbols.length === 0) return;
+
+    const heldSummaries: string[] = [];
+    for (const symbol of [...new Set(symbols)]) {
+      const positions = await getPositions(symbol);
+      if (positions.length === 0) continue;
+      heldSummaries.push(`${symbol} (${positions.length} open)`);
+    }
+    if (heldSummaries.length === 0) return;
+
+    const text = message.cleanText.replace(/\s+/g, ' ').trim();
+    const clippedText = text.length > 160 ? `${text.slice(0, 157)}...` : text;
+    await env.pipeline.sendAlert({
+      title: 'Skipped message on open position',
+      message: `${context.author} mentioned held symbol(s) ${heldSummaries.join(', ')} but no trade was taken. Reason: ${reason}. Message: "${clippedText}" [${env.scope}]`,
+      severity: 'warning',
+    });
+  };
 
   if (resolved.outcome !== 'EXECUTE') {
     const result = {
@@ -139,6 +158,8 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
       { outcome: mappedOutcome, phase: 'orchestrator', reasoning: resolved.reason, skipCategory, inputTokens: resolved.usage?.inputTokens, outputTokens: resolved.usage?.outputTokens },
       { resolved },
     );
+
+    await maybeAlertSkippedHeldSymbols(resolved.reason);
 
     // Stamp hasUpdate on open trades — no execution happened so open trades are unchanged
     if (symbols.length > 0 && context.author) {

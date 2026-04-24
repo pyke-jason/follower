@@ -1,14 +1,14 @@
 import { loadSecrets } from '../lib/secrets/index.js';
 await loadSecrets();
 
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { db, sqliteClient } from './client.js';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { db, pgPool } from './client.js';
 
 async function main() {
   console.log('Running migrations...');
-  migrate(db, { migrationsFolder: './drizzle' });
+  await migrate(db, { migrationsFolder: './drizzle' });
   console.log('Migrations complete.');
-  sqliteClient.close();
+  await pgPool.end();
 }
 
 main().catch((err) => {

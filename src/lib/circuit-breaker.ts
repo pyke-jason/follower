@@ -8,7 +8,7 @@
 
 import { BrokerTransientError } from './errors.js';
 
-export type CircuitBreakerConfig = {
+type CircuitBreakerConfig = {
   /** How often to probe health when circuit is closed (ms). Default: 30_000. */
   healthCheckCacheMs?: number;
   /** Consecutive failures before opening circuit. Default: 3. */
@@ -19,7 +19,7 @@ export type CircuitBreakerConfig = {
   backoffMaxMs?: number;
 };
 
-export type CircuitBreakerDeps = {
+type CircuitBreakerDeps = {
   isHealthy: () => Promise<boolean>;
   sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info' }) => Promise<void> | void;
 };

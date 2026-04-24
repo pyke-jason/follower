@@ -1,11 +1,17 @@
 import { defineConfig } from 'drizzle-kit';
-import { resolve } from 'node:path';
+
+const DEFAULT_DATABASE_URL = 'postgres://jason@127.0.0.1:5432/trade_follower';
+const databaseUrl = process.env.POSTGRES_DATABASE_URL ?? process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;
+
+if (databaseUrl.startsWith('file:')) {
+  throw new Error('Postgres is required. Set POSTGRES_DATABASE_URL or DATABASE_URL to a postgres:// URL.');
+}
 
 export default defineConfig({
   schema: './src/db/schema.ts',
   out: './drizzle',
-  dialect: 'sqlite',
+  dialect: 'postgresql',
   dbCredentials: {
-    url: (process.env.DATABASE_URL?.replace(/^file:/, '') ?? resolve(import.meta.dirname ?? '.', 'data/trade-follower.db')),
+    url: databaseUrl,
   },
 });

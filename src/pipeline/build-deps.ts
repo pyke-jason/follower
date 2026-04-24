@@ -14,7 +14,8 @@ import type { BrokerService } from '../broker/interface.js';
 import type { RiskCheckConfig, RiskCheckDeps } from '../orders/risk-check.js';
 import type { PositionFilters } from '../trades/filters.js';
 import type { Trade } from '../db/schema.js';
-import type { ResolvedPipelineDeps, ResolvedPendingContext } from './execute-resolved.js';
+import type { PendingResumeData, ResolvedPipelineDeps, ResolvedPendingContext } from './execute-resolved.js';
+import { createPendingContextFromResume } from './execute-resolved.js';
 import { OrderManager } from '../orders/order-manager.js';
 import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
@@ -37,13 +38,13 @@ export type TradeScope = string;
 
 /** Ambient environment — everything that varies between live and backtest
  *  that isn't the broker or config. */
-export type Environment = {
+type Environment = {
   clock: () => Date;
   scope: TradeScope;
   sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info' }) => Promise<void> | void;
 };
 
-export type PipelineConfig = {
+type PipelineConfig = {
   riskConfig: RiskCheckConfig;
   agentIdentity: { provider: string; model: string };
   disableRiskLimits?: boolean;
@@ -57,10 +58,11 @@ export type PipelineConfig = {
 
 // ─── Factory input/output ────────────────────────────
 
-export type PipelineInfra = {
+type PipelineInfra = {
   broker: BrokerService;
   env: Environment;
   config: PipelineConfig;
+  initialPendingIntents?: Array<{ orderId: string; context: PendingResumeData }>;
 };
 
 export type PipelineBundle = {
@@ -166,6 +168,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
   const pipelineDeps: ResolvedPipelineDeps = {
     broker,
     orderManager,
+    sendAlert: env.sendAlert,
 
     calculatePositionSize: async (input) => {
       const tc = await getTrader(input.trader);
@@ -199,6 +202,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     recordTrade: (input) => {
       return recordTrade({
         ...input,
+        sendAlert: env.sendAlert,
         channelId: scope,
         requireExplicitTimestamps: config.requireExplicitTimestamps,
         metadata: { ...input.metadata, agentModel },
@@ -209,6 +213,13 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       pendingIntents.set(orderId, context);
     },
   };
+
+  for (const pending of infra.initialPendingIntents ?? []) {
+    pendingIntents.set(
+      pending.orderId,
+      createPendingContextFromResume(pending.context, pipelineDeps.recordTrade),
+    );
+  }
 
   // ── Destroy ──
   const destroy = () => {

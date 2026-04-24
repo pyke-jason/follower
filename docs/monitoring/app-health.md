@@ -2,7 +2,7 @@
 
 Auto-updated by `/loop` every 5 min. Most recent snapshot at top; older snapshots trimmed to last 12 (~1h of history).
 
-Refresh script: `scripts/monitor-health.sh` (read-only queries against `data/trade-follower.db` + `localhost:3791/health`).
+Refresh script: `scripts/monitor-health.sh` (read-only Postgres queries + `localhost:3791/health`).
 
 ---
 
@@ -537,6 +537,5 @@ a8a7f4f5  EXECUTE_TRADE   xai             IBKR sidecar 504: {"error":"Market dat
 ### Pending / in-progress (live channels only)
 ```
 ```
-
 
 

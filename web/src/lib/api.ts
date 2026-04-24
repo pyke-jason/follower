@@ -6,7 +6,7 @@ export class ApiError extends Error {
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? '/web').replace(/\/+$/, '');
 
-function toApiUrl(path: string): string {
+export function toApiUrl(path: string): string {
   if (/^https?:\/\//.test(path)) return path;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   if (normalizedPath === API_BASE || normalizedPath.startsWith(`${API_BASE}/`)) {

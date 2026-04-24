@@ -65,7 +65,7 @@ export function formatDateShort(iso: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export function formatDuration(startIso: string, endIso: string): string {
+function formatDuration(startIso: string, endIso: string): string {
   const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
@@ -116,6 +116,6 @@ export function signalBorderColor(actionHint: string | null, directionHint: stri
   return 'border-l-border';
 }
 
-export function positionBorderColor(direction: string): string {
+function positionBorderColor(direction: string): string {
   return direction === 'LONG' ? 'border-l-profit' : 'border-l-loss';
 }

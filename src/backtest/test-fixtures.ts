@@ -1,7 +1,7 @@
 /**
  * Shared test fixtures: arbitraries, market-data stubs, DB DDL, and helpers.
  *
- * Any test that needs in-memory SQLite tables or domain arbitraries should
+ * Any test that needs Postgres-backed tables or domain arbitraries should
  * import from here rather than maintaining its own copies.
  */
 
@@ -123,7 +123,7 @@ export function stubMarketData(prices: Record<string, number> | number): Backtes
 /** A function that returns a price for a given timestamp. */
 export type PriceFn = (at: Date) => number;
 
-export type TimeAwareStubConfig = {
+type TimeAwareStubConfig = {
   /** Map from underlying symbol to a time-varying price function. */
   underlyings: Record<string, PriceFn>;
   /** Base time value for options in dollars (default: 2.00). */
@@ -264,94 +264,93 @@ export function linearPrice(
 
 // ── DB helpers (parameterised on db/schema from vi.mock) ─────────────
 
-/** SQL to create the trades + trade_events tables for in-memory test databases. */
+/** SQL to create the trades table for isolated Postgres test schemas. */
 export const CREATE_TRADES_SQL = sql`
   CREATE TABLE IF NOT EXISTS trades (
-    id TEXT PRIMARY KEY,
-    task_id TEXT,
-    source_message_id TEXT,
-    trader TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    strategy TEXT NOT NULL,
-    legs TEXT NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'OPEN',
-    entry_price TEXT,
-    exit_price TEXT,
-    quantity INTEGER DEFAULT 1,
-    pnl TEXT,
-    opened_at TEXT,
-    closed_at TEXT,
-    close_message_id TEXT,
-    channel_id TEXT NOT NULL DEFAULT 'ibkr:live:12345',
-    metadata TEXT DEFAULT '{}',
-    avg_entry_price TEXT,
-    realized_pnl TEXT,
-    broker_fill_price TEXT,
-    broker_fill_qty INTEGER,
-    broker_commission TEXT,
-    broker_fill_time TEXT,
-    broker_leg_fills TEXT
+    id text PRIMARY KEY,
+    task_id text,
+    source_message_id text,
+    trader text NOT NULL,
+    symbol text NOT NULL,
+    direction text NOT NULL,
+    strategy text NOT NULL,
+    legs jsonb NOT NULL DEFAULT '[]'::jsonb,
+    status text NOT NULL DEFAULT 'OPEN',
+    entry_price text,
+    exit_price text,
+    quantity integer DEFAULT 1,
+    pnl text,
+    opened_at text,
+    closed_at text,
+    close_message_id text,
+    channel_id text NOT NULL DEFAULT 'ibkr:live:12345',
+    metadata jsonb DEFAULT '{}'::jsonb,
+    avg_entry_price text,
+    realized_pnl text,
+    broker_fill_price text,
+    broker_fill_qty integer,
+    broker_commission text,
+    broker_fill_time text,
+    broker_leg_fills jsonb
   )
 `;
 
 /** SQL to create the trade_events table (append-only action log used by recordTrade). */
 export const CREATE_TRADE_EVENTS_SQL = sql`
   CREATE TABLE IF NOT EXISTS trade_events (
-    id TEXT PRIMARY KEY,
-    trade_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    price TEXT,
-    quantity INTEGER,
-    legs TEXT DEFAULT '[]',
-    strategy TEXT,
-    direction TEXT,
-    message_id TEXT,
-    metadata TEXT DEFAULT '{}',
-    timestamp TEXT NOT NULL,
-    created_at TEXT
+    id text PRIMARY KEY,
+    trade_id text NOT NULL,
+    action text NOT NULL,
+    price text,
+    quantity integer,
+    legs jsonb DEFAULT '[]'::jsonb,
+    strategy text,
+    direction text,
+    message_id text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    timestamp text NOT NULL,
+    created_at text
   )
 `;
 
-/** SQL to create the messages table for in-memory test databases. */
+/** SQL to create the messages table for isolated Postgres test schemas. */
 export const CREATE_MESSAGES_SQL = sql`
   CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    author TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    raw_html TEXT NOT NULL,
-    clean_text TEXT NOT NULL,
-    badges TEXT DEFAULT '[]',
-    symbols TEXT DEFAULT '[]',
-    action_hint TEXT,
-    direction_hint TEXT,
-    detected_strategies TEXT DEFAULT '[]',
-    is_paper_trade INTEGER DEFAULT 0,
-    confidence TEXT,
-    ingested_at TEXT,
-    content_hash TEXT,
-    reactions TEXT DEFAULT '[]'
+    id text PRIMARY KEY,
+    author text NOT NULL,
+    timestamp text NOT NULL,
+    raw_html text NOT NULL,
+    clean_text text NOT NULL,
+    badges jsonb DEFAULT '[]'::jsonb,
+    symbols jsonb DEFAULT '[]'::jsonb,
+    action_hint text,
+    direction_hint text,
+    detected_strategies jsonb DEFAULT '[]'::jsonb,
+    is_paper_trade boolean DEFAULT false,
+    confidence text,
+    ingested_at text,
+    content_hash text,
+    reactions jsonb DEFAULT '[]'::jsonb
   )
 `;
 
-/** SQL to create the tasks table for in-memory test databases. */
+/** SQL to create the tasks table for isolated Postgres test schemas. */
 export const CREATE_TASKS_SQL = sql`
   CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    message_id TEXT,
-    task_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    assignee TEXT NOT NULL DEFAULT 'agent',
-    priority INTEGER DEFAULT 0,
-    context TEXT DEFAULT '{}',
-    result TEXT,
-    created_at TEXT,
-    started_at TEXT,
-    completed_at TEXT,
-    error TEXT,
-    model_provider TEXT,
-    model_name TEXT,
-    channel_id TEXT NOT NULL DEFAULT 'test:channel'
+    id text PRIMARY KEY,
+    message_id text,
+    task_type text NOT NULL,
+    status text NOT NULL DEFAULT 'PENDING',
+    assignee text NOT NULL DEFAULT 'agent',
+    priority integer DEFAULT 0,
+    context jsonb DEFAULT '{}'::jsonb,
+    created_at text,
+    started_at text,
+    completed_at text,
+    error text,
+    model_provider text,
+    model_name text,
+    channel_id text NOT NULL DEFAULT 'test:channel'
   )
 `;
 
@@ -361,7 +360,7 @@ export const CREATE_TASKS_UNIQUE_IDX = sql`
   ON tasks(message_id, channel_id) WHERE message_id IS NOT NULL
 `;
 
-export type InsertOpenTradeParams = {
+type InsertOpenTradeParams = {
   symbol?: string;
   direction: Direction;
   strategy: string;
@@ -373,7 +372,7 @@ export type InsertOpenTradeParams = {
   openedAt?: string;
 };
 
-export type InsertClosedTradeParams = {
+type InsertClosedTradeParams = {
   symbol?: string;
   direction: Direction;
   strategy: string;
@@ -384,7 +383,7 @@ export type InsertClosedTradeParams = {
   runId?: string;
 };
 
-export type InsertOpenOptionTradeParams = {
+type InsertOpenOptionTradeParams = {
   symbol?: string;
   direction: Direction;
   strategy: string;
@@ -408,8 +407,8 @@ export type InsertOpenOptionTradeParams = {
 export function makeDbHelpers(db: any, schema: any, defaultRunId = 'test-run') {
   return {
     async resetDb() {
-      await db.run(sql`DELETE FROM trade_events`);
-      await db.run(sql`DELETE FROM trades`);
+      await db.execute(sql`DELETE FROM trade_events`);
+      await db.execute(sql`DELETE FROM trades`);
     },
 
     async insertOpenTrade(params: InsertOpenTradeParams): Promise<string> {

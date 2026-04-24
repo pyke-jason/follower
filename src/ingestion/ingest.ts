@@ -62,7 +62,7 @@ function startMessageWatchdog(): void {
   }, WATCHDOG_CHECK_INTERVAL_MS);
 }
 
-export function stopMessageWatchdog(): void {
+function stopMessageWatchdog(): void {
   if (watchdogTimer) {
     clearInterval(watchdogTimer);
     watchdogTimer = null;
@@ -396,11 +396,12 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
 // ─── Reaction Updates ───────────────────────────────
 
 async function processReactionUpdate(update: ReactionUpdate): Promise<void> {
-  const result = await db.update(schema.messages)
+  const [row] = await db.update(schema.messages)
     .set({ reactions: update.reactions })
-    .where(eq(schema.messages.id, update.messageId));
+    .where(eq(schema.messages.id, update.messageId))
+    .returning({ id: schema.messages.id });
 
-  if (result.changes > 0) {
+  if (row) {
     console.log(`[Ingest] Reactions updated for msg ${update.messageId}: ${update.reactions.map(r => `${r.Type}:${r.Count}`).join(', ')}`);
   }
 }

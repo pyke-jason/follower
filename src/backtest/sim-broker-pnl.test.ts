@@ -12,20 +12,11 @@
  */
 
 import { describe, test, expect, vi, beforeAll, beforeEach } from 'vitest';
-import { sql, eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
-// Mock db/client with a real in-memory SQLite + drizzle instance.
 vi.mock('../db/client.js', async () => {
-  const Database = (await import('better-sqlite3')).default;
-  const { drizzle } = await import('drizzle-orm/better-sqlite3');
-  const schema = await import('../db/schema.js');
-  const sqlite = new Database(':memory:');
-  const db = drizzle(sqlite, { schema });
-  return {
-    db, schema, sqliteClient: sqlite,
-    runTx: (cb: any) => db.transaction(cb),
-    withBusyRetry: (fn: any) => fn(),
-  };
+  const { createPgTestClient } = await import('../test/pg-test-client.js');
+  return createPgTestClient('sim_broker_pnl');
 });
 
 import { db, schema } from '../db/client.js';
@@ -48,8 +39,8 @@ import {
 // ── DB setup ─────────────────────────────────────────────────────────
 
 beforeAll(async () => {
-  await db.run(CREATE_TRADES_SQL);
-  await db.run(CREATE_TRADE_EVENTS_SQL);
+  await db.execute(CREATE_TRADES_SQL);
+  await db.execute(CREATE_TRADE_EVENTS_SQL);
 });
 
 const RUN_ID = 'pnl-test-run';

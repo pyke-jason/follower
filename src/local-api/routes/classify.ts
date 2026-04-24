@@ -163,9 +163,9 @@ app.delete('/classify/:id', async (c) => {
     }).catch(() => {});
   }
 
-  runTx((tx) => {
-    tx.delete(schema.runDecisions).where(eq(schema.runDecisions.channelId, channelId)).run();
-    tx.delete(schema.classifyRuns).where(eq(schema.classifyRuns.id, runId)).run();
+  await runTx(async (tx) => {
+    await tx.delete(schema.runDecisions).where(eq(schema.runDecisions.channelId, channelId));
+    await tx.delete(schema.classifyRuns).where(eq(schema.classifyRuns.id, runId));
   });
 
   await fetch(`${LOCAL_API_URL}/logs/${runId}`, { method: 'DELETE' }).catch(() => {});
@@ -193,9 +193,9 @@ app.post('/classify/bulk-delete', async (c) => {
   }
 
   const channelIds = ids.map(clsChannel);
-  runTx((tx) => {
-    tx.delete(schema.runDecisions).where(inArray(schema.runDecisions.channelId, channelIds)).run();
-    tx.delete(schema.classifyRuns).where(inArray(schema.classifyRuns.id, ids)).run();
+  await runTx(async (tx) => {
+    await tx.delete(schema.runDecisions).where(inArray(schema.runDecisions.channelId, channelIds));
+    await tx.delete(schema.classifyRuns).where(inArray(schema.classifyRuns.id, ids));
   });
 
   for (const id of ids) {

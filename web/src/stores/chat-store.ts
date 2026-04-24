@@ -10,7 +10,7 @@ export type MessageEnrichment = {
   trade: TradeOutcome | null;
 };
 
-export type MessageFilters = {
+type MessageFilters = {
   authors?: string[];
   startDate?: string;
   endDate?: string;
@@ -32,7 +32,7 @@ export type FilterConstraints = {
   lastProcessedTs?: string;
 };
 
-export type RelatedContext = {
+type RelatedContext = {
   messages: Message[];
   sourceSymbols: string[];
 };

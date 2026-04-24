@@ -23,10 +23,10 @@ app.get('/eval/labels', async (c) => {
   if (source) conditions.push(eq(schema.evalLabels.source, source));
   if (verified !== undefined) conditions.push(eq(schema.evalLabels.humanVerified, verified));
   if (confidence) {
-    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.confidence') = ${confidence}`);
+    conditions.push(sql`${schema.evalLabels.label}->>'confidence' = ${confidence}`);
   }
   if (isTrade !== undefined) {
-    conditions.push(sql`json_extract(${schema.evalLabels.label}, '$.isTrade') = ${isTrade}`);
+    conditions.push(sql`(${schema.evalLabels.label}->>'isTrade')::boolean = ${isTrade}`);
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -68,8 +68,8 @@ app.get('/eval/labels', async (c) => {
   // Stats
   const [stats] = await db.select({
     total: count(),
-    verified: sql<number>`SUM(CASE WHEN human_verified = 1 THEN 1 ELSE 0 END)`,
-    lowConfidence: sql<number>`SUM(CASE WHEN json_extract(label, '$.confidence') = 'LOW' THEN 1 ELSE 0 END)`,
+    verified: sql<number>`SUM(CASE WHEN ${schema.evalLabels.humanVerified} IS TRUE THEN 1 ELSE 0 END)`,
+    lowConfidence: sql<number>`SUM(CASE WHEN ${schema.evalLabels.label}->>'confidence' = 'LOW' THEN 1 ELSE 0 END)`,
     agentSource: sql<number>`SUM(CASE WHEN source = 'agent' THEN 1 ELSE 0 END)`,
     humanSource: sql<number>`SUM(CASE WHEN source = 'human' THEN 1 ELSE 0 END)`,
   }).from(schema.evalLabels);

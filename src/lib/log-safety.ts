@@ -9,7 +9,7 @@ import { createLogger, flushLogs } from './logger.js';
 
 const log = createLogger('process');
 
-export type InstallOptions = {
+type InstallOptions = {
   onFatal?: (kind: 'uncaughtException' | 'unhandledRejection', err: unknown) => void | Promise<void>;
   exitOnUncaught?: boolean;
 };

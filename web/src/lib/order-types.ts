@@ -9,7 +9,7 @@ import { OrderTypeSchema } from '@src/lib/enums';
 import { computeMidpoint, defaultTickSize } from '@src/lib/quotes';
 
 export type QuoteData = z.infer<typeof QuoteDataSchema>;
-export type OrderType = z.infer<typeof OrderTypeSchema>;
+type OrderType = z.infer<typeof OrderTypeSchema>;
 
 // ─── Order Entry (frontend -> API) ──────────────────
 
@@ -39,4 +39,4 @@ export type OrderFormValues = z.infer<typeof OrderFormValuesSchema>;
 export const ModifyOrderParamsSchema = ModifyOrderBodySchema;
 export type ModifyOrderParams = z.infer<typeof ModifyOrderParamsSchema>;
 
-export { computeMidpoint, defaultTickSize };
+export { defaultTickSize };

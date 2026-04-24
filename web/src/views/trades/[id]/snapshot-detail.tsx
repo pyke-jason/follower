@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { getSnapshotParams, getCancelledOrder, getSnapshotSignal } from '@/lib/snapshot-accessors';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 
-export type LegRow = {
+type LegRow = {
   symbol?: string;
   strike?: number;
   expiry?: string;

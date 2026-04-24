@@ -21,7 +21,7 @@ import { addTradeFlags } from '../trades/trade-flags.js';
 
 const log = createLogger('OrderCallbacks');
 
-export type CallbackDeps = {
+type CallbackDeps = {
   pendingIntents: Map<string, ResolvedPendingContext>;
   createScopedEmitter: (messageId?: string, taskId?: string) => SignalEventEmitter;
 

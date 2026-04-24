@@ -2,7 +2,6 @@ import type { SecretProvider } from './types';
 import { EnvProvider } from './env-provider';
 import { KeychainProvider } from './keychain-provider';
 
-export type { SecretProvider } from './types';
 export { SECRET_KEYS } from './keychain-provider';
 
 /** Get the active secret provider for CRUD operations. */

@@ -1,7 +1,7 @@
 import { load } from 'cheerio';
 import type { ActionHint, Direction } from '../lib/enums.js';
 
-export type BadgeInfo = {
+type BadgeInfo = {
   badges: string[];          // ['Long'], ['Short'], ['Exit', 'Long'], etc.
   actionHint: ActionHint | null;
   directionHint: Direction | null;

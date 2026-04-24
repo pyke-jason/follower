@@ -5,7 +5,7 @@ import { PositionHero } from './position-hero';
 import { ReconAlertBanner } from './recon-alert-banner';
 import { TraderActivity } from './trader-activity';
 import { cn } from '@/lib/utils';
-import type { TradeStory } from '@/stores/trades-store';
+import type { TradeStory } from '@/lib/trade-story';
 import { DetailPanel } from './detail-panel';
 import { TradeStatusPanel } from './trade-status-panel';
 

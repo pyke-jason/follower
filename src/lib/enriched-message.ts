@@ -32,7 +32,7 @@ export type EnrichedMessage = {
   decision: MessageDecision | null;
 };
 
-export type MessageRole = 'executed' | 'skipped' | 'noise';
+type MessageRole = 'executed' | 'skipped' | 'noise';
 
 export function getMessageRole(em: EnrichedMessage): MessageRole {
   if (em.trade) return 'executed';

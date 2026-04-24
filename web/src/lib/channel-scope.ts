@@ -1,12 +1,12 @@
 type ScopeParamValue = string | number | boolean | null | undefined;
 
 /** Append ?channel=X to a URL path when a scope is active */
-export function buildHref(path: string, channelId?: string): string {
+function buildHref(path: string, channelId?: string): string {
   return buildScopedPath(path, channelId);
 }
 
 /** Build query string with current channel + extra params. */
-export function buildScopedSearch(
+function buildScopedSearch(
   channelId?: string,
   params: Record<string, ScopeParamValue> = {},
 ): string {

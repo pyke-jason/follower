@@ -1,7 +1,7 @@
 import { MultiLineChart } from './line-chart';
 import { EmptyState } from '@/components/empty-state';
 
-export type RollingWinRatePoint = { tradeNum: number; date: string; winRate: number; windowSize: number };
+type RollingWinRatePoint = { tradeNum: number; date: string; winRate: number; windowSize: number };
 
 export function RollingWinRate({ data }: { data: RollingWinRatePoint[] }) {
   if (data.length === 0) {

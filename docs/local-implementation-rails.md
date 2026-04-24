@@ -6,17 +6,16 @@ This app is optimized for a single operator running it on one Mac. These rails a
 
 - Run the backend, local API, browser ingestion, and dashboard on the same machine.
 - Bind services to localhost unless there is a deliberate reason not to.
-- Treat the SQLite files in `data/` as the source of truth for local state.
+- Treat local Postgres as the source of truth for app state and tick-cache state.
 
 ## Runtime Rails
 
-- Use one pinned Node major for the whole repo. Native modules like `better-sqlite3` are sensitive to Node ABI changes.
-- If Node changes, rebuild native modules before trusting tests or runtime behavior.
+- Use one pinned Node major for the whole repo.
 - Keep `web` and backend contracts type-safe. A passing bundle is not enough if the shared TypeScript surface no longer typechecks.
 
 ## Database Rails
 
-- SQLite foreign keys must be enabled on every process connection.
+- Postgres schema and migrations must be applied before running backend, local API, backtests, or classify jobs.
 - Startup should repair lightweight integrity drift from older local runs:
   - clear orphan `taskId` references on `trades`
   - clear orphan `taskId` references on `run_decisions`
@@ -37,7 +36,7 @@ This app is optimized for a single operator running it on one Mac. These rails a
 
 ## Operational Rails
 
-- Treat `.logs/`, `data/trade-follower.db`, and `data/tick-cache.db` as bounded local caches, not infinite sinks.
+- Treat `.logs/` and local Postgres databases as bounded local state, not infinite sinks.
 - Prefer explicit cleanup paths for completed backtests and stale logs.
 - Use these checks before trusting a change:
   - `npx tsc --noEmit`

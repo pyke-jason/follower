@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { CircleCheck, XCircle, AlertTriangle } from 'lucide-react';
 import { Badge as UiBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { api } from '@/lib/api';
+import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { useTradesStore } from '@/stores/trades-store';
-import type { RunDecision, Trade } from '@src/db/schema';
+import type { Message, RunDecision, Trade } from '@src/db/schema';
 import type { TradeLabel } from '@src/local-api/http-schemas';
 import { formatLegsSummary } from '@src/lib/trade';
 
@@ -12,10 +13,16 @@ export function TradeLabelSection({
   label,
   trade,
   systemDecision,
+  sourceMessage,
+  closeMessage,
+  onLabelPatch,
 }: {
   label: TradeLabel | undefined;
   trade: Trade;
   systemDecision: RunDecision | null;
+  sourceMessage: Message | null;
+  closeMessage: Message | null;
+  onLabelPatch?: (tradeId: string, patch: Partial<TradeLabel>) => void;
 }) {
   if (!label || label.bucket === 'unlabeled') {
     return (
@@ -34,6 +41,11 @@ export function TradeLabelSection({
 
   return (
     <section className="space-y-3">
+      <MessageUnderReview
+        sourceMessage={sourceMessage}
+        closeMessage={closeMessage}
+      />
+
       <div className="flex items-center gap-1.5">
         {isFalsePositive ? (
           <>
@@ -86,45 +98,90 @@ export function TradeLabelSection({
       {label.labelId && (
         <LabelVerdict
           labelId={label.labelId}
+          tradeId={trade.id}
           humanVerified={label.humanVerified}
           rejectionReason={label.rejectionReason}
+          onLabelPatch={onLabelPatch}
         />
       )}
     </section>
   );
 }
 
+function MessageUnderReview({
+  sourceMessage,
+  closeMessage,
+}: {
+  sourceMessage: Message | null;
+  closeMessage: Message | null;
+}) {
+  return (
+    <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+      <div className="space-y-0.5">
+        <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Label applies to source message
+        </span>
+        {sourceMessage ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-medium text-foreground">{sourceMessage.author}</span>
+              <span className="text-muted-foreground">{formatDate(sourceMessage.timestamp)}</span>
+            </div>
+            <p className="text-sm leading-5 text-foreground">{sourceMessage.cleanText}</p>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">Source message not available.</p>
+        )}
+      </div>
+
+      {closeMessage && (
+        <div className="border-t border-border/70 pt-2">
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Separate close message
+          </span>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium text-foreground">{closeMessage.author}</span>
+            <span className="text-muted-foreground">{formatDate(closeMessage.timestamp)}</span>
+          </div>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+            {closeMessage.cleanText}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            This close signal is not what the label table below is judging.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LabelVerdict({
   labelId,
+  tradeId,
   humanVerified,
   rejectionReason,
+  onLabelPatch,
 }: {
   labelId: string;
+  tradeId: string;
   humanVerified: boolean;
   rejectionReason: string | null;
+  onLabelPatch?: (tradeId: string, patch: Partial<TradeLabel>) => void;
 }) {
   const [loading, setLoading] = useState(false);
-  const tradeId = useTradesStore((s) => s.selectedTradeId);
-  const updateLabel = useTradesStore((s) => s.updateLabel);
 
   const currentVerdict = humanVerified ? (rejectionReason ?? 'LABEL_CORRECT') : null;
 
   const submit = async (action: 'approve' | 'reject', reason?: string) => {
     setLoading(true);
     try {
-      const url = `/api/eval/labels/${labelId}/${action}`;
+      const path = `/eval/labels/${labelId}/${action}`;
       const body = action === 'reject' ? JSON.stringify({ reason }) : undefined;
-      await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
+      await api(path, { method: 'POST', body });
+      onLabelPatch?.(tradeId, {
+        humanVerified: true,
+        rejectionReason: action === 'reject' ? (reason ?? null) : null,
       });
-      if (tradeId) {
-        updateLabel(tradeId, {
-          humanVerified: true,
-          rejectionReason: action === 'reject' ? (reason ?? null) : null,
-        });
-      }
     } finally {
       setLoading(false);
     }
@@ -133,13 +190,8 @@ function LabelVerdict({
   const undo = async () => {
     setLoading(true);
     try {
-      await fetch(`/api/eval/labels/${labelId}/undo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (tradeId) {
-        updateLabel(tradeId, { humanVerified: false, rejectionReason: null });
-      }
+      await api(`/eval/labels/${labelId}/undo`, { method: 'POST' });
+      onLabelPatch?.(tradeId, { humanVerified: false, rejectionReason: null });
     } finally {
       setLoading(false);
     }

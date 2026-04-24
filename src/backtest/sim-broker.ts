@@ -4,6 +4,7 @@ import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, Acco
 import type { BacktestPriceProvider } from './market-data.js';
 import type { QuoteTick } from './databento-tape.js';
 import type { SimClock } from './clock.js';
+import type { SerializedSimBrokerState } from './checkpoint-types.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { isOpen, isClosed, forChannel, forSymbol, forTrader, forStrategy, type PositionFilters } from '../trades/filters.js';
@@ -21,7 +22,7 @@ import { isMarketHours, lastMarketCloseUTC, dayBoundsUTC } from '../lib/et-date.
 
 const log = createLogger('SimBroker');
 
-export type SimFillEvent = {
+type SimFillEvent = {
   orderId: string;
   symbol: string;
   side: LegAction;
@@ -65,7 +66,7 @@ function shouldFillLimit(isBuy: boolean, limitPrice: number, bid: number, ask: n
   return isBuy ? limitPrice >= ask : limitPrice <= bid;
 }
 
-export type FillPriceParams = {
+type FillPriceParams = {
   fillModel: FillModel;
   bid: number;
   ask: number;
@@ -104,7 +105,7 @@ const QUEUE_LIMIT_ON_STALE_DATA = true;
  * Strategy for auto-closing expiring positions before the options cutoff.
  * Swappable: implement to change when/how positions are priced on expiry day.
  */
-export type ExpiryAutoCloseStrategy = {
+type ExpiryAutoCloseStrategy = {
   /** Returns the UTC timestamp to use for the closing quote. */
   getCloseTimestamp(expiryDateKey: string, symbol: string): Date;
 };
@@ -160,6 +161,23 @@ export class SimBroker implements BrokerService {
     private fillModel: FillModel,
     private startingEquity: number,
   ) {}
+
+  exportState(): SerializedSimBrokerState {
+    return {
+      orderCounter: this.orderCounter,
+      workingOrders: [...this.workingOrders.entries()],
+      filledOrders: [...this.filledOrders.entries()],
+      lastAdvanceTime: this.lastAdvanceTime?.toISOString() ?? null,
+    };
+  }
+
+  restoreState(state: SerializedSimBrokerState): void {
+    this.orderCounter = state.orderCounter;
+    this.workingOrders = new Map(state.workingOrders);
+    this.filledOrders = new Map(state.filledOrders);
+    this.lastAdvanceTime = state.lastAdvanceTime ? new Date(state.lastAdvanceTime) : null;
+    this.balanceCache = null;
+  }
 
   async getQuote(symbol: string): Promise<Quote> {
     return this.marketData.getQuote(symbol, this.clock.now());
@@ -420,6 +438,63 @@ export class SimBroker implements BrokerService {
     return this.getOptionSpreadQuote(params, effectiveAt);
   }
 
+  private getOptionQuoteTime(at: Date): Date {
+    return isMarketHours(at) ? at : lastMarketCloseUTC(at);
+  }
+
+  private async prefetchTradeQuotes(
+    rows: Array<{ symbol: string; strategy: string; legs: unknown }>,
+    at: Date,
+    opts?: { includeOptionUnderlyings?: boolean },
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const stockSymbols = new Set<string>();
+    const optionSymbols = new Set<string>();
+    const underlyingSymbols = new Set<string>();
+
+    for (const row of rows) {
+      if (row.strategy === 'STOCK') {
+        stockSymbols.add(row.symbol);
+        continue;
+      }
+
+      const legs = parseLegs(row.legs);
+      for (const leg of legs) {
+        if (leg.type === 'STOCK') continue;
+        optionSymbols.add(formatOccSymbol({
+          underlying: row.symbol,
+          expiration: leg.expiry,
+          type: leg.type as OptionType,
+          strike: leg.strike,
+        }));
+      }
+
+      if (opts?.includeOptionUnderlyings) {
+        underlyingSymbols.add(row.symbol);
+      }
+    }
+
+    const equitySymbols = [...stockSymbols, ...underlyingSymbols];
+    const optionQuoteTime = this.getOptionQuoteTime(at);
+    await Promise.all([
+      equitySymbols.length > 0 ? this.marketData.prefetch(equitySymbols, at) : Promise.resolve(),
+      optionSymbols.size > 0 ? this.marketData.prefetch([...optionSymbols], optionQuoteTime) : Promise.resolve(),
+    ]);
+  }
+
+  private async prefetchWorkingOrderUnderlyings(at: Date): Promise<void> {
+    const symbols = new Set<string>();
+    for (const [, entry] of this.workingOrders) {
+      if (entry.status !== 'OPEN') continue;
+      if (entry.params.isClosing) continue;
+      if (entry.params.strategy === 'STOCK') continue;
+      symbols.add(entry.params.symbol);
+    }
+    if (symbols.size === 0) return;
+    await this.marketData.prefetch([...symbols], at);
+  }
+
   // ─── Shared internals ────────────────────────────────────
 
   /** Build a map of trade ID -> current mark price for all open positions. */
@@ -427,6 +502,8 @@ export class SimBroker implements BrokerService {
     const time = at ?? this.clock.now();
     const markPrices = new Map<string, number>();
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
+
+    await this.prefetchTradeQuotes(openTrades, time);
 
     for (const t of openTrades) {
       try {
@@ -466,6 +543,8 @@ export class SimBroker implements BrokerService {
   async getUnrealizedPnl(at?: Date): Promise<number> {
     const time = at ?? this.clock.now();
     const openTrades = await db.select().from(schema.trades).where(and(isOpen, forChannel(this.channelId)));
+
+    await this.prefetchTradeQuotes(openTrades, time);
 
     let total = 0;
     for (const row of openTrades) {
@@ -625,7 +704,7 @@ export class SimBroker implements BrokerService {
     const [row] = await db.select({ count: sql<number>`COUNT(*)` })
       .from(schema.trades)
       .where(and(isOpen, forChannel(this.channelId)));
-    return row?.count ?? 0;
+    return Number(row?.count ?? 0);
   }
 
   /** Get all open trade rows for this run, optionally filtered by trader/symbol/strategy. */
@@ -693,6 +772,9 @@ export class SimBroker implements BrokerService {
     const openTrades = await db.select().from(schema.trades)
       .where(and(isOpen, forChannel(this.channelId)));
     const tDb2 = Date.now();
+
+    await this.prefetchTradeQuotes(openTrades, now, { includeOptionUnderlyings: true });
+    await this.prefetchWorkingOrderUnderlyings(now);
 
     let cash = this.startingEquity + realizedPnl;
     let totalMaintenanceMargin = 0;

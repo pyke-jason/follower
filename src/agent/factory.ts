@@ -1,11 +1,12 @@
 import type { Agent, ModelIdentity, ModelProvider } from './result.js';
+import { DEFAULT_TRADE_MODEL } from './model-defaults.js';
 
 let _defaultTradeModel: ModelIdentity | null = null;
 export function getDefaultTradeModel(): ModelIdentity {
   if (!_defaultTradeModel) {
     _defaultTradeModel = {
-      provider: (process.env.TRADE_MODEL_PROVIDER ?? 'anthropic') as ModelProvider,
-      model: process.env.TRADE_MODEL ?? 'claude-sonnet-4-6',
+      provider: (process.env.TRADE_MODEL_PROVIDER ?? DEFAULT_TRADE_MODEL.provider) as ModelProvider,
+      model: process.env.TRADE_MODEL ?? DEFAULT_TRADE_MODEL.model,
     };
   }
   return _defaultTradeModel;

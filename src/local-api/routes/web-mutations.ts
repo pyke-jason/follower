@@ -175,6 +175,107 @@ app.post('/backtests/start', async (c) => {
   return c.json({ id: backtestRunId });
 });
 
+app.post('/backtests/:id/pause', async (c) => {
+  const backtestRunId = c.req.param('id');
+
+  const [run] = await db
+    .select({ status: schema.backtestRuns.status })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, backtestRunId));
+
+  if (!run) return c.json({ error: 'Run not found' }, 404);
+  if (run.status === 'PAUSED') return c.json({ ok: true });
+  if (run.status !== 'RUNNING' && run.status !== 'PENDING') {
+    return c.json({ error: 'Run not pausable' }, 400);
+  }
+
+  await db.update(schema.backtestRuns)
+    .set({
+      status: 'PAUSED',
+      error: 'Paused by user',
+    })
+    .where(eq(schema.backtestRuns.id, backtestRunId));
+
+  return c.json({ ok: true });
+});
+
+app.post('/backtests/:id/resume', async (c) => {
+  const backtestRunId = c.req.param('id');
+
+  const [run] = await db
+    .select({
+      status: schema.backtestRuns.status,
+      pid: schema.backtestRuns.pid,
+      config: schema.backtestRuns.config,
+    })
+    .from(schema.backtestRuns)
+    .where(eq(schema.backtestRuns.id, backtestRunId));
+
+  if (!run) return c.json({ error: 'Run not found' }, 404);
+  if (run.status !== 'PAUSED' && run.status !== 'FAILED') {
+    return c.json({ error: 'Run not resumable' }, 400);
+  }
+
+  if (run.pid) {
+    try {
+      process.kill(run.pid, 0);
+      await db.update(schema.backtestRuns)
+        .set({
+          status: 'RUNNING',
+          error: null,
+        })
+        .where(eq(schema.backtestRuns.id, backtestRunId));
+      return c.json({ ok: true, restarted: false });
+    } catch (err) {
+      if (!(err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ESRCH')) {
+        throw err;
+      }
+    }
+  }
+
+  const [checkpoint] = await db
+    .select({ runId: schema.backtestCheckpoints.runId })
+    .from(schema.backtestCheckpoints)
+    .where(eq(schema.backtestCheckpoints.runId, backtestRunId));
+  if (!checkpoint) {
+    return c.json({ error: 'Run has no checkpoint to resume from' }, 409);
+  }
+
+  const config = run.config;
+  const res = await fetch(`${LOCAL_API_URL}/backtests/spawn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId: backtestRunId,
+      resume: true,
+      startDate: config.startDate.slice(0, 10),
+      endDate: config.endDate.slice(0, 10),
+      traders: config.traders,
+      ...(config.agentProvider ? { agentProvider: config.agentProvider } : {}),
+      ...(config.agentModel ? { agentModel: config.agentModel } : {}),
+      ...(config.refreshQuoteCache ? { refreshQuoteCache: config.refreshQuoteCache } : {}),
+      ...(config.disableRiskLimits ? { disableRiskLimits: config.disableRiskLimits } : {}),
+      ...(config.maxOnSymbol != null ? { maxOnSymbol: config.maxOnSymbol } : {}),
+      ...(config.maxTotalPositions != null ? { maxTotalPositions: config.maxTotalPositions } : {}),
+      ...(config.maxDrawdownPct != null ? { maxDrawdownPct: config.maxDrawdownPct } : {}),
+      ...(config.maxAgentCalls != null ? { maxAgentCalls: config.maxAgentCalls } : {}),
+      ...(config.startingEquity != null ? { startingEquity: config.startingEquity } : {}),
+      ...(config.commissionSchedule ? { commissionSchedule: config.commissionSchedule } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    return c.json({ error: `Resume spawn failed: ${res.status} ${await res.text()}` }, 500);
+  }
+
+  const { pid } = await res.json() as { pid: number | null };
+  await db.update(schema.backtestRuns)
+    .set({ status: 'RUNNING', error: null, pid })
+    .where(eq(schema.backtestRuns.id, backtestRunId));
+
+  return c.json({ ok: true, restarted: true });
+});
+
 app.post('/backtests/:id/cancel', async (c) => {
   const backtestRunId = c.req.param('id');
 
@@ -183,7 +284,7 @@ app.post('/backtests/:id/cancel', async (c) => {
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, backtestRunId));
 
-  if (!run || (run.status !== 'RUNNING' && run.status !== 'PENDING')) {
+  if (!run || (run.status !== 'RUNNING' && run.status !== 'PENDING' && run.status !== 'PAUSED')) {
     return c.json({ error: 'Run not cancellable' }, 400);
   }
 
@@ -266,27 +367,26 @@ app.delete('/backtests/:id', async (c) => {
     .from(schema.backtestRuns)
     .where(eq(schema.backtestRuns.id, backtestRunId));
 
-  if (run && (run.status === 'RUNNING' || run.status === 'PENDING') && run.pid) {
+  if (run && (run.status === 'RUNNING' || run.status === 'PENDING' || run.status === 'PAUSED') && run.pid) {
     await fetch(`${LOCAL_API_URL}/backtests/${backtestRunId}/cancel`, {
       method: 'POST',
     });
   }
 
-  runTx((tx) => {
-    const tradeIds = tx
+  await runTx(async (tx) => {
+    const tradeIds = (await tx
       .select({ id: schema.trades.id })
       .from(schema.trades)
-      .where(eq(schema.trades.channelId, channelId))
-      .all()
+      .where(eq(schema.trades.channelId, channelId)))
       .map((row) => row.id);
-    tx.delete(schema.runDecisions).where(eq(schema.runDecisions.channelId, channelId)).run();
+    await tx.delete(schema.runDecisions).where(eq(schema.runDecisions.channelId, channelId));
     if (tradeIds.length > 0) {
-      tx.delete(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds)).run();
+      await tx.delete(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds));
     }
-    tx.delete(schema.trades).where(eq(schema.trades.channelId, channelId)).run();
-    tx.delete(schema.tasks).where(eq(schema.tasks.channelId, channelId)).run();
-    tx.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, channelId)).run();
-    tx.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, backtestRunId)).run();
+    await tx.delete(schema.trades).where(eq(schema.trades.channelId, channelId));
+    await tx.delete(schema.tasks).where(eq(schema.tasks.channelId, channelId));
+    await tx.delete(schema.backtestMtmSnapshots).where(eq(schema.backtestMtmSnapshots.channelId, channelId));
+    await tx.delete(schema.backtestRuns).where(eq(schema.backtestRuns.id, backtestRunId));
   });
 
   // Clean up log file
@@ -306,7 +406,7 @@ app.post('/backtests/bulk-delete', async (c) => {
     .where(inArray(schema.backtestRuns.id, ids));
 
   for (const run of runs) {
-    if ((run.status === 'RUNNING' || run.status === 'PENDING') && run.pid) {
+    if ((run.status === 'RUNNING' || run.status === 'PENDING' || run.status === 'PAUSED') && run.pid) {
       await fetch(`${LOCAL_API_URL}/backtests/${run.id}/cancel`, {
         method: 'POST',
       }).catch(() => {});
@@ -314,21 +414,20 @@ app.post('/backtests/bulk-delete', async (c) => {
   }
 
   const channelIds = ids.map(btChannel);
-  runTx((tx) => {
-    const tradeIds = tx
+  await runTx(async (tx) => {
+    const tradeIds = (await tx
       .select({ id: schema.trades.id })
       .from(schema.trades)
-      .where(inArray(schema.trades.channelId, channelIds))
-      .all()
+      .where(inArray(schema.trades.channelId, channelIds)))
       .map((row) => row.id);
-    tx.delete(schema.runDecisions).where(inArray(schema.runDecisions.channelId, channelIds)).run();
+    await tx.delete(schema.runDecisions).where(inArray(schema.runDecisions.channelId, channelIds));
     if (tradeIds.length > 0) {
-      tx.delete(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds)).run();
+      await tx.delete(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds));
     }
-    tx.delete(schema.trades).where(inArray(schema.trades.channelId, channelIds)).run();
-    tx.delete(schema.tasks).where(inArray(schema.tasks.channelId, channelIds)).run();
-    tx.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.channelId, channelIds)).run();
-    tx.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, ids)).run();
+    await tx.delete(schema.trades).where(inArray(schema.trades.channelId, channelIds));
+    await tx.delete(schema.tasks).where(inArray(schema.tasks.channelId, channelIds));
+    await tx.delete(schema.backtestMtmSnapshots).where(inArray(schema.backtestMtmSnapshots.channelId, channelIds));
+    await tx.delete(schema.backtestRuns).where(inArray(schema.backtestRuns.id, ids));
   });
 
   for (const id of ids) {

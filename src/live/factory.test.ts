@@ -8,18 +8,9 @@
 import { describe, test, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
 
-// In-memory SQLite
 vi.mock('../db/client.js', async () => {
-  const Database = (await import('better-sqlite3')).default;
-  const { drizzle } = await import('drizzle-orm/better-sqlite3');
-  const schema = await import('../db/schema.js');
-  const sqlite = new Database(':memory:');
-  const db = drizzle(sqlite, { schema });
-  return {
-    db, schema, sqliteClient: sqlite,
-    runTx: (cb: any) => db.transaction(cb),
-    withBusyRetry: (fn: any) => fn(),
-  };
+  const { createPgTestClient } = await import('../test/pg-test-client.js');
+  return createPgTestClient('live_factory');
 });
 
 // Mock isTrackedTrader to always return true
@@ -37,14 +28,14 @@ import type { Message } from '../db/schema.js';
 const CHANNEL_ID = 'ibkr:paper:test-account';
 
 beforeAll(async () => {
-  await db.run(CREATE_MESSAGES_SQL);
-  await db.run(CREATE_TASKS_SQL);
-  await db.run(CREATE_TASKS_UNIQUE_IDX);
+  await db.execute(CREATE_MESSAGES_SQL);
+  await db.execute(CREATE_TASKS_SQL);
+  await db.execute(CREATE_TASKS_UNIQUE_IDX);
 });
 
 beforeEach(async () => {
-  await db.run(sql`DELETE FROM tasks`);
-  await db.run(sql`DELETE FROM messages`);
+  await db.execute(sql`DELETE FROM tasks`);
+  await db.execute(sql`DELETE FROM messages`);
 });
 
 // ── Helpers ───────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 
 Trade Follower 3 -- an autonomous trade-copy system that monitors a live trading chat room, classifies messages using an AI agent, and mirrors trades via broker APIs. Includes backtesting, evaluation, and a dashboard.
 
-**Stack:** TypeScript (ESM) backend (`src/`), Vite + React SPA frontend (`web/src/`), SQLite via Drizzle ORM, Hono local API.
+**Stack:** TypeScript (ESM) backend (`src/`), Vite + React SPA frontend (`web/src/`), Postgres via Drizzle ORM, Hono local API.
 
 **Pipeline:** Chat message -> parser (sync, zero I/O) -> orchestrator routing -> executor -> broker -> record trade.
 

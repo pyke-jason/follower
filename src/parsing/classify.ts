@@ -4,7 +4,7 @@ import { htmlToCleanText } from './html.js';
 import { extractBadges } from './badges.js';
 import { extractSymbols } from './symbols.js';
 
-export type MessageClassification = {
+type MessageClassification = {
   cleanText: string;
   badges: string[];
   symbols: string[];

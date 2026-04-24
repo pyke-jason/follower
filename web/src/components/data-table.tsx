@@ -160,10 +160,10 @@ export function DataTable<T>({
           return (
             <th
               key={col.key}
-              className={cn(thClass, 'cursor-pointer select-none hover:text-foreground', col.className)}
+              className={cn(thClass, 'cursor-pointer select-none hover:text-foreground', col.align === 'right' && 'text-right', col.className)}
               onClick={() => toggle(col.key)}
             >
-              <span className={cn('inline-flex items-center gap-1', col.align === 'right' && 'justify-end')}>
+              <span className={cn('inline-flex items-center gap-1', col.align === 'right' && 'w-full justify-end')}>
                 {col.label}
                 <Icon className={cn('size-3.5 shrink-0', !isActive && 'opacity-30')} />
               </span>

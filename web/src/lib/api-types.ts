@@ -9,8 +9,8 @@ export type CursorResponse<T> = {
 
 /* ---- /status response ---- */
 
-export const channelKindSchema = z.enum(['runtime', 'backtest', 'unknown']);
-export type ChannelKind = z.infer<typeof channelKindSchema>;
+const channelKindSchema = z.enum(['runtime', 'backtest', 'unknown']);
+type ChannelKind = z.infer<typeof channelKindSchema>;
 
 export const channelBriefSchema = z.object({
   id: z.string(),

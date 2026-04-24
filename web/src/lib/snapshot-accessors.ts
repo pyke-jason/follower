@@ -13,12 +13,11 @@ import type { Span as TraceSpan } from '@src/lib/trace';
 import { SignalSchema } from '@src/agent/schemas';
 import type { Signal } from '@src/agent/schemas';
 
-export type { TraceSpan };
 
 // ── Snapshot sub-shapes ──────────────────────────────
 
 /** Order params nested inside snapshots (ORDER_PLACED, ORDER_FILLED, ORDER_ADJUSTED). */
-export type SnapshotOrderParams = {
+type SnapshotOrderParams = {
   orderType?: string;
   limitPrice?: number;
   symbol?: string;
@@ -26,13 +25,13 @@ export type SnapshotOrderParams = {
 };
 
 /** A single chase adjustment rule from order params. */
-export type AdjustmentRule = {
+type AdjustmentRule = {
   chaseLimit?: number;
   stepAmount?: number;
 };
 
 /** The `order` sub-object inside ORDER_CANCELLED snapshots. */
-export type SnapshotCancelledOrder = {
+type SnapshotCancelledOrder = {
   params?: SnapshotOrderParams;
   currentLimitPrice?: number;
   adjustmentCount?: number;
@@ -40,7 +39,7 @@ export type SnapshotCancelledOrder = {
 };
 
 /** The `signal` sub-object inside SETTLED snapshots. */
-export type SnapshotSignal = {
+type SnapshotSignal = {
   action?: string;
   orderType?: string;
   tradeId?: string;
@@ -104,7 +103,7 @@ export function getClassifierSignalsFromSnapshot(snap: unknown): Signal[] {
  * Returns null when the decision has no snapshot, no spans field, or spans is not an array.
  * Spans are emitted by the backend via `src/lib/trace.ts` and serialized onto the decision snapshot.
  */
-export function getTraceSpans(d: RunDecision): TraceSpan[] | null {
+function getTraceSpans(d: RunDecision): TraceSpan[] | null {
   const snap = getSnapshot(d);
   if (!snap) return null;
   const spans = snap.spans;

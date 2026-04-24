@@ -17,7 +17,7 @@ import {
   addBusinessDays,
 } from './et-date.js';
 
-export interface OccOptionParts {
+interface OccOptionParts {
   underlying: string;
   expiration: Date;
   type: OptionType;
@@ -333,7 +333,7 @@ function strikeInterval(price: number): number {
 
 // ── Strike Inference ─────────────────────────────────────────────────
 
-export type InferredSpread = {
+type InferredSpread = {
   longStrike: number;
   shortStrike: number;
   width: number;
@@ -350,7 +350,7 @@ function spreadWidth(price: number): number {
  * Infer ATM spread strikes from stock price + strategy.
  * Pure function — no I/O, no LLM calls.
  */
-export function inferATMSpread(
+function inferATMSpread(
   stockPrice: number,
   strategy: 'CDS' | 'PDS',
 ): InferredSpread {
@@ -365,7 +365,7 @@ export function inferATMSpread(
 }
 
 /** Infer ATM strike for naked call/put. */
-export function inferATMStrike(stockPrice: number): number {
+function inferATMStrike(stockPrice: number): number {
   const interval = strikeInterval(stockPrice);
   return Math.round(stockPrice / interval) * interval;
 }

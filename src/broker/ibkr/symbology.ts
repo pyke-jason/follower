@@ -10,7 +10,7 @@ import { ContractResolveResponseSchema, parseSidecarResponse } from './schemas.j
 import type { CallPutAbbrev } from '@/lib/enums.js';
 
 /** Parsed OCC fields in the shape the sidecar's resolve endpoint expects. */
-export type IbkrContractParams = {
+type IbkrContractParams = {
   symbol: string;
   secType: 'OPT';
   expiry: string;
@@ -40,7 +40,7 @@ export function occToIBKR(occSymbol: string): IbkrContractParams | null {
   };
 }
 
-export type ResolvedContract = { conId: number; minTick: number };
+type ResolvedContract = { conId: number; minTick: number };
 
 /** In-memory cache: OCC symbol → resolved contract. ConIds and minTick are stable per contract. */
 const contractCache = new Map<string, ResolvedContract>();

@@ -29,10 +29,10 @@ export function assertSafeRunId(runId: string): void {
   }
 }
 
-export type RuntimeBroker = 'ibkr';
-export type RuntimeMode = 'live' | 'paper';
+type RuntimeBroker = 'ibkr';
+type RuntimeMode = 'live' | 'paper';
 
-export function runtimeChannel(
+function runtimeChannel(
   broker: RuntimeBroker,
   mode: RuntimeMode,
   accountId: string,
@@ -44,7 +44,7 @@ export function ibkrChannel(mode: RuntimeMode, accountId: string): string {
   return runtimeChannel('ibkr', mode, accountId);
 }
 
-export function liveChannel(accountId: string): string {
+function liveChannel(accountId: string): string {
   return ibkrChannel('live', accountId);
 }
 
@@ -52,10 +52,14 @@ export function btChannel(runId: string): string {
   return `bt:${runId}`;
 }
 
+export function isBacktestChannel(channelId: string): boolean {
+  return channelId.startsWith('bt:');
+}
+
 export function clsChannel(runId: string): string {
   return `cls:${runId}`;
 }
 
-export function paperChannel(accountId: string): string {
+function paperChannel(accountId: string): string {
   return ibkrChannel('paper', accountId);
 }

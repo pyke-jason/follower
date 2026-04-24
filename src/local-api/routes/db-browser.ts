@@ -5,8 +5,8 @@ import {
   asc, desc, count, getTableColumns, isTable,
 } from 'drizzle-orm';
 import type { AnyColumn, SQL } from 'drizzle-orm';
-import { getTableConfig } from 'drizzle-orm/sqlite-core';
-import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
+import { getTableConfig } from 'drizzle-orm/pg-core';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import {
   FiltersSchema, type FilterOp,
   type ColumnMeta, type ForeignKeyMeta, type TableMeta,
@@ -16,15 +16,15 @@ import { CellUpdateBodySchema, DbTableQuerySchema } from '../http-schemas.js';
 
 const app = new Hono();
 
-const tableByName: Map<string, SQLiteTable> = new Map();
+const tableByName: Map<string, PgTable> = new Map();
 for (const value of Object.values(schema)) {
   if (isTable(value)) {
-    const table = value as SQLiteTable;
+    const table = value as PgTable;
     tableByName.set(getTableConfig(table).name, table);
   }
 }
 
-function describeColumns(table: SQLiteTable): ColumnMeta[] {
+function describeColumns(table: PgTable): ColumnMeta[] {
   return getTableConfig(table).columns.map((col) => ({
     name: col.name,
     type: col.getSQLType(),
@@ -34,11 +34,11 @@ function describeColumns(table: SQLiteTable): ColumnMeta[] {
   }));
 }
 
-function describeForeignKeys(table: SQLiteTable): ForeignKeyMeta[] {
+function describeForeignKeys(table: PgTable): ForeignKeyMeta[] {
   const out: ForeignKeyMeta[] = [];
   for (const fk of getTableConfig(table).foreignKeys) {
     const ref = fk.reference();
-    const refTableName = getTableConfig(ref.foreignTable as SQLiteTable).name;
+    const refTableName = getTableConfig(ref.foreignTable as PgTable).name;
     for (let i = 0; i < ref.columns.length; i++) {
       out.push({
         column: ref.columns[i].name,
@@ -50,18 +50,18 @@ function describeForeignKeys(table: SQLiteTable): ForeignKeyMeta[] {
   return out;
 }
 
-function findColumn(table: SQLiteTable, sqlName: string): AnyColumn | undefined {
+function findColumn(table: PgTable, sqlName: string): AnyColumn | undefined {
   return getTableConfig(table).columns.find((c) => c.name === sqlName) as AnyColumn | undefined;
 }
 
-function findColumnPropertyName(table: SQLiteTable, sqlName: string): string | undefined {
+function findColumnPropertyName(table: PgTable, sqlName: string): string | undefined {
   for (const [propName, col] of Object.entries(getTableColumns(table))) {
     if ((col as AnyColumn).name === sqlName) return propName;
   }
   return undefined;
 }
 
-function primaryKeyColumn(table: SQLiteTable): AnyColumn | undefined {
+function primaryKeyColumn(table: PgTable): AnyColumn | undefined {
   return getTableConfig(table).columns.find((c) => c.primary) as AnyColumn | undefined;
 }
 

@@ -110,6 +110,7 @@ async function runClassifyInner(
     processedMessages: 0,
     byOutcome: { EXECUTE: 0, SKIP: 0, MANUAL_REVIEW: 0, ERROR: 0 },
     byRoute: { 'hard-skip': 0, deterministic: 0, llm: 0 },
+    byRuleId: {},
     totalInputTokens: 0,
     totalOutputTokens: 0,
     totalCacheReadInputTokens: 0,
@@ -242,6 +243,12 @@ async function classifyMessage(
     resolved.parseResult?.isHardSkip ? 'hard-skip'
     : (resolved.usage && resolved.usage.inputTokens > 0) ? 'llm'
     : 'deterministic';
+
+  const ruleId = resolved.parseResult?.ruleId;
+  if (ruleId) {
+    summary.byRuleId ??= {};
+    summary.byRuleId[ruleId] = (summary.byRuleId[ruleId] ?? 0) + 1;
+  }
 
   if (resolved.classifierSignals == null) {
     throw new Error(`classify runner: resolved.classifierSignals missing for message ${msg.id}`);

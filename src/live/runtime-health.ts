@@ -8,7 +8,7 @@ export function upsertRuntimeHealth(channelId: string, fields: {
 }): void {
   const now = new Date().toISOString();
   // Fire-and-forget — health writes must never block task processing
-  db.insert(schema.runtimeHealth)
+  void db.insert(schema.runtimeHealth)
     .values({
       channelId,
       brokerHealthy: fields.brokerHealthy,
@@ -25,5 +25,7 @@ export function upsertRuntimeHealth(channelId: string, fields: {
         updatedAt: sql`excluded.updated_at`,
       },
     })
-    .run();
+    .catch((error) => {
+      console.debug('[runtime-health] Failed to write health row:', error);
+    });
 }

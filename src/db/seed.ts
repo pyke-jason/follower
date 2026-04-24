@@ -1,7 +1,7 @@
 import { loadSecrets } from '../lib/secrets/index.js';
 await loadSecrets();
 
-import { db, schema, sqliteClient } from './client.js';
+import { db, pgPool, schema } from './client.js';
 
 async function seed() {
   console.log('Seeding tracked traders...');
@@ -31,7 +31,7 @@ async function seed() {
   ]).onConflictDoNothing();
 
   console.log('Seed complete.');
-  sqliteClient.close();
+  await pgPool.end();
 }
 
 seed().catch((err) => {

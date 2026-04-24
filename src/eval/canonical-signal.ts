@@ -21,7 +21,7 @@ const MONTH_MAP: Record<string, number> = {
   dec: 12, december: 12,
 };
 
-export function canonicalExpiry(raw: string | null | undefined): string | null {
+function canonicalExpiry(raw: string | null | undefined): string | null {
   if (raw == null || raw === '') return null;
   const s = String(raw).trim();
   // ISO form: strip year (intent-level, not execution-level)
@@ -60,12 +60,12 @@ export function canonicalExpiry(raw: string | null | undefined): string | null {
 }
 
 /** Strikes comparable independent of leg order for spreads. */
-export function canonicalStrikes(raw: number[] | null | undefined): number[] | null {
+function canonicalStrikes(raw: number[] | null | undefined): number[] | null {
   if (raw == null || raw.length === 0) return null;
   return [...raw].sort((a, b) => a - b);
 }
 
-export function canonicalizeSignal(s: Signal): Signal {
+function canonicalizeSignal(s: Signal): Signal {
   return {
     ...s,
     symbol: s.symbol.toUpperCase(),

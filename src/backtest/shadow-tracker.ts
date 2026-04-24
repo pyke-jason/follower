@@ -13,6 +13,10 @@ const EXIT_ACTIONS = new Set(['CLOSE', 'TRIM', 'LEG_OFF']);
 export class ShadowTracker {
   private shadows = new Set<string>();
 
+  constructor(initialKeys: string[] = []) {
+    this.shadows = new Set(initialKeys);
+  }
+
   private key(author: string, symbol: string): string {
     return `${author}:${symbol}`;
   }
@@ -36,5 +40,9 @@ export class ShadowTracker {
   isUnfollowedExit(author: string, action: string | null, symbol: string | null): boolean {
     if (!action || !symbol) return false;
     return EXIT_ACTIONS.has(action) && this.isUnfollowedSymbol(author, symbol);
+  }
+
+  serialize(): string[] {
+    return [...this.shadows].sort();
   }
 }

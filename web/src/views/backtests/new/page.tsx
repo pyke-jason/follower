@@ -28,7 +28,8 @@ export default function NewBacktestPage() {
   if (!trackedTraders) return <Spinner />;
 
   const defaultConfig: BacktestRunConfig | undefined = cloneSource?.run.config;
-  const defaultTraders = trackedTraders.map((t) => t.name).join(', ');
+  const traderOptions = trackedTraders.map((t) => t.name);
+  const defaultTraders = defaultConfig?.traders ?? traderOptions;
 
   return (
     <div className="space-y-4 max-w-2xl mx-auto">
@@ -43,7 +44,7 @@ export default function NewBacktestPage() {
 
       <Card className="py-4 gap-3">
         <CardContent>
-          <BacktestForm defaultTraders={defaultTraders} defaultConfig={defaultConfig} />
+          <BacktestForm traderOptions={traderOptions} defaultTraders={defaultTraders} defaultConfig={defaultConfig} />
         </CardContent>
       </Card>
     </div>

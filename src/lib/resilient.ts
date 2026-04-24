@@ -63,7 +63,7 @@ export function classifyError(err: unknown): ErrorCategory {
 }
 
 /** OpenAI-compatible SDK error classifier: reads .status directly from error objects. */
-export function oaiClassify(err: unknown): ErrorCategory {
+function oaiClassify(err: unknown): ErrorCategory {
   if (err != null && typeof err === 'object' && 'status' in err) {
     const status = (err as { status: number }).status;
     if (typeof status === 'number') {
