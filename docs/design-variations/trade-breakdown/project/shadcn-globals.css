@@ -1,0 +1,61 @@
+/* shadcn/ui globals — dark theme tuned for a trading terminal.
+   Matches shadcn CSS-var conventions so components drop-in cleanly. */
+
+@layer base {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 6%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 142 72% 45%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 0 0% 14%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14%;
+    --input: 0 0% 14%;
+    --ring: 142 72% 45%;
+    --radius: 0.5rem;
+
+    /* Strategy palette — from repo */
+    --strat-call: 160 60% 50%;
+    --strat-put: 0 75% 60%;
+    --strat-stock: 210 75% 60%;
+    --strat-cds: 40 90% 55%;
+    --strat-pds: 275 70% 65%;
+  }
+}
+
+/* Base app */
+html, body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono-ui { font-family: "Geist Mono", "JetBrains Mono", "SF Mono", monospace; }
+
+/* Recharts tooltip theming */
+.recharts-default-tooltip {
+  background: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: calc(var(--radius) - 2px) !important;
+  font-size: 11px !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4) !important;
+}
+.recharts-tooltip-label { color: hsl(var(--muted-foreground)) !important; font-size: 10px !important; }
+.recharts-tooltip-item { color: hsl(var(--foreground)) !important; }
+
+/* Scrollbars */
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }

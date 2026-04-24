@@ -23,7 +23,7 @@ If unsure: When a message is genuinely ambiguous (could reasonably be trade or n
 
 These files contain every trading communication pattern you need. Read them in full before labeling:
 - `docs/rails/parse_instructions.md` — trader conventions, spread types, exit language, what is NOT a trade
-- `.Codex/rules/orchestrator.md` — direction semantics, parser routing logic
+- `.claude/rules/orchestrator.md` — direction semantics, parser routing logic
 
 ## Schema
 

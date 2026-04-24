@@ -103,19 +103,15 @@ export function formatInteger(value: number): string {
   return Math.round(value).toLocaleString('en-US');
 }
 
+export function formatRMultiple(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '--';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(1)}R`;
+}
+
 export function pnlColor(value: number | string | null | undefined): string {
   if (value == null) return 'text-zinc-400';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num) || num === 0) return 'text-muted-foreground';
   return num > 0 ? 'text-profit' : 'text-loss';
-}
-
-export function signalBorderColor(actionHint: string | null, directionHint: string | null): string {
-  if (actionHint === 'CLOSE' || directionHint === 'SHORT') return 'border-l-loss/70';
-  if (actionHint === 'OPEN' || directionHint === 'LONG') return 'border-l-profit/70';
-  return 'border-l-border';
-}
-
-function positionBorderColor(direction: string): string {
-  return direction === 'LONG' ? 'border-l-profit' : 'border-l-loss';
 }

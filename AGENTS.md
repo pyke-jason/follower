@@ -10,11 +10,11 @@ Trade Follower 3 -- an autonomous trade-copy system that monitors a live trading
 
 ## The one rule
 
-**Own the outcome.** You are not done when the code compiles. You are done when the feature works. Run `/verify` after building anything. See `.Codex/skills/verify/SKILL.md` for the full protocol.
+**Own the outcome.** You are not done when the code compiles. You are done when the feature works. Run `/verify` after building anything. See `.agents/skills/verify/SKILL.md` for the full protocol.
 
 ## How to work
 
-1. **Read the docs first.** `docs/rails.md` is the authoritative coding standards reference -- read it before writing code. `.Codex/rules/` has domain-specific rules loaded contextually by file path. `web/AGENTS.md` has frontend-specific rules and the UI cookbook.
+1. **Read the docs first.** `docs/rails.md` is the authoritative coding standards reference -- read it before writing code. `.claude/rules/` has domain-specific rules loaded contextually by file path. `web/AGENTS.md` has frontend-specific rules and the UI cookbook.
 2. **Verify your work.** Run `/verify` after building or changing features. It starts the dev server, interacts via Playwright, runs quality gates, and fixes anything broken.
 3. **Use the scratchpad.** `scratchpad/` is your workbench for throwaway scripts with REAL data. Run via `npx tsx scratchpad/debug-xxx.ts`. Delete when verified.
 
@@ -49,10 +49,10 @@ npx tsc --noEmit && npm test && npm --prefix web run check && npx knip
 | Coding standards (authoritative) | `docs/rails.md` |
 | Frontend data patterns | `docs/rails/frontend-data.md` |
 | shadcn/ui component guide | `docs/rails/shadcn.md` |
-| UI cookbook (intent-driven) | `docs/cookbook/` |
+| UI cookbook (intent-driven) | `web/docs/cookbook/` |
 | Frontend rules | `web/AGENTS.md` |
 | Schema (source of truth) | `src/db/schema.ts` |
-| Domain-specific rules | `.Codex/rules/` (loaded contextually) |
+| Domain-specific rules | `.claude/rules/` (loaded contextually) |
 | Implementation notes | `docs/local-implementation-rails.md` |
 | IBKR TWS API reference | `docs/ibkr/` |
 | IBKR sidecar | `sidecar/` (Java) |
@@ -66,7 +66,7 @@ npx tsc --noEmit && npm test && npm --prefix web run check && npx knip
 
 ## Signal pipeline
 
-Message -> parser (sync, zero I/O) -> routing (hard skip / deterministic open-close / LLM fallback) -> execution -> broker -> record trade. Prefer deterministic paths over LLM. See `.Codex/rules/orchestrator.md` for the full routing diagram.
+Message -> parser (sync, zero I/O) -> routing (hard skip / deterministic open-close / LLM fallback) -> execution -> broker -> record trade. Prefer deterministic paths over LLM. See `.claude/rules/orchestrator.md` for the full routing diagram.
 
 ## Domain glossary
 
@@ -75,7 +75,7 @@ Message -> parser (sync, zero I/O) -> routing (hard skip / deterministic open-cl
 - **Direction:** `LONG`/`SHORT` means buying vs selling the instrument — not a bullish/bearish view.
 - **Fill models (backtest):** `orats` (bid-ask width + leg count estimate), `midpoint`, `natural` (buy ask / sell bid).
 - **Run scoping:** Live data has no run scope; backtest data is isolated per `channelId = 'bt:<runId>'`. Dashboard pages accept `?run=<id>` for scoped views.
-- **Agent:** `Agent` (`src/agent/result.ts`) is the provider-agnostic interface. `createAgent(identity)` returns `AnthropicAgent` (via `@anthropic-ai/Codex-agent-sdk`) or `XAIAgent` (via `@ai-sdk/xai`).
+- **Agent:** `Agent` (`src/agent/result.ts`) is the provider-agnostic interface. `createAgent(identity)` returns `AnthropicAgent` (via `@anthropic-ai/claude-agent-sdk`) or `XAIAgent` (via `@ai-sdk/xai`).
 
 ## Coding standards
 
@@ -83,11 +83,11 @@ Message -> parser (sync, zero I/O) -> routing (hard skip / deterministic open-cl
 
 - **Pipeline code is shared.** Never add `if (isBacktest)` branches in `src/pipeline/` or `src/orders/`. Differences belong in `BrokerService` implementations.
 
-Frontend rules are in `.Codex/rules/shadcn-ui.md` and `.Codex/rules/web-components.md` (loaded contextually). Database rules are in `.Codex/rules/data-context.md` and `.Codex/rules/database-trades.md`.
+Frontend rules are in `.claude/rules/shadcn-ui.md` and `.claude/rules/web-components.md` (loaded contextually). Database rules are in `.claude/rules/data-context.md` and `.claude/rules/database-trades.md`.
 
 ## Database
 
-Schema: `src/db/schema.ts`. Transactions: `runTx()` from `src/db/client.ts`. Channel scoping: all data scoped by `channelId` (helpers in `src/lib/channel.ts`). See `.Codex/rules/data-context.md` for operational warnings (WAL, Databento costs, foreign keys).
+Schema: `src/db/schema.ts`. Transactions: `runTx()` from `src/db/client.ts`. Channel scoping: all data scoped by `channelId` (helpers in `src/lib/channel.ts`). See `.claude/rules/data-context.md` for operational warnings (WAL, Databento costs, foreign keys).
 
 ## Environment
 
@@ -109,6 +109,6 @@ This project has a graphify knowledge graph at graphify-out/.
 
 Rules:
 - Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files. If it is absent, use `graphify-out/GRAPH_REPORT.md`.
 - For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)

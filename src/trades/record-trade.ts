@@ -18,6 +18,7 @@ import type { TradeLeg, TradeMetadata, TradeFlag } from '../db/schema.js';
 import type { Direction, Strategy, TradeAction } from '../lib/enums.js';
 import type { OrderLeg } from '../broker/types.js';
 import { buildFlags } from './trade-flags.js';
+import { updateTradeRiskSnapshot, type TradeRiskInput } from './trade-risk.js';
 
 const log = createLogger('RecordTrade');
 
@@ -131,6 +132,17 @@ function requireTrade(row: TradeRow | undefined, id: string): TradeRow {
     throw new Error(`recordTrade: trade ${id} was not returned after write`);
   }
   return row;
+}
+
+function withRiskSnapshot(
+  metadata: TradeMetadata,
+  input: TradeRiskInput,
+  previousRisk = metadata.risk,
+): TradeMetadata {
+  return {
+    ...metadata,
+    risk: updateTradeRiskSnapshot(input, previousRisk),
+  };
 }
 
 async function emitEvent(tx: Tx, source: TradeEventSource, data: TradeEventData): Promise<void> {
@@ -269,46 +281,56 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
   if (isOpen_) {
     const tradeId = crypto.randomUUID();
     const ts = openedAt ?? now;
+    // SAFETY: direction and strategy are guaranteed non-null by the isOpen_ guard above.
+    const openDirection = direction!;
+    const openStrategy = strategy!;
+    const openLegs = legs ?? [];
+    const openQuantity = quantity ?? 1;
+    const openMetadata = withRiskSnapshot(metadata ?? {}, {
+      strategy: openStrategy,
+      direction: openDirection,
+      entryPrice,
+      quantity: openQuantity,
+      legs: openLegs,
+    });
     const values = {
       id: tradeId,
       taskId: taskId ?? null,
       sourceMessageId: sourceMessageId ?? null,
       trader,
       symbol,
-      // SAFETY: direction and strategy are guaranteed non-null by the isOpen_ guard above.
-      direction: direction!,
-      strategy: strategy!,
-      legs: legs ?? [],
+      direction: openDirection,
+      strategy: openStrategy,
+      legs: openLegs,
       status: 'OPEN',
       entryPrice: entryPrice != null ? String(entryPrice) : null,
       exitPrice: null,
-      quantity: quantity ?? 1,
+      quantity: openQuantity,
       pnl: null,
       openedAt: ts,
       closedAt: null,
       channelId,
-      metadata: metadata ?? {},
+      metadata: openMetadata,
     };
 
     const trade = await runTx(async (tx) => {
       const [row] = await tx.insert(schema.trades).values(values).returning();
-      // SAFETY: direction and strategy are guaranteed non-null by the isOpen_ guard above.
-      await emitEvent(tx, { id: tradeId, strategy: strategy!, direction: direction!, legs: legs ?? [] }, {
-        action: 'OPEN', price: entryPrice, quantity: quantity ?? 1,
-        messageId: sourceMessageId, metadata: metadata ?? undefined, timestamp: ts,
+      await emitEvent(tx, { id: tradeId, strategy: openStrategy, direction: openDirection, legs: openLegs }, {
+        action: 'OPEN', price: entryPrice, quantity: openQuantity,
+        messageId: sourceMessageId, metadata: openMetadata, timestamp: ts,
       });
       return requireTrade(row, tradeId);
     });
 
-    log.debug(`OPEN: ${direction} ${strategy} ${symbol} qty=${quantity ?? 1} @$${entryPrice} [${tradeId.slice(0, 8)}]`);
+    log.debug(`OPEN: ${openDirection} ${openStrategy} ${symbol} qty=${openQuantity} @$${entryPrice} [${tradeId.slice(0, 8)}]`);
     await sendTradeLifecycleAlert({
       sendAlert,
       action: 'OPEN',
       trader,
       symbol,
-      strategy: strategy!,
-      direction: direction!,
-      quantity: quantity ?? 1,
+      strategy: openStrategy,
+      direction: openDirection,
+      quantity: openQuantity,
       price: entryPrice,
       channelId,
     });
@@ -395,13 +417,25 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
 
           const openLegCount = existingLegs.length;
           const existingMeta = existing.metadata;
+          const nextMeta = withRiskSnapshot({
+            ...existingMeta,
+            chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps),
+            openLegCount,
+            flags: buildFlags(existingMeta.flags, 'legOff'),
+          }, {
+            strategy: targetStrategy,
+            direction: newDirection,
+            entryPrice: newEntryPrice,
+            quantity: existing.quantity,
+            legs: [keptLeg],
+          }, existingMeta.risk);
           const [row] = await tx.update(schema.trades)
             .set({
               strategy: targetStrategy,
               legs: [keptLeg],
               entryPrice: String(newEntryPrice),
               direction: newDirection,
-              metadata: { ...existingMeta, chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps), openLegCount, flags: buildFlags(existingMeta.flags, 'legOff') },
+              metadata: nextMeta,
             })
             .where(eq(schema.trades.id, existing.id))
             .returning();
@@ -448,6 +482,13 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps),
       flags: buildFlags(existingMeta.flags, ...metadata?.flags ?? [], ...closeFlags),
     };
+    const closeMeta = withRiskSnapshot(mergedMeta, {
+      strategy: existing.strategy,
+      direction: existing.direction,
+      entryPrice: existing.entryPrice,
+      quantity: existing.quantity,
+      legs: existing.legs,
+    }, existingMeta.risk);
 
     const trade = await runTx(async (tx) => {
       await emitEvent(tx, existing, {
@@ -462,7 +503,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           pnl: String(totalPnl),
           closedAt: ts,
           closeMessageId: closeMessageId ?? null,
-          metadata: mergedMeta,
+          metadata: closeMeta,
         })
         .where(eq(schema.trades.id, existing.id))
         .returning();
@@ -497,6 +538,16 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
     const ts = openedAt ?? now;
 
     const existingMeta = existing.metadata;
+    const addMeta = withRiskSnapshot({
+      ...existingMeta,
+      flags: buildFlags(existingMeta.flags, 'add'),
+    }, {
+      strategy: existing.strategy,
+      direction: existing.direction,
+      entryPrice: avgPrice,
+      quantity: totalQty,
+      legs: existing.legs,
+    }, existingMeta.risk);
 
     const trade = await runTx(async (tx) => {
       await emitEvent(tx, existing, {
@@ -509,7 +560,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           quantity: totalQty,
           entryPrice: String(avgPrice),
           avgEntryPrice: String(avgPrice),
-          metadata: { ...existingMeta, flags: buildFlags(existingMeta.flags, 'add') },
+          metadata: addMeta,
         })
         .where(eq(schema.trades.id, existing.id))
         .returning();
@@ -573,6 +624,13 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
         chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps),
         flags: trimFlags,
       };
+      const nextTrimMeta = withRiskSnapshot(trimMeta, {
+        strategy: existing.strategy,
+        direction: existing.direction,
+        entryPrice: existing.entryPrice,
+        quantity: remainingQty,
+        legs: existing.legs,
+      }, existingMeta.risk);
       let row: TradeRow | undefined;
       if (remainingQty <= 0) {
         // 100% trim = effectively a close
@@ -585,7 +643,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
             exitPrice: String(exit),
             closedAt: ts,
             closeMessageId: closeMessageId ?? null,
-            metadata: trimMeta,
+            metadata: nextTrimMeta,
           })
           .where(eq(schema.trades.id, existing.id))
           .returning();
@@ -594,7 +652,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           .set({
             quantity: remainingQty,
             realizedPnl: String(newRealized),
-            metadata: trimMeta,
+            metadata: nextTrimMeta,
           })
           .where(eq(schema.trades.id, existing.id))
           .returning();
@@ -684,13 +742,26 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
         messageId: closeMessageId, metadata: { targetStrategy, closedLeg, keptLeg, legOffPnl }, timestamp: ts,
       });
 
+      const nextMeta = withRiskSnapshot({
+        ...existingMeta,
+        chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps),
+        openLegCount,
+        flags: buildFlags(existingMeta.flags, 'legOff'),
+      }, {
+        strategy: targetStrategy,
+        direction: newDirection,
+        entryPrice: newEntryPrice,
+        quantity: existing.quantity,
+        legs: [keptLeg],
+      }, existingMeta.risk);
+
       const [row] = await tx.update(schema.trades)
         .set({
           strategy: targetStrategy,
           legs: [keptLeg],
           entryPrice: String(newEntryPrice),
           direction: newDirection,
-          metadata: { ...existingMeta, chaseSteps: sumChase(existingMeta.chaseSteps, metadata?.chaseSteps), openLegCount, flags: buildFlags(existingMeta.flags, 'legOff') },
+          metadata: nextMeta,
         })
         .where(eq(schema.trades.id, existing.id))
         .returning();

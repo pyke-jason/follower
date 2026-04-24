@@ -6,31 +6,16 @@ import { getAuthorTextColor } from '@/lib/author-colors';
 import { formatTime } from '@/lib/format';
 import type { Message } from '@src/db/schema';
 
-function getAccentBorder(message: Message): string {
-  const action = message.actionHint;
-  const direction = message.directionHint;
-  const badges = message.badges;
-  const symbols = message.symbols;
-
-  const isSignal = action || badges.length > 0 || symbols.length > 0;
-  if (!isSignal) return 'border-l-transparent';
-
-  if (action === 'CLOSE' || direction === 'SHORT') return 'border-l-loss';
-  if (action === 'OPEN' || direction === 'LONG') return 'border-l-profit';
-  return 'border-l-border';
-}
-
 export const ChatBubble = memo(function ChatBubble({ message, noBorder }: { message: Message; noBorder?: boolean }) {
   const badges = message.badges;
   const symbols = message.symbols;
   const isSignal =
     !!message.actionHint || badges.length > 0 || symbols.length > 0;
 
-  const accentClass = noBorder ? '' : `border-l-2 ${getAccentBorder(message)}`;
   return (
     <div
       data-message-id={message.id}
-      className={`flex gap-3 px-4 py-1.5 hover:bg-white/[0.02] ${accentClass}`}
+      className={`flex gap-3 px-4 py-1.5 hover:bg-white/[0.02] ${noBorder ? '' : 'border-l-2 border-l-transparent'}`}
     >
       <AuthorAvatar name={message.author} />
 

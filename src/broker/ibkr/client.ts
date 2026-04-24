@@ -422,9 +422,10 @@ async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
 
     return positions.map((p) => {
       const isOption = p.secType === 'OPT';
-      // OCC localSymbol from IBKR has internal whitespace padding — normalize
+      // OCC parsing needs the original 6-char padded underlying. Normalize only
+      // the display symbol after parsing so option positions still match DB legs.
       const normalizedLocal = p.localSymbol.replace(/\s+/g, ' ').trim();
-      const parsed = isOption ? occToIBKR(normalizedLocal) : null;
+      const parsed = isOption ? occToIBKR(p.localSymbol) : null;
 
       const pos: BrokerPosition = {
         symbol: isOption ? normalizedLocal : p.symbol,

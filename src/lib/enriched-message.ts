@@ -1,4 +1,5 @@
 import type { Message } from '../db/schema.js';
+import type { Signal } from '../agent/schemas.js';
 
 /** Subset of Trade fields needed for inline display in the chat feed. */
 export type TradeOutcome = {
@@ -25,17 +26,21 @@ export type MessageDecision = {
   taskId: string | null;
 };
 
+/** Latest classifier/orchestrator intent for a message, before execution settles. */
+export type MessageIntentSummary = {
+  decision: 'EXECUTE' | 'SKIP' | 'MANUAL_REVIEW';
+  route: string;
+  reasoning: string | null;
+  signals: Signal[] | null;
+  durationMs: number | null;
+  model: string;
+  version: number;
+};
+
 /** A chat message enriched with its trade outcome and agent decision. */
 export type EnrichedMessage = {
   message: Message;
   trade: TradeOutcome | null;
   decision: MessageDecision | null;
+  intent: MessageIntentSummary | null;
 };
-
-type MessageRole = 'executed' | 'skipped' | 'noise';
-
-export function getMessageRole(em: EnrichedMessage): MessageRole {
-  if (em.trade) return 'executed';
-  if (em.decision) return 'skipped';
-  return 'noise';
-}

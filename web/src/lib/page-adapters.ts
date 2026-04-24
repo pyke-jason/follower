@@ -5,6 +5,7 @@ import type {
   Message,
   Task,
   Trade,
+  TradeFlag,
   TrackedTrader,
 } from '@src/db/schema';
 import type { EquityPoint } from '@src/backtest/types';
@@ -69,6 +70,25 @@ type DashboardRiskSnapshot = {
   tradingBlocked: boolean;
 } | null;
 
+export type DashboardTradeQualitySummary = {
+  coverage: {
+    closedTrades: number;
+    withFiniteRisk: number;
+    excluded: number;
+    medianFiniteRisk: number | null;
+  };
+  rBuckets: Array<{ label: string; count: number }>;
+  gradeBuckets: Array<{ grade: 'A' | 'B' | 'C' | 'D' | 'F'; count: number }>;
+  flagCounts: Array<{ flag: TradeFlag; count: number }>;
+  byStrategy: Array<{
+    strategy: string;
+    trades: number;
+    finiteRiskTrades: number;
+    totalPnl: number;
+    avgR: number | null;
+  }>;
+};
+
 type DashboardApiResponse = {
   stats: DashboardStats;
   openTrades: Trade[];
@@ -89,28 +109,41 @@ export type DashboardSignalRow = {
 export type DashboardPageData = {
   stats: DashboardStats;
   openTrades: Trade[];
-  equityData: Array<{ date: string; equity: number }>;
+  unrealizedData: Array<{ date: string; unrealizedPnl: number }>;
   traderData: Array<{ trader: string; pnl: number; trades: number; winRate: number }>;
   signals: DashboardSignalRow[];
   pendingReviews: Task[];
   riskSnapshot: DashboardRiskSnapshot;
+  qualitySummary: DashboardTradeQualitySummary;
   livePositionsByTradeId: Record<string, LivePositionRow>;
   accountBalance: AccountBalanceSnapshot | null;
 };
 
 export async function fetchDashboardPageData(channelId?: string): Promise<DashboardPageData> {
-  const [dashboard, signals, pendingReviews] = await Promise.all([
+  const [dashboard, signals, pendingReviews, qualitySummary] = await Promise.all([
     api<DashboardApiResponse>(buildScopedPath('/dashboard', channelId)),
     api<DashboardSignalRow[]>(buildScopedPath('/signals', channelId, { limit: 20 })),
     api<Task[]>(buildScopedPath('/tasks', channelId, { status: 'PENDING', limit: 200 })),
+    api<DashboardTradeQualitySummary>(buildScopedPath('/trade-quality', channelId)),
   ]);
 
-  const equityData = [...dashboard.dailyBalances]
+  const unrealizedData = [...dashboard.dailyBalances]
     .reverse()
     .map((row) => ({
       date: row.date,
-      equity: toNumber(row.equity),
+      unrealizedPnl: toNumber(row.unrealizedPnl),
     }));
+  const liveDate = (dashboard.accountBalance?.timestamp ?? new Date().toISOString()).slice(0, 10);
+  const livePoint = {
+    date: liveDate,
+    unrealizedPnl: dashboard.stats.unrealizedPnl,
+  };
+  const lastPoint = unrealizedData[unrealizedData.length - 1];
+  if (lastPoint?.date === livePoint.date) {
+    unrealizedData[unrealizedData.length - 1] = livePoint;
+  } else {
+    unrealizedData.push(livePoint);
+  }
 
   const traderData = dashboard.traderPnl.map((row) => ({
     trader: row.trader,
@@ -122,11 +155,12 @@ export async function fetchDashboardPageData(channelId?: string): Promise<Dashbo
   return {
     stats: dashboard.stats,
     openTrades: dashboard.openTrades,
-    equityData,
+    unrealizedData,
     traderData,
     signals,
     pendingReviews,
     riskSnapshot: dashboard.risk,
+    qualitySummary,
     livePositionsByTradeId: dashboard.livePositionsByTradeId ?? {},
     accountBalance: dashboard.accountBalance ?? null,
   };

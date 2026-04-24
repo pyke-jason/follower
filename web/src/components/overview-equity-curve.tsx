@@ -7,23 +7,34 @@ import {
 } from '@/components/ui/chart';
 import { formatCurrency, formatCurrencyAxis, formatDateShort, formatDateTooltip } from '@/lib/format';
 
-const chartConfig = {
-  equity: {
-    label: 'Equity',
-    color: 'var(--profit)',
-  },
-} satisfies ChartConfig;
+type CurvePoint<Key extends string> = { date: string } & Record<Key, number>;
 
-interface Props {
+interface CurveProps<Key extends string> {
+  data: CurvePoint<Key>[];
+  dataKey: Key;
+  label: string;
+}
+
+interface UnrealizedProps {
+  data: { date: string; unrealizedPnl: number }[];
+}
+
+interface EquityProps {
   data: { date: string; equity: number }[];
 }
 
-export function OverviewEquityCurve({ data }: Props) {
+function OverviewCurve<Key extends string>({ data, dataKey, label }: CurveProps<Key>) {
   if (data.length < 2) return null;
 
-  const first = data[0].equity;
-  const last = data[data.length - 1].equity;
-  const isPositive = last >= first;
+  const chartConfig = {
+    [dataKey]: {
+      label,
+      color: 'var(--profit)',
+    },
+  } satisfies ChartConfig;
+
+  const last = data[data.length - 1][dataKey];
+  const isPositive = last >= 0;
   const color = isPositive ? 'oklch(0.72 0.19 155)' : 'oklch(0.68 0.22 25)';
 
   return (
@@ -68,7 +79,7 @@ export function OverviewEquityCurve({ data }: Props) {
           }
         />
         <Area
-          dataKey="equity"
+          dataKey={dataKey}
           type="monotone"
           fill="url(#equityFill)"
           stroke={color}
@@ -77,4 +88,12 @@ export function OverviewEquityCurve({ data }: Props) {
       </AreaChart>
     </ChartContainer>
   );
+}
+
+export function OverviewUnrealizedCurve({ data }: UnrealizedProps) {
+  return <OverviewCurve data={data} dataKey="unrealizedPnl" label="Unrealized P&L" />;
+}
+
+export function OverviewEquityCurve({ data }: EquityProps) {
+  return <OverviewCurve data={data} dataKey="equity" label="Cumulative P&L" />;
 }

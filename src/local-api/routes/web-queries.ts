@@ -12,7 +12,7 @@ import type {
 } from '@/db/schema.js';
 import type { Signal } from '@/agent/schemas.js';
 import type { BrokerPosition, AccountBalance } from '@/broker/types.js';
-import type { EnrichedMessage, TradeOutcome, MessageDecision } from '@/lib/enriched-message.js';
+import type { EnrichedMessage, TradeOutcome, MessageDecision, MessageIntentSummary } from '@/lib/enriched-message.js';
 import type { Strategy } from '@/lib/enums.js';
 import { btChannel } from '@/lib/channel.js';
 import { getDefaultRuntimeChannelId } from '@/lib/runtime-channels.js';
@@ -21,6 +21,7 @@ import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '@/trades/fi
 import { computeCoreStats } from '@/backtest/report.js';
 import { computeTradeCommission } from '@/lib/commission.js';
 import { tradeQty } from '@/lib/trade.js';
+import { computeTradeQualitySummary } from '@/trades/trade-quality.js';
 import { getProvider, SECRET_KEYS } from '@/lib/secrets/index.js';
 import { getRuntimeBrokerMap } from '@/broker/select.js';
 import { upsertRuntimeHealth } from '@/live/runtime-health.js';
@@ -750,6 +751,14 @@ app.get('/dashboard', async (c) => {
   });
 });
 
+// ── GET /trade-quality ──────────────────────────────
+
+app.get('/trade-quality', async (c) => {
+  const channelId = resolveChannelId(c.req.query('channel') || undefined);
+  const trades = await getClosedTradesForQualityInternal(channelId);
+  return c.json(computeTradeQualitySummary(trades));
+});
+
 /** Live account balance from the runtime broker. Null if unreachable or
  *  no runtime broker is registered for the channel. */
 async function getChannelAccountBalance(channelId: string): Promise<AccountBalance | null> {
@@ -1240,13 +1249,14 @@ app.get('/messages', async (c) => {
       cursor,
       channelId,
       roleFilter,
+      signalsOnly,
       limit,
     });
 
     const messages = enrichedResult.rows.map((r) => r.message);
-    const enrichment: Record<string, { decision: MessageDecision | null; trade: TradeOutcome | null }> = {};
+    const enrichment: Record<string, { decision: MessageDecision | null; trade: TradeOutcome | null; intent: MessageIntentSummary | null }> = {};
     for (const r of enrichedResult.rows) {
-      enrichment[r.message.id] = { decision: r.decision, trade: r.trade };
+      enrichment[r.message.id] = { decision: r.decision, trade: r.trade, intent: r.intent };
     }
 
     const allAuthors = await db
@@ -2151,6 +2161,14 @@ async function getOpenTradesInternal(limit = 50, channelId?: string) {
     .limit(limit);
 }
 
+async function getClosedTradesForQualityInternal(channelId?: string) {
+  return db
+    .select()
+    .from(schema.trades)
+    .where(and(isClosed, tradeScope(channelId)))
+    .orderBy(desc(schema.trades.closedAt));
+}
+
 async function getTraderPnlSummaryInternal(channelId?: string) {
   return db
     .select({
@@ -2434,6 +2452,7 @@ async function getEnrichedMessagesInternal(opts: {
   cursor?: string;
   limit?: number;
   roleFilter?: 'all' | 'processed' | 'executed' | 'skipped';
+  signalsOnly?: boolean;
 }) {
   const pageSize = opts.limit ?? 100;
   const resolvedChannel = resolveChannelId(opts.channelId);
@@ -2446,23 +2465,103 @@ async function getEnrichedMessagesInternal(opts: {
   if (opts.cursor) {
     conditions.push(lt(schema.messages.timestamp, opts.cursor));
   }
-
-  const decisionJoin = and(
-    eq(schema.runDecisions.messageId, schema.messages.id),
-    eq(schema.runDecisions.channelId, resolvedChannel),
-  );
-
-  if (opts.roleFilter === 'processed') {
-    conditions.push(isNotNull(schema.runDecisions.outcome));
-  } else if (opts.roleFilter === 'executed') {
-    conditions.push(isNotNull(schema.trades.id));
-  } else if (opts.roleFilter === 'skipped') {
-    conditions.push(and(isNotNull(schema.runDecisions.outcome), isNull(schema.trades.id))!);
+  if (opts.signalsOnly) {
+    conditions.push(
+      or(
+        isNotNull(schema.messages.actionHint),
+        sql`jsonb_array_length(${schema.messages.symbols}) > 0`,
+        sql`jsonb_array_length(${schema.messages.badges}) > 0`,
+      )!
+    );
   }
 
+  const hasDecision = sql`EXISTS (
+    SELECT 1 FROM ${schema.runDecisions}
+    WHERE ${schema.runDecisions.messageId} = ${schema.messages.id}
+      AND ${schema.runDecisions.channelId} = ${resolvedChannel}
+      AND ${schema.runDecisions.outcome} IS NOT NULL
+  )`;
+  const hasIntent = sql`EXISTS (
+    SELECT 1 FROM ${schema.messageIntents}
+    WHERE ${schema.messageIntents.messageId} = ${schema.messages.id}
+  )`;
+  const hasTrade = sql`EXISTS (
+    SELECT 1 FROM ${schema.trades}
+    WHERE ${schema.trades.sourceMessageId} = ${schema.messages.id}
+      AND ${schema.trades.channelId} = ${resolvedChannel}
+  )`;
+
+  if (opts.roleFilter === 'processed') {
+    conditions.push(or(hasDecision, hasIntent)!);
+  } else if (opts.roleFilter === 'executed') {
+    conditions.push(or(
+      hasTrade,
+      sql`EXISTS (
+        SELECT 1 FROM ${schema.messageIntents}
+        WHERE ${schema.messageIntents.messageId} = ${schema.messages.id}
+          AND ${schema.messageIntents.decision} = 'EXECUTE'
+      )`,
+    )!);
+  } else if (opts.roleFilter === 'skipped') {
+    conditions.push(or(
+      sql`EXISTS (
+        SELECT 1 FROM ${schema.runDecisions}
+        WHERE ${schema.runDecisions.messageId} = ${schema.messages.id}
+          AND ${schema.runDecisions.channelId} = ${resolvedChannel}
+          AND ${schema.runDecisions.outcome} IN ('SKIP', 'FAIL')
+      )`,
+      sql`EXISTS (
+        SELECT 1 FROM ${schema.messageIntents}
+        WHERE ${schema.messageIntents.messageId} = ${schema.messages.id}
+          AND ${schema.messageIntents.decision} IN ('SKIP', 'MANUAL_REVIEW')
+      )`,
+    )!);
+  }
+
+  const messageQuery = db
+    .select()
+    .from(schema.messages)
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(pageSize + 1);
+
+  const rows = conditions.length > 0
+    ? await messageQuery.where(and(...conditions))
+    : await messageQuery;
+
+  const hasMore = rows.length > pageSize;
+  const result = hasMore ? rows.slice(0, pageSize) : rows;
+  const messageIds = result.map((message) => message.id);
+
+  const [trades, decisions, intents] = await Promise.all([
+    getTradeOutcomesByMessageId(messageIds, opts.channelId),
+    getLatestDecisionsByMessageId(messageIds, resolvedChannel),
+    getLatestIntentsByMessageId(messageIds),
+  ]);
+
+  const enriched: EnrichedMessage[] = [];
+  for (const message of result) {
+    enriched.push({
+      message,
+      trade: trades.get(message.id) ?? null,
+      decision: decisions.get(message.id) ?? null,
+      intent: intents.get(message.id) ?? null,
+    });
+  }
+
+  return {
+    rows: enriched,
+    nextCursor: hasMore ? result[result.length - 1].timestamp : null,
+  };
+}
+
+async function getTradeOutcomesByMessageId(
+  messageIds: string[],
+  channelId?: string,
+): Promise<Map<string, TradeOutcome>> {
+  if (messageIds.length === 0) return new Map();
   const rows = await db
     .select({
-      message: schema.messages,
+      sourceMessageId: schema.trades.sourceMessageId,
       trade: {
         id: schema.trades.id,
         symbol: schema.trades.symbol,
@@ -2476,47 +2575,125 @@ async function getEnrichedMessagesInternal(opts: {
         openedAt: schema.trades.openedAt,
         closedAt: schema.trades.closedAt,
       },
-      decision: {
-        outcome: schema.runDecisions.outcome,
-        reasoning: schema.runDecisions.reasoning,
-        pnl: schema.runDecisions.pnl,
-        phase: schema.runDecisions.phase,
-        durationMs: schema.runDecisions.durationMs,
-        taskId: schema.runDecisions.taskId,
-      },
     })
-    .from(schema.messages)
-    .leftJoin(
-      schema.trades,
-      and(
-        eq(schema.trades.sourceMessageId, schema.messages.id),
-        tradeScope(opts.channelId),
-      ),
-    )
-    .leftJoin(schema.runDecisions, decisionJoin)
-    .where(and(...conditions))
-    .orderBy(desc(schema.messages.timestamp))
-    .limit(pageSize + 1);
+    .from(schema.trades)
+    .where(and(
+      inArray(schema.trades.sourceMessageId, messageIds),
+      tradeScope(channelId),
+    ));
 
-  const hasMore = rows.length > pageSize;
-  const result = hasMore ? rows.slice(0, pageSize) : rows;
-
-  const seen = new Set<string>();
-  const enriched: EnrichedMessage[] = [];
-  for (const r of result) {
-    if (seen.has(r.message.id)) continue;
-    seen.add(r.message.id);
-    enriched.push({
-      message: r.message,
-      trade: r.trade?.id ? (r.trade as TradeOutcome) : null,
-      decision: r.decision?.outcome ? (r.decision as MessageDecision) : null,
-    });
+  const map = new Map<string, TradeOutcome>();
+  for (const row of rows) {
+    if (row.sourceMessageId && !map.has(row.sourceMessageId)) {
+      map.set(row.sourceMessageId, row.trade);
+    }
   }
+  return map;
+}
 
+function toMessageDecision(row: {
+  outcome: string | null;
+  reasoning: string | null;
+  pnl: string | null;
+  phase: string | null;
+  durationMs: number | null;
+  taskId: string | null;
+}): MessageDecision | null {
+  const outcome = row.outcome;
+  if (outcome !== 'EXECUTE' && outcome !== 'SKIP' && outcome !== 'FAIL' && outcome !== 'PENDING') {
+    return null;
+  }
   return {
-    rows: enriched,
-    nextCursor: hasMore ? result[result.length - 1].message.timestamp : null,
+    outcome,
+    reasoning: row.reasoning,
+    pnl: row.pnl,
+    phase: row.phase ?? 'pipeline',
+    durationMs: row.durationMs,
+    taskId: row.taskId,
   };
+}
+
+async function getLatestDecisionsByMessageId(
+  messageIds: string[],
+  channelId: string,
+): Promise<Map<string, MessageDecision>> {
+  if (messageIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      messageId: schema.runDecisions.messageId,
+      outcome: schema.runDecisions.outcome,
+      reasoning: schema.runDecisions.reasoning,
+      pnl: schema.runDecisions.pnl,
+      phase: schema.runDecisions.phase,
+      durationMs: schema.runDecisions.durationMs,
+      taskId: schema.runDecisions.taskId,
+    })
+    .from(schema.runDecisions)
+    .where(and(
+      inArray(schema.runDecisions.messageId, messageIds),
+      eq(schema.runDecisions.channelId, channelId),
+      isNotNull(schema.runDecisions.outcome),
+    ))
+    .orderBy(desc(schema.runDecisions.createdAt));
+
+  const map = new Map<string, MessageDecision>();
+  for (const row of rows) {
+    if (!row.messageId || map.has(row.messageId)) continue;
+    const decision = toMessageDecision(row);
+    if (decision) map.set(row.messageId, decision);
+  }
+  return map;
+}
+
+function toMessageIntentSummary(row: {
+  decision: string;
+  route: string;
+  reasoning: string | null;
+  signals: Signal[] | null;
+  durationMs: number | null;
+  model: string;
+  version: number;
+}): MessageIntentSummary | null {
+  if (row.decision !== 'EXECUTE' && row.decision !== 'SKIP' && row.decision !== 'MANUAL_REVIEW') {
+    return null;
+  }
+  return {
+    decision: row.decision,
+    route: row.route,
+    reasoning: row.reasoning,
+    signals: row.signals,
+    durationMs: row.durationMs,
+    model: row.model,
+    version: row.version,
+  };
+}
+
+async function getLatestIntentsByMessageId(
+  messageIds: string[],
+): Promise<Map<string, MessageIntentSummary>> {
+  if (messageIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      messageId: schema.messageIntents.messageId,
+      decision: schema.messageIntents.decision,
+      route: schema.messageIntents.route,
+      reasoning: schema.messageIntents.reasoning,
+      signals: schema.messageIntents.signals,
+      durationMs: schema.messageIntents.durationMs,
+      model: schema.messageIntents.model,
+      version: schema.messageIntents.version,
+    })
+    .from(schema.messageIntents)
+    .where(inArray(schema.messageIntents.messageId, messageIds))
+    .orderBy(desc(schema.messageIntents.version), desc(schema.messageIntents.createdAt));
+
+  const map = new Map<string, MessageIntentSummary>();
+  for (const row of rows) {
+    if (map.has(row.messageId)) continue;
+    const intent = toMessageIntentSummary(row);
+    if (intent) map.set(row.messageId, intent);
+  }
+  return map;
 }
 
 

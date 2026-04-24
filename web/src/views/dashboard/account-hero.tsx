@@ -1,44 +1,50 @@
 import { formatCurrency, pnlColor } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { TrendingUp, TrendingDown } from 'lucide-react';
 import type { AccountBalanceSnapshot } from '@/lib/page-adapters';
 
 /**
- * Robinhood-style account hero: huge equity number top-left, day change
- * underneath in the P&L color. All live data — no card chrome, just typography
- * so the number carries the page.
+ * Primary account readout. The dashboard is built around live unrealized P&L;
+ * net liquidation is account context, not the hero number.
  */
-export function AccountHero({ balance, unrealizedPnl, realizedToday, accountLabel }: {
+export function AccountHero({ balance, unrealizedPnl, realizedToday, openTrades, accountLabel }: {
   balance: AccountBalanceSnapshot | null;
   unrealizedPnl: number;
   realizedToday: number;
+  openTrades: number;
   accountLabel: string;
 }) {
   const netLiq = balance?.equity ?? 0;
-  const dayChange = unrealizedPnl + realizedToday;
-  const dayChangePct = netLiq > 0 ? (dayChange / netLiq) * 100 : 0;
-  const Icon = dayChange >= 0 ? TrendingUp : TrendingDown;
-  const color = pnlColor(dayChange);
+  const exposurePct = netLiq > 0 ? (unrealizedPnl / netLiq) * 100 : 0;
+  const color = pnlColor(unrealizedPnl);
 
   return (
     <div>
       <p className="text-xs text-muted-foreground tracking-wide uppercase mb-1">
         {accountLabel}
       </p>
-      <h1 className="text-5xl font-bold tracking-tight tabular-nums font-mono">
-        {balance
-          ? formatCurrency(netLiq, 2)
-          : <span className="text-muted-foreground/40">—</span>}
+      <h1 className={cn('text-5xl font-bold tracking-tight tabular-nums font-mono', color)}>
+        {unrealizedPnl >= 0 ? '+' : ''}{formatCurrency(unrealizedPnl, 2)}
       </h1>
-      <div className={cn('mt-2 flex items-center gap-2 text-sm font-medium', color)}>
-        <Icon className="h-4 w-4" />
-        <span className="tabular-nums font-mono">
-          {dayChange >= 0 ? '+' : ''}{formatCurrency(dayChange, 2)}
-          {netLiq > 0 && (
-            <span className="ml-1 opacity-80">({dayChange >= 0 ? '+' : ''}{dayChangePct.toFixed(2)}%)</span>
-          )}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span className="font-medium text-muted-foreground">
+          Unrealized P&L across {openTrades} open position{openTrades === 1 ? '' : 's'}
         </span>
-        <span className="text-muted-foreground font-normal">Today</span>
+        {netLiq > 0 && (
+          <span className={cn('tabular-nums font-mono', color)}>
+            {unrealizedPnl >= 0 ? '+' : ''}{exposurePct.toFixed(2)}% of net liq
+          </span>
+        )}
+        {balance && (
+          <span className="text-muted-foreground">
+            Net liq <span className="font-mono tabular-nums text-foreground">{formatCurrency(netLiq, 2)}</span>
+          </span>
+        )}
+        <span className="text-muted-foreground">
+          Realized today{' '}
+          <span className={cn('font-mono tabular-nums', realizedToday === 0 ? 'text-muted-foreground' : pnlColor(realizedToday))}>
+            {realizedToday > 0 ? '+' : ''}{formatCurrency(realizedToday, 2)}
+          </span>
+        </span>
       </div>
     </div>
   );

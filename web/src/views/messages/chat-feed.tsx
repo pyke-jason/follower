@@ -117,7 +117,7 @@ export function ChatFeed({
     }
     const msgEnrichment = enrichment?.[item.message.id];
     const isPending = !!(lastProcessedTs && item.message.timestamp > lastProcessedTs);
-    if (msgEnrichment && (msgEnrichment.decision || msgEnrichment.trade)) {
+    if (msgEnrichment && (msgEnrichment.decision || msgEnrichment.trade || msgEnrichment.intent)) {
       return (
         <div
           className={cn(
@@ -127,7 +127,12 @@ export function ChatFeed({
           onClick={onMessageClick ? () => onMessageClick(item.message) : undefined}
         >
           <EnrichedChatBubble
-            enriched={{ message: item.message, trade: msgEnrichment.trade, decision: msgEnrichment.decision }}
+            enriched={{
+              message: item.message,
+              trade: msgEnrichment.trade,
+              decision: msgEnrichment.decision,
+              intent: msgEnrichment.intent,
+            }}
             isHighlighted={isHighlighted}
             isPending={isPending}
           />

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Message } from '@src/db/schema';
-import type { TradeOutcome, MessageDecision } from '@src/lib/enriched-message';
+import type { TradeOutcome, MessageDecision, MessageIntentSummary } from '@src/lib/enriched-message';
 import { api } from '@/lib/api';
 
 export type LabelFilter = 'labeled' | 'unlabeled';
@@ -8,6 +8,7 @@ export type LabelFilter = 'labeled' | 'unlabeled';
 export type MessageEnrichment = {
   decision: MessageDecision | null;
   trade: TradeOutcome | null;
+  intent: MessageIntentSummary | null;
 };
 
 type MessageFilters = {

@@ -117,29 +117,40 @@ export function TopBar() {
         {status && (
           <div className="flex items-center gap-4 animate-in-right">
             {/* P&L — live unrealized for runtime, realized for backtest */}
-            <div
-              className="flex items-center gap-1.5"
-              title={isRuntime ? 'Unrealized P&L across all open positions (live from broker)' : 'Realized P&L'}
-            >
-              <PnlIcon className={`h-3.5 w-3.5 ${pnlCls}`} />
-              <span className={`text-sm font-mono font-semibold tabular-nums ${pnlCls}`}>
-                {pnlSign}
-                {formatCurrency(primaryPnl, 0)}
-              </span>
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
-                {primaryLabel}
-              </span>
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-1.5">
+                  <PnlIcon className={`h-3.5 w-3.5 ${pnlCls}`} />
+                  <span className={`text-sm font-mono font-semibold tabular-nums ${pnlCls}`}>
+                    {pnlSign}
+                    {formatCurrency(primaryPnl, 0)}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                    {primaryLabel}
+                  </span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {isRuntime ? 'Unrealized P&L across all open positions, live from broker' : 'Realized P&L'}
+              </TooltipContent>
+            </Tooltip>
 
             {/* Realized-today secondary badge for runtime channels */}
             {isRuntime && (
-              <span
-                className={`text-xs font-mono tabular-nums ${realizedToday === 0 ? 'text-muted-foreground/50' : pnlColor(realizedToday)}`}
-                title="Realized P&L from trades closed today"
-              >
-                {realizedToday > 0 ? '+' : ''}
-                {formatCurrency(realizedToday, 0)} realized
-              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-sm font-mono font-semibold tabular-nums ${realizedToday === 0 ? 'text-muted-foreground/50' : pnlColor(realizedToday)}`}>
+                      {realizedToday > 0 ? '+' : ''}
+                      {formatCurrency(realizedToday, 0)}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                      realized
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Realized P&L from trades closed today</TooltipContent>
+              </Tooltip>
             )}
 
             {/* Open positions */}

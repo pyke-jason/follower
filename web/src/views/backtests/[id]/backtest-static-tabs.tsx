@@ -85,7 +85,7 @@ function buildBacktestChatData({
     if (decision?.outcome === 'EXECUTE') executedCount += 1;
     if (decision?.outcome === 'SKIP') skippedCount += 1;
 
-    enrichment[row.message.id] = { decision, trade };
+    enrichment[row.message.id] = { decision, trade, intent: null };
   }
 
   const messages = [...latestMessageById.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));

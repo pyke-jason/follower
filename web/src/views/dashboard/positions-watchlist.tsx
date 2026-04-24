@@ -40,7 +40,7 @@ export function PositionsWatchlist({ trades, livePositionsByTradeId }: {
       const entry = safeParseFloat(t.avgEntryPrice) || safeParseFloat(t.entryPrice);
       const costBasis = entry ? entry * qty * mult : null;
       const live = livePositionsByTradeId[t.id];
-      const mark = live?.marketValue != null && qty > 0 ? live.marketValue / (qty * mult) : null;
+      const mark = live?.marketValue != null && qty > 0 ? Math.abs(live.marketValue) / (qty * mult) : null;
       const unrealizedPnl = live?.unrealizedPnl ?? null;
       const unrealizedPct = unrealizedPnl != null && costBasis
         ? (unrealizedPnl / Math.abs(costBasis)) * 100
@@ -102,15 +102,30 @@ export function PositionsWatchlist({ trades, livePositionsByTradeId }: {
                     </p>
                   </div>
                   <div className="text-right shrink-0 min-w-0">
-                    <p className="text-sm font-mono tabular-nums font-medium">
-                      {r.mark != null ? formatCurrency(r.mark) : <span className="text-muted-foreground/40">—</span>}
+                    <p className={cn(
+                      'text-sm font-mono tabular-nums font-semibold',
+                      r.unrealizedPnl == null ? 'text-muted-foreground/45' : pnlColor(r.unrealizedPnl),
+                    )}>
+                      {r.unrealizedPnl != null ? (
+                        <>
+                          {r.unrealizedPnl > 0 ? '+' : ''}
+                          {formatCurrency(r.unrealizedPnl)}
+                        </>
+                      ) : (
+                        'No P&L'
+                      )}
                     </p>
                     {r.unrealizedPct != null ? (
-                      <p className={cn('text-[10px] tabular-nums font-medium', pnlColor(r.unrealizedPnl))}>
-                        {r.unrealizedPct > 0 ? '+' : ''}{r.unrealizedPct.toFixed(2)}%
+                      <p className="text-[10px] text-muted-foreground/70 tabular-nums">
+                        <span className={cn('font-medium', pnlColor(r.unrealizedPnl))}>
+                          {r.unrealizedPct > 0 ? '+' : ''}{r.unrealizedPct.toFixed(2)}%
+                        </span>
+                        {r.mark != null && (
+                          <span> · mark {formatCurrency(r.mark)}</span>
+                        )}
                       </p>
                     ) : (
-                      <p className="text-[10px] text-muted-foreground/40">—</p>
+                      <p className="text-[10px] text-muted-foreground/45">unmatched broker leg</p>
                     )}
                   </div>
                 </Link>

@@ -69,13 +69,25 @@ export function ChatFilters() {
     if (!enrichment) return null;
     const entries = Object.values(enrichment);
     if (entries.length === 0) return null;
+    let processed = 0;
     let executed = 0;
     let skipped = 0;
     for (const e of entries) {
-      if (e.decision?.outcome === 'EXECUTE') executed++;
-      else if (e.decision?.outcome === 'SKIP') skipped++;
+      if (e.decision || e.intent) processed++;
+
+      const finalOutcome = e.decision?.outcome;
+      const intentDecision = e.intent?.decision;
+      if (e.trade || finalOutcome === 'EXECUTE' || (!finalOutcome && intentDecision === 'EXECUTE')) {
+        executed++;
+      } else if (
+        finalOutcome === 'SKIP'
+        || finalOutcome === 'FAIL'
+        || (!finalOutcome && (intentDecision === 'SKIP' || intentDecision === 'MANUAL_REVIEW'))
+      ) {
+        skipped++;
+      }
     }
-    return { processedCount: executed + skipped, executedCount: executed, skippedCount: skipped };
+    return { processedCount: processed, executedCount: executed, skippedCount: skipped };
   }, [stableDecisionCounts, constraints?.channelId, enrichment]);
 
   const hasDateConstraint = !!(constraints?.startDate && constraints?.endDate);

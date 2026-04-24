@@ -3,10 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useChannelId } from '@/hooks/use-channel-id';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { queries } from '@/lib/queries';
-import { formatCurrency } from '@/lib/format';
-import { OverviewEquityCurve } from '@/components/overview-equity-curve';
+import { OverviewUnrealizedCurve } from '@/components/overview-equity-curve';
 import { AccountHero } from './account-hero';
 import { PositionsWatchlist } from './positions-watchlist';
+import { QualitySnapshotPanel } from './quality-snapshot-panel';
 import { RiskPanel } from './risk-panel';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
 import { ArrowRight, AlertTriangle } from 'lucide-react';
@@ -31,8 +31,8 @@ function DashboardContent({ data, href, channelId }: {
   channelId: string;
 }) {
   const {
-    openTrades, equityData, pendingReviews, riskSnapshot,
-    stats, livePositionsByTradeId, accountBalance,
+    openTrades, unrealizedData, pendingReviews, riskSnapshot,
+    stats, qualitySummary, livePositionsByTradeId, accountBalance,
   } = data;
 
   return (
@@ -56,34 +56,31 @@ function DashboardContent({ data, href, channelId }: {
           balance={accountBalance}
           unrealizedPnl={stats.unrealizedPnl}
           realizedToday={stats.todayPnl}
+          openTrades={stats.openTrades}
           accountLabel={channelId}
         />
 
-        {equityData.length > 1 ? (
+        {unrealizedData.length > 1 ? (
           <div className="min-h-[300px]">
-            <OverviewEquityCurve data={equityData} />
+            <OverviewUnrealizedCurve data={unrealizedData} />
           </div>
         ) : (
           <div className="min-h-[200px] flex items-center justify-center border border-dashed border-border/40 rounded-lg">
             <p className="text-sm text-muted-foreground">
-              Equity curve will appear once two or more daily balances are recorded.
+              Unrealized P&L history will appear once two or more snapshots are recorded.
             </p>
           </div>
         )}
 
-        {/* Account details row — buying power, cash, margin */}
-        {accountBalance && (
+        {riskSnapshot && (
           <div className="border-t border-border/40 pt-4">
-            <AccountDetails balance={accountBalance} />
+            <RiskPanel data={riskSnapshot} balance={accountBalance} />
           </div>
         )}
 
-        {/* Risk / attention panel */}
-        {riskSnapshot && (
-          <div className="border-t border-border/40 pt-4">
-            <RiskPanel data={riskSnapshot} />
-          </div>
-        )}
+        <div className="border-t border-border/40 pt-4">
+          <QualitySnapshotPanel summary={qualitySummary} />
+        </div>
       </div>
 
       {/* ─── Right column: positions watchlist ─── */}
@@ -91,34 +88,5 @@ function DashboardContent({ data, href, channelId }: {
         <PositionsWatchlist trades={openTrades} livePositionsByTradeId={livePositionsByTradeId} />
       </aside>
     </div>
-  );
-}
-
-function AccountDetails({ balance }: { balance: NonNullable<DashboardPageData['accountBalance']> }) {
-  const rows: Array<{ label: string; value: string; muted?: boolean }> = [
-    { label: 'Buying Power', value: formatCurrency(balance.buyingPower, 2) },
-    { label: 'Cash', value: formatCurrency(balance.cashBalance, 2) },
-    { label: 'Market Value', value: formatCurrency(balance.marketValue, 2) },
-  ];
-  if (balance.maintenanceMargin != null) {
-    rows.push({ label: 'Margin Used', value: formatCurrency(balance.maintenanceMargin, 2) });
-  }
-  if (balance.cushion != null) {
-    rows.push({
-      label: 'Margin Cushion',
-      value: `${(balance.cushion * 100).toFixed(1)}%`,
-      muted: balance.cushion > 0.3,
-    });
-  }
-
-  return (
-    <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3">
-      {rows.map((r) => (
-        <div key={r.label} className="flex items-baseline justify-between border-b border-border/30 pb-1.5">
-          <dt className="text-xs text-muted-foreground">{r.label}</dt>
-          <dd className="text-sm font-mono tabular-nums font-medium">{r.value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }

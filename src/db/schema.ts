@@ -442,6 +442,26 @@ export type BacktestRunSummary = {
 export const TRADE_FLAGS = ['autoClose','legOff','trim','add','slippage','closeFailed','hasUpdate','marketDataFail','chaseWarn','chaseDanger','strategyMismatch'] as const;
 export type TradeFlag = (typeof TRADE_FLAGS)[number];
 
+export type TradeRiskBasis =
+  | 'premium_paid'
+  | 'defined_spread'
+  | 'stock_notional'
+  | 'margin_requirement'
+  | 'manual_stop'
+  | 'unbounded'
+  | 'unknown';
+
+export type TradeRiskConfidence = 'exact' | 'estimate' | 'unknown';
+
+export type TradeRiskSnapshot = {
+  currentRisk: number | null;
+  peakRisk: number | null;
+  basis: TradeRiskBasis;
+  confidence: TradeRiskConfidence;
+  multiplier: number;
+  notes: string[];
+};
+
 // ─── Message Reactions ───────────────────────────────
 
 export type MessageReaction = {
@@ -524,6 +544,8 @@ export type TradeMetadata = {
   exitSlippage?: number;
   /** Chase slippage on exit as % of limit price. */
   exitSlippagePct?: number;
+  /** Algorithmic finite-risk snapshot used for R-multiple analytics. */
+  risk?: TradeRiskSnapshot;
   /** Materialized trade flags — set at write time by recordTrade and async updaters. */
   flags?: TradeFlag[];
   /** Total pipeline execution time (ms) from trace spans — message ingestion to final event. */
