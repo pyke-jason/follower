@@ -79,6 +79,12 @@ export class AnthropicAgent implements Agent {
 
     const allowedTools = opts.tools.map((t) => `mcp__${MCP_SERVER_NAME}__${t.name}`);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error(`LLM request timed out after ${opts.timeoutMs ?? 120_000}ms`)),
+      opts.timeoutMs ?? 120_000,
+    );
+
     const q = query({
       prompt: opts.userPrompt,
       options: {
@@ -95,9 +101,11 @@ export class AnthropicAgent implements Agent {
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         maxTurns: opts.maxTurns ?? 10,
+        abortController: controller,
       },
     });
 
+    try {
     for await (const msg of q) {
       if (msg.type === 'assistant') {
         for (const block of msg.message.content) {
@@ -116,6 +124,9 @@ export class AnthropicAgent implements Agent {
         // Anthropic does not return a cost field — compute from published rates.
         usage = { ...tokenUsage, costUsd: estimateLlmCost(this.identity.model, tokenUsage) };
       }
+    }
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     return { model: this.identity, steps, result: capturedResult, usage };

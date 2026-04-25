@@ -6,7 +6,7 @@
  * on cache hit to skip the expensive agent loop.
  */
 
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gte, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/db/client.js';
 import { messageIntents, IntentStepSchema } from '@/db/schema.js';
@@ -21,7 +21,7 @@ const log = createLogger('IntentCache');
  * Bump when NLU_SYSTEM_PROMPT, tool schemas, parser logic, or prompt
  * construction changes. Invalidates all cached results.
  */
-export const INTENT_VERSION = 60;
+export const INTENT_VERSION = 61;
 
 export type IntentRoute = 'hard-skip' | 'deterministic' | 'llm';
 
@@ -86,6 +86,20 @@ export async function lookupIntent(
     return null;
   }
   return parsed.data;
+}
+
+/**
+ * Sum LLM cost (USD) recorded in message_intents for the current calendar day
+ * (UTC). Includes all models and versions. Returns 0 when no rows exist or
+ * all costs are null.
+ */
+export async function getDailyLlmCostUsd(): Promise<number> {
+  const todayUtc = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const [row] = await db
+    .select({ total: sql<number>`coalesce(sum(${messageIntents.costUsd}), 0)` })
+    .from(messageIntents)
+    .where(gte(messageIntents.createdAt, todayUtc));
+  return row?.total ?? 0;
 }
 
 /**

@@ -66,6 +66,7 @@ export class XAIAgent implements Agent {
       tools: toolSet,
       stopWhen: stepCountIs(maxTurns),
       temperature,
+      abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
       ...(opts.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
     });
 
