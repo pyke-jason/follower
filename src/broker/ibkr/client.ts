@@ -38,8 +38,12 @@ type IbkrRuntime = {
   // their own order IDs independently; a collision on a low integer orderId
   // could flip the limit-price sign on the wrong account's modify call.
   creditComboOrderIds: Set<string>;
-  alertedMissingSubscription: Set<string>;
+  // Map keyed by symbol -> epoch ms of last 402 alert. Bounded via 24h TTL
+  // eviction in the 402 handler so the map cannot grow unbounded across runs.
+  alertedSubscriptionAt: Map<string, number>;
 };
+
+const SUBSCRIPTION_ALERT_TTL_MS = 24 * 60 * 60_000;
 
 /** Round a price to the nearest valid tick using the contract's actual minTick from IBKR. */
 function roundToTick(price: number, minTick: number): number {
@@ -218,8 +222,13 @@ async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
     }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/IBKR sidecar 402:/.test(msg) && !runtime.alertedMissingSubscription.has(symbol)) {
-      runtime.alertedMissingSubscription.add(symbol);
+    const now = Date.now();
+    const lastAlerted = runtime.alertedSubscriptionAt.get(symbol) ?? 0;
+    if (/IBKR sidecar 402:/.test(msg) && now - lastAlerted > SUBSCRIPTION_ALERT_TTL_MS) {
+      runtime.alertedSubscriptionAt.set(symbol, now);
+      for (const [sym, ts] of runtime.alertedSubscriptionAt) {
+        if (now - ts > SUBSCRIPTION_ALERT_TTL_MS) runtime.alertedSubscriptionAt.delete(sym);
+      }
       const isCompetingSession = /"twsCode"\s*:\s*10197/.test(msg);
       void sendSystemAlert({
         title: isCompetingSession
@@ -412,6 +421,7 @@ async function getOrderStatus(orderId: string, runtime: IbkrRuntime): Promise<Or
       result.filledQuantity = order.filledQuantity;
       result.commission = order.commission;
       result.fillTimestamp = new Date().toISOString();
+      runtime.creditComboOrderIds.delete(orderId);
     }
 
     return result;
@@ -505,7 +515,7 @@ export function createIbkrService(options: IbkrServiceOptions): BrokerService {
     sidecarUrl: options.sidecarUrl,
     accountId: options.accountId,
     creditComboOrderIds: new Set<string>(),
-    alertedMissingSubscription: new Set<string>(),
+    alertedSubscriptionAt: new Map<string, number>(),
   };
   return {
     getQuote: (symbol) => getQuote(symbol, runtime),
