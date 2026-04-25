@@ -83,13 +83,18 @@ export function buildComboOrderBody(args: {
     ? (isCredit ? -limitPrice : limitPrice)
     : undefined;
 
+  // Closing orders use GTC so they persist until filled (an unfilled close leaves an
+  // unhedged position). Opening orders use DAY so stale unfilled entries don't carry
+  // over to the next session if the bot crashes before cancelAfterSec fires.
+  const tif = params.isClosing ? 'GTC' : 'DAY';
+
   const body: Record<string, unknown> = {
     symbol,
     legs: comboLegs,
     action: 'BUY',
     orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
     quantity: params.legs[0].quantity,
-    tif: 'GTC',
+    tif,
     clientOrderRef,
   };
   if (signedLimitPrice != null) {
@@ -282,12 +287,13 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
     if (resolvedLegs.length === 1) {
       // Single leg order
       const { leg, conId } = resolvedLegs[0];
+      // Same DAY/GTC split as combo orders — see buildComboOrderBody.
       const singleBody: Record<string, unknown> = {
         conId,
         action: leg.action,
         orderType: params.orderType === 'LIMIT' ? 'LMT' : 'MKT',
         quantity: leg.quantity,
-        tif: 'GTC',
+        tif: params.isClosing ? 'GTC' : 'DAY',
         clientOrderRef,
       };
       if (limitPrice != null) {

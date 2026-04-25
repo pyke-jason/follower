@@ -2,7 +2,8 @@ import type { Trade } from '../db/schema.js';
 import type { PositionFilters } from '../trades/filters.js';
 import type { WorkingOrderExposure } from './order-manager.js';
 import { safeParseFloat } from '../lib/numbers.js';
-import { contractMultiplier, tradeQty, notionalValue } from '../lib/trade.js';
+import { contractMultiplier, tradeQty, notionalValue, getSpreadWidth } from '../lib/trade.js';
+import { parseLegs } from '../db/parse.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -11,6 +12,8 @@ export type RiskCheckConfig = {
   maxTotalPositions: number;     // both: 20
   maxDrawdownPct: number;        // both: 5
   maxNotionalMultiplier: number; // both: 2 (2x equity leverage cap)
+  /** Block new opens when (equity − maintenanceMargin) / equity < this fraction. */
+  minMarginCushionPct?: number;  // both: 0.20
 };
 
 export type RiskCheckDeps = {
@@ -18,6 +21,7 @@ export type RiskCheckDeps = {
   getDailyClosedPnl: () => Promise<number>;
   getStartingEquity: () => Promise<number | null>;
   getCurrentEquity: () => Promise<number>;
+  getMaintenanceMargin: () => Promise<number | null>;
   getReconciliationAlertCount: () => Promise<number>;
   getWorkingOrderExposure: () => WorkingOrderExposure;
 };
@@ -37,7 +41,26 @@ export type RiskCheckResult = {
   workingOrdersOnSymbol: number;
   workingOrdersTotal: number;
   workingOrderNotional: number;
+  marginCushionPct?: number;
 };
+
+/**
+ * Risk-appropriate notional for an open position.
+ * For credit spreads (PCS/CCS): uses max-loss (width − credit) × qty × 100,
+ * not the credit received. This prevents the notional cap from being bypassed
+ * by small-credit, wide-spread positions.
+ */
+function positionRiskNotional(trade: Trade): number {
+  if (trade.strategy === 'PCS' || trade.strategy === 'CCS') {
+    const legs = parseLegs(trade.legs);
+    const width = getSpreadWidth(legs);
+    const credit = safeParseFloat(trade.entryPrice);
+    if (width > 0 && isFinite(credit)) {
+      return Math.max(0, width - credit) * tradeQty(trade.quantity) * contractMultiplier(trade.strategy);
+    }
+  }
+  return notionalValue(trade.entryPrice, trade.quantity, trade.strategy);
+}
 
 // ─── Implementation ─────────────────────────────────
 
@@ -62,6 +85,7 @@ export async function checkRiskLimits(
       workingOrdersOnSymbol: 0,
       workingOrdersTotal: 0,
       workingOrderNotional: 0,
+      marginCushionPct: undefined,
     };
   }
 
@@ -115,9 +139,8 @@ export async function checkRiskLimits(
   const effectiveTotal = totalOpenPositions + workingExposure.totalCount;
 
   // 4. Notional exposure (leverage cap)
-  const totalNotional = allOpen.reduce((sum, t) => {
-    return sum + notionalValue(t.entryPrice, t.quantity, t.strategy);
-  }, 0);
+  // Use max-loss notional for credit spreads (PCS/CCS) — not the credit received.
+  const totalNotional = allOpen.reduce((sum, t) => sum + positionRiskNotional(t), 0);
   const equity = await deps.getCurrentEquity();
   const maxNotional = equity * config.maxNotionalMultiplier;
   const effectiveNotional = totalNotional + workingExposure.totalNotional;
@@ -127,15 +150,28 @@ export async function checkRiskLimits(
   const symbolBlocked = effectiveOnSymbol >= config.maxOnSymbol;
   const totalBlocked = effectiveTotal >= config.maxTotalPositions;
 
-  // 6. Reconciliation alerts
+  // 6. Margin cushion check — block new opens before approaching margin call
+  const maintenanceMargin = await deps.getMaintenanceMargin();
+  let marginCushionPct: number | undefined;
+  let marginCushionBlocked = false;
+  if (config.minMarginCushionPct != null && maintenanceMargin != null && equity > 0) {
+    marginCushionPct = Math.round(((equity - maintenanceMargin) / equity) * 10000) / 100;
+    if (marginCushionPct / 100 < config.minMarginCushionPct) {
+      marginCushionBlocked = true;
+    }
+  }
+
+  // 7. Reconciliation alerts
   const alertCount = await deps.getReconciliationAlertCount();
 
-  // 7. Result
+  // 8. Result
   const allowed = !symbolBlocked && !totalBlocked && !drawdownBlocked
-    && !notionalBlocked && alertCount === 0;
+    && !notionalBlocked && !marginCushionBlocked && alertCount === 0;
 
   let reason: string | undefined;
-  if (drawdownBlocked) {
+  if (marginCushionBlocked) {
+    reason = `Margin cushion ${marginCushionPct?.toFixed(1)}% < ${((config.minMarginCushionPct ?? 0) * 100).toFixed(0)}% minimum (equity $${equity.toFixed(0)} maintenance $${maintenanceMargin?.toFixed(0)})`;
+  } else if (drawdownBlocked) {
     reason = `Daily drawdown ${currentDrawdownPct}% >= ${config.maxDrawdownPct}%`;
   } else if (notionalBlocked) {
     // Include top 3 positions for debugging
@@ -174,5 +210,6 @@ export async function checkRiskLimits(
     workingOrdersOnSymbol: workingExposure.countBySymbol.get(input.symbol) ?? 0,
     workingOrdersTotal: workingExposure.totalCount,
     workingOrderNotional: workingExposure.totalNotional,
+    marginCushionPct,
   };
 }
