@@ -725,6 +725,7 @@ const TOGGLE_ENV: Record<string, string> = {
   discord: 'ALERTS_DISCORD_ENABLED',
   pushover: 'ALERTS_PUSHOVER_ENABLED',
   ingestion: 'LIVE_INGESTION_ENABLED',
+  orders: 'LIVE_ORDERS_ENABLED',
 };
 
 app.post('/settings/secrets', async (c) => {

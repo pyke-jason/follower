@@ -437,6 +437,12 @@ async function placeOrder(
   signalIndex?: number,
   pricingContext?: PricingContext,
 ): Promise<OrderResult> {
+  // Emergency kill switch: POST /settings/toggles/orders with {enabled:false}
+  // or set LIVE_ORDERS_ENABLED=0 in the environment.
+  if (process.env.LIVE_ORDERS_ENABLED === '0') {
+    log.warn({ symbol: params.symbol, strategy: params.strategy }, 'Order placement halted — LIVE_ORDERS_ENABLED=0');
+    return { orderId: '', status: 'REJECTED', message: 'Order placement halted (LIVE_ORDERS_ENABLED=0)' };
+  }
   const raw = await deps.orderManager.submitOrder(params);
   const result = OrderResultSchema.parse(raw);
 

@@ -132,7 +132,14 @@ function ibkrClassify(err: unknown): ErrorCategory {
 // Needed so modifyOrder can preserve the sign convention — the sidecar's
 // modify endpoint writes lmtPrice verbatim, and OrderManager passes positive
 // chase prices that must be re-signed for credit combos.
+// Entries are deleted on cancel; filled orders are never explicitly removed,
+// so cap at 2000 to prevent unbounded growth across a long-lived session.
 const creditComboOrderIds = new Set<string>();
+const CREDIT_COMBO_MAX = 2000;
+
+function evictOldestIfNeeded(set: Set<string>, max: number): void {
+  if (set.size >= max) set.delete(set.values().next().value as string);
+}
 
 // ── HTTP helper ─────────────────────────────────────────────────────
 
@@ -180,6 +187,7 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
 // ── BrokerService Implementation ────────────────────────────────────
 
 const alertedMissingSubscription = new Set<string>();
+const ALERTED_SUBSCRIPTION_MAX = 500;
 
 async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
   try {
@@ -221,6 +229,7 @@ async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/IBKR sidecar 402:/.test(msg) && !alertedMissingSubscription.has(symbol)) {
+      evictOldestIfNeeded(alertedMissingSubscription, ALERTED_SUBSCRIPTION_MAX);
       alertedMissingSubscription.add(symbol);
       const isCompetingSession = /"twsCode"\s*:\s*10197/.test(msg);
       void sendSystemAlert({
@@ -315,6 +324,7 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
 
     const orderId = String(order.orderId);
     if (resolvedLegs.length > 1 && (isCreditOrderStructural(params.legs) ?? false)) {
+      evictOldestIfNeeded(creditComboOrderIds, CREDIT_COMBO_MAX);
       creditComboOrderIds.add(orderId);
     }
 
