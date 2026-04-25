@@ -16,6 +16,7 @@
     "baseUrl": ".",
     "paths": {
       "@/agent/*": ["../src/agent/*"],
+      "@/broker/*": ["../src/broker/*"],
       "@/db/*": ["../src/db/*"],
       "@/eval/*": ["../src/eval/*"],
       "@/lib/*": ["./src/lib/*", "../src/lib/*"],

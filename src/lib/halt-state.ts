@@ -4,7 +4,7 @@ import { PROJECT_ROOT } from './paths.js';
 
 const HALT_FILE = resolve(PROJECT_ROOT, 'data', 'trading.halt');
 
-export type HaltState = {
+type HaltState = {
   haltedAt: string;
   reason: string;
   triggeredBy: 'cli' | 'api' | 'system';

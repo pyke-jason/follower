@@ -22,7 +22,7 @@ import type { Direction, Strategy } from '@/lib/enums.js';
 import type { OrderLeg, StopOrderParams } from '@/broker/types.js';
 import { roundCents } from '@/lib/numbers.js';
 
-export const STOP_DEFAULTS = {
+const STOP_DEFAULTS = {
   /** Maximum loss fraction for long stock before stop triggers. */
   STOCK_LOSS_PCT: 0.05,
   /** Maximum loss fraction of premium for long options. */
