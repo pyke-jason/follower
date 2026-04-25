@@ -14,6 +14,7 @@ import { acquireLock, releaseLock } from './lib/pidlock.js';
 import { startHealthcheck, stopHealthcheck } from './lib/healthcheck.js';
 import { PATHS } from './lib/paths.js';
 import { sendSystemAlert } from './lib/alert.js';
+import { checkDiskSpace } from './lib/disk-check.js';
 
 const LOCK_PATH = PATHS.lockFile;
 
@@ -27,6 +28,8 @@ let reconSchedulers: ReconciliationScheduler[] = [];
 let fillSweeps: FillSweep[] = [];
 
 async function main() {
+  await checkDiskSpace();
+
   const lock = acquireLock(LOCK_PATH);
   if (!lock.acquired) {
     console.error(`\n[pidlock] Backend already running (PID ${lock.existingPid}). Exiting.\n`);
