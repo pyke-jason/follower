@@ -71,7 +71,36 @@ export function buildOrderCallbacks(
         { signalIndex: pending.signalIndex },
         { ...order, pending, immediatelyFilled: false },
       );
-      await pending.recordFill(order);
+      try {
+        await pending.recordFill(order);
+      } catch (recordErr) {
+        // Fill confirmed at broker but DB write failed — write an orphan record so
+        // reconciliation can detect and manually close the position.
+        log.error({ err: recordErr, orderId: order.orderId }, 'recordFill failed after ORDER_FILLED event — writing orphan');
+        try {
+          await db.insert(schema.orphanFills).values({
+            orderId: order.orderId,
+            symbol: order.params.symbol,
+            strategy: order.params.strategy,
+            direction: order.params.direction,
+            filledPrice: order.filledPrice,
+            filledAt: order.filledAt.toISOString(),
+            filledQuantity: order.filledQuantity ?? null,
+            commission: order.commission ?? null,
+            legs: JSON.stringify(order.params.legs),
+            rawOrder: JSON.stringify(order),
+            detectedAt: deps.clock().toISOString(),
+            ...deps.scope,
+          }).onConflictDoNothing();
+        } catch (orphanErr) {
+          log.error({ err: orphanErr, orderId: order.orderId }, 'orphan_fills insert also failed — position may be untracked');
+        }
+        await deps.sendAlert?.({
+          title: 'CRITICAL: Fill DB write failed — position untracked',
+          message: `Order ${order.orderId}: ${order.params.direction} ${order.params.strategy} ${order.params.symbol} filled @ $${order.filledPrice}. DB write failed after fill event. Written to orphan_fills. Manual reconciliation required.`,
+          severity: 'critical',
+        });
+      }
     },
 
     onCancel: async (order) => {

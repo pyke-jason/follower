@@ -137,22 +137,36 @@ async function claimAndProcess(state: ChannelRunnerState, task: Task): Promise<v
   await handleTask(state, task);
 }
 
+// 120 s gives the LLM three 60 s attempts (LLM_DEFAULTS maxRetries=3) plus DB/broker overhead
+// without this, a hung provider call stalls all incoming signals indefinitely.
+const TASK_TIMEOUT_MS = 120_000;
+
 async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> {
   console.log(`[Runner ${state.service.channelId}] Processing task ${task.id} (${task.taskType})`);
   const trace = createTrace();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`Task ${task.id} timed out after ${TASK_TIMEOUT_MS / 1000}s`)),
+      TASK_TIMEOUT_MS,
+    );
+  });
   try {
-    await processTaskShared(task, {
-      getOpenPositions: state.bundle.getOpenPositions,
-      agent: await getAgent(),
-      pipeline: state.bundle.pipelineDeps,
-      scope: state.service.channelId,
-      agentIdentity: getDefaultTradeModel(),
-      trace,
-      onResult: async (result, _emitter) => {
-        await completeTask(task.id);
-        console.log(`[Runner ${state.service.channelId}] Task ${task.id} completed: ${result.outcome}`);
-      },
-    });
+    await Promise.race([
+      processTaskShared(task, {
+        getOpenPositions: state.bundle.getOpenPositions,
+        agent: await getAgent(),
+        pipeline: state.bundle.pipelineDeps,
+        scope: state.service.channelId,
+        agentIdentity: getDefaultTradeModel(),
+        trace,
+        onResult: async (result, _emitter) => {
+          await completeTask(task.id);
+          console.log(`[Runner ${state.service.channelId}] Task ${task.id} completed: ${result.outcome}`);
+        },
+      }),
+      timeoutPromise,
+    ]);
     state.circuitBreaker.recordSuccess();
     upsertRuntimeHealth(state.service.channelId, {
       brokerHealthy: true,
@@ -167,6 +181,8 @@ async function handleTask(state: ChannelRunnerState, task: Task): Promise<void> 
       circuitOpen: state.circuitBreaker.isOpen(),
       lastError: errMsg.slice(0, 500),
     });
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }
 
@@ -261,7 +277,9 @@ export async function initRunner(): Promise<{ channels: RuntimeChannelService[] 
   // Independent timers for expiry warnings and circuit breaker health
   expiryTimer = setInterval(() => {
     for (const state of channels.values()) {
-      checkExpiryWarnings(() => state.bundle.getOpenPositions()).catch(() => {});
+      checkExpiryWarnings(() => state.bundle.getOpenPositions()).catch((err) => {
+        log.error({ err }, 'checkExpiryWarnings failed');
+      });
     }
   }, 5 * 60 * 1000);
 
