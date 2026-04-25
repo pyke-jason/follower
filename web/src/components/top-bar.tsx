@@ -105,6 +105,17 @@ export function TopBar() {
 
         <div className="flex-1" />
 
+        {/* LIVE / PAPER account mode badge */}
+        {status?.channelKind === 'runtime' && status.accountMode != null && (
+          <span className={`text-[10px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded border ${
+            status.accountMode === 'live'
+              ? 'text-gain border-gain/40 bg-gain/10'
+              : 'text-warning border-warning/40 bg-warning/10'
+          }`}>
+            {status.accountMode}
+          </span>
+        )}
+
         {/* Runtime alert indicator */}
         {showRuntimeAlert && (
           <span className="relative flex h-2.5 w-2.5 mr-1">

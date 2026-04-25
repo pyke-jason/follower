@@ -29,6 +29,8 @@ export type ChannelBrief = z.infer<typeof channelBriefSchema>;
 export const statusResponseSchema = z.object({
   channelId: z.string(),
   channelKind: channelKindSchema,
+  /** 'live' or 'paper' for runtime channels; absent for backtest channels. */
+  accountMode: z.enum(['live', 'paper']).nullable().optional(),
   openTrades: z.number(),
   /** Realized P&L from trades closed today (live) or total realized (backtest). */
   todayPnl: z.number(),
