@@ -3,6 +3,7 @@ import { eq, and, gte, ne } from 'drizzle-orm';
 import { fetchJson } from './resilient-fetcher.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
+import type { Message } from '../db/schema.js';
 import { compactReactions, type SignalRMessage } from './signalr.js';
 import { isoToDateKey } from '../lib/et-date.js';
 import { normalizeForDedup, computeContentHash } from './dedup.js';
@@ -33,6 +34,20 @@ const ApiResponseSchema = z.object({
 
 type ApiMessage = z.infer<typeof ApiMessageSchema>;
 
+type HistoricalFetchResult = {
+  fetched: number;
+  saved: number;
+  messageIds: string[];
+};
+
+export type HistoricalDaySyncResult = {
+  fetched: number;
+  saved: number;
+  savedMessages: Message[];
+};
+
+type SavedMessageHandler = (message: Message) => void | Promise<void>;
+
 // ─── Active Runs (for cancellation) ─────────────────
 
 const activeControllers = new Map<string, AbortController>();
@@ -43,8 +58,9 @@ export async function fetchHistorical(opts: {
   since: string;
   until: string;
   clearExisting?: boolean;
-}): Promise<void> {
-  const { since, until, clearExisting = false } = opts;
+  onSavedMessage?: SavedMessageHandler;
+}): Promise<HistoricalFetchResult> {
+  const { since, until, clearExisting = false, onSavedMessage } = opts;
 
   // Create the run record
   const runId = crypto.randomUUID();
@@ -69,6 +85,7 @@ export async function fetchHistorical(opts: {
 
     let totalFetched = 0;
     let totalSaved = 0;
+    const messageIds: string[] = [];
 
     // Process each chunk
     for (const date of dates) {
@@ -123,9 +140,10 @@ export async function fetchHistorical(opts: {
         .where(eq(schema.historicalFetchChunks.id, chunk.id));
 
       try {
-        const { fetched, saved } = await fetchDay(date, controller.signal);
+        const { fetched, saved, savedMessages } = await fetchDay(date, controller.signal, onSavedMessage);
         totalFetched += fetched;
         totalSaved += saved;
+        messageIds.push(...savedMessages.map((message) => message.id));
 
         await db.update(schema.historicalFetchChunks)
           .set({
@@ -176,6 +194,7 @@ export async function fetchHistorical(opts: {
       .where(eq(schema.historicalFetchRuns.id, runId));
 
     console.log(`[Historical] Run ${finalStatus}: ${totalFetched} fetched, ${totalSaved} new messages saved`);
+    return { fetched: totalFetched, saved: totalSaved, messageIds };
   } catch (err) {
     const isCancelled = controller.signal.aborted;
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -193,9 +212,18 @@ export async function fetchHistorical(opts: {
       throw err;
     }
     console.log('[Historical] Run cancelled');
+    return { fetched: 0, saved: 0, messageIds: [] };
   } finally {
     activeControllers.delete(runId);
   }
+}
+
+export async function syncHistoricalDay(
+  date: string,
+  onSavedMessage?: SavedMessageHandler,
+): Promise<HistoricalDaySyncResult> {
+  const controller = new AbortController();
+  return fetchDay(date, controller.signal, onSavedMessage);
 }
 
 async function cancelFetch(runId: string): Promise<boolean> {
@@ -207,7 +235,11 @@ async function cancelFetch(runId: string): Promise<boolean> {
 
 // ─── Internals ──────────────────────────────────────
 
-async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: number; saved: number }> {
+async function fetchDay(
+  date: string,
+  signal: AbortSignal,
+  onSavedMessage?: SavedMessageHandler,
+): Promise<{ fetched: number; saved: number; savedMessages: Message[] }> {
   // The API treats `until` as exclusive, so we pass the next day
   const nextDay = new Date(date + 'T00:00:00Z');
   nextDay.setUTCDate(nextDay.getUTCDate() + 1);
@@ -225,6 +257,7 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
   }
 
   let saved = 0;
+  const savedMessages: Message[] = [];
   for (const apiMsg of messages) {
     const msg = mapToSignalRFormat(apiMsg);
     const classification = classifyMessage(msg.MessageText);
@@ -232,7 +265,7 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
     const contentHash = computeContentHash(normalizedText);
     const reactions = compactReactions(msg.Reactions);
 
-    const [row] = await db.insert(schema.messages).values({
+    const values = {
       id: msg.Id,
       author: msg.User.Name,
       timestamp: msg.PostTime || new Date().toISOString(),
@@ -247,15 +280,26 @@ async function fetchDay(date: string, signal: AbortSignal): Promise<{ fetched: n
       confidence: classification.confidence != null ? String(classification.confidence) : null,
       contentHash,
       reactions,
-    }).onConflictDoUpdate({
-      target: schema.messages.id,
-      set: { reactions },
-    }).returning({ id: schema.messages.id });
+    };
 
-    if (row) saved++;
+    const [inserted] = await db.insert(schema.messages)
+      .values(values)
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted) {
+      saved++;
+      savedMessages.push(inserted);
+      await onSavedMessage?.(inserted);
+      continue;
+    }
+
+    await db.update(schema.messages)
+      .set({ reactions })
+      .where(eq(schema.messages.id, msg.Id));
   }
 
-  return { fetched: messages.length, saved };
+  return { fetched: messages.length, saved, savedMessages };
 }
 
 function mapToSignalRFormat(api: ApiMessage): SignalRMessage {

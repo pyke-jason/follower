@@ -18,7 +18,7 @@ import type { TradeLeg, TradeMetadata, TradeFlag } from '../db/schema.js';
 import type { Direction, Strategy, TradeAction } from '../lib/enums.js';
 import type { OrderLeg } from '../broker/types.js';
 import { buildFlags } from './trade-flags.js';
-import { updateTradeRiskSnapshot, type TradeRiskInput } from './trade-risk.js';
+import { updateTradeRiskSnapshot, type TradeRiskInput, type UpdateRiskOptions } from './trade-risk.js';
 
 const log = createLogger('RecordTrade');
 
@@ -27,6 +27,19 @@ const sumChase = (a?: number, b?: number): number | undefined => {
   const sum = (a ?? 0) + (b ?? 0);
   return sum > 0 ? sum : undefined;
 };
+
+/** MIN(legs.expiry) for option/spread positions; null when no defensible date.
+ *  Used to mark trades as past-plan in the diagnosis view. */
+function plannedExitFromLegs(legs: readonly TradeLeg[] | null | undefined): string | null {
+  if (!legs || legs.length === 0) return null;
+  let earliest: string | null = null;
+  for (const leg of legs) {
+    if (leg.type === 'STOCK') continue;
+    if (!leg.expiry) continue;
+    if (earliest == null || leg.expiry < earliest) earliest = leg.expiry;
+  }
+  return earliest;
+}
 
 /** Transaction handle — same API surface as `db` but scoped to a transaction. */
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -138,10 +151,11 @@ function withRiskSnapshot(
   metadata: TradeMetadata,
   input: TradeRiskInput,
   previousRisk = metadata.risk,
+  options: UpdateRiskOptions = {},
 ): TradeMetadata {
   return {
     ...metadata,
-    risk: updateTradeRiskSnapshot(input, previousRisk),
+    risk: updateTradeRiskSnapshot(input, previousRisk, options),
   };
 }
 
@@ -311,6 +325,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
       closedAt: null,
       channelId,
       metadata: openMetadata,
+      plannedExitDate: plannedExitFromLegs(openLegs),
     };
 
     const trade = await runTx(async (tx) => {
@@ -428,7 +443,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
             entryPrice: newEntryPrice,
             quantity: existing.quantity,
             legs: [keptLeg],
-          }, existingMeta.risk);
+          }, existingMeta.risk, { topologyChanged: true });
           const [row] = await tx.update(schema.trades)
             .set({
               strategy: targetStrategy,
@@ -436,6 +451,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
               entryPrice: String(newEntryPrice),
               direction: newDirection,
               metadata: nextMeta,
+              plannedExitDate: plannedExitFromLegs([keptLeg]),
             })
             .where(eq(schema.trades.id, existing.id))
             .returning();
@@ -753,7 +769,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
         entryPrice: newEntryPrice,
         quantity: existing.quantity,
         legs: [keptLeg],
-      }, existingMeta.risk);
+      }, existingMeta.risk, { topologyChanged: true });
 
       const [row] = await tx.update(schema.trades)
         .set({
@@ -762,6 +778,7 @@ export async function recordTrade(input: RecordTradeInput): Promise<RecordTradeR
           entryPrice: String(newEntryPrice),
           direction: newDirection,
           metadata: nextMeta,
+          plannedExitDate: plannedExitFromLegs([keptLeg]),
         })
         .where(eq(schema.trades.id, existing.id))
         .returning();

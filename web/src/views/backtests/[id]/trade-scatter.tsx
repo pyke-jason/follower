@@ -2,15 +2,12 @@ import { useState, useMemo } from 'react';
 import { ScatterPlotChart, type ScatterTooltipProps } from './scatter-chart';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { formatCurrency } from '@/lib/format';
-type TradeScatterPoint = {
-  symbol: string;
-  pnl: number;
-  strategy: string;
-  direction: string;
-  trader: string;
-  date: string;
-  quantity: number;
-};
+import { useSearchParam } from '@/hooks/use-search-param';
+import { STRAT_COLOR, STRAT_ORDER } from '@/lib/strat-colors';
+import type { Strategy } from '@src/lib/enums';
+import type { BacktestDetailResponse } from '@src/local-api/http-schemas';
+
+type TradeScatterPoint = BacktestDetailResponse['tradeScatter'][number];
 
 const CHART_COLORS = [
   'var(--color-chart-1)',
@@ -24,6 +21,18 @@ type ColorMode = 'strategy' | 'direction' | 'trader';
 
 function colorFor(index: number): string {
   return CHART_COLORS[index % CHART_COLORS.length];
+}
+
+const STRAT_SET = new Set<string>(STRAT_ORDER);
+
+function parseStratFilter(raw: string | null): Set<Strategy> {
+  if (!raw) return new Set();
+  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const out = new Set<Strategy>();
+  for (const p of parts) {
+    if (STRAT_SET.has(p)) out.add(p as Strategy);
+  }
+  return out;
 }
 
 function ScatterTooltip({ active, payload }: ScatterTooltipProps<TradeScatterPoint>) {
@@ -46,10 +55,25 @@ function ScatterTooltip({ active, payload }: ScatterTooltipProps<TradeScatterPoi
 
 export function TradeScatter({ data }: { data: TradeScatterPoint[] }) {
   const [colorMode, setColorMode] = useState<ColorMode>('strategy');
+  const [stratParam, setStratParam] = useSearchParam('strat');
+  const selectedStrats = useMemo(() => parseStratFilter(stratParam), [stratParam]);
+
+  const presentStrats = useMemo(() => {
+    const set = new Set<Strategy>();
+    for (const pt of data) {
+      if (STRAT_SET.has(pt.strategy)) set.add(pt.strategy as Strategy);
+    }
+    return STRAT_ORDER.filter((s) => set.has(s));
+  }, [data]);
+
+  const filteredData = useMemo(() => {
+    if (selectedStrats.size === 0) return data;
+    return data.filter((pt) => selectedStrats.has(pt.strategy as Strategy));
+  }, [data, selectedStrats]);
 
   const series = useMemo(() => {
     const groups = new Map<string, TradeScatterPoint[]>();
-    for (const pt of data) {
+    for (const pt of filteredData) {
       const key = colorMode === 'strategy' ? pt.strategy
         : colorMode === 'direction' ? pt.direction
         : pt.trader;
@@ -63,19 +87,29 @@ export function TradeScatter({ data }: { data: TradeScatterPoint[] }) {
       label: key,
       color: colorMode === 'direction'
         ? (key === 'LONG' ? 'var(--color-profit)' : 'var(--color-loss)')
-        : colorFor(i),
+        : colorMode === 'strategy' && STRAT_SET.has(key)
+          ? STRAT_COLOR[key as Strategy]
+          : colorFor(i),
       data: points,
     }));
-  }, [data, colorMode]);
+  }, [filteredData, colorMode]);
 
-  // Compute zRange based on quantity variance
-  const quantities = data.map((d) => d.quantity);
+  const quantities = filteredData.map((d) => d.quantity);
   const allSame = quantities.every((q) => q === quantities[0]);
   const zRange: [number, number] = allSame ? [60, 60] : [30, 200];
 
+  const onStratToggle = (next: string[]) => {
+    if (next.length === 0) {
+      setStratParam(null);
+      return;
+    }
+    const ordered = STRAT_ORDER.filter((s) => next.includes(s));
+    setStratParam(ordered.join(','));
+  };
+
   return (
     <div>
-      <div className="flex gap-1 mb-2 px-1">
+      <div className="flex flex-wrap items-center gap-2 mb-2 px-1">
         <ToggleGroup
           type="single"
           value={colorMode}
@@ -88,6 +122,35 @@ export function TradeScatter({ data }: { data: TradeScatterPoint[] }) {
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
+        {presentStrats.length > 1 && (
+          <ToggleGroup
+            type="multiple"
+            value={[...selectedStrats]}
+            onValueChange={onStratToggle}
+            size="sm"
+            aria-label="Filter by strategy"
+          >
+            {presentStrats.map((s) => (
+              <ToggleGroupItem
+                key={s}
+                value={s}
+                className="text-[10px] px-2 py-0.5 gap-1"
+              >
+                <span
+                  aria-hidden
+                  className="inline-block size-2 rounded-sm"
+                  style={{ backgroundColor: STRAT_COLOR[s] }}
+                />
+                {s}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        )}
+        {selectedStrats.size > 0 && (
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {filteredData.length}/{data.length}
+          </span>
+        )}
       </div>
       <ScatterPlotChart
         series={series}

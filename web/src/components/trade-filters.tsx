@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { createFilterParams } from '@/hooks/use-filter-params';
 import { TRADE_FLAGS } from '@src/db/schema';
-import type { Trade, TradeFlag } from '@src/db/schema';
+import type { TradeFlag } from '@src/db/schema';
+import type { TradeRowWithQuality } from '@/lib/page-adapters';
 import type { EvalSummary } from '@src/local-api/http-schemas';
 
 // ── Filter values ──────────────────────────────────────────────────
@@ -43,11 +44,11 @@ interface TradeFilterValues {
 }
 
 function applyTradeFilters(
-  trades: Trade[],
+  trades: TradeRowWithQuality[],
   filters: TradeFilterValues,
   flagsByTradeId?: Record<string, TradeFlag[]>,
   labelsByTradeId?: Record<string, { bucket: string }>,
-): Trade[] {
+): TradeRowWithQuality[] {
   return trades.filter((t) => {
     if (filters.statuses.length > 0 && !filters.statuses.includes(t.status)) return false;
     if (filters.traders.length > 0 && !filters.traders.includes(t.trader)) return false;
@@ -87,8 +88,8 @@ interface TradeFilterContextValue {
   clearKey: (key: MultiFilterKey) => void;
   clearFilters: () => void;
   hasFilters: boolean;
-  allTrades: Trade[];
-  filteredTrades: Trade[];
+  allTrades: TradeRowWithQuality[];
+  filteredTrades: TradeRowWithQuality[];
   availableFlags: TradeFlag[];
   labelsByTradeId?: Record<string, { bucket: string }>;
 }
@@ -101,7 +102,7 @@ export function TradeFilterProvider({
   labelsByTradeId,
   children,
 }: {
-  trades: Trade[];
+  trades: TradeRowWithQuality[];
   flagsByTradeId?: Record<string, TradeFlag[]>;
   labelsByTradeId?: Record<string, { bucket: string }>;
   children: ReactNode;

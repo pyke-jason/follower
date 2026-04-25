@@ -17,6 +17,7 @@ import { createFilterParams } from '@/hooks/use-filter-params';
 import { useSearchParam } from '@/hooks/use-search-param';
 import { useScopedHref } from '@/hooks/use-scoped-href';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/empty-state';
 import { DataTable } from '@/components/data-table';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -33,7 +34,20 @@ import type { TradeLabel } from '@src/local-api/http-schemas';
 import type { LivePosition } from '@/lib/trade-story';
 import type { LucideIcon } from 'lucide-react';
 
-type SortColumn = 'pnl' | 'openedAt';
+type SortColumn = 'pnl' | 'openedAt' | 'rMultiple';
+
+/** Quality decoration the backend attaches to every trade row served by
+ *  /dashboard, /trades, and /trades-view. Inner fields can be null when a
+ *  trade has no defensible finite risk (R, score, grade null; reasons may
+ *  contain "no finite risk"). */
+type TradeQuality = {
+  rMultiple: number | null;
+  score: number | null;
+  grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+  reasons: string[];
+};
+
+type TradeWithQuality = Trade & { quality: TradeQuality };
 
 const EMPTY_EVENTS: readonly TradeEvent[] = [];
 const EMPTY_FLAGS: readonly TradeFlag[] = [];
@@ -83,7 +97,7 @@ type TradePresentation = {
 type TradeTableRow = {
   kind: 'trade';
   key: string;
-  trade: Trade;
+  trade: TradeWithQuality;
   events: readonly TradeEvent[];
   flags: readonly TradeFlag[];
   label?: TradeLabel;
@@ -105,7 +119,7 @@ type TableRow = TradeTableRow | EventTableRow;
 export function TradesTableClient({
   trades,
 }: {
-  trades: Trade[];
+  trades: TradeWithQuality[];
 }) {
   const {
     eventsByTradeId,
@@ -144,6 +158,15 @@ export function TradesTableClient({
         if (aPnl == null) return 1;
         if (bPnl == null) return -1;
         return sortDirection === 'desc' ? bPnl - aPnl : aPnl - bPnl;
+      });
+    } else if (sortColumn === 'rMultiple') {
+      rows.sort((a, b) => {
+        const aR = a.quality.rMultiple;
+        const bR = b.quality.rMultiple;
+        if (aR == null && bR == null) return 0;
+        if (aR == null) return 1;
+        if (bR == null) return -1;
+        return sortDirection === 'desc' ? bR - aR : aR - bR;
       });
     } else {
       rows.sort((a, b) => {
@@ -210,17 +233,35 @@ export function TradesTableClient({
         key: 'position',
         label: 'Position',
         sortable: true,
-        className: hasLabels ? 'w-[52%]' : 'w-[62%]',
+        className: hasLabels ? 'w-[38%]' : 'w-[44%]',
         render: (row) => (row.kind === 'trade'
           ? <TradeIdentityCell row={row} />
           : <EventIdentityCell row={row} />),
+      },
+      {
+        key: 'rMultiple',
+        label: 'R',
+        sortable: true,
+        align: 'right',
+        className: 'w-[10%]',
+        render: (row) => (row.kind === 'trade'
+          ? <TradeRCell row={row} />
+          : null),
+      },
+      {
+        key: 'reasons',
+        label: 'Reasons',
+        className: 'w-[18%]',
+        render: (row) => (row.kind === 'trade'
+          ? <TradeReasonsCell row={row} />
+          : null),
       },
       {
         key: 'pnl',
         label: 'Mark / P&L',
         sortable: true,
         align: 'right',
-        className: hasLabels ? 'w-[34%]' : 'w-[38%]',
+        className: hasLabels ? 'w-[23%]' : 'w-[28%]',
         render: (row) => (row.kind === 'trade'
           ? <TradePnlCell row={row} />
           : <EventPnlCell row={row} />),
@@ -612,6 +653,47 @@ function EventPnlCell({ row }: { row: EventTableRow }) {
         <div className={`font-mono tabular-nums text-[10px] ${pnlColor(trimPnl)}`}>
           {formatCurrency(trimPnl)}
         </div>
+      )}
+    </div>
+  );
+}
+
+function TradeRCell({ row }: { row: TradeTableRow }) {
+  const r = row.trade.quality.rMultiple;
+  if (r == null || !Number.isFinite(r)) {
+    return <span className="font-mono text-xs tabular-nums text-muted-foreground">--</span>;
+  }
+  const tone = r > 0 ? 'text-profit' : r < 0 ? 'text-loss' : 'text-muted-foreground';
+  const sign = r > 0 ? '+' : '';
+  return (
+    <span className={`font-mono text-xs tabular-nums ${tone}`}>
+      {sign}{r.toFixed(1)}R
+    </span>
+  );
+}
+
+function TradeReasonsCell({ row }: { row: TradeTableRow }) {
+  const reasons = row.trade.quality.reasons;
+  if (reasons.length === 0) {
+    return <span className="text-muted-foreground/40 text-[10px]">--</span>;
+  }
+  const visible = reasons.slice(0, 2);
+  const overflow = reasons.length - visible.length;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {visible.map((reason) => (
+        <Badge
+          key={reason}
+          variant="outline"
+          className="px-1.5 py-0 text-[10px] font-normal"
+        >
+          {reason}
+        </Badge>
+      ))}
+      {overflow > 0 && (
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          +{overflow} more
+        </span>
       )}
     </div>
   );

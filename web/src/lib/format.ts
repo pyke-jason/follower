@@ -110,7 +110,7 @@ export function formatRMultiple(value: number | null | undefined): string {
 }
 
 export function pnlColor(value: number | string | null | undefined): string {
-  if (value == null) return 'text-zinc-400';
+  if (value == null) return 'text-muted-foreground';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num) || num === 0) return 'text-muted-foreground';
   return num > 0 ? 'text-profit' : 'text-loss';

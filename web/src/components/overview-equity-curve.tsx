@@ -9,6 +9,8 @@ import { formatCurrency, formatCurrencyAxis, formatDateShort, formatDateTooltip 
 
 type CurvePoint<Key extends string> = { date: string } & Record<Key, number>;
 
+export type UnrealizedPnlPoint = CurvePoint<'unrealizedPnl'>;
+
 interface CurveProps<Key extends string> {
   data: CurvePoint<Key>[];
   dataKey: Key;
@@ -16,11 +18,11 @@ interface CurveProps<Key extends string> {
 }
 
 interface UnrealizedProps {
-  data: { date: string; unrealizedPnl: number }[];
+  data: UnrealizedPnlPoint[];
 }
 
 interface EquityProps {
-  data: { date: string; equity: number }[];
+  data: CurvePoint<'equity'>[];
 }
 
 function OverviewCurve<Key extends string>({ data, dataKey, label }: CurveProps<Key>) {

@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { Card, CardHeader, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardContent, type CardTone } from '@/components/ui/card';
 import { AnimatedNumber } from './animated-number';
 import { Sparkline } from './sparkline';
 import { pnlColor } from '@/lib/format';
@@ -14,6 +14,8 @@ export interface Metric {
   suffix?: string;
   /** Small secondary line below the main value — e.g. "today realized: +$120". */
   secondary?: { label: string; value: number; format?: Metric['format']; colorBySign?: boolean };
+  /** Tints the card border/background to surface attention. Maps directly to Card's `tone` variant. */
+  tone?: CardTone;
 }
 
 interface MetricStripProps {
@@ -36,10 +38,8 @@ export function MetricStrip({ metrics, className }: MetricStripProps) {
       {metrics.map((metric, i) => (
         <Card
           key={metric.label}
-          className={cn(
-            'gap-0 py-0 hover-lift',
-            `stagger-${i + 1}`
-          )}
+          tone={metric.tone}
+          className={cn('gap-0 py-0 hover-lift', `stagger-${i + 1}`)}
         >
           <CardHeader className="px-4 pt-3 pb-0">
             <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-muted-foreground">

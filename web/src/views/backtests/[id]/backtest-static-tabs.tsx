@@ -7,9 +7,16 @@ import { DrawdownChart } from './drawdown-chart';
 import { BreakdownCharts } from './breakdown-charts';
 import { TradeScatter } from './trade-scatter';
 import { RollingWinRate } from './rolling-win-rate';
-import { OpenPositionsTimeline } from './open-positions-timeline';
+import { OpenPositionsTimeline, type OpenPositionsTimelineMode } from './open-positions-timeline';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { TraderTradeDrilldown } from './trader-trade-drilldown';
 import { BacktestTradesPane } from './backtest-trades-pane';
+import {
+  DiagnosisPanel,
+  bucketTrades,
+  type DiagnosisBucket,
+} from './diagnosis-panel';
+import { EmptyState } from '@/components/empty-state';
 import { ChatRoom } from '@/views/messages/chat-room';
 import { ChatHydrator } from '@/views/messages/chat-hydrator';
 import { btChannel } from '@src/lib/channel';
@@ -128,6 +135,9 @@ function BacktestStaticTabsInner({
   onLabelPatch: (tradeId: string, patch: Partial<TradeLabel>) => void;
 }) {
   const [selectedTrader, setSelectedTrader] = useSearchParam('trader');
+  const [timelineModeRaw, setTimelineMode] = useSearchParam('timeline', 'total');
+  const [diagnosisRaw] = useSearchParam('diagnosis');
+  const timelineMode: OpenPositionsTimelineMode = timelineModeRaw === 'by-strategy' ? 'by-strategy' : 'total';
   const {
     run,
     summary,
@@ -154,6 +164,30 @@ function BacktestStaticTabsInner({
     endDate: messagesEndDate ?? config.endDate,
     lastProcessedTs: run.liveMetrics?.lastProcessedMessageTs ?? null,
   }), [allTrades, channelId, config.endDate, config.startDate, config.traders, decisions, messagesEndDate, run.liveMetrics]);
+
+  const diagnosisEndIso = messagesEndDate ?? config.endDate;
+  const diagnosis = useMemo(
+    () => bucketTrades(allTrades, diagnosisEndIso),
+    [allTrades, diagnosisEndIso],
+  );
+
+  const diagnosisBucket: DiagnosisBucket | null =
+    diagnosisRaw === 'holding'
+    || diagnosisRaw === 'wheel-expiry'
+    || diagnosisRaw === 'within-window'
+    || diagnosisRaw === 'past-plan'
+      ? diagnosisRaw
+      : null;
+
+  const diagnosisFilteredTrades = useMemo(() => {
+    if (!diagnosisBucket) return [];
+    return allTrades.filter((trade) => diagnosis.byTradeId[trade.id] === diagnosisBucket);
+  }, [allTrades, diagnosis.byTradeId, diagnosisBucket]);
+
+  const diagnosisFilteredData = useMemo<BacktestDetailResponse>(
+    () => ({ ...data, allTrades: diagnosisFilteredTrades }),
+    [data, diagnosisFilteredTrades],
+  );
 
   const performanceContent = (
     <div className="space-y-4">
@@ -202,7 +236,7 @@ function BacktestStaticTabsInner({
       </div>
 
       <Card className="py-0 gap-0">
-        <CardHeader className="border-b py-3 px-4">
+        <CardHeader className="border-b py-3 px-4 flex-row items-center justify-between gap-2 space-y-0">
           <CardTitle className="text-sm">
             Open Positions Timeline
             {summary?.openAtEnd ? (
@@ -211,11 +245,52 @@ function BacktestStaticTabsInner({
               </span>
             ) : null}
           </CardTitle>
+          <ToggleGroup
+            type="single"
+            value={timelineMode}
+            onValueChange={(v) => { if (v) setTimelineMode(v as OpenPositionsTimelineMode); }}
+            size="sm"
+          >
+            <ToggleGroupItem value="total" className="text-[10px] px-2 py-0.5">total</ToggleGroupItem>
+            <ToggleGroupItem value="by-strategy" className="text-[10px] px-2 py-0.5">by strategy</ToggleGroupItem>
+          </ToggleGroup>
         </CardHeader>
         <CardContent className="pt-4 pb-2 px-2">
           {allTrades.length > 0
-            ? <OpenPositionsTimeline trades={allTrades} endIso={messagesEndDate} />
+            ? <OpenPositionsTimeline trades={allTrades} endIso={messagesEndDate} mode={timelineMode} />
             : noData(240)}
+        </CardContent>
+      </Card>
+
+      <Card className="py-0 gap-0">
+        <CardHeader className="border-b py-3 px-4">
+          <CardTitle className="text-sm">
+            Open Position Diagnosis
+            {diagnosis.buckets.find((b) => b.id === 'past-plan')!.count > 0 && (
+              <span className="ml-2 text-xs font-normal text-warning">
+                {diagnosis.buckets.find((b) => b.id === 'past-plan')!.count} past planned exit
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-3 pb-3 px-3">
+          <div className="grid gap-3 grid-cols-1 md:grid-cols-[minmax(0,260px)_1fr]">
+            <DiagnosisPanel trades={allTrades} endIso={diagnosisEndIso} />
+            <div className="min-h-[320px] flex flex-col">
+              {diagnosisBucket
+                ? (
+                  diagnosisFilteredTrades.length > 0
+                    ? <BacktestTradesPane id={id} data={diagnosisFilteredData} onLabelPatch={onLabelPatch} />
+                    : <EmptyState title="No trades in this bucket" variant="filtered" />
+                )
+                : (
+                  <EmptyState
+                    title="Select a bucket"
+                    hint="Click a card on the left to inspect the trades in that group."
+                  />
+                )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 

@@ -96,11 +96,16 @@ export const trades = pgTable('trades', {
   brokerFillTime:  text('broker_fill_time'),
   brokerLegFills:  typedJson<LegFill[]>('broker_leg_fills'),
   realizedPnl:     text('realized_pnl'),  // accumulated PnL from partial exits (TRIMs)
+  /** ISO date when the position was expected to be exited.
+   *  Set at OPEN to MIN(legs.expiry) for option trades. Null means
+   *  no defensible planned exit (stock without stop, signal without expiry). */
+  plannedExitDate: text('planned_exit_date'),
 }, (table) => [
   index('idx_trades_trader').on(table.trader),
   index('idx_trades_symbol').on(table.symbol),
   index('idx_trades_status').on(table.status),
   index('idx_trades_channel').on(table.channelId),
+  index('idx_trades_planned_exit').on(table.channelId, table.status, table.plannedExitDate),
 ]);
 
 // ─── Trade Events (append-only action log) ──────────
@@ -460,6 +465,10 @@ export type TradeRiskSnapshot = {
   confidence: TradeRiskConfidence;
   multiplier: number;
   notes: string[];
+  /** True when the position's risk structure mutated mid-life (LEG_OFF).
+   *  Peak is frozen from the prior structure; downstream R-multiple
+   *  consumers should treat the denominator as historical, not forward. */
+  riskTopologyChanged?: boolean;
 };
 
 // ─── Message Reactions ───────────────────────────────
@@ -528,6 +537,10 @@ export type TradeMetadata = {
   keptLeg?: TradeLeg;
   /** Final broker order status when order was rejected/cancelled (from fill sweep). */
   brokerFinalStatus?: string;
+  /** True when a cancelled/rejected order had a partial fill; trade kept OPEN at actual qty. */
+  partialFill?: boolean;
+  /** Original requested quantity before a partial fill truncated it. */
+  originalQuantity?: number;
   /** Set when trade was force-exited via local API. */
   forceExit?: boolean;
   /** Broker order ID from a force-exit. */

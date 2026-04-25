@@ -17,6 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Kbd } from '@/components/ui/kbd';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -627,9 +628,7 @@ export function TraderRoster({
                   </span>
                 )}
               </span>
-              <kbd className="ml-auto text-[10px] font-mono text-muted-foreground/40 border border-border/60 rounded px-1.5 py-0.5 leading-none">
-                /
-              </kbd>
+              <Kbd className="ml-auto">/</Kbd>
             </Button>
           </PopoverTrigger>
           <PopoverContent

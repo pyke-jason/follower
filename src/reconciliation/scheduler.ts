@@ -40,7 +40,19 @@ export class ReconciliationScheduler {
 
   private async _run(): Promise<void> {
     try {
-      this.lastResult = await runReconciliation(this.broker, this.channelId);
+      const newAlerts = await runReconciliation(this.broker, this.channelId);
+      this.lastResult = newAlerts;
+
+      // Fire critical alert immediately on any new drift — don't wait for the next cycle.
+      if (newAlerts.length > 0) {
+        const symbols = Array.from(new Set(newAlerts.map((a) => a.symbol))).join(', ');
+        const types = Array.from(new Set(newAlerts.map((a) => a.type))).join(', ');
+        sendSystemAlert({
+          title: `Reconciliation drift: ${types}`,
+          message: `${newAlerts.length} new alert(s) on ${symbols}. New OPEN trades are blocked until resolved.`,
+          severity: 'critical',
+        });
+      }
     } catch (err) {
       log.error('Reconciliation failed:', err);
       sendSystemAlert({
@@ -56,13 +68,13 @@ export class ReconciliationScheduler {
 
   /**
    * Run reconciliation on-demand and return a safety assessment.
-   * safe=false if any DB_ONLY alerts exist (we think something is open but broker disagrees).
+   * safe=false if any unresolved alerts exist (any drift type blocks new opens).
    */
   async preTradeCheck(): Promise<{ safe: boolean; alerts: ReconciliationAlertInput[] }> {
     try {
       const alerts = await runReconciliation(this.broker, this.channelId);
       this.lastResult = alerts;
-      const safe = !alerts.some((a) => a.type === 'DB_ONLY');
+      const safe = alerts.length === 0;
       return { safe, alerts };
     } catch (err) {
       log.error('Pre-trade check failed:', err);

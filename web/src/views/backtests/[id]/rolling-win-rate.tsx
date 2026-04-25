@@ -1,7 +1,8 @@
 import { MultiLineChart } from './line-chart';
 import { EmptyState } from '@/components/empty-state';
+import type { BacktestDetailResponse } from '@src/local-api/http-schemas';
 
-type RollingWinRatePoint = { tradeNum: number; date: string; winRate: number; windowSize: number };
+type RollingWinRatePoint = BacktestDetailResponse['rollingWinRate'][number];
 
 export function RollingWinRate({ data }: { data: RollingWinRatePoint[] }) {
   if (data.length === 0) {

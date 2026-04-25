@@ -103,7 +103,115 @@ describe('recordTrade risk snapshots', () => {
     expect(closed.metadata.risk?.peakRisk).toBe(600);
   });
 
-  test('updates current risk after leg off while preserving prior peak', async () => {
+  test('leg-off into kept-long freezes peak risk and flags topology change', async () => {
+    const lower = callLeg(100, 'BUY');
+    const higher = callLeg(105, 'SELL');
+    const open = await recordTrade({
+      action: 'OPEN',
+      symbol: 'SPY',
+      trader: 'tester',
+      direction: 'LONG',
+      strategy: 'CDS',
+      entryPrice: 2,
+      quantity: 1,
+      legs: [lower, higher],
+      openedAt: '2026-04-20T14:00:00.000Z',
+      channelId: CHANNEL_ID,
+    });
+    expect(open?.trade.metadata.risk?.peakRisk).toBe(200);
+
+    await recordTrade({
+      action: 'LEG_OFF',
+      tradeId: open?.tradeId,
+      symbol: 'SPY',
+      trader: 'tester',
+      exitPrice: 0.5,
+      legs: [{ ...higher, action: 'BUY' }],
+      closedAt: '2026-04-20T14:20:00.000Z',
+      channelId: CHANNEL_ID,
+    });
+
+    const trade = await getTrade(open!.tradeId);
+    expect(trade.strategy).toBe('CALL');
+    expect(trade.metadata.risk).toMatchObject({
+      currentRisk: 250,
+      peakRisk: 200,
+      basis: 'premium_paid',
+      riskTopologyChanged: true,
+    });
+  });
+
+  test('leg-off into kept-short clears peak risk because position is now unbounded', async () => {
+    const lower = callLeg(100, 'BUY');
+    const higher = callLeg(105, 'SELL');
+    const open = await recordTrade({
+      action: 'OPEN',
+      symbol: 'SPY',
+      trader: 'tester',
+      direction: 'LONG',
+      strategy: 'CDS',
+      entryPrice: 2,
+      quantity: 1,
+      legs: [lower, higher],
+      openedAt: '2026-04-20T14:00:00.000Z',
+      channelId: CHANNEL_ID,
+    });
+    expect(open?.trade.metadata.risk?.peakRisk).toBe(200);
+
+    // Leg off the long K=100 leg, leaving the short K=105 leg (naked short call).
+    await recordTrade({
+      action: 'LEG_OFF',
+      tradeId: open?.tradeId,
+      symbol: 'SPY',
+      trader: 'tester',
+      exitPrice: 1,
+      legs: [{ ...lower, action: 'SELL' }],
+      closedAt: '2026-04-20T14:20:00.000Z',
+      channelId: CHANNEL_ID,
+    });
+
+    const trade = await getTrade(open!.tradeId);
+    expect(trade.strategy).toBe('CALL');
+    expect(trade.direction).toBe('SHORT');
+    expect(trade.metadata.risk?.basis).toBe('unbounded');
+    expect(trade.metadata.risk?.currentRisk).toBeNull();
+    expect(trade.metadata.risk?.peakRisk).toBeNull();
+    expect(trade.metadata.risk?.riskTopologyChanged).toBe(true);
+  });
+
+  test('open populates plannedExitDate from MIN(legs.expiry); leg-off recomputes from kept leg', async () => {
+    const lower = { ...callLeg(100, 'BUY'), expiry: '2026-06-19' };
+    const higher = { ...callLeg(105, 'SELL'), expiry: '2026-05-15' };
+    const open = await recordTrade({
+      action: 'OPEN',
+      symbol: 'SPY',
+      trader: 'tester',
+      direction: 'LONG',
+      strategy: 'CDS',
+      entryPrice: 2,
+      quantity: 1,
+      legs: [lower, higher],
+      openedAt: '2026-04-20T14:00:00.000Z',
+      channelId: CHANNEL_ID,
+    });
+    expect(open?.trade.plannedExitDate).toBe('2026-05-15');
+
+    await recordTrade({
+      action: 'LEG_OFF',
+      tradeId: open?.tradeId,
+      symbol: 'SPY',
+      trader: 'tester',
+      exitPrice: 0.5,
+      legs: [{ ...higher, action: 'BUY' }],
+      closedAt: '2026-04-20T14:20:00.000Z',
+      channelId: CHANNEL_ID,
+    });
+
+    const trade = await getTrade(open!.tradeId);
+    expect(trade.plannedExitDate).toBe('2026-06-19');
+  });
+
+  test('leg-off topology flag is preserved through subsequent close', async () => {
     const lower = callLeg(100, 'BUY');
     const higher = callLeg(105, 'SELL');
     const open = await recordTrade({
@@ -130,12 +238,20 @@ describe('recordTrade risk snapshots', () => {
       channelId: CHANNEL_ID,
     });
 
-    const trade = await getTrade(open!.tradeId);
-    expect(trade.strategy).toBe('CALL');
-    expect(trade.metadata.risk).toMatchObject({
-      currentRisk: 250,
-      peakRisk: 250,
-      basis: 'premium_paid',
+    await recordTrade({
+      action: 'CLOSE',
+      tradeId: open?.tradeId,
+      symbol: 'SPY',
+      trader: 'tester',
+      exitPrice: 4,
+      closedAt: '2026-04-20T15:00:00.000Z',
+      closeMessageId: 'close-msg',
+      channelId: CHANNEL_ID,
     });
+
+    const closed = await getTrade(open!.tradeId);
+    expect(closed.status).toBe('CLOSED');
+    expect(closed.metadata.risk?.peakRisk).toBe(200);
+    expect(closed.metadata.risk?.riskTopologyChanged).toBe(true);
   });
 });

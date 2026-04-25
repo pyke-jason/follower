@@ -62,8 +62,8 @@ function TableNode({ data }: NodeProps<Node>) {
             const isFk = table.foreignKeys.some((fk) => fk.column === col.name);
             return (
               <div key={col.name} className="flex items-center gap-1.5">
-                {col.primaryKey && <Key className="size-2.5 shrink-0 text-amber-500" />}
-                {isFk && !col.primaryKey && <ArrowRight className="size-2.5 shrink-0 text-blue-500" />}
+                {col.primaryKey && <Key className="size-2.5 shrink-0 text-warning" />}
+                {isFk && !col.primaryKey && <ArrowRight className="size-2.5 shrink-0 text-primary" />}
                 {!col.primaryKey && !isFk && <span className="size-2.5 shrink-0" />}
                 <span className="text-[10px] text-card-foreground truncate">{col.name}</span>
                 <span className="text-[10px] text-muted-foreground ml-auto shrink-0 font-mono">{col.type}</span>

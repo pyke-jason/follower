@@ -156,7 +156,7 @@ export async function checkRiskLimits(
   } else if (totalBlocked) {
     reason = `${effectiveTotal} total positions (${totalOpenPositions} open + ${workingExposure.totalCount} working) (max ${config.maxTotalPositions})`;
   } else if (alertCount > 0) {
-    reason = `${alertCount} unresolved DB_ONLY reconciliation alert(s)`;
+    reason = `${alertCount} unresolved reconciliation alert(s) — resolve drift before opening new positions`;
   }
 
   return {

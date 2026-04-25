@@ -6,6 +6,10 @@ import { contractMultiplier, getSpreadWidth, tradeQty } from '../lib/trade.js';
 const DEBIT_SPREADS = new Set<Strategy>(['CDS', 'PDS']);
 const CREDIT_SPREADS = new Set<Strategy>(['PCS', 'CCS']);
 
+/** Proxy stop fraction used when a stock trade has no captured stop.
+ *  Documented in the design transcript: "position size × 10% as a proxy". */
+const STOCK_RISK_PROXY_PCT = 0.10;
+
 export type TradeRiskInput = {
   strategy: Strategy;
   direction: Direction;
@@ -62,12 +66,23 @@ export function computeTradeRiskSnapshot(input: TradeRiskInput): TradeRiskSnapsh
   }
 
   if (input.strategy === 'STOCK') {
+    if (entry == null) {
+      return snapshot({
+        currentRisk: null,
+        basis: 'stock_notional',
+        confidence: 'unknown',
+        multiplier,
+        notes: ['Stock trade missing entry price; cannot proxy R.'],
+      });
+    }
+    // Default proxy: 10% of notional as risk. Not a real stop, but produces
+    // a defensible R denominator so stock trades enter coverage.
     return snapshot({
-      currentRisk: null,
+      currentRisk: roundCents(entry * qty * multiplier * STOCK_RISK_PROXY_PCT),
       basis: 'stock_notional',
-      confidence: 'unknown',
+      confidence: 'estimate',
       multiplier,
-      notes: ['Stock trades need a captured stop to produce true finite R.'],
+      notes: [`Stock proxy: ${(STOCK_RISK_PROXY_PCT * 100).toFixed(0)}% of notional. Replace with captured stop when available.`],
     });
   }
 
@@ -163,11 +178,58 @@ export function computeTradeRiskSnapshot(input: TradeRiskInput): TradeRiskSnapsh
   });
 }
 
+export type UpdateRiskOptions = {
+  /** Set on LEG_OFF when the position's risk structure changed mid-life.
+   *  Prevents the post-mutation `currentRisk` from inflating `peakRisk`,
+   *  which would silently corrupt R-multiple denominators. */
+  topologyChanged?: boolean;
+};
+
 export function updateTradeRiskSnapshot(
   input: TradeRiskInput,
   previous?: TradeRiskSnapshot,
+  options: UpdateRiskOptions = {},
 ): TradeRiskSnapshot {
   const next = computeTradeRiskSnapshot(input);
+
+  if (options.topologyChanged) {
+    const priorPeak = positiveMax([previous?.peakRisk, previous?.currentRisk]);
+
+    if (next.currentRisk == null) {
+      return {
+        ...next,
+        peakRisk: null,
+        riskTopologyChanged: true,
+        notes: [
+          ...next.notes,
+          'Risk topology changed; new structure has no defensible finite risk. Excluded from R.',
+        ],
+      };
+    }
+
+    return {
+      ...next,
+      peakRisk: priorPeak,
+      riskTopologyChanged: true,
+      notes: [
+        ...next.notes,
+        'Risk topology changed; peak risk frozen from prior structure.',
+      ],
+    };
+  }
+
+  // Once topology has changed, the peak is frozen at the pre-mutation value.
+  // Subsequent ADD/TRIM/CLOSE recomputations on the post-mutation structure
+  // would otherwise re-inflate the denominator and corrupt R.
+  if (previous?.riskTopologyChanged === true) {
+    return {
+      ...next,
+      peakRisk: previous.peakRisk,
+      riskTopologyChanged: true,
+      notes: [...next.notes, 'Peak risk frozen from prior topology change.'],
+    };
+  }
+
   const peakRisk = positiveMax([
     previous?.peakRisk,
     previous?.currentRisk,

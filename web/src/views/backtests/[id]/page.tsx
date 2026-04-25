@@ -23,6 +23,7 @@ import { formatCurrency, isoToDateKey } from '@/lib/format';
 import { CollapsibleError } from './collapsible-error';
 import { LogViewer } from './log-viewer';
 import { BacktestStaticTabs } from './backtest-static-tabs';
+import { bucketTrades } from './diagnosis-panel';
 import { useBacktestDetailLiveQuery } from './use-backtest-detail-live-query';
 import { Square, Trash2, Copy, ArrowLeft, RotateCcw, Pause, Play } from 'lucide-react';
 import { PROFIT_FACTOR_INF, pctDisplay } from '@src/lib/numbers';
@@ -95,8 +96,12 @@ function BacktestDetailContent({ data, id }: {
     decisions,
     llmCost,
     liveRuntime,
+    allTrades,
+    messagesEndDate,
   } = data;
   const config = run.config;
+  const pastPlanCount = bucketTrades(allTrades, messagesEndDate ?? config.endDate)
+    .buckets.find((b) => b.id === 'past-plan')?.count ?? 0;
 
   const backtestRunId = id;
   const liveMetrics = run.liveMetrics ?? null;
@@ -224,35 +229,48 @@ function BacktestDetailContent({ data, id }: {
           {/* Results row — key metrics as labeled values */}
           {summary && (() => {
             const unrealized = liveMetrics?.unrealizedPnl ?? 0;
-            const hasOpen = summary.openAtEnd > 0 && unrealized !== 0;
+            const hasOpen = summary.openAtEnd > 0;
             const hasComm = (summary.totalCommissions ?? 0) > 0;
-            const displayPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
-            const totalPnl = hasOpen ? displayPnl + unrealized : displayPnl;
+            const realizedPnl = hasComm ? (summary.netPnl ?? summary.totalPnl) : summary.totalPnl;
+            const profitFactor = summary.profitFactor >= PROFIT_FACTOR_INF
+              ? 99.99
+              : (summary.profitFactor ?? 0);
             return (
               <div className="flex items-end gap-6 px-4 py-3 flex-wrap">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">Trades</div>
                   <div className="text-sm font-mono font-semibold tabular-nums">{summary.totalTrades}{summary.openAtEnd > 0 && <span className="text-muted-foreground/50 font-normal text-xs ml-1">+{summary.openAtEnd} open</span>}</div>
+                  {pastPlanCount > 0 && (
+                    <div className="text-[10px] font-mono tabular-nums text-warning mt-0.5">+{pastPlanCount} past plan</div>
+                  )}
                 </div>
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">Win Rate</div>
                   <div className="text-sm font-mono font-semibold tabular-nums">{pctDisplay(summary.winRate)}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">P&L</div>
-                  <div className={`text-sm font-mono font-semibold tabular-nums ${totalPnl >= 0 ? 'text-profit' : 'text-loss'}`}>
-                    {formatCurrency(totalPnl)}
+                  <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">Realized P&amp;L</div>
+                  <div className={`text-sm font-mono font-semibold tabular-nums ${realizedPnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+                    {formatCurrency(realizedPnl)}
                     {hasComm && <span className="text-muted-foreground font-normal text-[10px] ml-1">(gross {formatCurrency(summary.totalPnl)} &minus; {formatCurrency(summary.totalCommissions!)} comm)</span>}
-                    {!hasComm && hasOpen && <span className="text-muted-foreground font-normal text-[10px] ml-1">({formatCurrency(summary.totalPnl)} realized)</span>}
                   </div>
                 </div>
+                {hasOpen && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">Unrealized</div>
+                    <div className={`text-sm font-mono font-semibold tabular-nums ${unrealized >= 0 ? 'text-profit' : 'text-loss'}`}>
+                      {formatCurrency(unrealized)}
+                      <span className="text-muted-foreground font-normal text-[10px] ml-1">{summary.openAtEnd} floating</span>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">Max DD</div>
-                  <div className="text-sm font-mono font-semibold tabular-nums">{formatCurrency(summary.maxDrawdown)}</div>
+                  <div className="text-sm font-mono font-semibold tabular-nums text-loss">{formatCurrency(summary.maxDrawdown)}</div>
                 </div>
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground mb-0.5">Profit Factor</div>
-                  <div className="text-sm font-mono font-semibold tabular-nums">{(summary.profitFactor >= PROFIT_FACTOR_INF ? 99.99 : (summary.profitFactor ?? 0)).toFixed(2)}</div>
+                  <div className="text-sm font-mono font-semibold tabular-nums">{profitFactor.toFixed(2)}</div>
                 </div>
               </div>
             );

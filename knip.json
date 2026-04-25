@@ -2,7 +2,11 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/eval-orchestrator.ts"]
+      "entry": [
+        "scripts/eval-orchestrator.ts",
+        "scripts/backfill-trade-risk.ts"
+      ],
+      "ignore": ["docs/design-variations/**"]
     },
     "web": {
       "entry": ["src/components/ui/**/*.{ts,tsx}"],

@@ -23,7 +23,9 @@ import dbBrowser from './routes/db-browser.js';
 import ingestBackfill from './routes/ingest-backfill.js';
 import { getRuntimeBrokerMap } from '../broker/select.js';
 import { db, schema } from '../db/client.js';
-import { sendSystemAlert } from '../lib/alert.js';
+import { sendSystemAlert, startPushoverQueue } from '../lib/alert.js';
+
+await startPushoverQueue();
 
 const channelBrokerMap = getRuntimeBrokerMap();
 if (channelBrokerMap.size === 0) {

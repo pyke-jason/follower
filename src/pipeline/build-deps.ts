@@ -149,12 +149,13 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     getReconciliationAlertCount: (config.skipReconciliationCheck ?? config.isBacktestScope ?? false)
       ? async () => 0
       : async () => {
+          // Block on all drift types: DB_ONLY, BROKER_ONLY, QUANTITY_MISMATCH.
+          // Any unresolved discrepancy is unsafe for new position opens.
           const alerts = await db.select({ count: sql<number>`COUNT(*)` })
             .from(schema.reconciliationAlerts)
             .where(and(
               eq(schema.reconciliationAlerts.channelId, scope),
               eq(schema.reconciliationAlerts.resolved, false),
-              eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
             ));
           return alerts[0]?.count ?? 0;
         },

@@ -21,7 +21,7 @@ import { isOpen, isClosed, forSymbol, forTrader, forStrategy } from '@/trades/fi
 import { computeCoreStats } from '@/backtest/report.js';
 import { computeTradeCommission } from '@/lib/commission.js';
 import { tradeQty } from '@/lib/trade.js';
-import { computeTradeQualitySummary } from '@/trades/trade-quality.js';
+import { computeTradeQuality, computeTradeQualitySummary } from '@/trades/trade-quality.js';
 import { getProvider, SECRET_KEYS } from '@/lib/secrets/index.js';
 import { getRuntimeBrokerMap } from '@/broker/select.js';
 import { upsertRuntimeHealth } from '@/live/runtime-health.js';
@@ -128,7 +128,7 @@ async function getBacktestTradeStreamState(id: string) {
   if (!run) return null;
 
   const channelId = btChannel(id);
-  const [decisions, allTrades, mtmSnapshots] = await Promise.all([
+  const [decisions, allTradesRaw, mtmSnapshots, medianFiniteRisk] = await Promise.all([
     db.select({
       decision: schema.runDecisions,
       message: schema.messages,
@@ -156,8 +156,11 @@ async function getBacktestTradeStreamState(id: string) {
     .from(schema.backtestMtmSnapshots)
     .where(eq(schema.backtestMtmSnapshots.channelId, channelId))
     .orderBy(asc(schema.backtestMtmSnapshots.date)),
+
+    getMedianFiniteRiskInternal(channelId),
   ]);
 
+  const allTrades = decorateTradesWithQuality(allTradesRaw, medianFiniteRisk);
   const tradeIds = allTrades.map((trade) => trade.id);
   const eventRows = tradeIds.length > 0
     ? await db.select()
@@ -727,7 +730,7 @@ app.get('/dashboard', async (c) => {
   const channelId = resolveChannelId(c.req.query('channel') || undefined);
   const backtestRunId = await getBacktestRunIdByChannelId(channelId);
 
-  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePositions, accountBalance] = await Promise.all([
+  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePositions, accountBalance, medianFiniteRisk] = await Promise.all([
     getStatsInternal(channelId, { useTotalPnl: !!backtestRunId }),
     getOpenTradesInternal(500, channelId),
     getTraderPnlSummaryInternal(channelId),
@@ -736,11 +739,12 @@ app.get('/dashboard', async (c) => {
     getDailyBalancesInternal(30, channelId),
     backtestRunId ? Promise.resolve({ totalUnrealizedPnl: 0, byTradeId: {} }) : getChannelLivePositionsByTradeId(channelId),
     backtestRunId ? Promise.resolve(null) : getChannelAccountBalance(channelId),
+    getMedianFiniteRiskInternal(channelId),
   ]);
 
   return c.json({
     stats: { ...stats, unrealizedPnl: livePositions.totalUnrealizedPnl },
-    openTrades,
+    openTrades: decorateTradesWithQuality(openTrades, medianFiniteRisk),
     traderPnl,
     historySummary,
     risk,
@@ -755,8 +759,16 @@ app.get('/dashboard', async (c) => {
 
 app.get('/trade-quality', async (c) => {
   const channelId = resolveChannelId(c.req.query('channel') || undefined);
+  const include = c.req.query('include');
+  const groupByParam = c.req.query('groupBy');
+  const groupBy = groupByParam === 'strategy' || groupByParam === 'trader' || groupByParam === 'symbol'
+    ? groupByParam
+    : undefined;
   const trades = await getClosedTradesForQualityInternal(channelId);
-  return c.json(computeTradeQualitySummary(trades));
+  return c.json(computeTradeQualitySummary(trades, {
+    includeRows: include === 'rows',
+    groupBy,
+  }));
 });
 
 /** Live account balance from the runtime broker. Null if unreachable or
@@ -843,7 +855,9 @@ app.get('/trades', async (c) => {
     : null;
 
   const flags = buildFlagsByTradeId(rows);
-  return c.json({ rows, nextCursor, total, flags });
+  const medianFiniteRisk = await getMedianFiniteRiskInternal(channelId);
+  const decorated = decorateTradesWithQuality(rows, medianFiniteRisk);
+  return c.json({ rows: decorated, nextCursor, total, flags });
 });
 
 // ── GET /trades-view ─────────────────────────────────
@@ -912,12 +926,16 @@ app.get('/trades-view', async (c) => {
   const flags = buildFlagsByTradeId(rows);
   const resolvedChannelId = resolveChannelId(channelId);
   const isBacktestChannel = resolvedChannelId.startsWith('bt:');
-  const livePositions = isBacktestChannel
-    ? { byTradeId: {} as Record<string, LivePositionRow> }
-    : await getChannelLivePositionsByTradeId(resolvedChannelId);
+  const [livePositions, medianFiniteRisk] = await Promise.all([
+    isBacktestChannel
+      ? Promise.resolve({ byTradeId: {} as Record<string, LivePositionRow> })
+      : getChannelLivePositionsByTradeId(resolvedChannelId),
+    getMedianFiniteRiskInternal(channelId),
+  ]);
+  const decorated = decorateTradesWithQuality(rows, medianFiniteRisk);
 
   return c.json({
-    rows,
+    rows: decorated,
     nextCursor,
     total,
     flags,
@@ -1394,7 +1412,7 @@ app.get('/traders/:name', async (c) => {
     .where(eq(schema.trackedTraders.name, name));
   if (!trader) return c.json({ error: 'Trader not found' }, 404);
 
-  const [equityCurve, strategyBreakdown, historySummary, closedTrades] = await Promise.all([
+  const [equityCurve, strategyBreakdown, historySummary, closedTrades, medianFiniteRisk] = await Promise.all([
     getTraderEquityCurveInternal(name, channelId),
     getTraderStrategyBreakdownInternal(name, channelId),
     getTradeHistorySummaryInternal({ trader: name, channelId }),
@@ -1407,9 +1425,16 @@ app.get('/traders/:name', async (c) => {
         .orderBy(desc(schema.trades.closedAt))
         .limit(50);
     })(),
+    getMedianFiniteRiskInternal(channelId),
   ]);
 
-  return c.json({ trader, equityCurve, strategyBreakdown, historySummary, closedTrades });
+  return c.json({
+    trader,
+    equityCurve,
+    strategyBreakdown,
+    historySummary,
+    closedTrades: decorateTradesWithQuality(closedTrades, medianFiniteRisk),
+  });
 });
 
 // ── GET /backtests ───────────────────────────────────
@@ -1537,7 +1562,7 @@ app.get('/backtests/:id', async (c) => {
     configEndDate: config.endDate,
   });
 
-  const [decisions, allTrades, mtmSnapshots] = await Promise.all([
+  const [decisions, allTradesRaw, mtmSnapshots, medianFiniteRisk] = await Promise.all([
     db.select({
       decision: schema.runDecisions,
       message: schema.messages,
@@ -1565,8 +1590,11 @@ app.get('/backtests/:id', async (c) => {
     .from(schema.backtestMtmSnapshots)
     .where(eq(schema.backtestMtmSnapshots.channelId, channelId))
     .orderBy(asc(schema.backtestMtmSnapshots.date)),
+
+    getMedianFiniteRiskInternal(channelId),
   ]);
 
+  const allTrades = decorateTradesWithQuality(allTradesRaw, medianFiniteRisk);
   const tradeIds = allTrades.map((t) => t.id);
   const eventRows = tradeIds.length > 0
     ? await db.select().from(schema.tradeEvents).where(inArray(schema.tradeEvents.tradeId, tradeIds)).orderBy(asc(schema.tradeEvents.timestamp))
@@ -2167,6 +2195,35 @@ async function getClosedTradesForQualityInternal(channelId?: string) {
     .from(schema.trades)
     .where(and(isClosed, tradeScope(channelId)))
     .orderBy(desc(schema.trades.closedAt));
+}
+
+/** Population median of `metadata.risk.peakRisk` across closed trades in a
+ *  channel, for sizing-relative quality reasons (oversized / conservative). */
+async function getMedianFiniteRiskInternal(channelId?: string): Promise<number | null> {
+  const [row] = await db
+    .select({
+      median: sql<string | null>`percentile_cont(0.5) WITHIN GROUP (ORDER BY (metadata->'risk'->>'peakRisk')::numeric)`,
+    })
+    .from(schema.trades)
+    .where(and(
+      isClosed,
+      tradeScope(channelId),
+      sql`(metadata->'risk'->>'peakRisk') IS NOT NULL`,
+      sql`(metadata->'risk'->>'peakRisk')::numeric > 0`,
+    ));
+  if (!row?.median) return null;
+  const parsed = Number.parseFloat(row.median);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function decorateTradesWithQuality<T extends typeof schema.trades.$inferSelect>(
+  trades: T[],
+  medianFiniteRisk: number | null,
+): Array<T & { quality: ReturnType<typeof computeTradeQuality> }> {
+  return trades.map((trade) => ({
+    ...trade,
+    quality: computeTradeQuality(trade, medianFiniteRisk),
+  }));
 }
 
 async function getTraderPnlSummaryInternal(channelId?: string) {

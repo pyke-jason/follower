@@ -2,10 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { buildScopedPath } from '@/lib/channel-scope';
 import { fetchDashboardPageData, type DashboardPageData, fetchBacktestsPageData, type BacktestsPageData } from '@/lib/page-adapters';
-import type { Trade, TradeFlag, Task, ClassifyRun } from '@src/db/schema';
+import type { TradeFlag, Task, ClassifyRun } from '@src/db/schema';
 import type {
   BacktestDetailResponse,
   ClassifyDetailResponse,
+  TradeWithQuality,
   TraderDetailResponse,
 } from '@src/local-api/http-schemas';
 import {
@@ -15,7 +16,7 @@ import {
 } from '@/lib/api-types';
 
 type TradesResponse = {
-  rows: Trade[];
+  rows: TradeWithQuality[];
   nextCursor: string | null;
   total: number;
   flags: Record<string, TradeFlag[]>;

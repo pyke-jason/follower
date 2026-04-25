@@ -337,16 +337,10 @@ async function superviseBackend(): Promise<void> {
 
 // ─── Sidecar supervisor ─────────────────────────────
 
-const SIDECAR_MAX_RESTARTS = 5;
 const SIDECAR_RESTART_DELAY_MS = 10_000;
 
-/**
- * Manages the IBKR gateway + sidecar lifecycle with automatic restarts.
- * Runs in the background — never blocks other services.
- */
 async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Promise<void> {
   const sidecarStatusUrl = `${sidecarBase}/status`;
-  let restartCount = 0;
 
   const isSidecarConnected = async (): Promise<boolean> => {
     try {
@@ -360,20 +354,13 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
   };
 
   const startGatewayAndSidecar = async (): Promise<void> => {
-    // Kill existing sidecar/gateway children before restart
-    for (const child of children) {
-      if (['gateway', 'sidecar'].includes(child.name) && child.proc.exitCode === null && !child.proc.killed) {
-        log('orch', `Stopping old ${child.name} (PID ${child.proc.pid})`);
-        child.proc.kill('SIGTERM');
-      }
-    }
+    killOnPort(8090, 'sidecar');
 
     log('orch', `Starting IB Gateway (${mode} mode)...`);
     // The IBC wrapper's path-based mode detection uses a stale absolute path
     // and otherwise defaults TRADING_MODE=live, which rejects paper credentials.
     spawnService('gateway', 'bash', ['-c', `TRADING_MODE=${mode} ~/ibc/gatewaystartmacos.sh -inline`]);
 
-    // Give gateway time to initialize
     await new Promise((r) => setTimeout(r, 5_000));
 
     const gwPort = mode === 'paper' ? '4002' : '4001';
@@ -382,49 +369,32 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
       env: { IBKR_GATEWAY_PORT: gwPort, LOG_DIR: PATHS.logs },
     });
 
-    // Wait up to 30s for sidecar to connect
     const ready = await waitForHealth('sidecar', sidecarStatusUrl, {
       check: (b: unknown) => (b as { connected?: boolean }).connected === true,
       timeoutMs: 30_000,
       intervalMs: 2_000,
     });
 
-    if (ready) {
-      restartCount = 0; // Reset on success
-      log('orch', 'Sidecar connected to IB Gateway');
-    } else {
-      log('orch', `Sidecar failed to connect (attempt ${restartCount + 1}/${SIDECAR_MAX_RESTARTS})`);
-    }
+    log('orch', ready ? 'Sidecar connected to IB Gateway' : 'Sidecar failed to connect — will retry');
   };
 
-  // Check if already running
-  if (await isSidecarConnected()) {
-    log('orch', 'Sidecar already running and connected — skipping start');
-    // Still monitor it below
-  } else {
-    await startGatewayAndSidecar();
-  }
+  await startGatewayAndSidecar();
 
-  // Monitor loop: check every 30s, restart if needed
+  // Monitor loop: check every 30s, restart on disconnect. Retries forever —
+  // a silent give-up after N attempts is worse than ongoing log noise.
   const monitor = async () => {
     while (!shuttingDown) {
       await new Promise((r) => setTimeout(r, 30_000));
       if (shuttingDown) break;
 
       if (!(await isSidecarConnected())) {
-        restartCount++;
-        if (restartCount > SIDECAR_MAX_RESTARTS) {
-          log('orch', `Sidecar failed ${SIDECAR_MAX_RESTARTS} times — giving up. Manual intervention required.`);
-          return;
-        }
-        log('orch', `Sidecar lost connection — restarting in ${SIDECAR_RESTART_DELAY_MS / 1000}s (attempt ${restartCount}/${SIDECAR_MAX_RESTARTS})`);
+        log('orch', `Sidecar lost connection — restarting in ${SIDECAR_RESTART_DELAY_MS / 1000}s`);
         await new Promise((r) => setTimeout(r, SIDECAR_RESTART_DELAY_MS));
         if (!shuttingDown) await startGatewayAndSidecar();
       }
     }
   };
 
-  // Fire and forget — monitor runs in background
   monitor().catch((err) => {
     if (!shuttingDown) log('orch', `Sidecar monitor error: ${err}`);
   });
@@ -472,6 +442,7 @@ function killExisting(): void {
   // Kill by port
   killOnPort(3791, 'local-api');
   killOnPort(3000, 'web');
+  killOnPort(8090, 'sidecar');
 
   // Brief pause so ports are released
   execSync('sleep 1');

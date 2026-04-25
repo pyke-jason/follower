@@ -291,7 +291,8 @@ export const CREATE_TRADES_SQL = sql`
     broker_fill_qty integer,
     broker_commission text,
     broker_fill_time text,
-    broker_leg_fills jsonb
+    broker_leg_fills jsonb,
+    planned_exit_date text
   )
 `;
 

@@ -77,7 +77,7 @@ describe('computeTradeRiskSnapshot', () => {
     expect(risk.basis).toBe('defined_spread');
   });
 
-  test('stock and naked short options are excluded from true R', () => {
+  test('stock uses 10% notional proxy; naked short options remain excluded', () => {
     const stock = computeTradeRiskSnapshot({
       strategy: 'STOCK',
       direction: 'LONG',
@@ -93,8 +93,10 @@ describe('computeTradeRiskSnapshot', () => {
       legs: [optionLeg({ strike: 100, type: 'CALL', action: 'SELL' })],
     });
 
-    expect(stock.currentRisk).toBeNull();
+    // 100 × 10 × 1 (multiplier) × 0.10 = 100
+    expect(stock.currentRisk).toBe(100);
     expect(stock.basis).toBe('stock_notional');
+    expect(stock.confidence).toBe('estimate');
     expect(shortCall.currentRisk).toBeNull();
     expect(shortCall.basis).toBe('unbounded');
   });
@@ -136,5 +138,84 @@ describe('updateTradeRiskSnapshot', () => {
     expect(next.currentRisk).toBe(300);
     expect(next.peakRisk).toBe(600);
     expect(next.notes).toContain('Peak risk preserved from earlier lifecycle state.');
+  });
+
+  test('topology change freezes peak at prior value (does not inflate from new currentRisk)', () => {
+    // Original CDS: $2 debit × 1 contract × 100 = $200 peak.
+    const previous: TradeRiskSnapshot = {
+      currentRisk: 200,
+      peakRisk: 200,
+      basis: 'defined_spread',
+      confidence: 'exact',
+      multiplier: 100,
+      notes: [],
+    };
+
+    // Post-LEG_OFF: kept long leg, basis is now $2 entry + $0.5 buyback = $2.5.
+    // Without the topology flag, peak would inflate to 250 (the bug).
+    const next = updateTradeRiskSnapshot({
+      strategy: 'CALL',
+      direction: 'LONG',
+      entryPrice: 2.5,
+      quantity: 1,
+      legs: [optionLeg({ strike: 100, type: 'CALL', action: 'BUY' })],
+    }, previous, { topologyChanged: true });
+
+    expect(next.currentRisk).toBe(250);
+    expect(next.peakRisk).toBe(200);
+    expect(next.riskTopologyChanged).toBe(true);
+    expect(next.notes.some((n) => n.includes('topology changed'))).toBe(true);
+  });
+
+  test('topology change to unbounded clears peak risk', () => {
+    // Original CDS: $200 peak.
+    const previous: TradeRiskSnapshot = {
+      currentRisk: 200,
+      peakRisk: 200,
+      basis: 'defined_spread',
+      confidence: 'exact',
+      multiplier: 100,
+      notes: [],
+    };
+
+    // Post-LEG_OFF: kept short leg → naked short call (unbounded).
+    const next = updateTradeRiskSnapshot({
+      strategy: 'CALL',
+      direction: 'SHORT',
+      entryPrice: 1,
+      quantity: 1,
+      legs: [optionLeg({ strike: 105, type: 'CALL', action: 'SELL' })],
+    }, previous, { topologyChanged: true });
+
+    expect(next.currentRisk).toBeNull();
+    expect(next.peakRisk).toBeNull();
+    expect(next.basis).toBe('unbounded');
+    expect(next.riskTopologyChanged).toBe(true);
+  });
+
+  test('peak stays frozen on updates after a prior topology change', () => {
+    const previous: TradeRiskSnapshot = {
+      currentRisk: 250,
+      peakRisk: 200,
+      basis: 'premium_paid',
+      confidence: 'exact',
+      multiplier: 100,
+      notes: [],
+      riskTopologyChanged: true,
+    };
+
+    // Subsequent CLOSE re-runs the snapshot with the same long-call structure.
+    // Peak must NOT inflate from the post-mutation currentRisk.
+    const next = updateTradeRiskSnapshot({
+      strategy: 'CALL',
+      direction: 'LONG',
+      entryPrice: 2.5,
+      quantity: 1,
+      legs: [optionLeg({ strike: 100, type: 'CALL', action: 'BUY' })],
+    }, previous);
+
+    expect(next.currentRisk).toBe(250);
+    expect(next.peakRisk).toBe(200);
+    expect(next.riskTopologyChanged).toBe(true);
   });
 });

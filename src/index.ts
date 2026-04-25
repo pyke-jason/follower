@@ -5,15 +5,14 @@ import { installProcessErrorHandlers } from './lib/log-safety.js';
 import { startIngestion, stopIngestion, closeBrowser } from './ingestion/ingest.js';
 import { initRunner, submitTask, stopRunner, awaitDrain, destroyOrderManager } from './live/runner.js';
 import { createTasksFromMessage } from './live/factory.js';
-import { db, schema } from './db/client.js';
-import { eq } from 'drizzle-orm';
 import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
 import { startHealthcheck, stopHealthcheck } from './lib/healthcheck.js';
 import { PATHS } from './lib/paths.js';
-import { sendSystemAlert } from './lib/alert.js';
+import { sendSystemAlert, startPushoverQueue, stopPushoverQueue } from './lib/alert.js';
+import { getRuntimeChannelDefinitions } from './lib/runtime-channels.js';
 
 const LOCK_PATH = PATHS.lockFile;
 
@@ -33,6 +32,33 @@ async function main() {
     process.exit(1);
   }
   console.log(`[pidlock] Backend lock acquired (PID ${process.pid})`);
+  await startPushoverQueue();
+
+  // Live-mode startup gate: require LIVE_TRADING_CONFIRMED=YYYY-MM-DD (UTC) to match today.
+  // Prevents accidental live execution when re-running a stale shell or after a date rollover.
+  const channelDefs = getRuntimeChannelDefinitions();
+  const hasLive = channelDefs.some((c) => c.mode === 'live');
+  if (hasLive) {
+    const today = new Date().toISOString().slice(0, 10);
+    const confirmed = process.env.LIVE_TRADING_CONFIRMED;
+    if (confirmed !== today) {
+      console.error(`
+╔══════════════════════════════════════════════════════════════╗
+║                    LIVE TRADING BLOCKED                      ║
+╠══════════════════════════════════════════════════════════════╣
+║  A live IBKR channel is configured but live trading has      ║
+║  not been confirmed for today (${today} UTC).       ║
+║                                                              ║
+║  To start in live mode, set this env var and restart:        ║
+║    LIVE_TRADING_CONFIRMED=${today}                  ║
+║                                                              ║
+║  This confirmation must be renewed each calendar day.        ║
+╚══════════════════════════════════════════════════════════════╝
+`);
+      process.exit(1);
+    }
+    console.log(`[LiveGate] Live trading confirmed for ${today}`);
+  }
 
   const { channels } = await initRunner();
   const runtimeChannelIds = channels.map((c) => c.channelId);
@@ -50,9 +76,11 @@ async function main() {
     }
   }
 
-  // Start reconciliation scheduler and fill sweep per channel
+  // Start reconciliation scheduler and fill sweep per channel.
+  // Live channels use a 2-minute cycle; paper keeps the default 5-minute cycle.
   reconSchedulers = channels.map((channel) => {
-    const scheduler = new ReconciliationScheduler(channel.broker, channel.channelId);
+    const intervalMs = channel.mode === 'live' ? 2 * 60 * 1000 : undefined;
+    const scheduler = new ReconciliationScheduler(channel.broker, channel.channelId, intervalMs);
     scheduler.start();
     return scheduler;
   });
@@ -66,21 +94,10 @@ async function main() {
   if (process.env.LIVE_INGESTION_ENABLED === '0') {
     console.log('[Ingest] Live ingestion disabled via LIVE_INGESTION_ENABLED=0, skipping browser launch');
   } else {
-    startIngestion(async (msg) => {
-      try {
-        const stored = await db.select()
-          .from(schema.messages)
-          .where(eq(schema.messages.id, msg.Id))
-          .limit(1);
-
-        if (stored[0]) {
-          const tasks = await createTasksFromMessage(stored[0], runtimeChannelIds);
-          for (const task of tasks) {
-            submitTask(task);
-          }
-        }
-      } catch (err) {
-        console.error('[Ingest] Task creation failed:', err);
+    startIngestion(async (message) => {
+      const tasks = await createTasksFromMessage(message, runtimeChannelIds);
+      for (const task of tasks) {
+        submitTask(task);
       }
     });
   }
@@ -98,6 +115,7 @@ async function shutdown() {
   stopIngestion();                // stops supervision loop + watchdog + auth monitor
   stopRunner();                   // stops accepting new tasks
   stopHealthcheck();
+  stopPushoverQueue();
 
   // Wait for in-flight task (the critical window: placeOrder → recordTrade)
   try {

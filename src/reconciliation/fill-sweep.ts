@@ -63,6 +63,9 @@ export class FillSweep {
           await enrichTradeWithFill(trade.id, status);
           enriched++;
         } else if (status.status === 'REJECTED' || status.status === 'CANCELLED') {
+          const partialQty = status.filledQuantity ?? 0;
+          const hasPartialFill = partialQty > 0 && status.filledPrice != null;
+
           // Re-read metadata inside transaction to avoid stale-spread race
           await runTx(async (tx) => {
             const [fresh] = await tx.select({ metadata: schema.trades.metadata })
@@ -70,23 +73,54 @@ export class FillSweep {
               .where(eq(schema.trades.id, trade.id))
               .limit(1);
             if (!fresh) return;
-            await tx.update(schema.trades)
-              .set({
-                status: 'CANCELLED',
-                metadata: {
-                  ...(fresh.metadata ?? {}),
-                  fillEnriched: true,
-                  fillEnrichedAt: new Date().toISOString(),
-                  brokerFinalStatus: status.status,
-                },
-              })
-              .where(eq(schema.trades.id, trade.id));
+
+            if (hasPartialFill) {
+              // Partial fill — keep trade OPEN with the actual filled quantity/price.
+              // The reconciler will catch any remaining broker/DB discrepancy on next cycle.
+              await tx.update(schema.trades)
+                .set({
+                  quantity: partialQty,
+                  brokerFillPrice: String(status.filledPrice!),
+                  brokerFillQty: partialQty,
+                  brokerFillTime: status.fillTimestamp ?? new Date().toISOString(),
+                  metadata: {
+                    ...(fresh.metadata ?? {}),
+                    fillEnriched: true,
+                    fillEnrichedAt: new Date().toISOString(),
+                    brokerFinalStatus: status.status,
+                    partialFill: true,
+                    originalQuantity: trade.quantity ?? undefined,
+                  },
+                })
+                .where(eq(schema.trades.id, trade.id));
+            } else {
+              await tx.update(schema.trades)
+                .set({
+                  status: 'CANCELLED',
+                  metadata: {
+                    ...(fresh.metadata ?? {}),
+                    fillEnriched: true,
+                    fillEnrichedAt: new Date().toISOString(),
+                    brokerFinalStatus: status.status,
+                  },
+                })
+                .where(eq(schema.trades.id, trade.id));
+            }
           });
-          sendSystemAlert({
-            title: `Order ${status.status}`,
-            message: `Order ${metadata.brokerOrderId} for ${trade.symbol} was ${status.status}. Trade marked CANCELLED.`,
-            severity: 'warning',
-          });
+
+          if (hasPartialFill) {
+            sendSystemAlert({
+              title: `Partial fill — ${trade.symbol} order ${status.status.toLowerCase()}`,
+              message: `Order ${metadata.brokerOrderId} partially filled ${partialQty}/${trade.quantity ?? '?'} @ $${status.filledPrice}. Trade kept OPEN at actual quantity. Verify position at broker.`,
+              severity: 'critical',
+            });
+          } else {
+            sendSystemAlert({
+              title: `Order ${status.status}`,
+              message: `Order ${metadata.brokerOrderId} for ${trade.symbol} was ${status.status}. Trade marked CANCELLED.`,
+              severity: 'warning',
+            });
+          }
           enriched++;
         }
       } catch (err) {

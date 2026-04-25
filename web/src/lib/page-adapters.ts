@@ -11,6 +11,8 @@ import type {
 import type { EquityPoint } from '@src/backtest/types';
 import { api } from '@/lib/api';
 import { buildScopedPath } from '@/lib/channel-scope';
+import type { BreakdownRow } from '@/components/breakdown-table';
+import type { UnrealizedPnlPoint } from '@/components/overview-equity-curve';
 
 function toNumber(value: string | number | null | undefined): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -89,9 +91,20 @@ export type DashboardTradeQualitySummary = {
   }>;
 };
 
+/** Trade row decorated with the algorithmic quality block. The server attaches
+ *  `quality` to every trade returned from /dashboard, /trades, and /trades-view. */
+export type TradeRowWithQuality = Trade & {
+  quality: {
+    rMultiple: number | null;
+    score: number | null;
+    grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+    reasons: string[];
+  };
+};
+
 type DashboardApiResponse = {
   stats: DashboardStats;
-  openTrades: Trade[];
+  openTrades: TradeRowWithQuality[];
   traderPnl: DashboardTraderPnlRow[];
   historySummary: DashboardHistorySummary;
   risk: DashboardRiskSnapshot;
@@ -108,9 +121,9 @@ export type DashboardSignalRow = {
 
 export type DashboardPageData = {
   stats: DashboardStats;
-  openTrades: Trade[];
-  unrealizedData: Array<{ date: string; unrealizedPnl: number }>;
-  traderData: Array<{ trader: string; pnl: number; trades: number; winRate: number }>;
+  openTrades: TradeRowWithQuality[];
+  unrealizedData: UnrealizedPnlPoint[];
+  traderData: BreakdownRow[];
   signals: DashboardSignalRow[];
   pendingReviews: Task[];
   riskSnapshot: DashboardRiskSnapshot;
@@ -145,8 +158,8 @@ export async function fetchDashboardPageData(channelId?: string): Promise<Dashbo
     unrealizedData.push(livePoint);
   }
 
-  const traderData = dashboard.traderPnl.map((row) => ({
-    trader: row.trader,
+  const traderData: BreakdownRow[] = dashboard.traderPnl.map((row) => ({
+    name: row.trader,
     pnl: toNumber(row.totalPnl),
     trades: row.tradeCount,
     winRate: row.tradeCount > 0 ? (row.wins / row.tradeCount) * 100 : 0,

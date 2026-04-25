@@ -1,3 +1,10 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { z } from 'zod';
+import { isMarketHoursWithBuffer, nextMarketOpenWithBufferUTC } from './et-date.js';
+import { PATHS } from './paths.js';
+
 type Severity = 'critical' | 'warning' | 'info';
 
 type AlertField = { name: string; value: string; inline?: boolean };
@@ -15,17 +22,85 @@ const COLORS: Record<Severity, number> = {
   info: 0x0099ff,     // Blue
 };
 
-/**
- * Send an emergency push notification via Pushover.
- * Never throws — alerting must not crash callers.
- * Returns silently if PUSHOVER_APP_TOKEN / PUSHOVER_USER_KEY are not set.
- */
-export async function sendPushover(title: string, message: string): Promise<void> {
-  if (process.env.ALERTS_PUSHOVER_ENABLED === '0') return;
+const PUSHOVER_QUEUE_RETRY_MS = 60_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
+const pushoverPageSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  message: z.string(),
+  queuedAt: z.string(),
+});
+
+type PushoverPage = z.infer<typeof pushoverPageSchema>;
+
+const pushoverQueueSchema = z.array(pushoverPageSchema);
+
+let pushoverQueue: PushoverPage[] | null = null;
+let pushoverQueuePathLoaded: string | null = null;
+let pushoverQueueLock: Promise<void> = Promise.resolve();
+let pushoverQueueTimer: ReturnType<typeof setTimeout> | null = null;
+
+function pushoverQueuePath(): string {
+  return process.env.PUSHOVER_QUEUE_FILE ?? join(PATHS.data, 'pushover-queue.json');
+}
+
+async function runWithPushoverQueue<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = pushoverQueueLock;
+  let release: () => void = () => {};
+  pushoverQueueLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+async function loadPushoverQueue(): Promise<PushoverPage[]> {
+  const queuePath = pushoverQueuePath();
+  if (pushoverQueue && pushoverQueuePathLoaded === queuePath) return pushoverQueue;
+
+  try {
+    const raw = await readFile(queuePath, 'utf-8');
+    pushoverQueue = pushoverQueueSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && err.code !== 'ENOENT') {
+      console.warn('[Alert] Failed to load Pushover queue:', err);
+    }
+    pushoverQueue = [];
+  }
+
+  pushoverQueuePathLoaded = queuePath;
+  return pushoverQueue;
+}
+
+async function savePushoverQueue(queue: PushoverPage[]): Promise<void> {
+  const queuePath = pushoverQueuePath();
+  await mkdir(dirname(queuePath), { recursive: true });
+  await writeFile(queuePath, `${JSON.stringify(queue, null, 2)}\n`);
+  pushoverQueue = queue;
+  pushoverQueuePathLoaded = queuePath;
+}
+
+async function enqueuePushoverPage(title: string, message: string): Promise<void> {
+  await runWithPushoverQueue(async () => {
+    const queue = await loadPushoverQueue();
+    queue.push({ id: randomUUID(), title, message, queuedAt: new Date().toISOString() });
+    await savePushoverQueue(queue);
+  });
+}
+
+async function deliverPushoverPage(page: PushoverPage): Promise<boolean> {
   const token = process.env.PUSHOVER_APP_TOKEN;
   const user = process.env.PUSHOVER_USER_KEY;
-  if (!token || !user) return;
+  if (!token || !user) {
+    console.warn('[Alert] Pushover credentials are not set; queued page retained');
+    return false;
+  }
 
   try {
     const res = await fetch('https://api.pushover.net/1/messages.json', {
@@ -34,8 +109,8 @@ export async function sendPushover(title: string, message: string): Promise<void
       body: JSON.stringify({
         token,
         user,
-        title,
-        message,
+        title: page.title,
+        message: page.message,
         priority: 2,
         retry: 60,
         expire: 600,
@@ -44,9 +119,79 @@ export async function sendPushover(title: string, message: string): Promise<void
     });
     if (!res.ok) {
       console.warn(`[Alert] Pushover responded ${res.status}`);
+      return false;
     }
+    return true;
   } catch (err) {
     console.warn('[Alert] Pushover request failed:', err);
+    return false;
+  }
+}
+
+function schedulePushoverQueueFlush(delayMs: number): void {
+  if (pushoverQueueTimer) return;
+  const boundedDelay = Math.min(Math.max(delayMs, 0), MAX_TIMEOUT_MS);
+  pushoverQueueTimer = setTimeout(() => {
+    pushoverQueueTimer = null;
+    void flushQueuedPushoverPages();
+  }, boundedDelay);
+  pushoverQueueTimer.unref?.();
+}
+
+function scheduleNextPushoverQueueFlush(now: Date): void {
+  const nextOpen = nextMarketOpenWithBufferUTC(now);
+  if (!nextOpen) return;
+  schedulePushoverQueueFlush(nextOpen.getTime() - now.getTime());
+}
+
+async function flushQueuedPushoverPages(): Promise<void> {
+  if (process.env.ALERTS_PUSHOVER_ENABLED === '0') return;
+
+  await runWithPushoverQueue(async () => {
+    const queue = await loadPushoverQueue();
+    if (queue.length === 0) return;
+
+    const now = new Date();
+    if (!isMarketHoursWithBuffer(now)) {
+      scheduleNextPushoverQueueFlush(now);
+      return;
+    }
+
+    while (queue.length > 0) {
+      const delivered = await deliverPushoverPage(queue[0]);
+      if (!delivered) {
+        schedulePushoverQueueFlush(PUSHOVER_QUEUE_RETRY_MS);
+        return;
+      }
+      queue.shift();
+      await savePushoverQueue(queue);
+    }
+  });
+}
+
+export async function startPushoverQueue(): Promise<void> {
+  await flushQueuedPushoverPages();
+}
+
+export function stopPushoverQueue(): void {
+  if (!pushoverQueueTimer) return;
+  clearTimeout(pushoverQueueTimer);
+  pushoverQueueTimer = null;
+}
+
+/**
+ * Send an emergency push notification via Pushover.
+ * Never throws — alerting must not crash callers.
+ * Queues outside buffered market hours and flushes once paging is allowed.
+ */
+export async function sendPushover(title: string, message: string): Promise<void> {
+  if (process.env.ALERTS_PUSHOVER_ENABLED === '0') return;
+
+  try {
+    await enqueuePushoverPage(title, message);
+    await flushQueuedPushoverPages();
+  } catch (err) {
+    console.warn('[Alert] Failed to queue Pushover page:', err);
   }
 }
 
@@ -61,33 +206,35 @@ export async function sendSystemAlert(params: SystemAlertParams): Promise<void> 
   const logFn = severity === 'critical' ? console.error : severity === 'warning' ? console.warn : console.log;
   logFn(`[Alert:${severity.toUpperCase()}] ${title}: ${message}`);
 
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!webhookUrl || process.env.ALERTS_DISCORD_ENABLED === '0') return;
+  if (process.env.ALERTS_DISCORD_ENABLED !== '0') {
+    const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    if (webhookUrl) {
+      try {
+        const embed: Record<string, unknown> = {
+          title: `[${severity.toUpperCase()}] ${title}`,
+          description: message,
+          color: COLORS[severity],
+          timestamp: new Date().toISOString(),
+        };
+        if (fields?.length) {
+          embed.fields = fields;
+        }
 
-  try {
-    const embed: Record<string, unknown> = {
-      title: `[${severity.toUpperCase()}] ${title}`,
-      description: message,
-      color: COLORS[severity],
-      timestamp: new Date().toISOString(),
-    };
-    if (fields?.length) {
-      embed.fields = fields;
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: 'Trade Follower',
+            embeds: [embed],
+          }),
+        });
+        if (!res.ok) {
+          console.warn(`[Alert] Discord webhook responded ${res.status}`);
+        }
+      } catch (err) {
+        console.warn('[Alert] Discord webhook request failed:', err);
+      }
     }
-
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: 'Trade Follower',
-        embeds: [embed],
-      }),
-    });
-    if (!res.ok) {
-      console.warn(`[Alert] Discord webhook responded ${res.status}`);
-    }
-  } catch (err) {
-    console.warn('[Alert] Discord webhook request failed:', err);
   }
 
   if (severity === 'critical') {

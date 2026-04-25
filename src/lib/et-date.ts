@@ -87,6 +87,7 @@ const MARKET_EARLY_CLOSES = new Set([
 const REGULAR_CLOSE_MINUTE = 960;  // 4:00 PM
 const EARLY_CLOSE_MINUTE = 780;    // 1:00 PM
 const MARKET_OPEN_MINUTE = 570;    // 9:30 AM
+const DEFAULT_MARKET_HOURS_BUFFER_MINUTES = 60;
 
 /** Market close time in minutes-of-day for a given date (780 on early close, 960 normally). */
 export function marketCloseMinute(d: Date): number {
@@ -104,6 +105,41 @@ export function isMarketHours(d: Date): boolean {
   if (!isTradingDay(d)) return false;
   const minutes = getETMinuteOfDay(d);
   return minutes >= MARKET_OPEN_MINUTE && minutes <= marketCloseMinute(d);
+}
+
+/** True during market hours plus a symmetric ET minute buffer on trading days. */
+export function isMarketHoursWithBuffer(
+  d: Date,
+  bufferMinutes = DEFAULT_MARKET_HOURS_BUFFER_MINUTES,
+): boolean {
+  if (!isTradingDay(d)) return false;
+  const minutes = getETMinuteOfDay(d);
+  return minutes >= MARKET_OPEN_MINUTE - bufferMinutes
+    && minutes <= marketCloseMinute(d) + bufferMinutes;
+}
+
+/** Buffered market open as a UTC Date. DST-aware. */
+function marketOpenWithBufferUTC(
+  d: Date,
+  bufferMinutes = DEFAULT_MARKET_HOURS_BUFFER_MINUTES,
+): Date {
+  const { start } = dayBoundsUTC(toDateKeyET(d));
+  return new Date(start.getTime() + (MARKET_OPEN_MINUTE - bufferMinutes) * 60 * 1000);
+}
+
+/** Next buffered market window start after `at`, or null if no trading day is found. */
+export function nextMarketOpenWithBufferUTC(
+  at: Date,
+  bufferMinutes = DEFAULT_MARKET_HOURS_BUFFER_MINUTES,
+): Date | null {
+  if (isTradingDay(at)) {
+    const todayStart = marketOpenWithBufferUTC(at, bufferMinutes);
+    if (at.getTime() < todayStart.getTime()) return todayStart;
+  }
+
+  const nextKey = getNextTradingDayKey(toDateKeyET(at));
+  if (!nextKey) return null;
+  return marketOpenWithBufferUTC(parseDateKey(nextKey), bufferMinutes);
 }
 
 /**

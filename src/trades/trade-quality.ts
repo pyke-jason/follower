@@ -1,4 +1,4 @@
-import type { Trade, TradeFlag } from '../db/schema.js';
+import type { Trade, TradeFlag, TradeRiskBasis } from '../db/schema.js';
 import { roundCents, safeParseFloat } from '../lib/numbers.js';
 
 type TradeQualityGrade = 'A' | 'B' | 'C' | 'D' | 'F';
@@ -31,12 +31,32 @@ type TradeQualityRow = {
   flags: TradeFlag[];
 };
 
+type TradeQualityGroupAxis = 'strategy' | 'trader' | 'symbol';
+
+type TradeQualityGroupRow = {
+  key: string;
+  trades: number;
+  finiteRiskTrades: number;
+  totalPnl: number;
+  avgR: number | null;
+};
+
+type TradeQualitySummaryOptions = {
+  /** Include the per-trade `rows[]` array. Default false to keep the
+   *  snapshot payload small for dashboard polling. */
+  includeRows?: boolean;
+  /** Add a `groupBy` axis result alongside the always-present `byStrategy`. */
+  groupBy?: TradeQualityGroupAxis;
+};
+
 type TradeQualitySummary = {
   coverage: {
     closedTrades: number;
     withFiniteRisk: number;
     excluded: number;
+    coveragePct: number;
     medianFiniteRisk: number | null;
+    exclusionReasons: Array<{ reason: TradeRiskBasis; count: number }>;
   };
   rBuckets: Array<{ label: string; count: number }>;
   gradeBuckets: Array<{ grade: TradeQualityGrade; count: number }>;
@@ -48,7 +68,8 @@ type TradeQualitySummary = {
     totalPnl: number;
     avgR: number | null;
   }>;
-  rows: TradeQualityRow[];
+  groupBy?: { axis: TradeQualityGroupAxis; rows: TradeQualityGroupRow[] };
+  rows?: TradeQualityRow[];
 };
 
 const R_BUCKETS = [
@@ -176,7 +197,48 @@ export function computeTradeQuality(
   };
 }
 
-export function computeTradeQualitySummary(trades: Trade[]): TradeQualitySummary {
+function groupKey(trade: Trade, axis: TradeQualityGroupAxis): string {
+  if (axis === 'trader') return trade.trader;
+  if (axis === 'symbol') return trade.symbol;
+  return trade.strategy;
+}
+
+function buildGroupRows(
+  trades: Trade[],
+  rows: TradeQualityRow[],
+  axis: TradeQualityGroupAxis,
+): TradeQualityGroupRow[] {
+  const map = new Map<string, { trades: number; finiteRiskTrades: number; totalPnl: number; totalR: number }>();
+  for (let i = 0; i < trades.length; i++) {
+    const trade = trades[i];
+    const row = rows[i];
+    const key = groupKey(trade, axis);
+    const current = map.get(key) ?? { trades: 0, finiteRiskTrades: 0, totalPnl: 0, totalR: 0 };
+    current.trades += 1;
+    current.totalPnl = roundCents(current.totalPnl + row.pnl);
+    if (row.rMultiple != null) {
+      current.finiteRiskTrades += 1;
+      current.totalR += row.rMultiple;
+    }
+    map.set(key, current);
+  }
+  return [...map.entries()]
+    .map(([key, stats]) => ({
+      key,
+      trades: stats.trades,
+      finiteRiskTrades: stats.finiteRiskTrades,
+      totalPnl: stats.totalPnl,
+      avgR: stats.finiteRiskTrades > 0
+        ? roundCents(stats.totalR / stats.finiteRiskTrades)
+        : null,
+    }))
+    .sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
+export function computeTradeQualitySummary(
+  trades: Trade[],
+  options: TradeQualitySummaryOptions = {},
+): TradeQualitySummary {
   const finiteRisks = trades
     .map((trade) => trade.metadata.risk?.peakRisk ?? null)
     .filter((risk): risk is number => risk != null && Number.isFinite(risk) && risk > 0);
@@ -220,51 +282,56 @@ export function computeTradeQualitySummary(trades: Trade[]): TradeQualitySummary
     }
   }
 
-  const strategyMap = new Map<string, {
-    trades: number;
-    finiteRiskTrades: number;
-    totalPnl: number;
-    totalR: number;
-  }>();
-  for (const row of rows) {
-    const current = strategyMap.get(row.strategy) ?? {
-      trades: 0,
-      finiteRiskTrades: 0,
-      totalPnl: 0,
-      totalR: 0,
-    };
-    current.trades += 1;
-    current.totalPnl = roundCents(current.totalPnl + row.pnl);
-    if (row.rMultiple != null) {
-      current.finiteRiskTrades += 1;
-      current.totalR += row.rMultiple;
-    }
-    strategyMap.set(row.strategy, current);
+  const strategyGroup = buildGroupRows(trades, rows, 'strategy');
+  const byStrategy = strategyGroup.map((g) => ({
+    strategy: g.key,
+    trades: g.trades,
+    finiteRiskTrades: g.finiteRiskTrades,
+    totalPnl: g.totalPnl,
+    avgR: g.avgR,
+  }));
+
+  // Exclusion reasons: bucket trades that lack finite peak risk by their basis.
+  const exclusionMap = new Map<TradeRiskBasis, number>();
+  for (const trade of trades) {
+    const risk = trade.metadata.risk;
+    const peak = risk?.peakRisk;
+    if (peak != null && Number.isFinite(peak) && peak > 0) continue;
+    const reason: TradeRiskBasis = risk?.basis ?? 'unknown';
+    exclusionMap.set(reason, (exclusionMap.get(reason) ?? 0) + 1);
   }
 
-  return {
+  const summary: TradeQualitySummary = {
     coverage: {
       closedTrades: trades.length,
       withFiniteRisk: finiteRisks.length,
       excluded: trades.length - finiteRisks.length,
+      coveragePct: trades.length > 0
+        ? roundCents(finiteRisks.length / trades.length)
+        : 0,
       medianFiniteRisk,
+      exclusionReasons: [...exclusionMap.entries()]
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count),
     },
     rBuckets,
     gradeBuckets,
     flagCounts: [...flagMap.entries()]
       .map(([flag, count]) => ({ flag, count }))
       .sort((a, b) => b.count - a.count),
-    byStrategy: [...strategyMap.entries()]
-      .map(([strategy, stats]) => ({
-        strategy,
-        trades: stats.trades,
-        finiteRiskTrades: stats.finiteRiskTrades,
-        totalPnl: stats.totalPnl,
-        avgR: stats.finiteRiskTrades > 0
-          ? roundCents(stats.totalR / stats.finiteRiskTrades)
-          : null,
-      }))
-      .sort((a, b) => b.totalPnl - a.totalPnl),
-    rows,
+    byStrategy,
   };
+
+  if (options.groupBy && options.groupBy !== 'strategy') {
+    summary.groupBy = {
+      axis: options.groupBy,
+      rows: buildGroupRows(trades, rows, options.groupBy),
+    };
+  } else if (options.groupBy === 'strategy') {
+    summary.groupBy = { axis: 'strategy', rows: strategyGroup };
+  }
+
+  if (options.includeRows) summary.rows = rows;
+
+  return summary;
 }

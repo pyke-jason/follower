@@ -21,6 +21,18 @@ import type {
 } from '../db/schema.js';
 import type { EquityPoint, LiveMetrics, StrategyStats, TraderStats } from '../backtest/types.js';
 
+/** Trade row decorated with the algorithmic quality block on the wire.
+ *  Every endpoint that returns trade rows decorates them via
+ *  `decorateTradesWithQuality` in `web-queries.ts`. */
+export type TradeWithQuality = Trade & {
+  quality: {
+    rMultiple: number | null;
+    score: number | null;
+    grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+    reasons: string[];
+  };
+};
+
 /* ─── Leaf: commission schedule ─────────────────────── */
 
 const CommissionScheduleSchema = z.object({
@@ -427,7 +439,7 @@ const RollingWinRatePointSchema = z.object({
 export const BacktestDetailResponseSchema = z.object({
   run: z.custom<BacktestRun>(),
   decisions: z.array(BacktestDecisionJoinRowSchema),
-  allTrades: z.array(z.custom<Trade>()),
+  allTrades: z.array(z.custom<TradeWithQuality>()),
   eventsByTradeId: z.record(z.string(), z.array(z.custom<TradeEvent>())),
   flagsByTradeId: z.record(z.string(), z.array(z.custom<TradeFlag>())),
   mtmSnapshots: z.array(z.object({ date: z.string(), unrealizedPnl: z.number() })),
@@ -467,7 +479,7 @@ export const BacktestLiveUpdateSchema = z.object({
 export type BacktestLiveUpdate = z.infer<typeof BacktestLiveUpdateSchema>;
 
 export const BacktestTradeSnapshotSchema = z.object({
-  allTrades: z.array(z.custom<Trade>()),
+  allTrades: z.array(z.custom<TradeWithQuality>()),
   eventsByTradeId: z.record(z.string(), z.array(z.custom<TradeEvent>())),
   flagsByTradeId: z.record(z.string(), z.array(z.custom<TradeFlag>())),
   mtmSnapshots: z.array(z.object({ date: z.string(), unrealizedPnl: z.number() })),
@@ -581,6 +593,6 @@ export const TraderDetailResponseSchema = z.object({
   equityCurve: z.array(EquityCurveRowSchema),
   strategyBreakdown: z.array(StrategyRowSchema),
   historySummary: HistorySummarySchema,
-  closedTrades: z.array(z.custom<Trade>()),
+  closedTrades: z.array(z.custom<TradeWithQuality>()),
 });
 export type TraderDetailResponse = z.infer<typeof TraderDetailResponseSchema>;

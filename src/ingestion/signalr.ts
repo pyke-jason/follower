@@ -32,11 +32,25 @@ export type ReactionUpdate = {
 type MessageHandler = (msg: SignalRMessage) => void | Promise<void>;
 type ReactionHandler = (update: ReactionUpdate) => void | Promise<void>;
 
+export type SignalRInjectionStatus = {
+  signalRAvailable: boolean;
+  addMessageConnected: boolean;
+  reactionProxyAttached: boolean;
+  transportName: string | null;
+  connectionState: number | null;
+  existingConnectionState: number | null;
+  details: string;
+};
+
+export function isSignalRSubscriptionReady(status: SignalRInjectionStatus): boolean {
+  return status.signalRAvailable && status.addMessageConnected && status.reactionProxyAttached;
+}
+
 export async function injectSignalRListener(
   page: Page,
   handler: MessageHandler,
   onReaction?: ReactionHandler,
-): Promise<void> {
+): Promise<SignalRInjectionStatus> {
   await page.exposeFunction('__onSignalRMessage', (raw: unknown) => {
     const msg = normalizeMessage(raw);
     if (!msg) return;
@@ -57,7 +71,17 @@ export async function injectSignalRListener(
     }
   });
 
-  await page.evaluate(async () => {
+  try {
+    await page.waitForFunction(
+      () => Boolean((window as unknown as { $?: { hubConnection?: unknown } }).$?.hubConnection),
+      undefined,
+      { timeout: 30_000 },
+    );
+  } catch {
+    console.warn('[SignalR] Timed out waiting for jQuery SignalR on page');
+  }
+
+  const status = await page.evaluate(async (): Promise<SignalRInjectionStatus> => {
     // OneOption uses jQuery SignalR 2.x (not @microsoft/signalr).
     // $.hubConnection() creates a NEW connection each call. Our 2nd connection
     // receives addMessage (broadcast to Clients.All) but NOT updateMessageReactions
@@ -65,42 +89,83 @@ export async function injectSignalRListener(
     //
     // Strategy: 2nd connection for addMessage, app's existing proxy for reactions.
     const win = window as any; // SAFETY: browser-injected global (jQuery SignalR)
-    if (win.$ && win.$.hubConnection) {
-      // ── addMessage: new connection (works, broadcast to all clients) ──
-      const connection = win.$.hubConnection();
-      const hub = connection.createHubProxy('chatHub');
+    if (!win.$ || !win.$.hubConnection) {
+      console.warn('[SignalR] jQuery SignalR not found on page');
+      return {
+        signalRAvailable: false,
+        addMessageConnected: false,
+        reactionProxyAttached: false,
+        transportName: null,
+        connectionState: null,
+        existingConnectionState: null,
+        details: 'jQuery SignalR not found on page',
+      };
+    }
 
-      hub.on('addMessage', (msg: unknown) => {
-        (window as any).__onSignalRMessage(msg); // SAFETY: browser-injected global via exposeFunction
+    // ── addMessage: new connection (works, broadcast to all clients) ──
+    const connection = win.$.hubConnection();
+    const hub = connection.createHubProxy('chatHub');
+
+    hub.on('addMessage', (msg: unknown) => {
+      (window as any).__onSignalRMessage(msg); // SAFETY: browser-injected global via exposeFunction
+    });
+
+    if (connection.state !== 1) {
+      console.log('[SignalR] Connection state ' + connection.state + ', starting...');
+      const connected = await new Promise<boolean>((resolve) => {
+        connection.start()
+          .done(() => {
+            console.log('[SignalR] Connected via ' + (connection.transport?.name || 'unknown'));
+            resolve(true);
+          })
+          .fail((err: unknown) => {
+            console.error('[SignalR] Connection failed:', err);
+            resolve(false);
+          });
       });
 
-      if (connection.state !== 1) {
-        console.log('[SignalR] Connection state ' + connection.state + ', starting...');
-        await new Promise<void>((resolve, reject) => {
-          connection.start()
-            .done(() => { console.log('[SignalR] Connected via ' + (connection.transport?.name || 'unknown')); resolve(); })
-            .fail((err: unknown) => { console.error('[SignalR] Connection failed:', err); reject(err); });
-        });
+      if (!connected) {
+        return {
+          signalRAvailable: true,
+          addMessageConnected: false,
+          reactionProxyAttached: false,
+          transportName: null,
+          connectionState: typeof connection.state === 'number' ? connection.state : null,
+          existingConnectionState: typeof win.$.connection?.hub?.state === 'number' ? win.$.connection.hub.state : null,
+          details: 'SignalR addMessage connection failed to start',
+        };
       }
-
-      // ── updateMessageReactions: app's existing proxy (joined to room group) ──
-      const existingProxy = win.$.connection?.chatHub;
-      if (existingProxy && typeof existingProxy.on === 'function') {
-        existingProxy.on('updateMessageReactions', (id: unknown, reactions: unknown) => {
-          (window as any).__onReactionUpdate(id, reactions); // SAFETY: browser-injected global via exposeFunction
-        });
-        console.log('[SignalR] Hook injected: addMessage (new conn) + updateMessageReactions (existing proxy)');
-      } else {
-        console.warn('[SignalR] No existing chatHub proxy found — reaction updates will not be received');
-        console.log('[SignalR] $.connection keys:', Object.keys(win.$.connection || {}).join(', '));
-        console.log('[SignalR] Hook injected: addMessage only (new conn)');
-      }
-    } else {
-      console.warn('[SignalR] jQuery SignalR not found on page');
     }
+
+    // ── updateMessageReactions: app's existing proxy (joined to room group) ──
+    const existingProxy = win.$.connection?.chatHub;
+    const reactionProxyAttached = Boolean(existingProxy && typeof existingProxy.on === 'function');
+    if (reactionProxyAttached) {
+      existingProxy.on('updateMessageReactions', (id: unknown, reactions: unknown) => {
+        (window as any).__onReactionUpdate(id, reactions); // SAFETY: browser-injected global via exposeFunction
+      });
+      console.log('[SignalR] Hook injected: addMessage (new conn) + updateMessageReactions (existing proxy)');
+    } else {
+      console.warn('[SignalR] No existing chatHub proxy found — page may not be joined to the chat room');
+      console.log('[SignalR] $.connection keys:', Object.keys(win.$.connection || {}).join(', '));
+      console.log('[SignalR] Hook injected: addMessage only (new conn)');
+    }
+
+    return {
+      signalRAvailable: true,
+      addMessageConnected: true,
+      reactionProxyAttached,
+      transportName: typeof connection.transport?.name === 'string' ? connection.transport.name : null,
+      connectionState: typeof connection.state === 'number' ? connection.state : null,
+      existingConnectionState: typeof win.$.connection?.hub?.state === 'number' ? win.$.connection.hub.state : null,
+      details: reactionProxyAttached
+        ? 'SignalR listener and chat-room proxy attached'
+        : 'SignalR listener attached, but page chat-room proxy is missing',
+    };
   });
 
   console.log('[SignalR] Listener injected');
+  return status;
 }
 
 /**

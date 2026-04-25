@@ -35,6 +35,7 @@ function trade(overrides: {
     brokerFillTime: null,
     brokerLegFills: null,
     realizedPnl: null,
+    plannedExitDate: null,
   };
 }
 

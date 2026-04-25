@@ -1,13 +1,15 @@
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor, shouldRotateProactively, clearProactiveRotationFlag, CHAT_URL } from './browser.js';
 import { rotateAccount } from './account-rotation.js';
-import { injectSignalRListener, compactReactions, type SignalRMessage, type ReactionUpdate } from './signalr.js';
+import { injectSignalRListener, isSignalRSubscriptionReady, compactReactions, type SignalRMessage, type ReactionUpdate } from './signalr.js';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
+import type { Message } from '../db/schema.js';
 import { sendSystemAlert } from '../lib/alert.js';
 import { isMarketHours, isoToDateKey } from '../lib/et-date.js';
-import { and, eq, gte } from 'drizzle-orm';
+import { and, asc, eq, gte } from 'drizzle-orm';
 import { normalizeForDedup, computeContentHash } from './dedup.js';
-import { fetchHistorical } from './historical.js';
+import { fetchHistorical, syncHistoricalDay, type HistoricalDaySyncResult } from './historical.js';
+import { shouldSendRecoveryAlert, staleRecoveredMessages } from './recovery.js';
 
 // ─── Message Watchdog ────────────────────────────────
 // Detects silent SignalR death: connection alive but no messages arriving.
@@ -15,19 +17,34 @@ import { fetchHistorical } from './historical.js';
 let lastMessageReceivedAt: Date | null = null;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let watchdogAlertFired = false;
+let restSafetyNetTimer: ReturnType<typeof setInterval> | null = null;
+let restSyncInFlight = false;
+let restPollingFailures = 0;
+let restSafetyNetFailures = 0;
+let lastRecoveryAlertAt: Date | null = null;
+let lastRestFailureAlertAt: Date | null = null;
 
 const WATCHDOG_CHECK_INTERVAL_MS = 60_000; // check every minute
 const WATCHDOG_SILENCE_THRESHOLD_MS = 5 * 60_000; // alert after 5 min silence
 
 const WATCHDOG_FORCE_RESTART_MS = 10 * 60_000; // force restart after 10 min silence
+const SUBSCRIPTION_RECOVERY_RESTART_MS = 30_000;
+const REST_SAFETY_NET_INTERVAL_MS = 60_000;
+const REST_RECOVERY_GRACE_MS = 45_000;
+const REST_RECOVERY_ALERT_COOLDOWN_MS = 5 * 60_000;
+const REST_SYNC_ALERT_FAILURES = 3;
+
+type StoredMessageHandler = (message: Message) => void | Promise<void>;
 
 function startMessageWatchdog(): void {
+  lastMessageReceivedAt ??= new Date();
+
   watchdogTimer = setInterval(() => {
     if (!isMarketHours(new Date())) {
       watchdogAlertFired = false; // reset so it can fire again next session
       return;
     }
-    if (!lastMessageReceivedAt) return; // haven't received any messages yet
+    if (!lastMessageReceivedAt) return;
 
     const silenceMs = Date.now() - lastMessageReceivedAt.getTime();
 
@@ -69,6 +86,28 @@ function stopMessageWatchdog(): void {
   }
 }
 
+function startRestSafetyNet(onStoredMessage?: StoredMessageHandler): void {
+  if (restSafetyNetTimer) return;
+  console.log(`[RestSafetyNet] Starting REST message audit (every ${REST_SAFETY_NET_INTERVAL_MS / 1000}s)`);
+  restSafetyNetTimer = setInterval(() => {
+    if (!isMarketHours(new Date())) {
+      restSafetyNetFailures = 0;
+      return;
+    }
+
+    syncTodayFromRest('safety-net', onStoredMessage).catch((err) => {
+      handleRestSyncFailure('safety-net', err);
+    });
+  }, REST_SAFETY_NET_INTERVAL_MS);
+}
+
+function stopRestSafetyNet(): void {
+  if (!restSafetyNetTimer) return;
+  clearInterval(restSafetyNetTimer);
+  restSafetyNetTimer = null;
+  console.log('[RestSafetyNet] Stopped');
+}
+
 // ─── Gap-Fill ────────────────────────────────────────
 // Startup: fetch last N days (default 30) so the UI has same-day/week/month
 // context on first boot. Reconnect: fetch today only. Prior-run chunk cache
@@ -77,15 +116,35 @@ function stopMessageWatchdog(): void {
 
 const INITIAL_BACKFILL_DAYS = Math.max(0, Number(process.env.INITIAL_BACKFILL_DAYS ?? '30'));
 
-async function gapFill(daysBack: number): Promise<void> {
+async function gapFill(
+  daysBack: number,
+  onStoredMessage?: StoredMessageHandler,
+  includeToday = true,
+): Promise<void> {
   try {
     const now = new Date();
-    const until = isoToDateKey(now.toISOString());
+    const untilDate = new Date(now);
+    if (!includeToday) {
+      untilDate.setUTCDate(untilDate.getUTCDate() - 1);
+    }
+
     const sinceDate = new Date(now);
     sinceDate.setUTCDate(sinceDate.getUTCDate() - daysBack);
+    if (sinceDate > untilDate) {
+      console.log('[Ingest] Gap-fill skipped: no historical days in range');
+      return;
+    }
+
+    const until = isoToDateKey(untilDate.toISOString());
     const since = isoToDateKey(sinceDate.toISOString());
     console.log(`[Ingest] Gap-fill: fetching historical ${since} to ${until}`);
-    await fetchHistorical({ since, until });
+    await fetchHistorical({
+      since,
+      until,
+      onSavedMessage: onStoredMessage
+        ? (message) => handleStoredMessage(message, onStoredMessage)
+        : undefined,
+    });
     console.log('[Ingest] Gap-fill complete');
   } catch (err) {
     // Non-fatal — SignalR will catch new messages going forward
@@ -98,9 +157,9 @@ async function gapFill(daysBack: number): Promise<void> {
 const RETRY_DELAYS = [10_000, 20_000, 40_000, 60_000]; // cap at 60s
 let shouldRun = true;
 
-export function startIngestion(onMessage?: (msg: SignalRMessage) => void | Promise<void>): void {
+export function startIngestion(onStoredMessage?: StoredMessageHandler): void {
   shouldRun = true;
-  superviseIngestion(onMessage).catch(err => {
+  superviseIngestion(onStoredMessage).catch(err => {
     console.error('[Ingest] Supervisor crashed unexpectedly:', err);
   });
 }
@@ -108,10 +167,12 @@ export function startIngestion(onMessage?: (msg: SignalRMessage) => void | Promi
 export function stopIngestion(): void {
   shouldRun = false;
   stopMessageWatchdog();
+  stopRestSafetyNet();
+  stopPollingFallback();
   stopAuthMonitor();
 }
 
-async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Promise<void>): Promise<void> {
+async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promise<void> {
   let consecutiveFailures = 0;
   let isFirstBoot = true;
 
@@ -120,6 +181,8 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
       // Clean slate — close previous browser process before relaunching
       await closeBrowser();
       stopMessageWatchdog();
+      stopRestSafetyNet();
+      stopPollingFallback();
       lastMessageReceivedAt = null;
       watchdogAlertFired = false;
 
@@ -219,11 +282,13 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
       }
 
       // Wire up SignalR + monitors
-      await injectSignalRListener(page, async (msg) => {
+      const signalRStatus = await injectSignalRListener(page, async (msg) => {
         lastMessageReceivedAt = new Date();
         try {
-          await processMessage(msg);
-          await onMessage?.(msg);
+          const stored = await processMessage(msg);
+          if (stored) {
+            await handleStoredMessage(stored, onStoredMessage);
+          }
         } catch (err) {
           console.error('[Ingest] Error processing message:', err);
           sendSystemAlert({
@@ -243,36 +308,79 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
       startAuthMonitor();
 
       const onChatPage = page.url().includes('/chat');
+      const subscriptionReady = isSignalRSubscriptionReady(signalRStatus);
 
       // Gap-fill: wide window on first boot, today-only on reconnect (non-blocking)
+      const initialBoot = isFirstBoot;
       const daysBack = isFirstBoot ? INITIAL_BACKFILL_DAYS : 0;
-      gapFill(daysBack).catch(() => {}); // errors already logged inside
+      gapFill(
+        daysBack,
+        initialBoot ? undefined : onStoredMessage,
+        !initialBoot,
+      ).catch(() => {}); // errors already logged inside
       isFirstBoot = false;
 
       consecutiveFailures = 0;
 
-      if (onChatPage) {
+      if (onChatPage && signalRStatus.addMessageConnected) {
         startMessageWatchdog();
-        sendSystemAlert({
-          title: 'Chat room connected',
-          message: 'Authenticated and listening for messages via SignalR',
-          severity: 'info',
-        });
-        console.log('[Ingest] Listening for messages (SignalR)...');
+        if (subscriptionReady) {
+          sendSystemAlert({
+            title: 'Chat room connected',
+            message: 'Authenticated and listening for messages via SignalR',
+            severity: 'info',
+          });
+          console.log('[Ingest] Listening for messages (SignalR)...');
+          startRestSafetyNet(onStoredMessage);
+          if (initialBoot) {
+            syncTodayFromRest('startup', onStoredMessage).catch((err) => {
+              handleRestSyncFailure('startup', err);
+            });
+            replayTodayStoredMessages(onStoredMessage).catch((err) => {
+              console.warn('[Ingest] Today task replay failed:', err instanceof Error ? err.message : String(err));
+            });
+          }
+        } else {
+          sendSystemAlert({
+            title: 'Chat room subscription degraded',
+            message: `${signalRStatus.details}. Polling REST fallback is active and the browser will restart in ${SUBSCRIPTION_RECOVERY_RESTART_MS / 1000}s.`,
+            severity: 'critical',
+          });
+          console.warn('[Ingest] SignalR subscription degraded:', signalRStatus);
+          startPollingFallback(onStoredMessage);
+          const recoveryTimer = setTimeout(() => {
+            closeBrowser().catch(() => {});
+          }, SUBSCRIPTION_RECOVERY_RESTART_MS);
+          recoveryTimer.unref?.();
+        }
       } else {
-        // Fallback: poll REST API when browser can't reach the chat page
+        // Fallback: poll REST API when browser can't reach the chat page or SignalR did not attach.
         sendSystemAlert({
           title: 'Chat room connected (polling mode)',
-          message: 'Browser not on chat page — polling REST API every 15s',
-          severity: 'warning',
+          message: onChatPage
+            ? `${signalRStatus.details} — polling REST API every 15s`
+            : 'Browser not on chat page — polling REST API every 15s',
+          severity: onChatPage ? 'critical' : 'warning',
         });
-        console.log('[Ingest] Browser not on chat page — using REST API polling fallback');
-        startPollingFallback();
+        console.log('[Ingest] Using REST API polling fallback');
+        startPollingFallback(onStoredMessage);
+        if (initialBoot) {
+          replayTodayStoredMessages(onStoredMessage).catch((err) => {
+            console.warn('[Ingest] Today task replay failed:', err instanceof Error ? err.message : String(err));
+          });
+        }
+        if (onChatPage) {
+          const recoveryTimer = setTimeout(() => {
+            closeBrowser().catch(() => {});
+          }, SUBSCRIPTION_RECOVERY_RESTART_MS);
+          recoveryTimer.unref?.();
+        }
       }
 
       // Park here until browser dies
       await crashed;
       stopPollingFallback();
+      stopRestSafetyNet();
 
       console.log('[Ingest] Browser closed — will restart');
       sendSystemAlert({
@@ -306,14 +414,16 @@ async function superviseIngestion(onMessage?: (msg: SignalRMessage) => void | Pr
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 const POLL_INTERVAL_MS = 15_000;
 
-function startPollingFallback(): void {
+function startPollingFallback(onStoredMessage?: StoredMessageHandler): void {
   if (pollingTimer) return;
   console.log('[Poll] Starting REST API polling (every 15s)');
   // Run immediately, then on interval
-  pollForMessages().catch(() => {});
+  syncTodayFromRest('polling', onStoredMessage).catch((err) => {
+    handleRestSyncFailure('polling', err);
+  });
   pollingTimer = setInterval(() => {
-    pollForMessages().catch(err => {
-      console.warn('[Poll] Polling error:', err instanceof Error ? err.message : String(err));
+    syncTodayFromRest('polling', onStoredMessage).catch((err) => {
+      handleRestSyncFailure('polling', err);
     });
   }, POLL_INTERVAL_MS);
 }
@@ -326,12 +436,128 @@ function stopPollingFallback(): void {
   }
 }
 
-async function pollForMessages(): Promise<void> {
+type RestSyncSource = 'polling' | 'safety-net' | 'startup';
+
+async function syncTodayFromRest(
+  source: RestSyncSource,
+  onStoredMessage?: StoredMessageHandler,
+): Promise<HistoricalDaySyncResult> {
+  if (restSyncInFlight) {
+    console.log(`[RestSync] Skipping ${source}: previous REST sync still running`);
+    return { fetched: 0, saved: 0, savedMessages: [] };
+  }
+
+  restSyncInFlight = true;
   const today = isoToDateKey(new Date().toISOString());
   try {
-    await fetchHistorical({ since: today, until: today });
-  } catch {
-    // Non-fatal — will retry on next interval
+    const result = await syncHistoricalDay(
+      today,
+      onStoredMessage
+        ? (message) => handleStoredMessage(message, onStoredMessage)
+        : undefined,
+    );
+    restPollingFailures = source === 'polling' ? 0 : restPollingFailures;
+    restSafetyNetFailures = source !== 'polling' ? 0 : restSafetyNetFailures;
+
+    if (source !== 'polling' && result.savedMessages.length > 0) {
+      await handleRestRecoveredMessages(result.savedMessages, source);
+    }
+
+    return result;
+  } finally {
+    restSyncInFlight = false;
+  }
+}
+
+function handleRestSyncFailure(source: RestSyncSource, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (source === 'polling') {
+    restPollingFailures++;
+  } else {
+    restSafetyNetFailures++;
+  }
+
+  const failures = source === 'polling' ? restPollingFailures : restSafetyNetFailures;
+  console.warn(`[RestSync] ${source} failed (${failures}): ${message}`);
+  if (failures < REST_SYNC_ALERT_FAILURES) return;
+
+  const now = new Date();
+  if (!shouldSendRecoveryAlert(lastRestFailureAlertAt, now, REST_RECOVERY_ALERT_COOLDOWN_MS)) return;
+  lastRestFailureAlertAt = now;
+  sendSystemAlert({
+    title: source === 'polling'
+      ? 'REST polling fallback failing'
+      : source === 'startup'
+        ? 'REST startup catch-up failing'
+        : 'REST message safety net failing',
+    message: `${failures} consecutive REST sync failures. Last error: ${message}`,
+    severity: 'critical',
+  });
+}
+
+async function handleRestRecoveredMessages(
+  messages: Message[],
+  source: Extract<RestSyncSource, 'safety-net' | 'startup'>,
+): Promise<void> {
+  const now = new Date();
+  const stale = staleRecoveredMessages(messages, now, REST_RECOVERY_GRACE_MS);
+  if (stale.length === 0) return;
+
+  const sample = stale
+    .slice(0, 3)
+    .map((message) => `${message.author} ${message.timestamp}: ${message.cleanText.slice(0, 80)}`)
+    .join('\n');
+
+  const restartBrowser = source === 'safety-net';
+  console.error(`[RestSafetyNet] Recovered ${stale.length} missed message(s) via ${source}${restartBrowser ? '; restarting browser' : ''}`);
+  if (shouldSendRecoveryAlert(lastRecoveryAlertAt, now, REST_RECOVERY_ALERT_COOLDOWN_MS)) {
+    lastRecoveryAlertAt = now;
+    await sendSystemAlert({
+      title: source === 'startup' ? 'Recovered startup chat gap' : 'Recovered missed chat messages',
+      message: source === 'startup'
+        ? `REST startup catch-up found ${stale.length} same-day message(s) older than ${Math.round(REST_RECOVERY_GRACE_MS / 1000)}s that were not in the database. Tasks were created.\n\n${sample}`
+        : `REST safety net found ${stale.length} message(s) older than ${Math.round(REST_RECOVERY_GRACE_MS / 1000)}s that SignalR had not processed. Tasks were created and the browser is restarting.\n\n${sample}`,
+      severity: 'critical',
+    });
+  }
+
+  if (restartBrowser) {
+    closeBrowser().catch(() => {});
+  }
+}
+
+async function replayTodayStoredMessages(onStoredMessage?: StoredMessageHandler): Promise<void> {
+  if (!onStoredMessage) return;
+
+  const today = isoToDateKey(new Date().toISOString());
+  const start = new Date(`${today}T00:00:00.000Z`).toISOString();
+  const rows = await db
+    .select()
+    .from(schema.messages)
+    .where(gte(schema.messages.timestamp, start))
+    .orderBy(asc(schema.messages.timestamp));
+
+  if (rows.length === 0) return;
+  console.log(`[Ingest] Replaying ${rows.length} stored same-day message(s) through task creation`);
+  for (const message of rows) {
+    await handleStoredMessage(message, onStoredMessage);
+  }
+}
+
+async function handleStoredMessage(
+  message: Message,
+  onStoredMessage?: StoredMessageHandler,
+): Promise<void> {
+  if (!onStoredMessage) return;
+  try {
+    await onStoredMessage(message);
+  } catch (err) {
+    console.error('[Ingest] Stored message handler failed:', err);
+    sendSystemAlert({
+      title: 'Live task creation failed',
+      message: `Message ${message.id} was stored but did not enter the live task pipeline: ${err instanceof Error ? err.message : String(err)}`,
+      severity: 'critical',
+    });
   }
 }
 
@@ -341,10 +567,10 @@ const DEDUP_WINDOW_MS = 60_000; // 60-second window for near-duplicate detection
 
 // ─── Message Processing ──────────────────────────────
 
-async function processMessage(msg: SignalRMessage): Promise<void> {
+async function processMessage(msg: SignalRMessage): Promise<Message | null> {
   if (typeof msg.MessageText !== 'string' || !msg.MessageText) {
     console.warn('[Ingest] Message with empty/missing text from', msg.User?.Name ?? 'unknown', '— dropped');
-    return;
+    return null;
   }
   const classification = classifyMessage(msg.MessageText);
 
@@ -367,12 +593,12 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
 
   if (existing.length > 0) {
     console.log(`[Ingest] Near-duplicate suppressed for ${author} (hash ${contentHash.substring(0, 8)}…, existing msg ${existing[0].id})`);
-    return;
+    return null;
   }
 
   const reactions = compactReactions(msg.Reactions);
 
-  await db.insert(schema.messages).values({
+  const [inserted] = await db.insert(schema.messages).values({
     id: msg.Id,
     author,
     timestamp,
@@ -387,10 +613,11 @@ async function processMessage(msg: SignalRMessage): Promise<void> {
     confidence: classification.confidence != null ? String(classification.confidence) : null,
     contentHash,
     reactions,
-  }).onConflictDoNothing();
+  }).onConflictDoNothing().returning();
 
   const badge = classification.badges.length > 0 ? `[${classification.badges.join(',')}]` : '';
   console.log(`[Ingest] ${author} ${badge}: ${classification.cleanText.substring(0, 80)}`);
+  return inserted ?? null;
 }
 
 // ─── Reaction Updates ───────────────────────────────

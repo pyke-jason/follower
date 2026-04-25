@@ -8,6 +8,7 @@ import { AccountHero } from './account-hero';
 import { PositionsWatchlist } from './positions-watchlist';
 import { QualitySnapshotPanel } from './quality-snapshot-panel';
 import { RiskPanel } from './risk-panel';
+import { TraderLeaderboard } from './trader-leaderboard';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
 import { ArrowRight, AlertTriangle } from 'lucide-react';
 import type { DashboardPageData } from '@/lib/page-adapters';
@@ -32,7 +33,7 @@ function DashboardContent({ data, href, channelId }: {
 }) {
   const {
     openTrades, unrealizedData, pendingReviews, riskSnapshot,
-    stats, qualitySummary, livePositionsByTradeId, accountBalance,
+    stats, qualitySummary, livePositionsByTradeId, accountBalance, traderData,
   } = data;
 
   return (
@@ -71,6 +72,8 @@ function DashboardContent({ data, href, channelId }: {
             </p>
           </div>
         )}
+
+        <TraderLeaderboard traderData={traderData} />
 
         {riskSnapshot && (
           <div className="border-t border-border/40 pt-4">
