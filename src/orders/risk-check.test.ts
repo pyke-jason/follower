@@ -50,6 +50,7 @@ function makeDeps(overrides: Partial<RiskCheckDeps> = {}): RiskCheckDeps {
     getCurrentEquity: async () => 100_000,
     getReconciliationAlertCount: async () => 0,
     getWorkingOrderExposure: () => ({ countBySymbol: new Map(), totalCount: 0, totalNotional: 0 }),
+    getMaintenanceMargin: async () => null,
     ...overrides,
   };
 }
