@@ -83,7 +83,9 @@ export class OrderManager {
 
   async tick(now: Date): Promise<void> {
     for (const [orderId, order] of this.workingOrders) {
-      if (order.status !== 'OPEN') continue;
+      // PENDING = IBKR Inactive (outside RTH / not yet submitted to exchange).
+      // Poll these too so we detect when they become OPEN or fill/cancel.
+      if (order.status !== 'OPEN' && order.status !== 'PENDING') continue;
 
       // 1. Check fill status FIRST — fills from advanceTo() must be detected
       //    before auto-cancel can fire, otherwise we lose recorded trades.
@@ -116,18 +118,46 @@ export class OrderManager {
         await this.onCancel(order);
         this.stopTimerIfEmpty();
         continue;
+      } else if (order.status === 'PENDING' && status.status === 'OPEN') {
+        // Order transitioned from Inactive to Submitted — reset placedAt so the
+        // cancelAfterSec timer starts from market activation, not original placement.
+        order.status = 'OPEN';
+        order.placedAt = now;
+        order.lastAdjustedAt = now;
+        log.info(`Order activated: ${orderId} ${order.params.symbol} (was Inactive)`);
+        continue;
       }
+
+      // Skip auto-cancel and price chase for still-PENDING (Inactive) orders.
+      if (order.status !== 'OPEN') continue;
 
       // 2. Check auto-cancel timeout
       if (order.params.cancelAfterSec != null) {
         const elapsed = (now.getTime() - order.placedAt.getTime()) / 1000;
         if (elapsed >= order.params.cancelAfterSec) {
           log.info(`Auto-cancel: ${orderId} ${order.params.symbol} after ${order.params.cancelAfterSec}s`);
-          await this.broker.cancelOrder(orderId);
-          order.status = 'CANCELLED';
-          order.cancelledAt = now;
-          this.workingOrders.delete(orderId);
-          await this.onCancel(order);
+          const cancelResult = await this.broker.cancelOrder(orderId);
+          // Race: IBKR may have filled the order in the window between the fill
+          // check above and the cancel request (the MU PUT scenario). If the
+          // cancel response reports FILLED, treat it as a fill — not a cancel —
+          // so the trade is recorded and the pending intent is resolved.
+          if (cancelResult.status === 'FILLED' && cancelResult.filledPrice != null && cancelResult.fillTimestamp != null) {
+            order.status = 'FILLED';
+            order.filledPrice = cancelResult.filledPrice;
+            order.filledAt = new Date(cancelResult.fillTimestamp);
+            order.filledQuantity = cancelResult.filledQuantity;
+            order.commission = cancelResult.commission;
+            order.fillTimestamp = cancelResult.fillTimestamp;
+            order.legFills = cancelResult.legFills;
+            this.workingOrders.delete(orderId);
+            log.info(`Fill on cancel: ${orderId} ${order.params.symbol} @ $${cancelResult.filledPrice}`);
+            await this.onFill(order as FilledWorkingOrder);
+          } else {
+            order.status = 'CANCELLED';
+            order.cancelledAt = now;
+            this.workingOrders.delete(orderId);
+            await this.onCancel(order);
+          }
           this.stopTimerIfEmpty();
           continue;
         }

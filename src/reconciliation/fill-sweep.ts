@@ -15,6 +15,7 @@ const log = createLogger('FillSweep');
 export class FillSweep {
   private timer: ReturnType<typeof setInterval> | null = null;
   private currentRun: Promise<number> | null = null;
+  private running = false;
 
   constructor(
     private broker: BrokerService,
@@ -36,10 +37,14 @@ export class FillSweep {
   }
 
   private _runSweep(): void {
-    this.currentRun = this.sweep().catch((err) => {
-      log.warn('Sweep error:', err);
-      return 0;
-    });
+    // Mirror the guard in ReconciliationScheduler — skip if a sweep is already
+    // in flight. Without this, back-to-back timer ticks could issue duplicate
+    // getOrderStatus calls for the same order and race on the metadata update.
+    if (this.running) return;
+    this.running = true;
+    this.currentRun = this.sweep()
+      .catch((err) => { log.warn('Sweep error:', err); return 0; })
+      .finally(() => { this.running = false; });
   }
 
   async sweep(): Promise<number> {

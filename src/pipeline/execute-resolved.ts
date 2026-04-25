@@ -451,7 +451,10 @@ async function placeOrder(
       filledAt: new Date(result.fillTimestamp!),
       adjustmentCount: 0,
     });
-  } else if (result.status === 'OPEN' && result.orderId) {
+  } else if ((result.status === 'OPEN' || result.status === 'PENDING') && result.orderId) {
+    // PENDING = IBKR Inactive (GTC placed outside RTH). Register the pending
+    // intent now so that when the order activates and fills, onFill can find it.
+    // Without this, after-hours orders become orphan fills with no DB trade.
     deps.onPending(result.orderId, pending);
   }
 

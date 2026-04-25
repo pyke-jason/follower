@@ -33,6 +33,12 @@ type IbkrServiceOptions = {
 type IbkrRuntime = {
   sidecarUrl: string;
   accountId: string;
+  // Per-instance sets — must NOT be module-level globals. Two concurrent
+  // IBKR services (e.g. live + paper) share the same module but must track
+  // their own order IDs independently; a collision on a low integer orderId
+  // could flip the limit-price sign on the wrong account's modify call.
+  creditComboOrderIds: Set<string>;
+  alertedMissingSubscription: Set<string>;
 };
 
 /** Round a price to the nearest valid tick using the contract's actual minTick from IBKR. */
@@ -128,12 +134,6 @@ function ibkrClassify(err: unknown): ErrorCategory {
   return classifyError(err);
 }
 
-// Tracks whether each placed combo order is a credit (negative limit sign).
-// Needed so modifyOrder can preserve the sign convention — the sidecar's
-// modify endpoint writes lmtPrice verbatim, and OrderManager passes positive
-// chase prices that must be re-signed for credit combos.
-const creditComboOrderIds = new Set<string>();
-
 // ── HTTP helper ─────────────────────────────────────────────────────
 
 async function sidecar(
@@ -156,7 +156,7 @@ async function sidecar(
   return res.json();
 }
 
-// ── IBKR Status Mapping ─────────────────────────────────────────────
+// ── IBKR Status Mapping ──────────────────────────────────────────────
 
 function mapIbkrStatus(ibkrStatus: string): OrderStatus {
   switch (ibkrStatus) {
@@ -178,8 +178,6 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
 }
 
 // ── BrokerService Implementation ────────────────────────────────────
-
-const alertedMissingSubscription = new Set<string>();
 
 async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
   try {
@@ -220,8 +218,8 @@ async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
     }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/IBKR sidecar 402:/.test(msg) && !alertedMissingSubscription.has(symbol)) {
-      alertedMissingSubscription.add(symbol);
+    if (/IBKR sidecar 402:/.test(msg) && !runtime.alertedMissingSubscription.has(symbol)) {
+      runtime.alertedMissingSubscription.add(symbol);
       const isCompetingSession = /"twsCode"\s*:\s*10197/.test(msg);
       void sendSystemAlert({
         title: isCompetingSession
@@ -315,7 +313,7 @@ async function placeOrder(params: OrderParams, runtime: IbkrRuntime): Promise<Or
 
     const orderId = String(order.orderId);
     if (resolvedLegs.length > 1 && (isCreditOrderStructural(params.legs) ?? false)) {
-      creditComboOrderIds.add(orderId);
+      runtime.creditComboOrderIds.add(orderId);
     }
 
     return {
@@ -339,7 +337,7 @@ async function modifyOrder(
     const rounded = Math.round(newLimitPrice * 100) / 100;
     // Credit combos were placed with a negative lmtPrice (BAG convention) —
     // chase updates pass positive magnitudes, so re-apply the sign here.
-    const signed = creditComboOrderIds.has(orderId) ? -Math.abs(rounded) : rounded;
+    const signed = runtime.creditComboOrderIds.has(orderId) ? -Math.abs(rounded) : rounded;
 
     const data = await sidecar(runtime.sidecarUrl, `/orders/${encodeURIComponent(orderId)}`, {
       method: 'PUT',
@@ -373,12 +371,23 @@ async function cancelOrder(orderId: string, runtime: IbkrRuntime): Promise<Order
       `DELETE /api/orders/${orderId}`,
     );
 
-    creditComboOrderIds.delete(orderId);
+    runtime.creditComboOrderIds.delete(orderId);
 
-    return {
+    const status = mapIbkrStatus(order.status);
+    const result: OrderResult = {
       orderId: String(order.orderId),
-      status: mapIbkrStatus(order.status),
+      status,
     };
+    // IBKR may have filled the order between our fill check and the cancel request
+    // (the MU PUT race). Return fill details so the caller can route to onFill
+    // instead of onCancel and avoid creating an orphan broker position.
+    if (status === 'FILLED') {
+      result.filledPrice = order.avgFillPrice;
+      result.filledQuantity = order.filledQuantity;
+      result.commission = order.commission;
+      result.fillTimestamp = new Date().toISOString();
+    }
+    return result;
   }, { ...WRITE_DEFAULTS, classify: ibkrClassify }, `cancelOrder(${orderId})`);
 }
 
@@ -495,6 +504,8 @@ export function createIbkrService(options: IbkrServiceOptions): BrokerService {
   const runtime: IbkrRuntime = {
     sidecarUrl: options.sidecarUrl,
     accountId: options.accountId,
+    creditComboOrderIds: new Set<string>(),
+    alertedMissingSubscription: new Set<string>(),
   };
   return {
     getQuote: (symbol) => getQuote(symbol, runtime),
