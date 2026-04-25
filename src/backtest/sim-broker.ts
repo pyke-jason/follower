@@ -1020,4 +1020,9 @@ export class SimBroker implements BrokerService {
   async isHealthy(): Promise<boolean> {
     return true;
   }
+
+  async placeStopOrder(_params: import('../broker/types.js').StopOrderParams): Promise<import('../broker/types.js').OrderResult> {
+    // Backtest exits are signal-driven; server-side stops are live-only infrastructure.
+    return { orderId: 'sim-no-stop', status: 'OPEN' };
+  }
 }

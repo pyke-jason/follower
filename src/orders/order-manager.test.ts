@@ -52,6 +52,7 @@ function makeBroker(overrides: Partial<BrokerService> = {}): BrokerService {
     getAccountBalance: vi.fn(),
     isHealthy: vi.fn(),
     cancelAllOrders: vi.fn().mockResolvedValue(undefined),
+    placeStopOrder: vi.fn().mockResolvedValue({ orderId: 'stop-001', status: 'OPEN' }),
     ...overrides,
   };
 }

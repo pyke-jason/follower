@@ -27,6 +27,7 @@ function makeStubBroker(): BrokerService {
       timestamp: '',
     }),
     isHealthy: async () => true,
+    placeStopOrder: async (): Promise<OrderResult> => ({ orderId: 'test-stop', status: 'OPEN' }),
   };
 }
 

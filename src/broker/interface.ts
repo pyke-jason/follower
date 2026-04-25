@@ -1,4 +1,4 @@
-import type { Quote, OrderResult, OrderParams, BrokerPosition, AccountBalance } from './types.js';
+import type { Quote, OrderResult, OrderParams, StopOrderParams, BrokerPosition, AccountBalance } from './types.js';
 
 export interface BrokerService {
   getQuote(symbol: string): Promise<Quote>;
@@ -12,4 +12,9 @@ export interface BrokerService {
   getAccountBalance(): Promise<AccountBalance>;
   /** Lightweight health probe. Returns false if broker is unreachable or in maintenance. */
   isHealthy(): Promise<boolean>;
+  /**
+   * Place a GTC stop order that lives at the broker independently of the bot process.
+   * Supported strategies: STOCK, CALL, PUT. Throws for spreads.
+   */
+  placeStopOrder(params: StopOrderParams): Promise<OrderResult>;
 }

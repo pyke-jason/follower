@@ -6,7 +6,7 @@ import { startIngestion, stopIngestion, closeBrowser } from './ingestion/ingest.
 import { initRunner, submitTask, stopRunner, awaitDrain, destroyOrderManager } from './live/runner.js';
 import { createTasksFromMessage } from './live/factory.js';
 import { pgPool } from './db/client.js';
-import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
+import { captureStartingBalance, ReconciliationScheduler, FillSweep, reconcileStops } from './reconciliation/index.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
@@ -90,6 +90,15 @@ async function main() {
       await captureStartingBalance(channel.broker, channel.channelId);
     } catch (err) {
       console.warn(`[Balance ${channel.channelId}] Failed to capture starting balance:`, err);
+    }
+  }
+
+  // One-shot: ensure all open positions have a live server-side stop at IBKR
+  for (const channel of channels) {
+    try {
+      await reconcileStops(channel.broker, channel.channelId);
+    } catch (err) {
+      console.warn(`[StopRecon ${channel.channelId}] Failed:`, err);
     }
   }
 

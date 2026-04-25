@@ -109,6 +109,10 @@ public class OrderRoutes {
         if (body.limitPrice() != null) {
             order.lmtPrice(body.limitPrice());
         }
+        // auxPrice is the stop/trigger price for STP and STP LMT orders
+        if (body.auxPrice() != null) {
+            order.auxPrice(body.auxPrice());
+        }
 
         int orderId = bridge.getNextReqId();
 
@@ -119,8 +123,8 @@ public class OrderRoutes {
 
         CompletableFuture<Map<String, Object>> future = bridge.createRequest(orderId);
 
-        log.info("AUDIT placeOrder orderId={} conId={} action={} qty={} orderType={} limitPrice={} tif={} clientOrderRef={}",
-                orderId, contract.conid(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.tif(), body.clientOrderRef());
+        log.info("AUDIT placeOrder orderId={} conId={} action={} qty={} orderType={} limitPrice={} auxPrice={} tif={} clientOrderRef={}",
+                orderId, contract.conid(), order.action(), order.totalQuantity(), order.orderType(), order.lmtPrice(), order.auxPrice(), order.tif(), body.clientOrderRef());
 
         bridge.getClient().placeOrder(orderId, contract, order);
         bridge.storeOrder(orderId, contract, order);

@@ -563,6 +563,12 @@ export type TradeMetadata = {
   flags?: TradeFlag[];
   /** Total pipeline execution time (ms) from trace spans — message ingestion to final event. */
   executionMs?: number;
+  /**
+   * IBKR order ID of the GTC stop order protecting this position.
+   * Set after entry fills. Cleared when the stop is cancelled (on CLOSE/TRIM).
+   * Absence means no server-side stop is active — startup reconciler will re-place.
+   */
+  stopOrderId?: string;
   /** Catch-all for genuinely unknown future fields. */
   extra?: Record<string, unknown>;
 };

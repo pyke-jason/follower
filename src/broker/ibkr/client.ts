@@ -6,7 +6,7 @@
  */
 
 import type { OptionType } from '@/lib/enums.js';
-import type { Quote, OrderResult, OrderParams, OrderStatus, BrokerPosition, AccountBalance, OrderLeg } from '../types.js';
+import type { Quote, OrderResult, OrderParams, StopOrderParams, OrderStatus, BrokerPosition, AccountBalance, OrderLeg } from '../types.js';
 import type { BrokerService } from '../interface.js';
 import type { ErrorCategory } from '@/lib/resilient.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '@/lib/resilient.js';
@@ -477,6 +477,55 @@ async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, 'getPositions');
 }
 
+async function placeStopOrder(params: StopOrderParams, runtime: IbkrRuntime): Promise<OrderResult> {
+  if (params.legs.length !== 1) {
+    throw new Error(
+      `placeStopOrder only supports single-leg instruments (got ${params.legs.length} legs, strategy=${params.strategy}). ` +
+      'Spread stops must be implemented separately.',
+    );
+  }
+
+  const leg = params.legs[0];
+
+  // Resolve contract
+  const { conId, minTick } = leg.type === 'STOCK'
+    ? await resolveStockContract(params.symbol, runtime.sidecarUrl)
+    : await resolveContract(leg.symbol, runtime.sidecarUrl);
+
+  const stopPrice = roundToTick(params.stopPrice, minTick);
+  const limitPrice = params.limitPrice != null ? roundToTick(params.limitPrice, minTick) : undefined;
+  const orderType = limitPrice != null ? 'STP LMT' : 'STP';
+  const clientOrderRef = randomUUID();
+
+  return withRetry(async (signal) => {
+    const body: Record<string, unknown> = {
+      conId,
+      action: params.stopAction,
+      orderType,
+      quantity: params.quantity,
+      tif: 'GTC',
+      auxPrice: stopPrice,
+      clientOrderRef,
+    };
+    if (limitPrice != null) {
+      body.limitPrice = limitPrice;
+    }
+
+    const data = await sidecar(runtime.sidecarUrl, '/orders/single', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    const order = parseSidecarResponse(OrderResponseSchema, data, 'POST /api/orders/single (stop)');
+
+    return {
+      orderId: String(order.orderId),
+      status: mapIbkrStatus(order.status),
+    };
+  }, { maxRetries: 2, timeoutMs: 15_000, classify: ibkrClassify }, 'placeStopOrder');
+}
+
 async function getAccountBalance(runtime: IbkrRuntime): Promise<AccountBalance> {
   return withRetry(async (signal) => {
     const data = await sidecar(runtime.sidecarUrl, '/account/summary', { signal });
@@ -538,5 +587,6 @@ export function createIbkrService(options: IbkrServiceOptions): BrokerService {
     getPositions: () => getPositions(runtime),
     getAccountBalance: () => getAccountBalance(runtime),
     isHealthy: () => isHealthy(runtime),
+    placeStopOrder: (params) => placeStopOrder(params, runtime),
   };
 }

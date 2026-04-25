@@ -1,12 +1,12 @@
-# Graph Report - trade-follower-3  (2026-04-24)
+# Graph Report - trade-follower-3  (2026-04-25)
 
 ## Corpus Check
-- 548 files · ~4,389,883 words
+- 560 files · ~4,373,786 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1820 nodes · 3204 edges · 145 communities detected
-- Extraction: 73% EXTRACTED · 27% INFERRED · 0% AMBIGUOUS · INFERRED: 854 edges (avg confidence: 0.8)
+- 1909 nodes · 3444 edges · 136 communities detected
+- Extraction: 73% EXTRACTED · 27% INFERRED · 0% AMBIGUOUS · INFERRED: 939 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -32,75 +32,72 @@
 - [[_COMMUNITY_Community 19|Community 19]]
 - [[_COMMUNITY_Community 20|Community 20]]
 - [[_COMMUNITY_Community 21|Community 21]]
-- [[_COMMUNITY_Community 22|Community 22]]
+- [[_COMMUNITY_Community 23|Community 23]]
 - [[_COMMUNITY_Community 24|Community 24]]
 - [[_COMMUNITY_Community 25|Community 25]]
 - [[_COMMUNITY_Community 26|Community 26]]
 - [[_COMMUNITY_Community 27|Community 27]]
 - [[_COMMUNITY_Community 28|Community 28]]
-- [[_COMMUNITY_Community 30|Community 30]]
 - [[_COMMUNITY_Community 31|Community 31]]
 - [[_COMMUNITY_Community 32|Community 32]]
 - [[_COMMUNITY_Community 33|Community 33]]
+- [[_COMMUNITY_Community 35|Community 35]]
 - [[_COMMUNITY_Community 36|Community 36]]
 - [[_COMMUNITY_Community 37|Community 37]]
 - [[_COMMUNITY_Community 38|Community 38]]
 - [[_COMMUNITY_Community 39|Community 39]]
 - [[_COMMUNITY_Community 40|Community 40]]
-- [[_COMMUNITY_Community 41|Community 41]]
 - [[_COMMUNITY_Community 42|Community 42]]
-- [[_COMMUNITY_Community 44|Community 44]]
+- [[_COMMUNITY_Community 45|Community 45]]
+- [[_COMMUNITY_Community 46|Community 46]]
 - [[_COMMUNITY_Community 47|Community 47]]
 - [[_COMMUNITY_Community 48|Community 48]]
-- [[_COMMUNITY_Community 49|Community 49]]
+- [[_COMMUNITY_Community 50|Community 50]]
 - [[_COMMUNITY_Community 51|Community 51]]
 - [[_COMMUNITY_Community 52|Community 52]]
 - [[_COMMUNITY_Community 53|Community 53]]
-- [[_COMMUNITY_Community 54|Community 54]]
-- [[_COMMUNITY_Community 55|Community 55]]
-- [[_COMMUNITY_Community 56|Community 56]]
-- [[_COMMUNITY_Community 60|Community 60]]
+- [[_COMMUNITY_Community 57|Community 57]]
+- [[_COMMUNITY_Community 62|Community 62]]
+- [[_COMMUNITY_Community 64|Community 64]]
 - [[_COMMUNITY_Community 66|Community 66]]
-- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 69|Community 69]]
 - [[_COMMUNITY_Community 70|Community 70]]
-- [[_COMMUNITY_Community 71|Community 71]]
-- [[_COMMUNITY_Community 73|Community 73]]
-- [[_COMMUNITY_Community 74|Community 74]]
-- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 75|Community 75]]
+- [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 80|Community 80]]
+- [[_COMMUNITY_Community 81|Community 81]]
 - [[_COMMUNITY_Community 82|Community 82]]
 - [[_COMMUNITY_Community 83|Community 83]]
 - [[_COMMUNITY_Community 84|Community 84]]
-- [[_COMMUNITY_Community 85|Community 85]]
-- [[_COMMUNITY_Community 86|Community 86]]
 - [[_COMMUNITY_Community 87|Community 87]]
 - [[_COMMUNITY_Community 88|Community 88]]
 - [[_COMMUNITY_Community 89|Community 89]]
-- [[_COMMUNITY_Community 92|Community 92]]
+- [[_COMMUNITY_Community 90|Community 90]]
+- [[_COMMUNITY_Community 91|Community 91]]
 - [[_COMMUNITY_Community 93|Community 93]]
 - [[_COMMUNITY_Community 94|Community 94]]
 - [[_COMMUNITY_Community 95|Community 95]]
-- [[_COMMUNITY_Community 96|Community 96]]
 - [[_COMMUNITY_Community 98|Community 98]]
 - [[_COMMUNITY_Community 99|Community 99]]
 - [[_COMMUNITY_Community 100|Community 100]]
 - [[_COMMUNITY_Community 101|Community 101]]
 - [[_COMMUNITY_Community 102|Community 102]]
-- [[_COMMUNITY_Community 103|Community 103]]
 - [[_COMMUNITY_Community 104|Community 104]]
+- [[_COMMUNITY_Community 105|Community 105]]
 - [[_COMMUNITY_Community 106|Community 106]]
 - [[_COMMUNITY_Community 107|Community 107]]
 - [[_COMMUNITY_Community 108|Community 108]]
-- [[_COMMUNITY_Community 109|Community 109]]
 - [[_COMMUNITY_Community 110|Community 110]]
-- [[_COMMUNITY_Community 112|Community 112]]
+- [[_COMMUNITY_Community 111|Community 111]]
 - [[_COMMUNITY_Community 113|Community 113]]
-- [[_COMMUNITY_Community 115|Community 115]]
-- [[_COMMUNITY_Community 117|Community 117]]
+- [[_COMMUNITY_Community 116|Community 116]]
+- [[_COMMUNITY_Community 118|Community 118]]
 - [[_COMMUNITY_Community 119|Community 119]]
 - [[_COMMUNITY_Community 120|Community 120]]
 - [[_COMMUNITY_Community 121|Community 121]]
 - [[_COMMUNITY_Community 122|Community 122]]
 - [[_COMMUNITY_Community 123|Community 123]]
+- [[_COMMUNITY_Community 124|Community 124]]
 - [[_COMMUNITY_Community 125|Community 125]]
 - [[_COMMUNITY_Community 126|Community 126]]
 - [[_COMMUNITY_Community 127|Community 127]]
@@ -110,12 +107,12 @@
 - [[_COMMUNITY_Community 131|Community 131]]
 - [[_COMMUNITY_Community 132|Community 132]]
 - [[_COMMUNITY_Community 133|Community 133]]
-- [[_COMMUNITY_Community 134|Community 134]]
+- [[_COMMUNITY_Community 135|Community 135]]
 - [[_COMMUNITY_Community 136|Community 136]]
-- [[_COMMUNITY_Community 137|Community 137]]
-- [[_COMMUNITY_Community 142|Community 142]]
-- [[_COMMUNITY_Community 146|Community 146]]
-- [[_COMMUNITY_Community 148|Community 148]]
+- [[_COMMUNITY_Community 141|Community 141]]
+- [[_COMMUNITY_Community 145|Community 145]]
+- [[_COMMUNITY_Community 147|Community 147]]
+- [[_COMMUNITY_Community 153|Community 153]]
 - [[_COMMUNITY_Community 154|Community 154]]
 - [[_COMMUNITY_Community 155|Community 155]]
 - [[_COMMUNITY_Community 156|Community 156]]
@@ -123,10 +120,11 @@
 - [[_COMMUNITY_Community 158|Community 158]]
 - [[_COMMUNITY_Community 159|Community 159]]
 - [[_COMMUNITY_Community 160|Community 160]]
-- [[_COMMUNITY_Community 161|Community 161]]
-- [[_COMMUNITY_Community 171|Community 171]]
+- [[_COMMUNITY_Community 170|Community 170]]
+- [[_COMMUNITY_Community 177|Community 177]]
 - [[_COMMUNITY_Community 178|Community 178]]
 - [[_COMMUNITY_Community 179|Community 179]]
+- [[_COMMUNITY_Community 180|Community 180]]
 - [[_COMMUNITY_Community 181|Community 181]]
 - [[_COMMUNITY_Community 182|Community 182]]
 - [[_COMMUNITY_Community 183|Community 183]]
@@ -137,48 +135,41 @@
 - [[_COMMUNITY_Community 188|Community 188]]
 - [[_COMMUNITY_Community 189|Community 189]]
 - [[_COMMUNITY_Community 190|Community 190]]
-- [[_COMMUNITY_Community 191|Community 191]]
 - [[_COMMUNITY_Community 192|Community 192]]
 - [[_COMMUNITY_Community 193|Community 193]]
+- [[_COMMUNITY_Community 194|Community 194]]
 - [[_COMMUNITY_Community 195|Community 195]]
 - [[_COMMUNITY_Community 196|Community 196]]
 - [[_COMMUNITY_Community 197|Community 197]]
-- [[_COMMUNITY_Community 198|Community 198]]
 - [[_COMMUNITY_Community 199|Community 199]]
 - [[_COMMUNITY_Community 200|Community 200]]
 - [[_COMMUNITY_Community 201|Community 201]]
+- [[_COMMUNITY_Community 202|Community 202]]
 - [[_COMMUNITY_Community 203|Community 203]]
-- [[_COMMUNITY_Community 204|Community 204]]
-- [[_COMMUNITY_Community 205|Community 205]]
-- [[_COMMUNITY_Community 206|Community 206]]
-- [[_COMMUNITY_Community 207|Community 207]]
-- [[_COMMUNITY_Community 208|Community 208]]
-- [[_COMMUNITY_Community 209|Community 209]]
-- [[_COMMUNITY_Community 210|Community 210]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `filter()` - 75 edges
-2. `String()` - 60 edges
-3. `log()` - 51 edges
+1. `filter()` - 81 edges
+2. `String()` - 65 edges
+3. `log()` - 60 edges
 4. `runBacktestInner()` - 46 edges
 5. `SimBroker` - 30 edges
-6. `round` - 26 edges
-7. `parse()` - 26 edges
-8. `roundCents` - 23 edges
-9. `cn() — class merge helper` - 22 edges
-10. `superviseIngestion()` - 20 edges
+6. `parse()` - 29 edges
+7. `round` - 28 edges
+8. `superviseIngestion()` - 25 edges
+9. `roundCents` - 25 edges
+10. `cn() — class merge helper` - 21 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `handleLabelFilter()` --calls--> `setLabel()`  [INFERRED]
-  web/src/views/messages/chat-filters.tsx → scratchpad/final-4-fix.ts
-- `String()` --calls--> `normalize()`  [INFERRED]
-  web/src/views/backtests/new/backtest-form.tsx → scratchpad/audit-deep.ts
-- `String()` --calls--> `extractExpiry()`  [INFERRED]
-  web/src/views/backtests/new/backtest-form.tsx → scratchpad/enrich-classifier-signals.ts
+- `getStrategyState()` --calls--> `filter()`  [INFERRED]
+  web/src/views/traders/trader-roster.tsx → src/backtest/runner-filter.test.ts
 - `String()` --calls--> `fmtTime()`  [INFERRED]
   web/src/views/backtests/new/backtest-form.tsx → docs/design-variations/trade-breakdown/project/terminal-shared.jsx
-- `String()` --calls--> `insertOpenStockTrade()`  [INFERRED]
-  web/src/views/backtests/new/backtest-form.tsx → src/local-api/routes/web-orders.test.ts
+- `hasPriceEvidence()` --calls--> `round`  [INFERRED]
+  scratchpad/label-add-from-classifier.ts → src/lib/numbers.ts
+- `fromResolvedSnapshot()` --calls--> `filter()`  [INFERRED]
+  scratchpad/audit-deep.ts → src/backtest/runner-filter.test.ts
+- `FnPatterns()` --calls--> `filter()`  [INFERRED]
+  docs/design-variations/trade-breakdown/project/fintech-dashboard.jsx → src/backtest/runner-filter.test.ts
 
 ## Hyperedges (group relationships)
 - **Sidecar route handler group routes via TwsBridge** — contractroutes_contract_routes, marketdataroutes_market_data_routes, orderroutes_order_routes, accountroutes_account_routes, twsbridge_tws_bridge [EXTRACTED 0.95]
@@ -234,355 +225,339 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.02
-Nodes (71): BacktestAgent, sleep(), withTimeout(), String(), toExpiryFromMonthName(), buildMessageParams(), handleSubmit(), cancelOrder() (+63 more)
+Nodes (52): eqField(), normExp(), categorize(), hasDirectionKeyword(), hasExitPct(), hasExpiryHint(), hasPrice(), hasStrategyKeyword() (+44 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.03
-Nodes (36): eqField(), normExp(), categorize(), hasDirectionKeyword(), hasExitPct(), hasExpiryHint(), hasPrice(), hasStrategyKeyword() (+28 more)
+Nodes (114): enqueuePushoverPage(), flushQueuedPushoverPages(), loadPushoverQueue(), pushoverQueuePath(), runWithPushoverQueue(), savePushoverQueue(), scheduleNextPushoverQueueFlush(), schedulePushoverQueueFlush() (+106 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.03
-Nodes (65): CommissionableTrade type, computeEntrySideCommission, computeSideCommission (internal), computeTradeCommission, DirectionSchema / Direction, insertMessage(), makeMessage(), forChannel() (+57 more)
+Nodes (73): BacktestTradesPane(), buildPipelineDeps(), buildOrderCallbacks(), btChannel(), runTx(), createEmitter(), SpreadStrategy, StrategySchema / Strategy (+65 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.04
-Nodes (59): buildBacktestChatData(), BacktestTradesPane(), btChannel(), clsChannel(), hasBacktestCheckpoint(), loadBacktestCheckpoint(), saveBacktestCheckpoint(), getApiStats() (+51 more)
+Cohesion: 0.03
+Nodes (68): main(), recomputeRiskFromTradeRow(), replayRiskFromEvents(), loadBacktestCheckpoint(), saveBacktestCheckpoint(), buildComboOrderBody(), CommissionableTrade type, computeEntrySideCommission (+60 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.03
-Nodes (62): getDateRange(), handleLabelFilter(), handleTimePeriod(), toggleAuthor(), DCSection(), formatSignedCurrency(), summarizeIntent(), summarizeSignal() (+54 more)
+Nodes (60): buildBacktestChatData(), handleLabelFilter(), buildMessageParams(), hasBacktestCheckpoint(), DatabentoClientError, defaultSchemaForDataset(), fetchDefinitionSnapshot(), fetchTickWindow() (+52 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.03
-Nodes (44): FnDetail(), FnOverview(), FnPatterns(), FnQualRow(), MonoDashboard(), MonoEquity(), MonoTradeCard(), Badge() (+36 more)
+Nodes (47): FnDetail(), FnOverview(), FnPatterns(), FnQualRow(), formatDuration(), formatInteger(), MonoDashboard(), MonoEquity() (+39 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.05
-Nodes (69): sendPushover, sendSystemAlert, parseBattery(), readBattery(), startBatteryMonitor(), tick(), acceptPoliciesIfNeeded(), attemptLogin() (+61 more)
+Cohesion: 0.04
+Nodes (74): createArtifact(), writeJsonArtifact(), extractBadges(), classifyMessage(), compareField(), compareOptionalField(), compareSignals(), computeEvalMetrics() (+66 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.04
-Nodes (41): buildPipelineDeps(), buildOrderCallbacks(), buildComboOrderBody(), runTx(), SpreadStrategy, StrategySchema / Strategy, buildOrderParams(), createPendingContextFromResume() (+33 more)
+Cohesion: 0.03
+Nodes (56): getDateRange(), handleTimePeriod(), toggleAuthor(), DCSection(), formatSignedCurrency(), summarizeIntent(), summarizeSignal(), FilteredTradesView() (+48 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.05
-Nodes (59): createArtifact(), readJsonArtifact(), writeJsonArtifact(), extractBadges(), classifyMessage(), createFixtureSource(), FixtureSource, buildEvalRunResult() (+51 more)
+Cohesion: 0.03
+Nodes (62): BacktestAgent, sleep(), withTimeout(), canonicalizeSignals(), synthesizeDeterministicSignals, buildOrchestratorContext(), createDbChatHistoryProvider(), formatTimestampForLLM() (+54 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.04
-Nodes (50): canonicalizeSignals(), synthesizeDeterministicSignals, buildOrchestratorContext(), createDbChatHistoryProvider(), formatTimestampForLLM(), generateWeeklyExpiries, emitOrchestratorEvents(), extractReferencedAuthor() (+42 more)
+Nodes (67): cn (from @/lib/utils), cva (class-variance-authority), HoverCard (shadcn), HoverCardContent, HoverCardTrigger, Input (shadcn), InputGroupAddon, InputGroup (+59 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.04
-Nodes (67): cn (from @/lib/utils), cva (class-variance-authority), HoverCard (shadcn), HoverCardContent, HoverCardTrigger, Input (shadcn), InputGroupAddon, InputGroup (+59 more)
+Cohesion: 0.05
+Nodes (45): withLiveBacktestMtmSnapshot(), BrokerService interface, upsertRuntimeHealth(), getRuntimeBrokerMap, getRuntimeChannelServices, ShadowTracker, groupBy(), buildFlagsByTradeId() (+37 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.05
-Nodes (41): withLiveBacktestMtmSnapshot(), BrokerCircuitBreaker, BrokerService interface, upsertRuntimeHealth(), getRuntimeBrokerMap, getRuntimeChannelServices, groupBy(), buildFlagsByTradeId() (+33 more)
+Nodes (32): SettingToggle(), OrderProvider(), TaskDetailPage(), TradeDetailPage(), TraderDetailPage(), QuoteCell(), QuoteStrip(), useFlash() (+24 more)
 
 ### Community 12 - "Community 12"
-Cohesion: 0.05
-Nodes (32): SettingToggle(), OrderProvider(), TaskDetailPage(), TradeDetailPage(), TraderDetailPage(), QuoteCell(), QuoteStrip(), useFlash() (+24 more)
+Cohesion: 0.07
+Nodes (33): readQueueLength(), readJsonArtifact(), escapeRegExp(), extractFirstDollarPrice(), hardSkip(), hasNoBadgeTradeCue(), matchNoBadgeSkipRule(), matchSimpleNoBadgeExecute() (+25 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.06
 Nodes (14): logPathForRun(), safeJsonParse(), toQuoteData(), findActiveManualOrderForTrade(), getManualOrder(), markManualOrderTradeRecorded(), upsertManualOrder(), computeMidpoint() (+6 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.07
-Nodes (33): xaiCostTicksToUsd, escapeRegExp(), extractFirstDollarPrice(), hardSkip(), hasNoBadgeTradeCue(), matchNoBadgeSkipRule(), matchSimpleNoBadgeExecute(), parse() (+25 more)
+Cohesion: 0.1
+Nodes (39): Accordion (shadcn), Alert (shadcn), AlertDialog (shadcn), AspectRatio (shadcn), Avatar (shadcn), Badge (shadcn), Breadcrumb (shadcn), Button (shadcn) (+31 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.1
-Nodes (40): Accordion (shadcn), Alert (shadcn), AlertDialog (shadcn), AspectRatio (shadcn), Avatar (shadcn), Badge (shadcn), Breadcrumb (shadcn), Button (shadcn) (+32 more)
-
-### Community 16 - "Community 16"
 Cohesion: 0.07
 Nodes (38): BacktestBanner - scoped run indicator with Exit button, deriveHealthState(status) -> healthy/degraded/unknown, HealthDot subcomponent, ChannelScopeSelector - Popover+Command switcher for runtime/backtest channels, ChannelScopeSync - URL<->store<->status sync, URL ?channel= is source of truth; redirect to default when empty, CommandPalette - Cmd+K global nav, navItems registry (dashboard, traders, trades, messages, tasks, backtests, reconciliation, eval, architecture, settings) (+30 more)
 
+### Community 16 - "Community 16"
+Cohesion: 0.07
+Nodes (20): api(), ApiError, toApiUrl(), buildHref(), buildScopedPath(), buildScopedSearch(), fetchBacktestsPageData(), fetchDashboardPageData() (+12 more)
+
 ### Community 17 - "Community 17"
 Cohesion: 0.21
-Nodes (25): parseTick(), addBusinessDays(), dayBoundsUTC(), etAnchor(), getDayOfWeekET(), getETComponents(), getETMinuteOfDay(), getNextTradingDayKey() (+17 more)
+Nodes (27): parseTick(), addBusinessDays(), dayBoundsUTC(), etAnchor(), getDayOfWeekET(), getETComponents(), getETMinuteOfDay(), getNextTradingDayKey() (+19 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.11
-Nodes (15): AnthropicAgent, configureSubscriptionModeIfEnabled(), generateRunId(), formatLogTimestampET, main(), parseArg(), estimateLlmCost, PRICING table (+7 more)
+Cohesion: 0.13
+Nodes (18): cancelOrder(), getAccountBalance(), getOrderStatus(), getPositions(), getQuote(), ibkrClassify(), isHealthy(), modifyOrder() (+10 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.12
-Nodes (24): createHmeAlias, findVerificationLink (iCloud IMAP), persistCredentials (Keychain), register (OneOption signup), rotateAccount, AccountRoutes — /api/account/summary + /api/positions, App.main — Javalin bootstrap + healthcheck, startHealthcheckPing — healthchecks.io pinger (+16 more)
+Cohesion: 0.1
+Nodes (6): BrokerCircuitBreaker, BrokerTransientError, DependencyUnavailableError, QuoteResolutionError, QuoteUnavailableError, createBacktestPauseControl()
 
 ### Community 20 - "Community 20"
-Cohesion: 0.15
-Nodes (11): api(), ApiError, toApiUrl(), buildHref(), buildScopedPath(), buildScopedSearch(), fetchBacktestsPageData(), fetchDashboardPageData() (+3 more)
+Cohesion: 0.12
+Nodes (24): createHmeAlias, findVerificationLink (iCloud IMAP), persistCredentials (Keychain), register (OneOption signup), rotateAccount, AccountRoutes — /api/account/summary + /api/positions, App.main — Javalin bootstrap + healthcheck, startHealthcheckPing — healthchecks.io pinger (+16 more)
 
 ### Community 21 - "Community 21"
 Cohesion: 0.31
 Nodes (13): fetchAndFormat(), fetchArticle(), fetchBatch(), fetchRedditJson(), formatArticle(), formatComment(), formatDate(), formatPost() (+5 more)
 
-### Community 22 - "Community 22"
-Cohesion: 0.33
-Nodes (12): compareField(), compareOptionalField(), compareSignals(), computeEvalMetrics(), getEvalFailures(), getEvalSummary(), initialFieldCounters(), labelTrades() (+4 more)
-
-### Community 24 - "Community 24"
+### Community 23 - "Community 23"
 Cohesion: 0.2
 Nodes (2): getSnapshot(), getTraceSpans()
 
-### Community 25 - "Community 25"
+### Community 24 - "Community 24"
 Cohesion: 0.2
 Nodes (10): ChatHydrator, ChatRoom, MessagesPage, SettingsContent, SettingsPage, useFullBleed, useSyncFiltersToStore, RelatedMessagesPanel (+2 more)
 
-### Community 26 - "Community 26"
+### Community 25 - "Community 25"
 Cohesion: 0.22
 Nodes (4): formatLegsSummary, buildTradeLabel(), DrilldownTooltip(), formatDate()
 
-### Community 27 - "Community 27"
+### Community 26 - "Community 26"
 Cohesion: 0.43
 Nodes (7): ClassifyDetailPage, ContextPanel, diff-cell (SIGNAL_FIELDS, computeDiffSummary, DiffSummaryBadge), EvalReviewDetail, EvalReviewList, EvalReviewPage, VerdictPanel
 
-### Community 28 - "Community 28"
+### Community 27 - "Community 27"
 Cohesion: 0.29
 Nodes (7): EnumToggleGroup, NullableEnumToggleGroup, SignalEditor, TradeEditor, EvalLabel, LabelRow, LabelsResponse
 
-### Community 30 - "Community 30"
-Cohesion: 0.4
-Nodes (5): previewAction, ReconciliationContent, ReconciliationPage, ResolveActions, useAlertColumns
+### Community 28 - "Community 28"
+Cohesion: 0.33
+Nodes (4): AnthropicAgent, configureSubscriptionModeIfEnabled(), estimateLlmCost, PRICING table
 
 ### Community 31 - "Community 31"
 Cohesion: 0.4
-Nodes (5): validateBody/Query/Params (Zod/Hono), POST /classify/spawn (detached classify child), POST /ingest-backfill (historical message ingest), GET/DELETE /logs/:id (child-process log tail), POST /trades/force-exit (broker close)
+Nodes (5): previewAction, ReconciliationContent, ReconciliationPage, ResolveActions, useAlertColumns
 
 ### Community 32 - "Community 32"
 Cohesion: 0.4
-Nodes (4): drainQueue() / claimAndProcess(), handleTask() (live task exec), initRunner(), submitTask() (push queue)
+Nodes (5): validateBody/Query/Params (Zod/Hono), POST /classify/spawn (detached classify child), POST /ingest-backfill (historical message ingest), GET/DELETE /logs/:id (child-process log tail), POST /trades/force-exit (broker close)
 
 ### Community 33 - "Community 33"
 Cohesion: 0.5
 Nodes (4): extractQuote, getTextContent, MessageContent, QuoteDisplay
 
+### Community 35 - "Community 35"
+Cohesion: 0.83
+Nodes (3): createRollingFileStream(), dayKey(), pathFor()
+
 ### Community 36 - "Community 36"
-Cohesion: 0.67
-Nodes (4): DbBrowserPage, SchemaGraph, TableFilters, TableViewer
-
-### Community 37 - "Community 37"
-Cohesion: 0.5
-Nodes (4): sendDiscordAlert, autoResolveAlerts, runReconciliation, ReconciliationScheduler
-
-### Community 38 - "Community 38"
 Cohesion: 0.5
 Nodes (4): AlertDialog for destructive, Dialog for everything else, Severity ladder: undo toast < AlertDialog < type-to-confirm, Cookbook 01 - Destructive Actions, Cookbook 08 - Feedback & Status
 
-### Community 39 - "Community 39"
+### Community 37 - "Community 37"
 Cohesion: 0.5
 Nodes (4): DataTable composition (shadcn Table + TanStack Table), Virtualize any list over 100 rows, Cookbook 04 - Data Tables & Lists, Cookbook 15 - Virtualized Infinite Scroll
 
-### Community 40 - "Community 40"
+### Community 38 - "Community 38"
 Cohesion: 0.67
 Nodes (3): Path alias @ -> src, @src -> ../src, Proxy rule: /web, /logs, /health -> localhost:3791, Vite SPA config (port 3000, proxy to :3791)
 
-### Community 41 - "Community 41"
+### Community 39 - "Community 39"
 Cohesion: 0.67
 Nodes (2): AnimatedNumber - rAF eased tween of numeric value, formatValue helper (currency/percent/integer/decimal)
 
-### Community 42 - "Community 42"
+### Community 40 - "Community 40"
 Cohesion: 0.67
 Nodes (3): TruncationTooltip, findClippedAncestor, isClipped
 
-### Community 44 - "Community 44"
+### Community 42 - "Community 42"
 Cohesion: 0.67
 Nodes (3): applyTheme, ThemeToggle, getSystemTheme
 
-### Community 47 - "Community 47"
+### Community 45 - "Community 45"
 Cohesion: 0.67
 Nodes (3): InputOTP, input-otp library, InputOTPSlot
 
-### Community 48 - "Community 48"
+### Community 46 - "Community 46"
 Cohesion: 0.67
 Nodes (3): getAuthorBgColor, getAuthorTextColor, hashString (author-colors)
 
-### Community 49 - "Community 49"
+### Community 47 - "Community 47"
 Cohesion: 0.67
 Nodes (3): TaskList component, useTaskColumns hook, TasksPage (views/tasks/page.tsx)
 
-### Community 51 - "Community 51"
+### Community 48 - "Community 48"
+Cohesion: 0.67
+Nodes (3): DbBrowserPage, TableFilters, TableViewer
+
+### Community 50 - "Community 50"
 Cohesion: 0.67
 Nodes (3): buildComboOrderBody (tested), WorkingOrderParamsSchema, OrderParams type
 
-### Community 52 - "Community 52"
-Cohesion: 0.67
-Nodes (3): checkRiskLimits, RiskCheckConfig, RiskCheckDeps
-
-### Community 53 - "Community 53"
+### Community 51 - "Community 51"
 Cohesion: 0.67
 Nodes (3): Cookbook 02 - Forms & Data Entry, Cookbook 03 - Multi-Step Workflows, Cookbook 09 - Settings & Preferences
 
-### Community 54 - "Community 54"
+### Community 52 - "Community 52"
 Cohesion: 0.67
 Nodes (3): Never use Sheet - prefer Dialog or ResizablePanelGroup, Cookbook 07 - Detail Views (no Sheet), Cookbook 10 - Content Organization
 
-### Community 55 - "Community 55"
+### Community 53 - "Community 53"
 Cohesion: 1.0
 Nodes (2): InfoChip, StatItem
 
-### Community 56 - "Community 56"
-Cohesion: 1.0
-Nodes (2): MetricStrip, Sparkline
-
-### Community 60 - "Community 60"
+### Community 57 - "Community 57"
 Cohesion: 1.0
 Nodes (2): AppSidebar, navLinks
 
-### Community 66 - "Community 66"
+### Community 62 - "Community 62"
 Cohesion: 1.0
 Nodes (2): MessageRow, NearbyMessages
 
-### Community 68 - "Community 68"
+### Community 64 - "Community 64"
 Cohesion: 1.0
 Nodes (2): ClassifyList, ClassifyPage
 
-### Community 70 - "Community 70"
-Cohesion: 1.0
-Nodes (2): TraderRoster component, TradersPage (views/traders/page.tsx)
-
-### Community 71 - "Community 71"
+### Community 66 - "Community 66"
 Cohesion: 1.0
 Nodes (2): BacktestList, BacktestsPage
 
-### Community 73 - "Community 73"
-Cohesion: 1.0
-Nodes (2): AreaChartComponent, DrawdownChart
-
-### Community 74 - "Community 74"
+### Community 69 - "Community 69"
 Cohesion: 1.0
 Nodes (2): CopyButton, LogViewer
 
-### Community 78 - "Community 78"
+### Community 70 - "Community 70"
+Cohesion: 1.0
+Nodes (2): AreaChartComponent, DrawdownChart
+
+### Community 75 - "Community 75"
 Cohesion: 1.0
 Nodes (2): ArchCanvas, ArchitecturePage
 
-### Community 82 - "Community 82"
-Cohesion: 1.0
-Nodes (2): Backend main — pidlock, ingestion, runner, recon, CLI: --fetch-historical mode
-
-### Community 83 - "Community 83"
+### Community 79 - "Community 79"
 Cohesion: 1.0
 Nodes (2): FilledWorkingOrder type, WorkingOrder type
 
-### Community 84 - "Community 84"
+### Community 80 - "Community 80"
 Cohesion: 1.0
 Nodes (2): equity curve tests, extended metrics tests (sortino, commissions)
 
-### Community 85 - "Community 85"
+### Community 81 - "Community 81"
 Cohesion: 1.0
 Nodes (1): createTasksFromMessage() (multi-channel fanout)
 
-### Community 86 - "Community 86"
+### Community 82 - "Community 82"
 Cohesion: 1.0
 Nodes (2): checkExpiryWarnings, alertThrottle map
 
-### Community 87 - "Community 87"
-Cohesion: 1.0
-Nodes (2): isSidecarHealthy, startHealthcheck
-
-### Community 88 - "Community 88"
+### Community 83 - "Community 83"
 Cohesion: 1.0
 Nodes (2): EnvProvider (dotenv), SecretProvider interface
 
-### Community 89 - "Community 89"
+### Community 84 - "Community 84"
 Cohesion: 1.0
 Nodes (2): web/CLAUDE.md (frontend rules), web/index.html (SPA entry)
 
-### Community 92 - "Community 92"
+### Community 87 - "Community 87"
 Cohesion: 1.0
 Nodes (1): Vite client env types
 
-### Community 93 - "Community 93"
+### Community 88 - "Community 88"
 Cohesion: 1.0
 Nodes (1): channel-store
 
-### Community 94 - "Community 94"
+### Community 89 - "Community 89"
 Cohesion: 1.0
 Nodes (1): useChannelStore
 
-### Community 95 - "Community 95"
+### Community 90 - "Community 90"
 Cohesion: 1.0
 Nodes (1): ErrorBoundary
 
-### Community 96 - "Community 96"
+### Community 91 - "Community 91"
 Cohesion: 1.0
 Nodes (1): ScrollToBottom
 
-### Community 98 - "Community 98"
+### Community 93 - "Community 93"
 Cohesion: 1.0
 Nodes (1): EmptyState
 
-### Community 99 - "Community 99"
+### Community 94 - "Community 94"
 Cohesion: 1.0
 Nodes (1): TradeOutcomeStrip
 
-### Community 100 - "Community 100"
+### Community 95 - "Community 95"
+Cohesion: 1.0
+Nodes (1): Sparkline
+
+### Community 98 - "Community 98"
 Cohesion: 1.0
 Nodes (1): REACTION_EMOJI
 
-### Community 101 - "Community 101"
+### Community 99 - "Community 99"
 Cohesion: 1.0
 Nodes (1): fmtMs
 
-### Community 102 - "Community 102"
+### Community 100 - "Community 100"
 Cohesion: 1.0
 Nodes (1): EVENT_LABEL
 
-### Community 103 - "Community 103"
+### Community 101 - "Community 101"
 Cohesion: 1.0
 Nodes (1): DOT
 
-### Community 104 - "Community 104"
+### Community 102 - "Community 102"
 Cohesion: 1.0
 Nodes (1): getInlineSummary
 
-### Community 106 - "Community 106"
+### Community 104 - "Community 104"
 Cohesion: 1.0
 Nodes (1): InputGroupText
 
-### Community 107 - "Community 107"
+### Community 105 - "Community 105"
 Cohesion: 1.0
 Nodes (1): InputOTPGroup
 
-### Community 108 - "Community 108"
+### Community 106 - "Community 106"
 Cohesion: 1.0
 Nodes (1): ItemTitle
 
-### Community 109 - "Community 109"
+### Community 107 - "Community 107"
 Cohesion: 1.0
 Nodes (1): shadcn Badge primitive
 
-### Community 110 - "Community 110"
+### Community 108 - "Community 108"
 Cohesion: 1.0
 Nodes (1): useIsMobile
 
-### Community 112 - "Community 112"
+### Community 110 - "Community 110"
 Cohesion: 1.0
 Nodes (1): utils
 
-### Community 113 - "Community 113"
+### Community 111 - "Community 111"
 Cohesion: 1.0
 Nodes (1): cn
 
-### Community 115 - "Community 115"
+### Community 113 - "Community 113"
 Cohesion: 1.0
 Nodes (1): getAuthorInitials
 
-### Community 117 - "Community 117"
+### Community 116 - "Community 116"
 Cohesion: 1.0
 Nodes (1): StickyDateBadge
 
-### Community 119 - "Community 119"
+### Community 118 - "Community 118"
 Cohesion: 1.0
 Nodes (1): DateSeparator
 
-### Community 120 - "Community 120"
+### Community 119 - "Community 119"
 Cohesion: 1.0
 Nodes (1): AuthorAvatar
+
+### Community 120 - "Community 120"
+Cohesion: 1.0
+Nodes (1): TradersPage (views/traders/page.tsx)
 
 ### Community 121 - "Community 121"
 Cohesion: 1.0
@@ -596,314 +571,290 @@ Nodes (1): backtest-list
 Cohesion: 1.0
 Nodes (1): backtests/page
 
-### Community 125 - "Community 125"
+### Community 124 - "Community 124"
 Cohesion: 1.0
 Nodes (1): area-chart
 
-### Community 126 - "Community 126"
+### Community 125 - "Community 125"
 Cohesion: 1.0
 Nodes (1): copy-button
 
-### Community 127 - "Community 127"
+### Community 126 - "Community 126"
 Cohesion: 1.0
 Nodes (1): collapsible-error
 
-### Community 128 - "Community 128"
+### Community 127 - "Community 127"
 Cohesion: 1.0
 Nodes (1): CollapsibleError
 
-### Community 129 - "Community 129"
+### Community 128 - "Community 128"
 Cohesion: 1.0
 Nodes (1): log-viewer
 
-### Community 130 - "Community 130"
+### Community 129 - "Community 129"
 Cohesion: 1.0
 Nodes (1): scatter-chart
 
-### Community 131 - "Community 131"
+### Community 130 - "Community 130"
 Cohesion: 1.0
 Nodes (1): ScatterPlotChart
 
-### Community 132 - "Community 132"
+### Community 131 - "Community 131"
 Cohesion: 1.0
 Nodes (1): line-chart
 
-### Community 133 - "Community 133"
+### Community 132 - "Community 132"
 Cohesion: 1.0
 Nodes (1): MultiLineChart
 
-### Community 134 - "Community 134"
+### Community 133 - "Community 133"
 Cohesion: 1.0
 Nodes (1): drawdown-chart
 
-### Community 136 - "Community 136"
+### Community 135 - "Community 135"
 Cohesion: 1.0
 Nodes (1): backtest-tabs
 
-### Community 137 - "Community 137"
+### Community 136 - "Community 136"
 Cohesion: 1.0
 Nodes (1): BacktestTabs
 
-### Community 142 - "Community 142"
+### Community 141 - "Community 141"
 Cohesion: 1.0
 Nodes (1): ReconAlertBanner
 
-### Community 146 - "Community 146"
+### Community 145 - "Community 145"
 Cohesion: 1.0
 Nodes (1): LegsTable
 
-### Community 148 - "Community 148"
+### Community 147 - "Community 147"
 Cohesion: 1.0
 Nodes (1): SignalDecisionSummary
 
-### Community 154 - "Community 154"
+### Community 153 - "Community 153"
 Cohesion: 1.0
 Nodes (1): architecture/page
 
-### Community 155 - "Community 155"
+### Community 154 - "Community 154"
 Cohesion: 1.0
 Nodes (1): ChipNode
 
-### Community 156 - "Community 156"
+### Community 155 - "Community 155"
 Cohesion: 1.0
 Nodes (1): FrameNode
 
-### Community 157 - "Community 157"
+### Community 156 - "Community 156"
 Cohesion: 1.0
 Nodes (1): SubNode
 
-### Community 158 - "Community 158"
+### Community 157 - "Community 157"
 Cohesion: 1.0
 Nodes (1): LeafNode
 
-### Community 159 - "Community 159"
+### Community 158 - "Community 158"
 Cohesion: 1.0
 Nodes (1): FlowEdge
 
-### Community 160 - "Community 160"
+### Community 159 - "Community 159"
 Cohesion: 1.0
 Nodes (1): REJECTION_REASONS
 
-### Community 161 - "Community 161"
+### Community 160 - "Community 160"
 Cohesion: 1.0
 Nodes (1): ChatContext
 
-### Community 171 - "Community 171"
+### Community 170 - "Community 170"
 Cohesion: 1.0
 Nodes (1): Sidecar Gradle settings
 
-### Community 178 - "Community 178"
-Cohesion: 1.0
-Nodes (1): captureStartingBalance
-
-### Community 179 - "Community 179"
+### Community 177 - "Community 177"
 Cohesion: 1.0
 Nodes (1): getTodayStartingBalance
 
-### Community 181 - "Community 181"
+### Community 178 - "Community 178"
 Cohesion: 1.0
 Nodes (1): ReconciliationAlertInput
 
-### Community 182 - "Community 182"
+### Community 179 - "Community 179"
 Cohesion: 1.0
 Nodes (1): OrderResultSchema
 
-### Community 183 - "Community 183"
+### Community 180 - "Community 180"
 Cohesion: 1.0
 Nodes (1): AccountBalance type
 
-### Community 184 - "Community 184"
+### Community 181 - "Community 181"
 Cohesion: 1.0
 Nodes (1): Quote type
 
-### Community 185 - "Community 185"
+### Community 182 - "Community 182"
 Cohesion: 1.0
 Nodes (1): OptionsChain type
 
-### Community 186 - "Community 186"
+### Community 183 - "Community 183"
 Cohesion: 1.0
 Nodes (1): BrokerPosition type
 
-### Community 187 - "Community 187"
+### Community 184 - "Community 184"
 Cohesion: 1.0
 Nodes (1): classify launch.main
 
-### Community 188 - "Community 188"
+### Community 185 - "Community 185"
 Cohesion: 1.0
 Nodes (1): STUB_BROKER
 
-### Community 189 - "Community 189"
+### Community 186 - "Community 186"
 Cohesion: 1.0
 Nodes (1): sumChase test suite
 
-### Community 190 - "Community 190"
+### Community 187 - "Community 187"
 Cohesion: 1.0
 Nodes (1): Agent interface + AgentRunOptions
 
-### Community 191 - "Community 191"
+### Community 188 - "Community 188"
 Cohesion: 1.0
 Nodes (1): summarizeToolInput/Output — telemetry helpers
 
-### Community 192 - "Community 192"
+### Community 189 - "Community 189"
 Cohesion: 1.0
 Nodes (1): ToolDef + submitDecisionTool / flagForReviewTool
 
-### Community 193 - "Community 193"
+### Community 190 - "Community 190"
 Cohesion: 1.0
 Nodes (1): xai-agent.test — recovery tests
 
-### Community 195 - "Community 195"
+### Community 192 - "Community 192"
 Cohesion: 1.0
 Nodes (1): BacktestConfig type
 
-### Community 196 - "Community 196"
+### Community 193 - "Community 193"
 Cohesion: 1.0
 Nodes (1): SimClock — mutable backtest clock
 
-### Community 197 - "Community 197"
+### Community 194 - "Community 194"
 Cohesion: 1.0
 Nodes (1): db-browser-types (filter/table meta schemas)
 
-### Community 198 - "Community 198"
-Cohesion: 1.0
-Nodes (1): stopHealthcheck
-
-### Community 199 - "Community 199"
+### Community 195 - "Community 195"
 Cohesion: 1.0
 Nodes (1): getSessionLabel
 
-### Community 200 - "Community 200"
+### Community 196 - "Community 196"
 Cohesion: 1.0
 Nodes (1): formatRelativeTime
 
-### Community 201 - "Community 201"
+### Community 197 - "Community 197"
 Cohesion: 1.0
 Nodes (1): pctDisplay
 
-### Community 203 - "Community 203"
-Cohesion: 1.0
-Nodes (1): acquireLock
-
-### Community 204 - "Community 204"
-Cohesion: 1.0
-Nodes (1): releaseLock
-
-### Community 205 - "Community 205"
+### Community 199 - "Community 199"
 Cohesion: 1.0
 Nodes (1): TradeActionSchema
 
-### Community 206 - "Community 206"
+### Community 200 - "Community 200"
 Cohesion: 1.0
 Nodes (1): OptionTypeSchema / OptionType
 
-### Community 207 - "Community 207"
+### Community 201 - "Community 201"
 Cohesion: 1.0
 Nodes (1): CallPutAbbrev
 
-### Community 208 - "Community 208"
+### Community 202 - "Community 202"
 Cohesion: 1.0
 Nodes (1): Span / TraceContext types
 
-### Community 209 - "Community 209"
+### Community 203 - "Community 203"
 Cohesion: 1.0
 Nodes (1): secrets manage CLI (import/set/get/list)
-
-### Community 210 - "Community 210"
-Cohesion: 1.0
-Nodes (1): RiskCheckResult
 
 ## Ambiguous Edges - Review These
 - `Field (shadcn)` → `Form (shadcn, RHF)`  [AMBIGUOUS]
   web/src/components/ui/form.tsx · relation: semantically_similar_to
 
 ## Knowledge Gaps
-- **262 isolated node(s):** `Vite client env types`, `Proxy rule: /web, /logs, /health -> localhost:3791`, `Path alias @ -> src, @src -> ../src`, `QueryCache: background refetch error toasts`, `PageFallback - Suspense spinner` (+257 more)
+- **250 isolated node(s):** `Vite client env types`, `Proxy rule: /web, /logs, /health -> localhost:3791`, `Path alias @ -> src, @src -> ../src`, `QueryCache: background refetch error toasts`, `PageFallback - Suspense spinner` (+245 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 24`** (11 nodes): `getAdjustedParams()`, `getCancelledOrder()`, `getClassifierSignalsFromSnapshot()`, `getEventMeta()`, `getFirstAdjustmentRule()`, `getSnapshot()`, `getSnapshotParams()`, `getSnapshotSignal()`, `getTraceSpans()`, `getTradeMeta()`, `snapshot-accessors.ts`
+- **Thin community `Community 23`** (11 nodes): `getAdjustedParams()`, `getCancelledOrder()`, `getClassifierSignalsFromSnapshot()`, `getEventMeta()`, `getFirstAdjustmentRule()`, `getSnapshot()`, `getSnapshotParams()`, `getSnapshotSignal()`, `getTraceSpans()`, `getTradeMeta()`, `snapshot-accessors.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 41`** (3 nodes): `AnimatedNumber - rAF eased tween of numeric value`, `formatValue helper (currency/percent/integer/decimal)`, `lib/utils cn()`
+- **Thin community `Community 39`** (3 nodes): `AnimatedNumber - rAF eased tween of numeric value`, `formatValue helper (currency/percent/integer/decimal)`, `lib/utils cn()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 55`** (2 nodes): `InfoChip`, `StatItem`
+- **Thin community `Community 53`** (2 nodes): `InfoChip`, `StatItem`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 56`** (2 nodes): `MetricStrip`, `Sparkline`
+- **Thin community `Community 57`** (2 nodes): `AppSidebar`, `navLinks`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 60`** (2 nodes): `AppSidebar`, `navLinks`
+- **Thin community `Community 62`** (2 nodes): `MessageRow`, `NearbyMessages`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 66`** (2 nodes): `MessageRow`, `NearbyMessages`
+- **Thin community `Community 64`** (2 nodes): `ClassifyList`, `ClassifyPage`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 68`** (2 nodes): `ClassifyList`, `ClassifyPage`
+- **Thin community `Community 66`** (2 nodes): `BacktestList`, `BacktestsPage`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 70`** (2 nodes): `TraderRoster component`, `TradersPage (views/traders/page.tsx)`
+- **Thin community `Community 69`** (2 nodes): `CopyButton`, `LogViewer`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 71`** (2 nodes): `BacktestList`, `BacktestsPage`
+- **Thin community `Community 70`** (2 nodes): `AreaChartComponent`, `DrawdownChart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 73`** (2 nodes): `AreaChartComponent`, `DrawdownChart`
+- **Thin community `Community 75`** (2 nodes): `ArchCanvas`, `ArchitecturePage`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 74`** (2 nodes): `CopyButton`, `LogViewer`
+- **Thin community `Community 79`** (2 nodes): `FilledWorkingOrder type`, `WorkingOrder type`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 78`** (2 nodes): `ArchCanvas`, `ArchitecturePage`
+- **Thin community `Community 80`** (2 nodes): `equity curve tests`, `extended metrics tests (sortino, commissions)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 82`** (2 nodes): `Backend main — pidlock, ingestion, runner, recon`, `CLI: --fetch-historical mode`
+- **Thin community `Community 81`** (2 nodes): `createTaskFromMessage()`, `createTasksFromMessage() (multi-channel fanout)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 83`** (2 nodes): `FilledWorkingOrder type`, `WorkingOrder type`
+- **Thin community `Community 82`** (2 nodes): `checkExpiryWarnings`, `alertThrottle map`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 84`** (2 nodes): `equity curve tests`, `extended metrics tests (sortino, commissions)`
+- **Thin community `Community 83`** (2 nodes): `EnvProvider (dotenv)`, `SecretProvider interface`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 85`** (2 nodes): `createTaskFromMessage()`, `createTasksFromMessage() (multi-channel fanout)`
+- **Thin community `Community 84`** (2 nodes): `web/CLAUDE.md (frontend rules)`, `web/index.html (SPA entry)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 86`** (2 nodes): `checkExpiryWarnings`, `alertThrottle map`
+- **Thin community `Community 87`** (1 nodes): `Vite client env types`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 87`** (2 nodes): `isSidecarHealthy`, `startHealthcheck`
+- **Thin community `Community 88`** (1 nodes): `channel-store`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 88`** (2 nodes): `EnvProvider (dotenv)`, `SecretProvider interface`
+- **Thin community `Community 89`** (1 nodes): `useChannelStore`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 89`** (2 nodes): `web/CLAUDE.md (frontend rules)`, `web/index.html (SPA entry)`
+- **Thin community `Community 90`** (1 nodes): `ErrorBoundary`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 92`** (1 nodes): `Vite client env types`
+- **Thin community `Community 91`** (1 nodes): `ScrollToBottom`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 93`** (1 nodes): `channel-store`
+- **Thin community `Community 93`** (1 nodes): `EmptyState`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 94`** (1 nodes): `useChannelStore`
+- **Thin community `Community 94`** (1 nodes): `TradeOutcomeStrip`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 95`** (1 nodes): `ErrorBoundary`
+- **Thin community `Community 95`** (1 nodes): `Sparkline`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 96`** (1 nodes): `ScrollToBottom`
+- **Thin community `Community 98`** (1 nodes): `REACTION_EMOJI`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 98`** (1 nodes): `EmptyState`
+- **Thin community `Community 99`** (1 nodes): `fmtMs`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 99`** (1 nodes): `TradeOutcomeStrip`
+- **Thin community `Community 100`** (1 nodes): `EVENT_LABEL`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 100`** (1 nodes): `REACTION_EMOJI`
+- **Thin community `Community 101`** (1 nodes): `DOT`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 101`** (1 nodes): `fmtMs`
+- **Thin community `Community 102`** (1 nodes): `getInlineSummary`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 102`** (1 nodes): `EVENT_LABEL`
+- **Thin community `Community 104`** (1 nodes): `InputGroupText`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 103`** (1 nodes): `DOT`
+- **Thin community `Community 105`** (1 nodes): `InputOTPGroup`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 104`** (1 nodes): `getInlineSummary`
+- **Thin community `Community 106`** (1 nodes): `ItemTitle`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 106`** (1 nodes): `InputGroupText`
+- **Thin community `Community 107`** (1 nodes): `shadcn Badge primitive`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 107`** (1 nodes): `InputOTPGroup`
+- **Thin community `Community 108`** (1 nodes): `useIsMobile`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 108`** (1 nodes): `ItemTitle`
+- **Thin community `Community 110`** (1 nodes): `utils`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 109`** (1 nodes): `shadcn Badge primitive`
+- **Thin community `Community 111`** (1 nodes): `cn`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 110`** (1 nodes): `useIsMobile`
+- **Thin community `Community 113`** (1 nodes): `getAuthorInitials`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 112`** (1 nodes): `utils`
+- **Thin community `Community 116`** (1 nodes): `StickyDateBadge`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 113`** (1 nodes): `cn`
+- **Thin community `Community 118`** (1 nodes): `DateSeparator`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 115`** (1 nodes): `getAuthorInitials`
+- **Thin community `Community 119`** (1 nodes): `AuthorAvatar`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 117`** (1 nodes): `StickyDateBadge`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 119`** (1 nodes): `DateSeparator`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 120`** (1 nodes): `AuthorAvatar`
+- **Thin community `Community 120`** (1 nodes): `TradersPage (views/traders/page.tsx)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 121`** (1 nodes): `BarChartComponent (recharts wrapper)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -911,113 +862,103 @@ Nodes (1): RiskCheckResult
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 123`** (1 nodes): `backtests/page`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 125`** (1 nodes): `area-chart`
+- **Thin community `Community 124`** (1 nodes): `area-chart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 126`** (1 nodes): `copy-button`
+- **Thin community `Community 125`** (1 nodes): `copy-button`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 127`** (1 nodes): `collapsible-error`
+- **Thin community `Community 126`** (1 nodes): `collapsible-error`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 128`** (1 nodes): `CollapsibleError`
+- **Thin community `Community 127`** (1 nodes): `CollapsibleError`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 129`** (1 nodes): `log-viewer`
+- **Thin community `Community 128`** (1 nodes): `log-viewer`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 130`** (1 nodes): `scatter-chart`
+- **Thin community `Community 129`** (1 nodes): `scatter-chart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 131`** (1 nodes): `ScatterPlotChart`
+- **Thin community `Community 130`** (1 nodes): `ScatterPlotChart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 132`** (1 nodes): `line-chart`
+- **Thin community `Community 131`** (1 nodes): `line-chart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 133`** (1 nodes): `MultiLineChart`
+- **Thin community `Community 132`** (1 nodes): `MultiLineChart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 134`** (1 nodes): `drawdown-chart`
+- **Thin community `Community 133`** (1 nodes): `drawdown-chart`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 136`** (1 nodes): `backtest-tabs`
+- **Thin community `Community 135`** (1 nodes): `backtest-tabs`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 137`** (1 nodes): `BacktestTabs`
+- **Thin community `Community 136`** (1 nodes): `BacktestTabs`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 142`** (1 nodes): `ReconAlertBanner`
+- **Thin community `Community 141`** (1 nodes): `ReconAlertBanner`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 146`** (1 nodes): `LegsTable`
+- **Thin community `Community 145`** (1 nodes): `LegsTable`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 148`** (1 nodes): `SignalDecisionSummary`
+- **Thin community `Community 147`** (1 nodes): `SignalDecisionSummary`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 154`** (1 nodes): `architecture/page`
+- **Thin community `Community 153`** (1 nodes): `architecture/page`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 155`** (1 nodes): `ChipNode`
+- **Thin community `Community 154`** (1 nodes): `ChipNode`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 156`** (1 nodes): `FrameNode`
+- **Thin community `Community 155`** (1 nodes): `FrameNode`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 157`** (1 nodes): `SubNode`
+- **Thin community `Community 156`** (1 nodes): `SubNode`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 158`** (1 nodes): `LeafNode`
+- **Thin community `Community 157`** (1 nodes): `LeafNode`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 159`** (1 nodes): `FlowEdge`
+- **Thin community `Community 158`** (1 nodes): `FlowEdge`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 160`** (1 nodes): `REJECTION_REASONS`
+- **Thin community `Community 159`** (1 nodes): `REJECTION_REASONS`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 161`** (1 nodes): `ChatContext`
+- **Thin community `Community 160`** (1 nodes): `ChatContext`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 171`** (1 nodes): `Sidecar Gradle settings`
+- **Thin community `Community 170`** (1 nodes): `Sidecar Gradle settings`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 178`** (1 nodes): `captureStartingBalance`
+- **Thin community `Community 177`** (1 nodes): `getTodayStartingBalance`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 179`** (1 nodes): `getTodayStartingBalance`
+- **Thin community `Community 178`** (1 nodes): `ReconciliationAlertInput`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 181`** (1 nodes): `ReconciliationAlertInput`
+- **Thin community `Community 179`** (1 nodes): `OrderResultSchema`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 182`** (1 nodes): `OrderResultSchema`
+- **Thin community `Community 180`** (1 nodes): `AccountBalance type`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 183`** (1 nodes): `AccountBalance type`
+- **Thin community `Community 181`** (1 nodes): `Quote type`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 184`** (1 nodes): `Quote type`
+- **Thin community `Community 182`** (1 nodes): `OptionsChain type`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 185`** (1 nodes): `OptionsChain type`
+- **Thin community `Community 183`** (1 nodes): `BrokerPosition type`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 186`** (1 nodes): `BrokerPosition type`
+- **Thin community `Community 184`** (1 nodes): `classify launch.main`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 187`** (1 nodes): `classify launch.main`
+- **Thin community `Community 185`** (1 nodes): `STUB_BROKER`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 188`** (1 nodes): `STUB_BROKER`
+- **Thin community `Community 186`** (1 nodes): `sumChase test suite`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 189`** (1 nodes): `sumChase test suite`
+- **Thin community `Community 187`** (1 nodes): `Agent interface + AgentRunOptions`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 190`** (1 nodes): `Agent interface + AgentRunOptions`
+- **Thin community `Community 188`** (1 nodes): `summarizeToolInput/Output — telemetry helpers`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 191`** (1 nodes): `summarizeToolInput/Output — telemetry helpers`
+- **Thin community `Community 189`** (1 nodes): `ToolDef + submitDecisionTool / flagForReviewTool`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 192`** (1 nodes): `ToolDef + submitDecisionTool / flagForReviewTool`
+- **Thin community `Community 190`** (1 nodes): `xai-agent.test — recovery tests`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 193`** (1 nodes): `xai-agent.test — recovery tests`
+- **Thin community `Community 192`** (1 nodes): `BacktestConfig type`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 195`** (1 nodes): `BacktestConfig type`
+- **Thin community `Community 193`** (1 nodes): `SimClock — mutable backtest clock`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 196`** (1 nodes): `SimClock — mutable backtest clock`
+- **Thin community `Community 194`** (1 nodes): `db-browser-types (filter/table meta schemas)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 197`** (1 nodes): `db-browser-types (filter/table meta schemas)`
+- **Thin community `Community 195`** (1 nodes): `getSessionLabel`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 198`** (1 nodes): `stopHealthcheck`
+- **Thin community `Community 196`** (1 nodes): `formatRelativeTime`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 199`** (1 nodes): `getSessionLabel`
+- **Thin community `Community 197`** (1 nodes): `pctDisplay`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 200`** (1 nodes): `formatRelativeTime`
+- **Thin community `Community 199`** (1 nodes): `TradeActionSchema`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 201`** (1 nodes): `pctDisplay`
+- **Thin community `Community 200`** (1 nodes): `OptionTypeSchema / OptionType`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 203`** (1 nodes): `acquireLock`
+- **Thin community `Community 201`** (1 nodes): `CallPutAbbrev`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 204`** (1 nodes): `releaseLock`
+- **Thin community `Community 202`** (1 nodes): `Span / TraceContext types`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 205`** (1 nodes): `TradeActionSchema`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 206`** (1 nodes): `OptionTypeSchema / OptionType`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 207`** (1 nodes): `CallPutAbbrev`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 208`** (1 nodes): `Span / TraceContext types`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 209`** (1 nodes): `secrets manage CLI (import/set/get/list)`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 210`** (1 nodes): `RiskCheckResult`
+- **Thin community `Community 203`** (1 nodes): `secrets manage CLI (import/set/get/list)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
@@ -1025,15 +966,15 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **What is the exact relationship between `Field (shadcn)` and `Form (shadcn, RHF)`?**
   _Edge tagged AMBIGUOUS (relation: semantically_similar_to) - confidence is low._
-- **Why does `filter()` connect `Community 4` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 11`, `Community 13`, `Community 14`, `Community 18`, `Community 21`?**
+- **Why does `filter()` connect `Community 7` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 8`, `Community 10`, `Community 12`, `Community 13`, `Community 16`, `Community 21`?**
   _High betweenness centrality (0.138) - this node is a cross-community bridge._
-- **Why does `String()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 11`, `Community 13`, `Community 14`, `Community 17`, `Community 18`, `Community 20`, `Community 22`?**
-  _High betweenness centrality (0.085) - this node is a cross-community bridge._
-- **Why does `runBacktestInner()` connect `Community 3` to `Community 0`, `Community 2`, `Community 4`, `Community 6`, `Community 7`, `Community 17`?**
-  _High betweenness centrality (0.048) - this node is a cross-community bridge._
-- **Are the 74 inferred relationships involving `filter()` (e.g. with `toggleTrader()` and `applyTradeFilters()`) actually correct?**
-  _`filter()` has 74 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 59 inferred relationships involving `String()` (e.g. with `buildMessageParams()` and `buildScopedSearch()`) actually correct?**
-  _`String()` has 59 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 40 inferred relationships involving `log()` (e.g. with `main()` and `main()`) actually correct?**
-  _`log()` has 40 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `String()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 8`, `Community 13`, `Community 16`, `Community 17`, `Community 18`, `Community 19`?**
+  _High betweenness centrality (0.090) - this node is a cross-community bridge._
+- **Why does `round` connect `Community 5` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 6`, `Community 7`, `Community 8`, `Community 10`, `Community 13`, `Community 18`, `Community 21`?**
+  _High betweenness centrality (0.054) - this node is a cross-community bridge._
+- **Are the 80 inferred relationships involving `filter()` (e.g. with `toggleTrader()` and `applyTradeFilters()`) actually correct?**
+  _`filter()` has 80 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 64 inferred relationships involving `String()` (e.g. with `buildMessageParams()` and `buildScopedSearch()`) actually correct?**
+  _`String()` has 64 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 49 inferred relationships involving `log()` (e.g. with `main()` and `main()`) actually correct?**
+  _`log()` has 49 INFERRED edges - model-reasoned connections that need verification._

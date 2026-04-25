@@ -57,6 +57,9 @@ function openOrderBroker(): BrokerService {
     async isHealthy(): Promise<boolean> {
       return true;
     },
+    async placeStopOrder(): Promise<OrderResult> {
+      return { orderId: 'NO-STOP', status: 'OPEN' };
+    },
   };
 }
 
