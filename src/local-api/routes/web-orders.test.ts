@@ -43,6 +43,7 @@ function makeBroker(fillPrice: number, filledQuantity: number): BrokerService {
     })),
     modifyOrder: vi.fn(async () => ({ orderId: crypto.randomUUID(), status: 'OPEN' as const })),
     cancelOrder: vi.fn(async () => ({ orderId: crypto.randomUUID(), status: 'CANCELLED' as const })),
+    cancelAllOrders: vi.fn(async () => {}),
     getOrderStatus: vi.fn(async () => ({ orderId: crypto.randomUUID(), status: 'OPEN' as const })),
     getPositions: vi.fn(async () => []),
     getAccountBalance: vi.fn(async () => ({

@@ -35,6 +35,7 @@ function openOrderBroker(): BrokerService {
     async cancelOrder(): Promise<OrderResult> {
       return { orderId: 'ORDER-1', status: 'CANCELLED' };
     },
+    async cancelAllOrders(): Promise<void> {},
     async getOrderStatus(): Promise<OrderResult> {
       return { orderId: 'ORDER-1', status: 'OPEN' };
     },

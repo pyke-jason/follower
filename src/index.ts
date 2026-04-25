@@ -16,6 +16,7 @@ import { PATHS } from './lib/paths.js';
 import { sendSystemAlert, startPushoverQueue, stopPushoverQueue } from './lib/alert.js';
 import { getRuntimeChannelDefinitions } from './lib/runtime-channels.js';
 import { checkDiskSpace } from './lib/disk-check.js';
+import { isHalted, readHaltState } from './lib/halt-state.js';
 
 const LOCK_PATH = PATHS.lockFile;
 
@@ -71,6 +72,17 @@ async function main() {
   console.log('═'.repeat(60));
   console.log('  TRADE FOLLOWER v0');
   console.log('═'.repeat(60));
+
+  // Kill switch check — warn loudly but continue running so orders can resume once cleared
+  if (isHalted()) {
+    const haltState = readHaltState();
+    const msg = `Kill switch is ACTIVE (reason: ${haltState?.reason ?? 'unknown'}, set at ${haltState?.haltedAt ?? 'unknown'}). No orders will be placed until you run: pnpm resume`;
+    console.error(`\n${'!'.repeat(60)}`);
+    console.error('  WARNING: TRADING IS HALTED');
+    console.error(`  ${msg}`);
+    console.error(`${'!'.repeat(60)}\n`);
+    void sendSystemAlert({ title: 'Bot started while halted', message: msg, severity: 'warning' });
+  }
 
   // Capture daily starting balance per channel (non-fatal)
   for (const channel of channels) {

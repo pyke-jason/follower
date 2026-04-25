@@ -2,6 +2,7 @@ import type { BrokerService } from '../broker/interface.js';
 import type { FilledWorkingOrder, OrderResult, WorkingOrder, WorkingOrderParams } from '../broker/types.js';
 import type { SerializedWorkingOrder } from '../backtest/checkpoint-types.js';
 import { WorkingOrderParamsSchema, OrderResultSchema } from '../broker/order-schemas.js';
+import { TradingHaltedError } from '../lib/errors.js';
 import { createLogger } from '../lib/logger.js';
 import { roundCents } from '../lib/numbers.js';
 import { notionalValue } from '../lib/trade.js';
@@ -22,6 +23,8 @@ export type OrderManagerConfig = {
   onAdjust: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   /** When true, disables the 1s wall-clock auto-tick timer. Caller is responsible for calling tick() explicitly (e.g. in backtests using sim time). */
   manualTick?: boolean;
+  /** If provided and returns true, submitOrder() throws TradingHaltedError. Wired to isHalted() in live mode only. */
+  haltCheck?: () => boolean;
 };
 
 export class OrderManager {
@@ -31,6 +34,7 @@ export class OrderManager {
   private onCancel: (order: WorkingOrder) => void | Promise<void>;
   private onAdjust: (order: WorkingOrder, fromPrice: number, toPrice: number, step: number) => void | Promise<void>;
   private manualTick: boolean;
+  private haltCheck: (() => boolean) | null;
   private workingOrders = new Map<string, WorkingOrder>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -41,9 +45,13 @@ export class OrderManager {
     this.onCancel = config.onCancel;
     this.onAdjust = config.onAdjust;
     this.manualTick = config.manualTick ?? false;
+    this.haltCheck = config.haltCheck ?? null;
   }
 
   async submitOrder(params: WorkingOrderParams): Promise<OrderResult> {
+    if (this.haltCheck?.()) {
+      throw new TradingHaltedError('Kill switch is active — call `pnpm resume` to clear');
+    }
     WorkingOrderParamsSchema.parse(params);
 
     const hasRules = (params.adjustmentRules?.length ?? 0) > 0 || params.cancelAfterSec != null;

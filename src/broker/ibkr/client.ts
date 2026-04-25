@@ -434,6 +434,11 @@ async function getOrderStatus(orderId: string, runtime: IbkrRuntime): Promise<Or
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getOrderStatus(${orderId})`);
 }
 
+async function cancelAllOrders(runtime: IbkrRuntime): Promise<void> {
+  await sidecar(runtime.sidecarUrl, '/orders', { method: 'DELETE' });
+  runtime.creditComboOrderIds.clear();
+}
+
 async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
   return withRetry(async (signal) => {
     const data = await sidecar(runtime.sidecarUrl, '/positions', { signal });
@@ -528,6 +533,7 @@ export function createIbkrService(options: IbkrServiceOptions): BrokerService {
     placeOrder: (params) => placeOrder(params, runtime),
     modifyOrder: (orderId, newLimitPrice) => modifyOrder(orderId, newLimitPrice, runtime),
     cancelOrder: (orderId) => cancelOrder(orderId, runtime),
+    cancelAllOrders: () => cancelAllOrders(runtime),
     getOrderStatus: (orderId) => getOrderStatus(orderId, runtime),
     getPositions: () => getPositions(runtime),
     getAccountBalance: () => getAccountBalance(runtime),

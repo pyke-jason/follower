@@ -51,6 +51,7 @@ function makeBroker(overrides: Partial<BrokerService> = {}): BrokerService {
     getPositions: vi.fn(),
     getAccountBalance: vi.fn(),
     isHealthy: vi.fn(),
+    cancelAllOrders: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }

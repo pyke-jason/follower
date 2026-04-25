@@ -17,6 +17,7 @@ import type { Trade } from '../db/schema.js';
 import type { PendingResumeData, ResolvedPipelineDeps, ResolvedPendingContext } from './execute-resolved.js';
 import { createPendingContextFromResume } from './execute-resolved.js';
 import { OrderManager } from '../orders/order-manager.js';
+import { isHalted } from '../lib/halt-state.js';
 import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { getTrader } from '../config/traders.js';
@@ -107,6 +108,7 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     broker,
     clock,
     manualTick: config.manualTick,
+    haltCheck: config.isBacktestScope ? undefined : isHalted,
     ...buildOrderCallbacks({
       pendingIntents,
       createScopedEmitter,

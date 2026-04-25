@@ -58,6 +58,7 @@ public class OrderRoutes {
         app.get("/api/orders/{orderId}", this::getStatus);
         app.put("/api/orders/{orderId}", this::modify);
         app.delete("/api/orders/{orderId}", this::cancel);
+        app.delete("/api/orders", this::cancelAll);
     }
 
     /** Await order future with standard timeout/error handling. */
@@ -233,6 +234,12 @@ public class OrderRoutes {
 
         // Return immediately — cancellation is async, status will update via orderStatus callback
         ctx.json(Map.of("orderId", orderId, "status", "PendingCancel"));
+    }
+
+    private void cancelAll(Context ctx) {
+        log.info("AUDIT cancelAllOrders (reqGlobalCancel) — kill switch triggered");
+        bridge.getClient().reqGlobalCancel(new OrderCancel(""));
+        ctx.json(Map.of("cancelled", true));
     }
 
 }
