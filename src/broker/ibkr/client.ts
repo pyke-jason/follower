@@ -132,6 +132,7 @@ function ibkrClassify(err: unknown): ErrorCategory {
 // Needed so modifyOrder can preserve the sign convention — the sidecar's
 // modify endpoint writes lmtPrice verbatim, and OrderManager passes positive
 // chase prices that must be re-signed for credit combos.
+// Entries are removed on fill or cancel so the set stays bounded.
 const creditComboOrderIds = new Set<string>();
 
 // ── HTTP helper ─────────────────────────────────────────────────────
@@ -179,7 +180,9 @@ function mapIbkrStatus(ibkrStatus: string): OrderStatus {
 
 // ── BrokerService Implementation ────────────────────────────────────
 
-const alertedMissingSubscription = new Set<string>();
+// TTL-bounded: allows re-alerting after 24h if the subscription issue persists.
+const alertedSubscriptionAt = new Map<string, number>(); // symbol -> epoch ms
+const SUBSCRIPTION_ALERT_TTL_MS = 24 * 60 * 60_000;
 
 async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
   try {
@@ -220,8 +223,14 @@ async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
     }, { ...READ_DEFAULTS, classify: ibkrClassify }, `getQuote(${symbol})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/IBKR sidecar 402:/.test(msg) && !alertedMissingSubscription.has(symbol)) {
-      alertedMissingSubscription.add(symbol);
+    const now = Date.now();
+    const lastAlerted = alertedSubscriptionAt.get(symbol) ?? 0;
+    if (/IBKR sidecar 402:/.test(msg) && now - lastAlerted > SUBSCRIPTION_ALERT_TTL_MS) {
+      alertedSubscriptionAt.set(symbol, now);
+      // Evict stale entries to keep the map bounded
+      for (const [sym, ts] of alertedSubscriptionAt) {
+        if (now - ts > SUBSCRIPTION_ALERT_TTL_MS) alertedSubscriptionAt.delete(sym);
+      }
       const isCompetingSession = /"twsCode"\s*:\s*10197/.test(msg);
       void sendSystemAlert({
         title: isCompetingSession
@@ -403,6 +412,7 @@ async function getOrderStatus(orderId: string, runtime: IbkrRuntime): Promise<Or
       result.filledQuantity = order.filledQuantity;
       result.commission = order.commission;
       result.fillTimestamp = new Date().toISOString();
+      creditComboOrderIds.delete(orderId);
     }
 
     return result;

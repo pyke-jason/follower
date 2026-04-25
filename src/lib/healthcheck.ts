@@ -42,7 +42,7 @@ export function startHealthcheck(): void {
     try {
       const healthy = await isSidecarHealthy();
       const pingUrl = healthy ? url : `${url}/fail`;
-      const res = await fetch(pingUrl);
+      const res = await fetch(pingUrl, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) {
         console.warn(`[Healthcheck] Ping responded ${res.status}`);
       }

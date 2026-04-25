@@ -5,13 +5,14 @@ import { installProcessErrorHandlers } from './lib/log-safety.js';
 import { startIngestion, stopIngestion, closeBrowser } from './ingestion/ingest.js';
 import { initRunner, submitTask, stopRunner, awaitDrain, destroyOrderManager } from './live/runner.js';
 import { createTasksFromMessage } from './live/factory.js';
-import { db, schema } from './db/client.js';
+import { db, schema, pgPool } from './db/client.js';
 import { eq } from 'drizzle-orm';
 import { captureStartingBalance, ReconciliationScheduler, FillSweep } from './reconciliation/index.js';
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState } from './ingestion/browser.js';
 import { fetchHistorical } from './ingestion/historical.js';
 import { acquireLock, releaseLock } from './lib/pidlock.js';
 import { startHealthcheck, stopHealthcheck } from './lib/healthcheck.js';
+import { startMetrics, stopMetrics } from './lib/process-metrics.js';
 import { PATHS } from './lib/paths.js';
 import { sendSystemAlert } from './lib/alert.js';
 
@@ -87,6 +88,7 @@ async function main() {
 
   // Start healthcheck pinger (dead-man's-switch for uptime monitoring)
   startHealthcheck();
+  startMetrics();
 
   console.log('\n Trade Follower is running.');
   console.log('  Messages → Parse → Task → Agent → Trade');
@@ -98,6 +100,7 @@ async function shutdown() {
   stopIngestion();                // stops supervision loop + watchdog + auth monitor
   stopRunner();                   // stops accepting new tasks
   stopHealthcheck();
+  stopMetrics();
 
   // Wait for in-flight task (the critical window: placeOrder → recordTrade)
   try {
@@ -124,6 +127,7 @@ async function shutdown() {
     await sweep.stop();
   }
   await closeBrowser();
+  await pgPool.end();
   releaseLock(LOCK_PATH);
   process.exit(0);
 }
