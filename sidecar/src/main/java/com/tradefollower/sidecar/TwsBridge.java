@@ -104,7 +104,12 @@ public class TwsBridge extends DefaultEWrapper {
         this.client = new EClientSocket(this, signal);
 
         this.host = System.getenv().getOrDefault("IBKR_GATEWAY_HOST", "127.0.0.1");
-        this.port = Integer.parseInt(System.getenv().getOrDefault("IBKR_GATEWAY_PORT", "4001"));
+        String ibkrGwPort = System.getenv("IBKR_GATEWAY_PORT");
+        if (ibkrGwPort == null || ibkrGwPort.isBlank()) {
+            throw new RuntimeException(
+                "IBKR_GATEWAY_PORT env var is required (4001=live, 4002=paper). Refusing to default.");
+        }
+        this.port = Integer.parseInt(ibkrGwPort);
         this.clientId = Integer.parseInt(System.getenv().getOrDefault("IBKR_CLIENT_ID", "1"));
     }
 

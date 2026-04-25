@@ -231,6 +231,7 @@ async function waitForHealth(
 type ChannelInfo = {
   hasIbkr: boolean;
   ibkrMode: 'live' | 'paper';
+  ibkrAccountId: string;
   sidecarUrl: string;
   channelSummary: string[];
 };
@@ -243,7 +244,7 @@ async function detectChannels(): Promise<ChannelInfo> {
   // Now read channel definitions (they read from process.env)
   const { getRuntimeChannelDefinitions } = await import('../src/lib/runtime-channels.js');
 
-  let defs: { brokerName: string; label: string; mode?: string; sidecarUrl?: string }[];
+  let defs: { brokerName: string; label: string; mode?: string; sidecarUrl?: string; accountId?: string }[];
   try {
     defs = getRuntimeChannelDefinitions();
   } catch {
@@ -253,11 +254,20 @@ async function detectChannels(): Promise<ChannelInfo> {
 
   const ibkrDefs = defs.filter((d) => d.brokerName === 'ibkr');
   const sidecarUrl = ibkrDefs[0]?.sidecarUrl ?? 'http://localhost:8090/api';
-  const ibkrMode = (ibkrDefs[0]?.mode === 'paper' ? 'paper' : 'live') as 'live' | 'paper';
+
+  const rawMode = ibkrDefs[0]?.mode;
+  if (ibkrDefs.length > 0 && rawMode !== 'paper' && rawMode !== 'live') {
+    throw new Error(
+      `IBKR channel mode must be 'paper' or 'live', got: ${JSON.stringify(rawMode)}. Check ENABLED_CHANNEL_IDS and channel env vars.`,
+    );
+  }
+  const ibkrMode = (rawMode ?? 'paper') as 'live' | 'paper';
+  const ibkrAccountId = ibkrDefs[0]?.accountId ?? '';
 
   return {
     hasIbkr: ibkrDefs.length > 0,
     ibkrMode,
+    ibkrAccountId,
     sidecarUrl,
     channelSummary: defs.map((d) => d.label),
   };
@@ -344,7 +354,7 @@ const SIDECAR_RESTART_DELAY_MS = 10_000;
  * Manages the IBKR gateway + sidecar lifecycle with automatic restarts.
  * Runs in the background — never blocks other services.
  */
-async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Promise<void> {
+async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper', expectedAccountId: string): Promise<void> {
   const sidecarStatusUrl = `${sidecarBase}/status`;
   let restartCount = 0;
 
@@ -352,8 +362,13 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
     try {
       const res = await fetch(sidecarStatusUrl, { signal: AbortSignal.timeout(3_000) });
       if (!res.ok) return false;
-      const body = (await res.json()) as { connected?: boolean };
-      return body.connected === true;
+      const body = (await res.json()) as { connected?: boolean; accountId?: string };
+      if (body.connected !== true) return false;
+      if (expectedAccountId && body.accountId !== expectedAccountId) {
+        log('orch', `SAFETY: sidecar connected to wrong account (got=${body.accountId}, expected=${expectedAccountId}) — treating as not ready`);
+        return false;
+      }
+      return true;
     } catch {
       return false;
     }
@@ -376,6 +391,9 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
     // Give gateway time to initialize
     await new Promise((r) => setTimeout(r, 5_000));
 
+    if (mode !== 'paper' && mode !== 'live') {
+      throw new Error(`Invalid IBKR mode: ${JSON.stringify(mode)}. Must be 'paper' or 'live'.`);
+    }
     const gwPort = mode === 'paper' ? '4002' : '4001';
     log('orch', `Starting IBKR Sidecar (${mode} mode, gateway port ${gwPort})...`);
     spawnService('sidecar', 'bash', [resolve(ROOT, 'sidecar/scripts/start-sidecar.sh')], {
@@ -384,7 +402,15 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper'): Pr
 
     // Wait up to 30s for sidecar to connect
     const ready = await waitForHealth('sidecar', sidecarStatusUrl, {
-      check: (b: unknown) => (b as { connected?: boolean }).connected === true,
+      check: (b: unknown) => {
+        const body = b as { connected?: boolean; accountId?: string };
+        if (body.connected !== true) return false;
+        if (expectedAccountId && body.accountId !== expectedAccountId) {
+          log('orch', `SAFETY: sidecar connected to wrong account (got=${body.accountId}, expected=${expectedAccountId})`);
+          return false;
+        }
+        return true;
+      },
       timeoutMs: 30_000,
       intervalMs: 2_000,
     });
@@ -533,7 +559,7 @@ async function main(): Promise<void> {
 
   if (needsIbkr) {
     // Don't await — runs entirely in the background with auto-restart
-    superviseSidecar(sidecarBase, channels.ibkrMode).catch((err) => {
+    superviseSidecar(sidecarBase, channels.ibkrMode, channels.ibkrAccountId).catch((err) => {
       log('orch', `Sidecar supervisor failed: ${err}`);
     });
   }

@@ -136,7 +136,9 @@ public class App {
         }
 
         // Paper trading (port 4002) — skip healthcheck pings
-        String gwPort = System.getenv().getOrDefault("IBKR_GATEWAY_PORT", "4001");
+        // IBKR_GATEWAY_PORT is required — TwsBridge throws at startup if absent.
+        // Using getenv() here (no default) so a missing var disables pings rather than activating live.
+        String gwPort = System.getenv("IBKR_GATEWAY_PORT");
         if ("4002".equals(gwPort)) {
             log.info("Paper trading detected (port 4002) — healthcheck pings disabled");
             return executor;
