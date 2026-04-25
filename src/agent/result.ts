@@ -44,6 +44,8 @@ export type AgentRunOptions = {
   maxTurns?: number;
   maxTokens?: number;
   temperature?: number;
+  /** Hard deadline for the entire agent run in ms. Defaults to 120 000 ms (2 min). */
+  timeoutMs?: number;
 };
 
 export interface Agent {
