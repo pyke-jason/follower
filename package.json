@@ -10,6 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
+    "db:backup": "bash scripts/db-backup.sh",
+    "db:restore": "bash scripts/db-restore.sh",
     "local-api": "tsx watch src/local-api/server.ts",
     "web": "cd web && pnpm dev",
     "backtest": "tsx src/backtest/launch.ts",
