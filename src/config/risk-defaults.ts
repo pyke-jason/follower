@@ -25,6 +25,11 @@ export const MAX_CONTRACTS: Record<string, number> = {
 };
 
 export const DEFAULT_STARTING_EQUITY = 100_000;
+
+/** Cushion fraction below which naked short options emit a warning alert. */
+export const SHORT_OPTION_CUSHION_WARN = 0.10;
+/** Cushion fraction below which naked short options are blocked entirely. */
+export const SHORT_OPTION_CUSHION_BLOCK = 0.05;
 const DEFAULT_FILL_MODEL = 'orats' as const;
 export const DEFAULT_COMMISSION_SCHEDULE = {
   option: { perContract: 0.50 },
