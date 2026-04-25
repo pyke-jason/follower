@@ -74,6 +74,10 @@ const MARKET_HOLIDAYS = new Set([
   '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03',
   '2026-05-25', '2026-06-19', '2026-07-03', '2026-09-07',
   '2026-11-26', '2026-12-25',
+  // 2027
+  '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26',
+  '2027-05-31', '2027-06-18', '2027-07-05', '2027-09-06',
+  '2027-11-25', '2027-12-24',
 ]);
 
 /** Early close days — market closes at 1:00 PM ET (minute 780) instead of 4:00 PM. */
@@ -82,6 +86,8 @@ const MARKET_EARLY_CLOSES = new Set([
   '2025-07-03', '2025-11-28', '2025-12-24',
   // 2026
   '2026-07-02', '2026-11-27', '2026-12-24',
+  // 2027
+  '2027-07-02', '2027-11-26',
 ]);
 
 const REGULAR_CLOSE_MINUTE = 960;  // 4:00 PM
@@ -104,6 +110,24 @@ export function isMarketHours(d: Date): boolean {
   if (!isTradingDay(d)) return false;
   const minutes = getETMinuteOfDay(d);
   return minutes >= MARKET_OPEN_MINUTE && minutes <= marketCloseMinute(d);
+}
+
+/** NYSE session at a given moment. */
+export type MarketSession = 'holiday' | 'pre' | 'regular' | 'post';
+
+/**
+ * Returns the NYSE session for a given timestamp.
+ * 'holiday'  — weekend or market holiday (no trading)
+ * 'pre'      — before 9:30 AM ET on a trading day
+ * 'regular'  — 9:30 AM through close (4 PM or 1 PM on early-close days)
+ * 'post'     — after close on a trading day
+ */
+export function getMarketSession(d: Date): MarketSession {
+  if (!isTradingDay(d)) return 'holiday';
+  const min = getETMinuteOfDay(d);
+  if (min < MARKET_OPEN_MINUTE) return 'pre';
+  if (min <= marketCloseMinute(d)) return 'regular';
+  return 'post';
 }
 
 /**

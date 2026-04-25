@@ -27,6 +27,8 @@ import { createEmitter } from '../decisions/emitter.js';
 import { getTodayStartingBalance } from '../reconciliation/daily-balance.js';
 import { safeParseFloat } from '../lib/numbers.js';
 import { toDateKeyET } from '../lib/et-date.js';
+import { HaltTracker } from '../lib/halt-tracker.js';
+import { MarketGuard } from '../lib/market-guard.js';
 import { isOpen, isClosed, forChannel, forSymbol, forTrader, forStrategy } from '../trades/filters.js';
 import { db, schema } from '../db/client.js';
 import { and, eq, sql } from 'drizzle-orm';
@@ -162,6 +164,13 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     getWorkingOrderExposure: () => orderManager.getExposure(),
   };
 
+  // ── Market guard ──
+  // Backtest gets a disabled guard so the pipeline can call it unconditionally
+  // (no path-specific `if (deps.marketGuard)` branch in shared executor code).
+  const marketGuard = config.isBacktestScope
+    ? MarketGuard.disabled()
+    : new MarketGuard(new HaltTracker(), clock);
+
   // ── Pipeline deps ──
   const agentModel = `${config.agentIdentity.provider}:${config.agentIdentity.model}`;
 
@@ -212,6 +221,8 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     onPending: (orderId, context) => {
       pendingIntents.set(orderId, context);
     },
+
+    marketGuard,
   };
 
   for (const pending of infra.initialPendingIntents ?? []) {

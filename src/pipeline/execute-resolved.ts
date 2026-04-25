@@ -29,6 +29,7 @@ import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { floorCents, round, roundCents } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
 import { addTradeFlags } from '../trades/trade-flags.js';
+import type { MarketGuard } from '../lib/market-guard.js';
 
 const log = createLogger('ExecuteResolved');
 
@@ -104,6 +105,8 @@ export type ResolvedPipelineDeps = {
   }) => Promise<RiskCheckResult>;
   recordTrade: (input: Omit<RecordTradeInput, 'channelId'>) => Promise<RecordTradeResult | null>;
   onPending: (orderId: string, context: ResolvedPendingContext) => void;
+  /** Live only. Undefined in backtest (market guard not applied). */
+  marketGuard: MarketGuard;
 };
 
 export type ResolvedPipelineResult = {
@@ -486,6 +489,22 @@ async function executeResolvedSignal(
   if (signal.tradeId) execParts.push(`tradeId=${signal.tradeId}`);
   log.info(execParts.join(' | '));
 
+  // ── Market guard (session + halt) ───────────────────
+  const guard = deps.marketGuard.checkSignal(symbol, isPositionReducing);
+  if (!guard.allowed) {
+    log.warn(`Market guard blocked: ${guard.reason}`);
+    const isHalt = guard.reason.toLowerCase().includes('halt');
+    const isHoliday = 'session' in guard && guard.session === 'holiday';
+    if (isHalt || isHoliday) {
+      await deps.sendAlert?.({
+        title: isHalt ? `Trading halt: ${symbol}` : 'Market closed — order blocked',
+        message: guard.reason,
+        severity: 'warning',
+      });
+    }
+    return { signal, executed: false, reason: guard.reason };
+  }
+
   // ── OPEN path ──────────────────────────────────────
 
   if (!isPositionReducing) {
@@ -678,6 +697,33 @@ export async function executeResolvedSignals(ctx: {
         );
         continue;
       }
+
+      // Halt detection: IBKR rejects orders on halted symbols — message contains "halted"/"suspended".
+      // Mark the symbol in the guard so subsequent signals are skipped for the cooldown window.
+      {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        // Match only "trading-context" halt phrases — bare \bsuspended\b
+        // false-positives on the broker client's "market data suspended" alert.
+        if (/trading\s+halt|trading\s+suspend|\bhalted\b/i.test(errMsg)) {
+          const sym = signal.legs[0]?.symbol ?? 'unknown';
+          deps.marketGuard.markHalted(sym);
+          const reason = `Trading halt detected for ${sym}`;
+          log.warn(`${reason}: ${errMsg.slice(0, 200)}`);
+          await deps.sendAlert?.({
+            title: `Trading halt: ${sym}`,
+            message: `${reason}. Future orders blocked for 15 min.\n${errMsg.slice(0, 500)}`,
+            severity: 'warning',
+          });
+          const haltResult: ResolvedPipelineResult = { signal, executed: false, reason };
+          results.push(haltResult);
+          await emitter.emit('SETTLED',
+            { outcome: 'FAIL', signalIndex: i, reasoning: reason },
+            { signal, result: haltResult },
+          );
+          continue;
+        }
+      }
+
       if (err instanceof QuoteResolutionError) {
         // Record the original failure
         const failResult: ResolvedPipelineResult = {
