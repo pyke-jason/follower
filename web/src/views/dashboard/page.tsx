@@ -7,6 +7,7 @@ import { OverviewUnrealizedCurve } from '@/components/overview-equity-curve';
 import { AccountHero } from './account-hero';
 import { PositionsWatchlist } from './positions-watchlist';
 import { QualitySnapshotPanel } from './quality-snapshot-panel';
+import { RecentAlertsPanel } from './recent-alerts-panel';
 import { RiskPanel } from './risk-panel';
 import { TraderLeaderboard } from './trader-leaderboard';
 import { QueryBoundary, MetricStripSkeleton } from '@/components/query-boundary';
@@ -33,7 +34,7 @@ function DashboardContent({ data, href, channelId }: {
 }) {
   const {
     openTrades, unrealizedData, pendingReviews, riskSnapshot,
-    stats, qualitySummary, livePositionsByTradeId, accountBalance, traderData,
+    stats, qualitySummary, livePositionsByTradeId, accountBalance, traderData, recentAlerts,
   } = data;
 
   return (
@@ -78,6 +79,12 @@ function DashboardContent({ data, href, channelId }: {
         {riskSnapshot && (
           <div className="border-t border-border/40 pt-4">
             <RiskPanel data={riskSnapshot} balance={accountBalance} />
+          </div>
+        )}
+
+        {recentAlerts.length > 0 && (
+          <div className="border-t border-border/40 pt-4">
+            <RecentAlertsPanel alerts={recentAlerts} />
           </div>
         )}
 

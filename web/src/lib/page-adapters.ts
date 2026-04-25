@@ -3,6 +3,7 @@ import type {
   BacktestRunSummary,
   DailyBalance,
   Message,
+  ReconciliationAlert,
   Task,
   Trade,
   TradeFlag,
@@ -112,6 +113,7 @@ type DashboardApiResponse = {
   channelId: string;
   livePositionsByTradeId: Record<string, LivePositionRow>;
   accountBalance: AccountBalanceSnapshot | null;
+  recentAlerts: ReconciliationAlert[];
 };
 
 export type DashboardSignalRow = {
@@ -130,6 +132,7 @@ export type DashboardPageData = {
   qualitySummary: DashboardTradeQualitySummary;
   livePositionsByTradeId: Record<string, LivePositionRow>;
   accountBalance: AccountBalanceSnapshot | null;
+  recentAlerts: ReconciliationAlert[];
 };
 
 export async function fetchDashboardPageData(channelId?: string): Promise<DashboardPageData> {
@@ -176,6 +179,7 @@ export async function fetchDashboardPageData(channelId?: string): Promise<Dashbo
     qualitySummary,
     livePositionsByTradeId: dashboard.livePositionsByTradeId ?? {},
     accountBalance: dashboard.accountBalance ?? null,
+    recentAlerts: dashboard.recentAlerts ?? [],
   };
 }
 

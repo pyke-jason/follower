@@ -31,6 +31,15 @@ const app = new Hono();
 
 // ── Helpers ──────────────────────────────────────────
 
+/** Returns the broker for a channel, or undefined when broker env vars are absent. */
+function getBroker(channelId: string) {
+  try {
+    return getRuntimeBrokerMap().get(channelId);
+  } catch {
+    return undefined;
+  }
+}
+
 function isoToDateKey(iso: string): string {
   return iso.split('T')[0];
 }
@@ -518,11 +527,15 @@ app.get('/status', async (c) => {
     getRuntimeHealthInternal(channelId),
     getChannelUnrealizedPnl(channelId),
   ]);
+  // channelId format: '<broker>:<mode>:<accountId>'
+  const modePart = channelId.split(':')[1];
+  const accountMode = modePart === 'live' || modePart === 'paper' ? modePart : null;
   return c.json({
     ...stats,
     unrealizedPnl,
     channelId,
     channelKind: 'runtime',
+    accountMode,
     tradingBlocked: risk.tradingBlocked,
     unresolvedAlertCount: risk.unresolvedAlerts,
     ...(health && {
@@ -544,7 +557,7 @@ type LivePositionRow = { unrealizedPnl: number; marketValue: number | null };
 async function getChannelLivePositionsByTradeId(
   channelId: string,
 ): Promise<{ totalUnrealizedPnl: number; byTradeId: Record<string, LivePositionRow> }> {
-  const broker = getRuntimeBrokerMap().get(channelId);
+  const broker = getBroker(channelId);
   if (!broker) return { totalUnrealizedPnl: 0, byTradeId: {} };
 
   let positions: BrokerPosition[];
@@ -730,7 +743,7 @@ app.get('/dashboard', async (c) => {
   const channelId = resolveChannelId(c.req.query('channel') || undefined);
   const backtestRunId = await getBacktestRunIdByChannelId(channelId);
 
-  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePositions, accountBalance, medianFiniteRisk] = await Promise.all([
+  const [stats, openTrades, traderPnl, historySummary, risk, dailyBalances, livePositions, accountBalance, medianFiniteRisk, recentAlerts] = await Promise.all([
     getStatsInternal(channelId, { useTotalPnl: !!backtestRunId }),
     getOpenTradesInternal(500, channelId),
     getTraderPnlSummaryInternal(channelId),
@@ -740,6 +753,7 @@ app.get('/dashboard', async (c) => {
     backtestRunId ? Promise.resolve({ totalUnrealizedPnl: 0, byTradeId: {} }) : getChannelLivePositionsByTradeId(channelId),
     backtestRunId ? Promise.resolve(null) : getChannelAccountBalance(channelId),
     getMedianFiniteRiskInternal(channelId),
+    backtestRunId ? Promise.resolve([]) : getRecentAlertsInternal(channelId),
   ]);
 
   return c.json({
@@ -752,6 +766,7 @@ app.get('/dashboard', async (c) => {
     channelId,
     livePositionsByTradeId: livePositions.byTradeId,
     accountBalance,
+    recentAlerts,
   });
 });
 
@@ -774,7 +789,7 @@ app.get('/trade-quality', async (c) => {
 /** Live account balance from the runtime broker. Null if unreachable or
  *  no runtime broker is registered for the channel. */
 async function getChannelAccountBalance(channelId: string): Promise<AccountBalance | null> {
-  const broker = getRuntimeBrokerMap().get(channelId);
+  const broker = getBroker(channelId);
   if (!broker) return null;
   try {
     return await broker.getAccountBalance();
@@ -2341,9 +2356,9 @@ async function getRiskSnapshotInternal(channelId?: string) {
       eq(schema.reconciliationAlerts.type, 'DB_ONLY'),
     ));
 
-  const tradingBlocked = drawdownPct >= 5 || (dbOnlyAlerts?.count ?? 0) > 0;
-
   const { LIVE_RISK_DEFAULTS } = await import('@/config/risk-defaults.js');
+  const tradingBlocked = drawdownPct >= LIVE_RISK_DEFAULTS.maxDrawdownPct || (dbOnlyAlerts?.count ?? 0) > 0;
+
   const rawMaxPos = process.env.LIVE_MAX_TOTAL_POSITIONS;
   const parsedMaxPos = rawMaxPos ? parseInt(rawMaxPos, 10) : NaN;
   const effectiveMaxPositions = Number.isFinite(parsedMaxPos) && parsedMaxPos > 0
@@ -2357,7 +2372,7 @@ async function getRiskSnapshotInternal(channelId?: string) {
     maxPositions: effectiveMaxPositions,
     positionsBySymbol: openPositions,
     drawdownPct: Math.round(drawdownPct * 100) / 100,
-    maxDrawdownPct: 5,
+    maxDrawdownPct: LIVE_RISK_DEFAULTS.maxDrawdownPct,
     todayPnl: safeParseFloat(todayPnlResult?.total),
     unresolvedAlerts: unresolvedAlerts?.count ?? 0,
     tradingBlocked,
@@ -2370,6 +2385,15 @@ async function getDailyBalancesInternal(limit = 30, channelId?: string) {
     .from(schema.dailyBalances)
     .where(eq(schema.dailyBalances.channelId, resolveChannelId(channelId)))
     .orderBy(desc(schema.dailyBalances.date))
+    .limit(limit);
+}
+
+async function getRecentAlertsInternal(channelId?: string, limit = 10) {
+  return db
+    .select()
+    .from(schema.reconciliationAlerts)
+    .where(eq(schema.reconciliationAlerts.channelId, resolveChannelId(channelId)))
+    .orderBy(desc(schema.reconciliationAlerts.createdAt))
     .limit(limit);
 }
 
@@ -3009,7 +3033,7 @@ async function getRuntimeHealthInternal(channelId: string) {
   }
 
   // Stale or missing — live-probe and persist so next read is fast
-  const broker = getRuntimeBrokerMap().get(channelId);
+  const broker = getBroker(channelId);
   if (!broker) return row ?? null;
 
   const healthy = await broker.isHealthy();
