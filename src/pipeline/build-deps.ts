@@ -146,6 +146,11 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
       return balance.equity;
     },
 
+    getMaintenanceMargin: async () => {
+      const balance = await broker.getAccountBalance();
+      return balance.maintenanceMargin ?? null;
+    },
+
     getReconciliationAlertCount: (config.skipReconciliationCheck ?? config.isBacktestScope ?? false)
       ? async () => 0
       : async () => {
