@@ -214,6 +214,7 @@ async function runBacktestInner(config: BacktestConfig, runId: string, options: 
       disableRiskLimits: config.disableRiskLimits,
       startingEquity,
       manualTick: true,
+      isBacktestScope: true,
     },
     initialPendingIntents: resumeCheckpoint?.pendingIntents,
   });

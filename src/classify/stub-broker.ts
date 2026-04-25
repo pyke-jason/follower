@@ -26,6 +26,7 @@ export const STUB_BROKER: BrokerService = {
   placeOrder: async () => unsupported('placeOrder'),
   modifyOrder: async () => unsupported('modifyOrder'),
   cancelOrder: async () => unsupported('cancelOrder'),
+  cancelAllOrders: async () => unsupported('cancelAllOrders'),
   getOrderStatus: async () => unsupported('getOrderStatus'),
   getPositions: async () => unsupported('getPositions'),
   getAccountBalance: async () => unsupported('getAccountBalance'),

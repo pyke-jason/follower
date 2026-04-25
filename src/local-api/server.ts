@@ -22,6 +22,7 @@ import evalRoutes from './routes/eval.js';
 import dbBrowser from './routes/db-browser.js';
 import ingestBackfill from './routes/ingest-backfill.js';
 import { getRuntimeBrokerMap } from '../broker/select.js';
+import { createAdminRouter } from './routes/admin.js';
 import { db, schema } from '../db/client.js';
 import { sendSystemAlert } from '../lib/alert.js';
 
@@ -45,6 +46,7 @@ app.onError((err, c) => {
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
+app.route('/admin', createAdminRouter(channelBrokerMap));
 app.route('/backtests', backtests);
 app.route('/classify', classifySpawn);
 app.route('/logs', logs);

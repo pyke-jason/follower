@@ -58,6 +58,17 @@ export class QuoteUnavailableError extends Error {
   }
 }
 
+/**
+ * Thrown by OrderManager.submitOrder() when the kill switch is active.
+ * Callers should surface this as a hard stop, not retry.
+ */
+export class TradingHaltedError extends Error {
+  constructor(reason: string) {
+    super(`Trading halted: ${reason}`);
+    this.name = 'TradingHaltedError';
+  }
+}
+
 export class QuoteResolutionError extends Error {
   constructor(
     public readonly originalMessage: string,

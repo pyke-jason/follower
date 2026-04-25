@@ -383,6 +383,10 @@ export class SimBroker implements BrokerService {
     return { orderId, status: 'OPEN' };
   }
 
+  async cancelAllOrders(): Promise<void> {
+    // No-op in simulation — backtest halt is not applicable
+  }
+
   async cancelOrder(orderId: string): Promise<OrderResult> {
     // Already filled — can't cancel a filled order
     const filled = this.filledOrders.get(orderId);
