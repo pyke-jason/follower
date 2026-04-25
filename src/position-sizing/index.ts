@@ -19,6 +19,7 @@ export type PositionSizingConfig = NotionalSizingConfig | AtrSizingConfig;
 interface SizingParams {
   symbol: string;
   strategy: string;
+  direction?: string;
   entryPrice: number;
   equity: number;
   legs: Leg[];
@@ -37,19 +38,41 @@ function getStrikeWidth(legs: Leg[]): number | undefined {
   return Math.abs(strikes[0] - strikes[1]);
 }
 
-function riskPerUnit(strategy: string, entryPrice: number, legs: Leg[]): { value: number; detail?: string } {
+type RiskResult =
+  | { value: number; detail?: string }
+  | { skip: true; reason: string };
+
+function riskPerUnit(strategy: string, direction: string, entryPrice: number, legs: Leg[]): RiskResult {
+  // Credit spreads (PCS/CCS): max loss = spread width - premium received
   const isCredit = strategy === 'PCS' || strategy === 'CCS';
-  if (!isCredit) return { value: entryPrice };
+  if (isCredit) {
+    const width = getStrikeWidth(legs);
+    if (!width) return { value: entryPrice };
+    const risk = Math.max(0.01, width - entryPrice);
+    return { value: risk, detail: `width $${width} - prem $${entryPrice.toFixed(2)}` };
+  }
 
-  const width = getStrikeWidth(legs);
-  if (!width) return { value: entryPrice };
+  // Naked short call: theoretically unbounded risk — cannot auto-size
+  if (strategy === 'CALL' && direction === 'SHORT') {
+    return { skip: true, reason: 'naked short call has unbounded risk — manual sizing required' };
+  }
 
-  const risk = Math.max(0.01, width - entryPrice);
-  return { value: risk, detail: `width $${width} - prem $${entryPrice.toFixed(2)}` };
+  // Naked short put: max loss = strike - premium received (underlying falls to zero)
+  if (strategy === 'PUT' && direction === 'SHORT') {
+    const strike = legs.find((l): l is Extract<Leg, { type: 'option' }> => l.type === 'option')?.strike;
+    if (strike != null && strike > 0) {
+      const risk = Math.max(0.01, strike - entryPrice);
+      return { value: risk, detail: `strike $${strike} - prem $${entryPrice.toFixed(2)}` };
+    }
+    // No strike available — fall through to entryPrice (conservative)
+  }
+
+  // Long options, stocks, debit spreads: risk = entryPrice (premium paid or share price)
+  return { value: entryPrice };
 }
 
 function calculateNotionalSize(config: NotionalSizingConfig, params: SizingParams): PositionSize {
-  const { entryPrice, equity, strategy, maxQuantity, legs } = params;
+  const { entryPrice, equity, strategy, direction = 'LONG', maxQuantity, legs } = params;
   const { maxNotionalPct } = config;
   const multiplier = contractMultiplier(strategy);
   const unit = strategy === 'STOCK' ? 'shares' : 'contracts';
@@ -60,7 +83,10 @@ function calculateNotionalSize(config: NotionalSizingConfig, params: SizingParam
     return { quantity: 0, reasoning: `Entry price $${entryPrice} <= 0, cannot size`, riskPerTrade: 0 };
   }
 
-  const risk = riskPerUnit(strategy, entryPrice, legs);
+  const risk = riskPerUnit(strategy, direction, entryPrice, legs);
+  if ('skip' in risk) {
+    return { quantity: 0, reasoning: risk.reason, riskPerTrade: 0 };
+  }
   const rawQty = Math.floor(targetNotional / (risk.value * multiplier));
   const quantity = maxQuantity ? Math.min(Math.max(rawQty, 1), maxQuantity) : Math.max(rawQty, 1);
   const actualNotional = quantity * risk.value * multiplier;

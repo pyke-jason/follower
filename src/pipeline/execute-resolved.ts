@@ -93,6 +93,7 @@ export type ResolvedPipelineDeps = {
     symbol: string;
     entryPrice: number;
     strategy: string;
+    direction: string;
     legs: Leg[];
   }) => Promise<PositionSize>;
   checkRiskLimits: (input: {
@@ -497,6 +498,7 @@ async function executeResolvedSignal(
       symbol,
       entryPrice,
       strategy,
+      direction,
       legs: signal.legs,
     }));
     if (size.quantity <= 0) {

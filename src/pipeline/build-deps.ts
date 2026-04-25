@@ -20,7 +20,7 @@ import { OrderManager } from '../orders/order-manager.js';
 import { buildOrderCallbacks } from '../orders/build-order-callbacks.js';
 import { buildPositionSizer } from '../position-sizing/index.js';
 import { getTrader } from '../config/traders.js';
-import { MAX_CONTRACTS } from '../config/risk-defaults.js';
+import { MAX_CONTRACTS, SHORT_OPTION_CUSHION_WARN, SHORT_OPTION_CUSHION_BLOCK } from '../config/risk-defaults.js';
 import { checkRiskLimits } from '../orders/risk-check.js';
 import { recordTrade, recordCancelledOpen } from '../trades/record-trade.js';
 import { createEmitter } from '../decisions/emitter.js';
@@ -174,10 +174,33 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
     calculatePositionSize: async (input) => {
       const tc = await getTrader(input.trader);
       const balance = await broker.getAccountBalance();
+
+      // Warn before placing naked short options if margin cushion is thin.
+      // cushion = (equity - maintenanceMargin) / equity; below 10% is danger territory.
+      const isNakedShort = (input.strategy === 'CALL' || input.strategy === 'PUT') && input.direction === 'SHORT';
+      if (isNakedShort && balance.cushion != null) {
+        if (balance.cushion < SHORT_OPTION_CUSHION_BLOCK) {
+          void env.sendAlert?.({
+            title: `Margin cushion critical — blocking naked short ${input.strategy}`,
+            message: `Account cushion is ${(balance.cushion * 100).toFixed(1)}% (below ${(SHORT_OPTION_CUSHION_BLOCK * 100).toFixed(0)}% block threshold). Order for ${input.symbol} will not be placed.`,
+            severity: 'critical',
+          });
+          return { quantity: 0, reasoning: `margin cushion ${(balance.cushion * 100).toFixed(1)}% below ${(SHORT_OPTION_CUSHION_BLOCK * 100).toFixed(0)}% block threshold`, riskPerTrade: 0 };
+        }
+        if (balance.cushion < SHORT_OPTION_CUSHION_WARN) {
+          void env.sendAlert?.({
+            title: `Low margin cushion — naked short ${input.strategy}`,
+            message: `Account cushion is ${(balance.cushion * 100).toFixed(1)}% (below ${(SHORT_OPTION_CUSHION_WARN * 100).toFixed(0)}% warning threshold). Proceeding with ${input.symbol} but monitor closely.`,
+            severity: 'warning',
+          });
+        }
+      }
+
       const sizer = buildPositionSizer(tc?.positionSizingConfig);
       return sizer.calculateSize({
         symbol: input.symbol,
         strategy: input.strategy,
+        direction: input.direction,
         entryPrice: input.entryPrice,
         equity: balance.equity,
         legs: input.legs,
