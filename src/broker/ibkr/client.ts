@@ -12,7 +12,7 @@ import type { ErrorCategory } from '@/lib/resilient.js';
 import { withRetry, READ_DEFAULTS, WRITE_DEFAULTS, classifyError } from '@/lib/resilient.js';
 import { randomUUID } from 'node:crypto';
 import { QuoteUnavailableError } from '@/lib/errors.js';
-import { resolveContract, resolveStockContract, isOccOptionSymbol, occToIBKR } from './symbology.js';
+import { resolveContract, resolveStockContract, isOccOptionSymbol, occToIBKR, normalizeIbkrTicker } from './symbology.js';
 import { formatOccSymbol } from '@/lib/occ-symbology.js';
 import { sendSystemAlert } from '@/lib/alert.js';
 import { isCreditOrderStructural } from '@/pipeline/leg-pricing.js';
@@ -190,7 +190,7 @@ async function getQuote(symbol: string, runtime: IbkrRuntime): Promise<Quote> {
         const { conId } = await resolveContract(symbol, runtime.sidecarUrl);
         body = { conId };
       } else {
-        body = { symbol, secType: 'STK' };
+        body = { symbol: normalizeIbkrTicker(symbol), secType: 'STK' };
       }
 
       const data = await sidecar(runtime.sidecarUrl, '/market-data/snapshot', {
@@ -422,13 +422,13 @@ async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
 
     return positions.map((p) => {
       const isOption = p.secType === 'OPT';
-      // OCC parsing needs the original 6-char padded underlying. Normalize only
-      // the display symbol after parsing so option positions still match DB legs.
-      const normalizedLocal = p.localSymbol.replace(/\s+/g, ' ').trim();
+      // OCC format is position-indexed (21 chars). Collapsing whitespace breaks the
+      // format ("AAPL  260221C00250000" → 20-char string that fails isOccOptionSymbol).
+      // Use localSymbol verbatim for options; normalize whitespace only for stock display.
       const parsed = isOption ? occToIBKR(p.localSymbol) : null;
 
       const pos: BrokerPosition = {
-        symbol: isOption ? normalizedLocal : p.symbol,
+        symbol: isOption ? p.localSymbol : p.symbol,
         quantity: p.position,
         averageCost: p.avgCost,
         marketValue: p.marketValue,
