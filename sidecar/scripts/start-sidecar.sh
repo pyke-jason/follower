@@ -30,5 +30,6 @@ if [[ ! -f "$JAR" ]]; then
     fi
 fi
 
-echo "Starting IBKR sidecar (gateway=${IBKR_GATEWAY_PORT}, http=${SIDECAR_PORT:-8090})"
-exec java -Xmx256m -XX:+UseG1GC -jar "$JAR"
+JAVA_BIN="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+echo "Starting IBKR sidecar (gateway=${IBKR_GATEWAY_PORT}, http=${SIDECAR_PORT:-8090}, java=$JAVA_BIN)"
+exec "$JAVA_BIN" -Xmx256m -XX:+UseG1GC -jar "$JAR"
