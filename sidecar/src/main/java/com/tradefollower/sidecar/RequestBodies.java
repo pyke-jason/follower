@@ -23,6 +23,7 @@ final class RequestBodies {
         String orderType,
         String tif,
         Double limitPrice,
+        Double auxPrice,
         String clientOrderRef
     ) {
         @JsonCreator
@@ -33,6 +34,7 @@ final class RequestBodies {
             @JsonProperty("orderType") String orderType,
             @JsonProperty("tif") String tif,
             @JsonProperty("limitPrice") Double limitPrice,
+            @JsonProperty("auxPrice") Double auxPrice,
             @JsonProperty("clientOrderRef") String clientOrderRef
         ) {
             this.conId = conId;
@@ -41,6 +43,7 @@ final class RequestBodies {
             this.orderType = orderType != null ? orderType : "LMT";
             this.tif = tif != null ? tif : "GTC";
             this.limitPrice = limitPrice;
+            this.auxPrice = auxPrice;
             this.clientOrderRef = clientOrderRef;
         }
     }

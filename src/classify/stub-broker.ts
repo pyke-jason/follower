@@ -30,4 +30,5 @@ export const STUB_BROKER: BrokerService = {
   getPositions: async () => unsupported('getPositions'),
   getAccountBalance: async () => unsupported('getAccountBalance'),
   isHealthy: async () => true,
+  placeStopOrder: async () => unsupported('placeStopOrder'),
 };

@@ -56,6 +56,7 @@ function makeBroker(fillPrice: number, filledQuantity: number): BrokerService {
       timestamp: fillTimestamp,
     })),
     isHealthy: vi.fn(async () => true),
+    placeStopOrder: vi.fn(async () => ({ orderId: 'stop-order-id', status: 'OPEN' as const })),
   };
 }
 

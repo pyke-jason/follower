@@ -1,5 +1,5 @@
 import type { TradeLeg } from '../db/schema.js';
-import type { Direction, OptionType, OrderType } from '../lib/enums.js';
+import type { Direction, OptionType, OrderType, Strategy } from '../lib/enums.js';
 
 /** A leg before fill — same shape as TradeLeg without fillPrice. */
 export type OrderLeg = Omit<TradeLeg, 'fillPrice'>;
@@ -134,4 +134,22 @@ export type OrderParams = {
   limitPrice?: number;
   /** Signals a position-reducing order — broker skips buying power gate. */
   isClosing: boolean;
+};
+
+/**
+ * Parameters for placing a server-side GTC stop order at the broker.
+ * Supported for single-leg instruments (STOCK, CALL, PUT) only.
+ * Spreads (CDS/PDS/CCS/PCS) are not supported — placeStopOrder will throw.
+ */
+export type StopOrderParams = {
+  symbol: string;
+  strategy: Strategy;
+  legs: OrderLeg[];
+  /** BUY to close a short position; SELL to close a long position. */
+  stopAction: 'BUY' | 'SELL';
+  quantity: number;
+  /** Trigger price (auxPrice in TWS). The order activates when the market hits this. */
+  stopPrice: number;
+  /** If set, order becomes STP LMT (safer for illiquid options). Omit for pure STP (stocks). */
+  limitPrice?: number;
 };

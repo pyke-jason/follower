@@ -29,6 +29,8 @@ import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { floorCents, round, roundCents } from '../lib/numbers.js';
 import { createLogger } from '../lib/logger.js';
 import { addTradeFlags } from '../trades/trade-flags.js';
+import { placeTradeStop, cancelTradeStop, cancelAndReplaceStop } from '../trades/stop-orders.js';
+import { computeStopParams, isStopSupportedStrategy } from '../config/stop-defaults.js';
 
 const log = createLogger('ExecuteResolved');
 
@@ -549,7 +551,32 @@ async function executeResolvedSignal(
     const openRecordFill = openPending.recordFill;
     openPending.recordFill = async (fill) => {
       const recorded = await openRecordFill(fill);
-      if (recorded) tradeId = recorded.tradeId;
+      if (recorded) {
+        tradeId = recorded.tradeId;
+        // Place server-side GTC stop — survives bot restart.
+        // Awaited inline so recordFill doesn't return while the position is unprotected
+        // (the alternative — fire-and-forget — leaves the exact crash window the feature is designed to prevent).
+        if (isStopSupportedStrategy(strategy)) {
+          try {
+            if (signalAction === 'ADD') {
+              // ADD scales an existing position; cancel the old stop and re-place
+              // sized to the post-ADD total qty at the blended entry price (read
+              // from DB after the recordFill commit).
+              await cancelAndReplaceStop(recorded.tradeId, deps.broker, strategy, direction);
+            } else {
+              const stopParams = computeStopParams(strategy, direction, fill.filledPrice, orderLegs, size.quantity);
+              if (stopParams) {
+                await placeTradeStop(recorded.tradeId, deps.broker, stopParams);
+              }
+            }
+          } catch (err) {
+            log.error(`Stop placement failed for trade ${recorded.tradeId}: ${err instanceof Error ? err.message : String(err)}`);
+            await deps.sendAlert?.({ title: 'Stop placement failed', message: `Trade ${recorded.tradeId} (${strategy} ${direction} ${symbol}) has no server-side stop: ${err instanceof Error ? err.message : String(err)}`, severity: 'critical' });
+          }
+        } else {
+          log.warn(`No server-side stop for ${strategy} ${direction} ${symbol} (tradeId=${recorded.tradeId}) — spread stops not yet supported`);
+        }
+      }
       return recorded;
     };
 
@@ -607,7 +634,21 @@ async function executeResolvedSignal(
   const reduceRecordFill = reducePending.recordFill;
   reducePending.recordFill = async (fill) => {
     const recorded = await reduceRecordFill(fill);
-    if (recorded) tradeId = recorded.tradeId;
+    if (recorded) {
+      tradeId = recorded.tradeId;
+      const closedTradeId = signal.tradeId ?? recorded.tradeId;
+      try {
+        if (reduceAction === 'TRIM') {
+          // TRIM: cancel old stop, re-place at remaining position size
+          await cancelAndReplaceStop(closedTradeId, deps.broker, strategy, direction);
+        } else {
+          // CLOSE / LEG_OFF: position gone, just cancel the stop
+          await cancelTradeStop(closedTradeId, deps.broker);
+        }
+      } catch (err) {
+        log.warn(`Stop ${reduceAction === 'TRIM' ? 'cancel+replace' : 'cancel'} failed for trade ${closedTradeId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     return recorded;
   };
 
