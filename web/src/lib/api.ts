@@ -21,6 +21,7 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      'X-Requested-With': 'fetch',
       ...init?.headers,
     },
   });

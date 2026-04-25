@@ -742,6 +742,7 @@ app.post('/settings/secrets', async (c) => {
 app.delete('/settings/secrets/:key', async (c) => {
   const key = decodeURIComponent(c.req.param('key'));
   if (!key) return c.json({ ok: false, error: 'Key is required' }, 400);
+  if (!/^[A-Z][A-Z0-9_]*$/.test(key)) return c.json({ ok: false, error: 'Invalid key format' }, 400);
 
   try {
     const provider = getProvider();
