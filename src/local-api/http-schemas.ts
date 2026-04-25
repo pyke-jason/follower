@@ -264,7 +264,10 @@ export const ReconciliationResolveBodySchema = z.object({
 /* ─── POST /web/settings/secrets ────────────────────── */
 
 export const SettingsSecretBodySchema = z.object({
-  key: z.string().min(1, 'Key is required'),
+  key: z
+    .string()
+    .min(1, 'Key is required')
+    .regex(/^[A-Z][A-Z0-9_]*$/, 'Key must be uppercase letters, digits, and underscores'),
   value: z.string().min(1, 'Value is required'),
 });
 

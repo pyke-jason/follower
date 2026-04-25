@@ -10,6 +10,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { eq, and, lt, inArray } from 'drizzle-orm';
+import { requireLocalhost, requireXRequestedWith, rateLimiter } from './middleware.js';
 import backtests from './routes/backtests.js';
 import classifySpawn from './routes/classify-spawn.js';
 import classifyRoutes from './routes/classify.js';
@@ -34,7 +35,37 @@ if (channelBrokerMap.size === 0) {
 
 const app = new Hono();
 
-app.use('*', cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'https://app.oneoption.com'] }));
+// Localhost origins only in global CORS — oneoption.com is NOT included here
+// because it would allow that origin to reach trading/mutation endpoints.
+const LOCALHOST_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+app.use('*', cors({ origin: LOCALHOST_ORIGINS }));
+
+// app.oneoption.com only for the ingest-backfill route (chat widget sends
+// captured messages here). This keeps cross-origin access away from orders/mutations.
+app.use('/ingest-backfill', cors({ origin: 'https://app.oneoption.com' }));
+
+// Reject connections from non-loopback addresses (defense-in-depth on top of
+// the 127.0.0.1 bind address set in serve() below).
+app.use('*', requireLocalhost());
+
+// Browser-facing mutating routes require X-Requested-With. HTML forms cannot
+// set arbitrary headers, so this defeats cross-site form-submission CSRF.
+// Only applies to POST/PUT/DELETE/PATCH — GETs are read-only.
+app.use('/web/*', async (c, next) => {
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(c.req.method)) {
+    return requireXRequestedWith()(c, next);
+  }
+  return next();
+});
+
+// Throttle order placement and force-exits to prevent runaway broker calls.
+app.use('/web/orders/*', rateLimiter(10));
+app.use('/web/trades/*', rateLimiter(5));
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
@@ -199,5 +230,6 @@ setTimeout(sweepStaleRuns, 30_000);
 // ─── Start Server ────────────────────────────────────
 
 const port = parseInt(process.env.LOCAL_API_PORT ?? '3791');
-console.log(`[local-api] Listening on http://localhost:${port}`);
-serve({ fetch: app.fetch, port });
+console.log(`[local-api] Listening on http://127.0.0.1:${port}`);
+// hostname: '127.0.0.1' binds to loopback only — never 0.0.0.0 (all interfaces).
+serve({ fetch: app.fetch, port, hostname: '127.0.0.1' });
