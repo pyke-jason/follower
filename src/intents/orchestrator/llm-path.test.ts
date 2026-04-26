@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeForPrompt, buildNLUPrompt } from './llm-path.js';
+import { sanitizeForPrompt, buildNLUPrompt, evaluateLlmBudget } from './llm-path.js';
 import type { ParseResult, OrchestratorContext } from './types.js';
 import type { Message } from '@/db/schema.js';
 
@@ -174,5 +174,42 @@ describe('buildNLUPrompt', () => {
     const prompt = buildNLUPrompt(makeMinimalParse(), ctx);
     expect(prompt).toContain('Previous execution attempt failed');
     expect(prompt).toContain('strike 350 not found');
+  });
+});
+
+// ── evaluateLlmBudget ───────────────────────────────────────────────────────
+
+describe('evaluateLlmBudget', () => {
+  it('does not alert below the daily budget', () => {
+    const result = evaluateLlmBudget({
+      dailyCostUsd: 4.99,
+      budgetUsd: 5,
+      messageId: 'msg-1',
+    });
+    expect(result.alert).toBeNull();
+    expect(result.blockReason).toBeNull();
+  });
+
+  it('alerts but does not block by default above the critical threshold', () => {
+    const result = evaluateLlmBudget({
+      dailyCostUsd: 10,
+      budgetUsd: 5,
+      messageId: 'msg-1',
+    });
+    expect(result.alert?.severity).toBe('critical');
+    expect(result.alert?.message).toContain('Continuing classification');
+    expect(result.blockReason).toBeNull();
+  });
+
+  it('can restore the legacy block behavior explicitly', () => {
+    const result = evaluateLlmBudget({
+      dailyCostUsd: 10,
+      budgetUsd: 5,
+      messageId: 'msg-1',
+      mode: 'block',
+    });
+    expect(result.alert?.severity).toBe('critical');
+    expect(result.alert?.message).toContain('Routing message msg-1 to MANUAL_REVIEW');
+    expect(result.blockReason).toContain('LLM daily budget hard limit');
   });
 });

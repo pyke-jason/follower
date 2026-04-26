@@ -6,6 +6,7 @@
  */
 
 import { db, schema, withDbRetry } from '../db/client.js';
+import type { RunDecision } from '../db/schema.js';
 
 export type DecisionColumns = {
   signalIndex?: number;
@@ -26,19 +27,26 @@ export function createEmitter(scope: {
   messageId?: string;
   channelId: string;
   taskId?: string;
+  onDecision?: (decision: RunDecision) => void | Promise<void>;
 }): SignalEventEmitter {
+  const { onDecision, ...insertScope } = scope;
   const startMs = Date.now();
   return {
     emit: async (event, columns = {}, snapshot) => {
-      await withDbRetry(() =>
+      const [decision] = await withDbRetry(() =>
         db.insert(schema.runDecisions).values({
-          ...scope,
+          ...insertScope,
           ...columns,
           event,
           snapshot: snapshot ?? null,
           durationMs: Date.now() - startMs,
-        }),
+        }).returning(),
       );
+      if (decision && onDecision) {
+        void Promise.resolve(onDecision(decision)).catch((err) => {
+          console.warn('[DecisionEmitter] onDecision failed:', err);
+        });
+      }
     },
   };
 }

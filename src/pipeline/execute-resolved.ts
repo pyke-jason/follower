@@ -745,7 +745,7 @@ export async function executeResolvedSignals(ctx: {
         }
         await emitter.emit('SETTLED',
           { outcome: 'FAIL', signalIndex: i, reasoning: failResult.reason },
-          { signal, result: failResult, quoteUnavailable: { symbol: err.symbol, detail: err.detail } },
+          { signal, result: failResult, resolved, quoteUnavailable: { symbol: err.symbol, detail: err.detail } },
         );
         continue;
       }
@@ -770,7 +770,7 @@ export async function executeResolvedSignals(ctx: {
           results.push(haltResult);
           await emitter.emit('SETTLED',
             { outcome: 'FAIL', signalIndex: i, reasoning: reason },
-            { signal, result: haltResult },
+            { signal, result: haltResult, resolved },
           );
           continue;
         }
@@ -823,7 +823,7 @@ export async function executeResolvedSignals(ctx: {
               results.push(sameSymbolResult);
               await emitter.emit('SETTLED',
                 { outcome: 'FAIL', signalIndex: resolved.signals.length + ri, reasoning: sameSymbolResult.reason! },
-                { signal: retrySignal, result: sameSymbolResult, retryContext: { originalError: err.originalMessage } },
+                { signal: retrySignal, result: sameSymbolResult, retryResolved, retryContext: { originalError: err.originalMessage } },
               );
               continue;
             }
@@ -847,7 +847,7 @@ export async function executeResolvedSignals(ctx: {
             results.push(retryFailResult);
             await emitter.emit('SETTLED',
               { outcome: 'FAIL', signalIndex: resolved.signals.length + ri, reasoning: retryFailResult.reason! },
-              { signal: retrySignal, result: retryFailResult, retryContext: { originalError: err.originalMessage }, error: errMsg },
+              { signal: retrySignal, result: retryFailResult, retryResolved, retryContext: { originalError: err.originalMessage }, error: errMsg },
             );
           }
         }

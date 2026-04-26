@@ -62,6 +62,12 @@ const COLORS: Record<string, string> = {
   RESOLVED: TEAL,
   UNRESOLVED: CORAL,
   HALTED: CORAL + ' animate-pulse',
+  CRITICAL: CORAL,
+  WARNING: AMBER,
+  INFO: CYAN,
+  open: CORAL,
+  resolved: TEAL,
+  dismissed: DIM,
 
   // Strategy type
   STOCK: SLATE,

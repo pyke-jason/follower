@@ -5,6 +5,7 @@ export const TRADE_MODELS_BY_PROVIDER = {
     'claude-sonnet-4-6',
     'claude-haiku-4-5-20251001',
     'claude-opus-4-6',
+    'claude-opus-4-7',
   ],
   xai: [
     'grok-4-1-fast-reasoning',
@@ -14,5 +15,5 @@ export const TRADE_MODELS_BY_PROVIDER = {
 
 export const DEFAULT_TRADE_MODEL = {
   provider: 'anthropic',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-opus-4-7',
 } as const satisfies ModelIdentity;

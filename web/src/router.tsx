@@ -25,6 +25,7 @@ const Classify = lazy(() => import('./views/classify/page'));
 const NewClassify = lazy(() => import('./views/classify/new/page'));
 const ClassifyDetail = lazy(() => import('./views/classify/[id]/page'));
 const Reconciliation = lazy(() => import('./views/reconciliation/page'));
+const AuditAlerts = lazy(() => import('./views/audits/page'));
 const Settings = lazy(() => import('./views/settings/page'));
 const EvalReview = lazy(() => import('./views/eval/review/page'));
 const Architecture = lazy(() => import('./views/architecture/page'));
@@ -108,6 +109,7 @@ export function App() {
         <Route path="classify/new" element={<NewClassify />} />
         <Route path="classify/:id" element={<ClassifyDetail />} />
         <Route path="reconciliation" element={<Reconciliation />} />
+        <Route path="audits" element={<AuditAlerts />} />
         <Route path="eval/review" element={<EvalReview />} />
         <Route path="architecture" element={<Architecture />} />
         <Route path="db" element={<DbBrowser />} />

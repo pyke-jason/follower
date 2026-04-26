@@ -25,6 +25,9 @@ import { resolveOrchestrator } from '../intents/orchestrator/index.js';
 import { executeResolvedSignals } from './execute-resolved.js';
 import { createEmitter } from '../decisions/emitter.js';
 import { stampHasUpdate } from '../trades/trade-flags.js';
+import { evaluateClassificationGate } from '../safety/classification-gate.js';
+import { enqueueClassificationAudit } from '../safety/classification-audit.js';
+import type { ClassificationGateResult } from '../safety/schemas.js';
 
 // ─── Types ──────────────────────────────────────────
 
@@ -79,13 +82,6 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
       env.pipeline.onPending(orderId, { ...ctx, taskId: task.id }),
   };
 
-  // Derive emitter from scope
-  const emitter = createEmitter({
-    messageId,
-    channelId: env.scope,
-    taskId: task.id,
-  });
-
   // Derive position lookup from getOpenPositions + context.author
   const getPositions = async (symbol?: string) => {
     const filters: PositionFilters = symbol ? { symbol } : {};
@@ -99,6 +95,27 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     .limit(1);
 
   if (!message) throw new Error(`Message ${messageId} not found for task ${task.id}`);
+
+  let gateResult: ClassificationGateResult | null = null;
+
+  // Derive emitter from scope. Audit work is fire-and-forget so SETTLED writes
+  // never wait on the critic or alert delivery.
+  const emitter = createEmitter({
+    messageId,
+    channelId: env.scope,
+    taskId: task.id,
+    onDecision: (runDecision) => {
+      if (runDecision.event !== 'SETTLED') return;
+      enqueueClassificationAudit({
+        message,
+        task,
+        runDecision,
+        agent: env.agent,
+        gateResult,
+        sendAlert: env.pipeline.sendAlert,
+      });
+    },
+  });
 
   const executeEnv: ExecuteEnv = {
     getPositions,
@@ -170,6 +187,55 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
       await emitter.emit('TRACE', {}, { spans: env.trace.getSpans() });
     }
     await env.onResult(result, emitter);
+    return;
+  }
+
+  const gateOpenPositions = await env.getOpenPositions({ trader: context.author ?? message.author });
+  gateResult = evaluateClassificationGate({
+    message,
+    resolved,
+    openPositions: gateOpenPositions,
+  });
+
+  if (gateResult.findings.length > 0) {
+    await emitter.emit('SAFETY_GATE',
+      { outcome: gateResult.decision === 'block' ? 'SKIP' : 'EXECUTE', phase: 'safety_gate', reasoning: gateResult.reason },
+      { gate: gateResult, resolved },
+    );
+  }
+
+  if (gateResult.decision === 'block') {
+    await env.pipeline.sendAlert?.({
+      title: 'Safety gate blocked trade',
+      message: `${message.author}: ${gateResult.reason}. Message: "${message.cleanText.slice(0, 240)}" [${env.scope}]`,
+      severity: 'critical',
+    });
+
+    await emitter.emit('SETTLED',
+      {
+        outcome: 'SKIP',
+        phase: 'safety_gate',
+        reasoning: gateResult.reason,
+        skipCategory: 'safety_block',
+        inputTokens: resolved.usage?.inputTokens,
+        outputTokens: resolved.usage?.outputTokens,
+      },
+      { gate: gateResult, resolved },
+    );
+
+    if (symbols.length > 0 && context.author) {
+      await stampHasUpdate({ symbols, trader: context.author, channelId: env.scope, messageId });
+    }
+
+    if (env.trace) {
+      await emitter.emit('TRACE', {}, { spans: env.trace.getSpans() });
+    }
+    await env.onResult({
+      outcome: 'SKIP',
+      reason: gateResult.reason,
+      parseResult: resolved.parseResult,
+      usage: resolved.usage,
+    }, emitter);
     return;
   }
 

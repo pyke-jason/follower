@@ -7,6 +7,15 @@ import type { LegFill } from '../broker/types.js';
 import type { ExtendedMetrics, LiveMetrics, TraderStats, StrategyStats, EquityPoint } from '../backtest/types.js';
 import type { BacktestCheckpointState } from '../backtest/checkpoint-types.js';
 import type { Direction, Strategy } from '../lib/enums.js';
+import type {
+  ClassificationAuditKind,
+  ClassificationAuditPayload,
+  ClassificationAuditStatus,
+  CriticVerdict,
+  SafetyFinding,
+  SafetyFindingCategory,
+  SafetySeverity,
+} from '../safety/schemas.js';
 // Inlined from enums.ts so drizzle-kit can load schema.ts without resolving
 // relative imports (its CJS bundler can't handle them).
 const LegTypeSchema = z.enum(['CALL', 'PUT', 'STOCK']);
@@ -392,6 +401,38 @@ export const IntentStepSchema = z.object({
 });
 export type IntentStep = z.infer<typeof IntentStepSchema>;
 
+// ─── Classification Audits ──────────────────────────
+
+export const classificationAudits = pgTable('classification_audits', {
+  id:            text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  channelId:     text('channel_id').notNull(),
+  taskId:        text('task_id').references(() => tasks.id),
+  messageId:     text('message_id').references(() => messages.id).notNull(),
+  runDecisionId: text('run_decision_id').references(() => runDecisions.id),
+  auditKind:     text('audit_kind').notNull().$type<ClassificationAuditKind>(),
+  severity:      text('severity').notNull().$type<SafetySeverity>(),
+  status:        text('status').notNull().$type<ClassificationAuditStatus>().default('open'),
+  confidence:    real('confidence').notNull().default(0),
+  category:      text('category').$type<SafetyFindingCategory>(),
+  title:         text('title').notNull(),
+  details:       text('details').notNull(),
+  findings:      typedJson<SafetyFinding[]>('findings').notNull().default(jsonArrayDefault),
+  payload:       typedJson<ClassificationAuditPayload>('payload').notNull().default(jsonObjectDefault),
+  critic:        typedJson<CriticVerdict>('critic'),
+  alertKey:      text('alert_key'),
+  alertSentAt:   text('alert_sent_at'),
+  resolvedAt:    text('resolved_at'),
+  resolvedReason: text('resolved_reason'),
+  createdAt:     text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_classification_audits_channel').on(table.channelId),
+  index('idx_classification_audits_message').on(table.messageId),
+  index('idx_classification_audits_decision').on(table.runDecisionId),
+  index('idx_classification_audits_status').on(table.status),
+  index('idx_classification_audits_severity_status').on(table.severity, table.status),
+  index('idx_classification_audits_alert_key').on(table.alertKey),
+]);
+
 // ─── Commission Schedule ─────────────────────────────
 
 export type CommissionSchedule = {
@@ -682,6 +723,8 @@ export type BacktestMessageProgress = typeof backtestMessageProgress.$inferSelec
 export type BacktestAttempt = typeof backtestAttempts.$inferSelect;
 export type MessageIntent = typeof messageIntents.$inferSelect;
 export type NewMessageIntent = typeof messageIntents.$inferInsert;
+export type ClassificationAudit = typeof classificationAudits.$inferSelect;
+export type NewClassificationAudit = typeof classificationAudits.$inferInsert;
 export type RuntimeHealth = typeof runtimeHealth.$inferSelect;
 export type DiscrepancyReview = typeof discrepancyReviews.$inferSelect;
 export type NewDiscrepancyReview = typeof discrepancyReviews.$inferInsert;

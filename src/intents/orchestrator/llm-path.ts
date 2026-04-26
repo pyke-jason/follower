@@ -39,6 +39,64 @@ import { DependencyUnavailableError } from '@/lib/errors.js';
 
 const log = createLogger('Orchestrator:LLM');
 
+type LlmBudgetMode = 'alert_only' | 'block';
+
+type LlmBudgetCheck = {
+  alert: {
+    title: string;
+    message: string;
+    severity: 'critical' | 'warning';
+  } | null;
+  blockReason: string | null;
+};
+
+function readLlmBudgetMode(): LlmBudgetMode {
+  return process.env.LLM_BUDGET_MODE === 'block' ? 'block' : 'alert_only';
+}
+
+/** @internal Exported for tests. */
+export function evaluateLlmBudget(params: {
+  dailyCostUsd: number;
+  budgetUsd: number;
+  messageId: string;
+  mode?: LlmBudgetMode;
+}): LlmBudgetCheck {
+  const mode = params.mode ?? 'alert_only';
+  const budgetUsd = params.budgetUsd;
+  const dailyCostUsd = params.dailyCostUsd;
+
+  if (!Number.isFinite(budgetUsd) || budgetUsd <= 0 || dailyCostUsd < budgetUsd) {
+    return { alert: null, blockReason: null };
+  }
+
+  const critical = dailyCostUsd >= budgetUsd * 2;
+  const formattedCost = dailyCostUsd.toFixed(2);
+  const formattedBudget = budgetUsd.toFixed(2);
+
+  if (!critical) {
+    return {
+      alert: {
+        title: 'LLM budget soft limit hit',
+        message: `Daily LLM cost $${formattedCost} has reached budget ($${formattedBudget}). Continuing classification in alert-only mode.`,
+        severity: 'warning',
+      },
+      blockReason: null,
+    };
+  }
+
+  const blockReason = `LLM daily budget hard limit: $${formattedCost} >= 2x $${formattedBudget}`;
+  return {
+    alert: {
+      title: 'LLM budget critical threshold hit',
+      message: mode === 'block'
+        ? `${blockReason}. Routing message ${params.messageId} to MANUAL_REVIEW.`
+        : `${blockReason}. Continuing classification for message ${params.messageId} because LLM_BUDGET_MODE=alert_only.`,
+      severity: 'critical',
+    },
+    blockReason: mode === 'block' ? blockReason : null,
+  };
+}
+
 // ── Simplified NLU-only system prompt ─────────────────────────────────────────
 //
 // Direction rules, PCS normalization, badge handling, lotto/yolo overrides are
@@ -263,28 +321,27 @@ export async function resolveLLMPath(
     },
   );
 
-  // ── Daily budget guard ──────────────────────────────────────────────────────
-  // Advisory: alert at soft limit, hard-stop at 2× to prevent runaway spend.
+  // ── Daily budget alert ──────────────────────────────────────────────────────
+  // Production default is alert-only: cost should page the operator, not route
+  // live signals away from the classifier. Set LLM_BUDGET_MODE=block to restore
+  // the legacy critical-threshold MANUAL_REVIEW behavior.
   const LLM_DAILY_BUDGET_USD = Number(process.env.LLM_DAILY_BUDGET_USD ?? '5');
   const dailyCost = await getDailyLlmCostUsd();
-  if (dailyCost >= LLM_DAILY_BUDGET_USD * 2) {
-    void sendSystemAlert({
-      title: 'LLM budget hard limit hit',
-      message: `Daily LLM cost $${dailyCost.toFixed(2)} is ≥2× budget ($${LLM_DAILY_BUDGET_USD}). Routing message ${ctx.message.id} to MANUAL_REVIEW.`,
-      severity: 'critical',
-    });
+  const budgetCheck = evaluateLlmBudget({
+    dailyCostUsd: dailyCost,
+    budgetUsd: LLM_DAILY_BUDGET_USD,
+    messageId: ctx.message.id,
+    mode: readLlmBudgetMode(),
+  });
+  if (budgetCheck.alert) {
+    void sendSystemAlert(budgetCheck.alert);
+  }
+  if (budgetCheck.blockReason) {
     return {
       outcome: 'MANUAL_REVIEW',
-      reason: `LLM daily budget hard limit: $${dailyCost.toFixed(2)} ≥ 2× $${LLM_DAILY_BUDGET_USD}`,
+      reason: budgetCheck.blockReason,
       classifierSignals: synthesizeDeterministicSignals(parse),
     };
-  }
-  if (dailyCost >= LLM_DAILY_BUDGET_USD) {
-    void sendSystemAlert({
-      title: 'LLM budget soft limit hit',
-      message: `Daily LLM cost $${dailyCost.toFixed(2)} has reached budget ($${LLM_DAILY_BUDGET_USD}).`,
-      severity: 'warning',
-    });
   }
 
   let agentResult: AgentResult;

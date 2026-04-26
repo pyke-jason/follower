@@ -9,6 +9,26 @@ import {
 } from '../lib/enums.js';
 import { EvalLabelDataSchema } from '../eval/label-schema.js';
 import { defaultTickSize, computeMidpoint } from '../lib/quotes.js';
+export {
+  ClassificationAuditIdParamsSchema,
+  ClassificationAuditListQuerySchema,
+  ClassificationAuditListResponseSchema,
+  ClassificationAuditResolveBodySchema,
+  ClassificationAuditRowSchema,
+  ClassificationAuditStatsSchema,
+  ClassificationAuditStatusSchema,
+  SafetySeveritySchema,
+} from '../safety/schemas.js';
+export type {
+  ClassificationAuditIdParams,
+  ClassificationAuditListQuery,
+  ClassificationAuditListResponse,
+  ClassificationAuditResolveBody,
+  ClassificationAuditRow,
+  ClassificationAuditStats,
+  ClassificationAuditStatus,
+  SafetySeverity,
+} from '../safety/schemas.js';
 import type {
   BacktestRun,
   BacktestRunSummary,
