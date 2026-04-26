@@ -725,17 +725,29 @@ async function processMessage(
           if (result.parseResult?.action === 'OPEN' && result.parseResult?.symbol) {
             shadows.recordFollowedOpen(msg.author, result.parseResult.symbol);
           }
-          await emitter.emit('SETTLED', { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId });
+          await emitter.emit(
+            'SETTLED',
+            { outcome: 'EXECUTE', phase: 'orchestrator', reasoning, tradeId: firstTradeId },
+            { classifierSignals: result.classifierSignals },
+          );
         } else if (failedResults.length > 0) {
           const failReason = failedResults.map(r => r.reason).join('; ');
           log.debug(`  pipeline failed: ${failReason.slice(0, 200)}`);
           stats.skipped++;
           stats.skipReasons.set('pipeline failure', (stats.skipReasons.get('pipeline failure') ?? 0) + 1);
-          await emitter.emit('SETTLED', { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason, skipCategory: 'pipeline failure' });
+          await emitter.emit(
+            'SETTLED',
+            { outcome: 'FAIL', phase: 'pipeline_failure', reasoning: failReason, skipCategory: 'pipeline failure' },
+            { classifierSignals: result.classifierSignals },
+          );
         } else {
           stats.skipped++;
           stats.skipReasons.set('no execution', (stats.skipReasons.get('no execution') ?? 0) + 1);
-          await emitter.emit('SETTLED', { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' });
+          await emitter.emit(
+            'SETTLED',
+            { outcome: 'SKIP', phase: 'orchestrator', reasoning: 'Signals produced but none executed', skipCategory: 'no execution' },
+            { classifierSignals: result.classifierSignals },
+          );
         }
       } else {
         // SKIP or MANUAL_REVIEW — classified by classifySkip, SETTLED emitted by processTask

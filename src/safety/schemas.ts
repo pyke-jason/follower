@@ -61,14 +61,28 @@ export const ClassificationRunDecisionSnapshotSchema = z.object({
   route: z.enum(['deterministic', 'llm', 'hard-skip']).optional(),
   resolved: OrchestratorResultSchema.optional(),
   retryResolved: OrchestratorResultSchema.optional(),
+  classifierSignals: z.array(SignalSchema).optional(),
   signal: ResolvedSignalSchema.optional(),
   gate: ClassificationGateResultSchema.optional(),
 }).passthrough().nullable();
 export type ClassificationRunDecisionSnapshot = z.infer<typeof ClassificationRunDecisionSnapshotSchema>;
 
+export const ClassifierSignalsSnapshotSchema = z.object({
+  classifierSignals: z.array(SignalSchema),
+}).passthrough();
+export type ClassifierSignalsSnapshot = z.infer<typeof ClassifierSignalsSnapshotSchema>;
+
+export function classifierSignalsSnapshotFromResolved(
+  resolved: z.infer<typeof OrchestratorResultSchema>,
+): ClassifierSignalsSnapshot {
+  return ClassifierSignalsSnapshotSchema.parse({ classifierSignals: resolved.classifierSignals });
+}
+
 export const ClassificationAuditDecisionContextSchema = z.object({
   snapshot: ClassificationRunDecisionSnapshotSchema,
 }).transform(({ snapshot }) => {
+  const { classifierSignals } = ClassifierSignalsSnapshotSchema.parse(snapshot);
+
   let resolved: z.infer<typeof OrchestratorResultSchema> | null = null;
   if (snapshot && snapshot.resolved) {
     resolved = snapshot.resolved;
@@ -87,7 +101,7 @@ export const ClassificationAuditDecisionContextSchema = z.object({
     snapshot,
     resolved,
     route: parseResult ? parseResult.routeReason : null,
-    signals: resolved && resolved.classifierSignals ? resolved.classifierSignals : null,
+    signals: classifierSignals,
   };
 });
 export type ClassificationAuditDecisionContext = z.infer<typeof ClassificationAuditDecisionContextSchema>;
@@ -113,7 +127,7 @@ export const ClassificationAuditPayloadSchema = z.object({
     outcome: z.string().nullable(),
     reasoning: z.string().nullable(),
     route: z.string().nullable(),
-    signals: z.array(SignalSchema).nullable(),
+    signals: z.array(SignalSchema),
     resolved: OrchestratorResultSchema.optional(),
   }),
   execution: z.object({

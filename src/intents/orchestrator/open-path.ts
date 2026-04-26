@@ -24,12 +24,11 @@ import type {
   TradePosition,
 } from './types.js';
 import type { LegAction, OptionType, Strategy } from '@/lib/enums.js';
+import type { Direction } from '@/lib/enums.js';
 import { isSpread, getOptionLegs, type SpreadStrategy } from '@/lib/trade.js';
 import { strikesFromParse } from './parser.js';
-import { generateWeeklyExpiries } from './expiry-resolver.js';
 import { normalizeExpiry } from '@/lib/occ-symbology.js';
 import { createLogger } from '@/lib/logger.js';
-import { toDateKeyET } from '@/lib/et-date.js';
 
 const log = createLogger('Orchestrator:OpenPath');
 
@@ -193,8 +192,7 @@ export async function resolveOpenPath(
     }
   }
 
-  // For non-spread strategies, direction comes from parse. For spreads it's unused.
-  const direction = parse.direction ?? 'LONG';
+  const direction = parse.direction;
 
   // ── Step 2: Resolve expiry ───────────────────────────────────────────────────
 
@@ -240,22 +238,11 @@ export async function resolveOpenPath(
       resolvedExpiry = null;
     }
     if (!resolvedExpiry) {
-      // Hint was unparseable — fall back to nearest available expiry
-      log.debug('open-path: could not parse expiryHint "%s", falling back to nearest expiry', parse.expiryHint);
       if (strikeSelection.method !== 'premium_match') {
-        let fallbackExpiries = await ctx.marketData.getExpiryDates(symbol);
-        if (!fallbackExpiries.length) {
-          fallbackExpiries = generateWeeklyExpiries(messageDate, 6);
-        }
-        if (fallbackExpiries.length > 0) {
-          resolvedExpiry = fallbackExpiries[0];
-          log.debug('open-path: fell back to nearest expiry %s for %s', resolvedExpiry, symbol);
-        } else {
-          return {
-            outcome: 'MANUAL_REVIEW',
-            reason: `Could not interpret expiryHint: "${parse.expiryHint}" and no fallback expiries available`,
-          };
-        }
+        return {
+          outcome: 'MANUAL_REVIEW',
+          reason: `Could not interpret expiryHint: "${parse.expiryHint}"`,
+        };
       }
       // If premium_match, resolvedExpiry stays null and the scan loop below handles it
     } else {
@@ -267,10 +254,7 @@ export async function resolveOpenPath(
       // Will scan expiries — resolvedExpiry stays null until scan below
       resolvedExpiry = null;
     } else {
-      let candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
-      if (!candidateExpiries.length) {
-        candidateExpiries = generateWeeklyExpiries(messageDate, 6);
-      }
+      const candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
       if (candidateExpiries.length > 0) {
         resolvedExpiry = candidateExpiries[0];
         fallbackExpiries = candidateExpiries.slice(1);
@@ -442,9 +426,12 @@ export async function resolveOpenPath(
   // ── Premium-match scan (expiry unknown, scanning multiple expiries) ──────────
 
   if (strikeSelection.method === 'premium_match' && resolvedExpiry === null) {
-    let candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
+    const candidateExpiries = await ctx.marketData.getExpiryDates(symbol);
     if (!candidateExpiries.length) {
-      candidateExpiries = generateWeeklyExpiries(messageDate, 6);
+      return {
+        outcome: 'MANUAL_REVIEW',
+        reason: `No expiries available to match stated premium for ${symbol}`,
+      };
     }
 
     for (const expiry of candidateExpiries) {
@@ -618,21 +605,15 @@ export async function resolveAddPath(
     const byStrategy = positions.filter(p => p.strategy === parse.strategy);
     if (byStrategy.length > 0) {
       candidates = byStrategy;
-    } else {
-      // No strategy match. Block STOCK↔non-STOCK cross-type ADDs — these are
-      // never benign (e.g. PDS should not merge into a STOCK position).
-      // Treat as a new OPEN instead.
-      const parseIsStock = parse.strategy === 'STOCK';
-      const allCrossType = positions.every(p => (p.strategy === 'STOCK') !== parseIsStock);
-      if (allCrossType) {
-        log.debug(
-          'ADD: strategy cross-type (%s vs positions [%s]) — treating as new OPEN',
-          parse.strategy,
-          positions.map(p => p.strategy).join(', '),
-        );
-        const enrichedParse: ParseResult = { ...parse, action: 'OPEN', direction: parse.direction };
-        return resolveOpenPath(enrichedParse, ctx);
-      }
+    } else if (positions.length > 0) {
+      log.debug(
+        'ADD: no %s position for %s among [%s] — treating as new OPEN',
+        parse.strategy,
+        parse.symbol,
+        positions.map(p => p.strategy).join(', '),
+      );
+      const enrichedParse: ParseResult = { ...parse, action: 'OPEN', direction: parse.direction };
+      return resolveOpenPath(enrichedParse, ctx);
     }
   }
 
@@ -640,14 +621,10 @@ export async function resolveAddPath(
   if (candidates.length === 1) {
     matched = candidates[0];
   } else if (candidates.length > 1) {
-    // Multiple candidates — pick the most recently opened (LIFO)
-    const sorted = [...candidates]
-      .filter(p => p.openedAt != null)
-      .sort((a, b) => b.openedAt!.localeCompare(a.openedAt!));
-    if (sorted.length > 0) {
-      matched = sorted[0];
-      log.debug('ADD: multiple positions for %s — using most-recent: %s', parse.symbol, matched.id.slice(0, 8));
-    }
+    return {
+      outcome: 'MANUAL_REVIEW',
+      reason: `multiple positions found for ${parse.symbol}, cannot determine which to add to`,
+    };
   }
 
   // Infer direction: matched position first, then unanimous agreement across all positions
@@ -699,7 +676,7 @@ export async function resolveAddPath(
 function buildLimitPrice(
   price: number | undefined,
   strategy: Strategy,
-  direction: string,
+  direction: Direction | null,
 ): number | undefined {
   if (price === undefined || price === null) return undefined;
   const abs = Math.abs(price);

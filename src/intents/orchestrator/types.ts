@@ -22,7 +22,8 @@ import { SignalSchema } from '../../agent/schemas.js';
 import type { Quote, OptionsChain } from '../../broker/types.js';
 import type { BrokerService } from '../../broker/interface.js';
 import type { SignalEventEmitter } from '../../decisions/emitter.js';
-import type { Message, TradeLeg } from '../../db/schema.js';
+import { TradeLegSchema } from '../../db/schema.js';
+import type { Message } from '../../db/schema.js';
 import type { TraceContext } from '../../lib/trace.js';
 import type { Agent } from '../../agent/result.js';
 
@@ -193,16 +194,19 @@ export interface OrchestratorMarketDataProvider {
   getExpiryDates(symbol: string): Promise<string[]>;
 }
 
-/** Subset of a trade row needed for position matching. Uses TradeLeg directly — no field renaming. */
-export type TradePosition = {
-  id: string;
-  symbol: string;
-  strategy: Strategy;
-  direction: Direction;
-  legs: TradeLeg[];
-  quantity: number | null;
-  openedAt: string | null;
-};
+/** Subset of a trade row needed for position matching. Validated at the DB boundary. */
+export const TradePositionSchema = z.object({
+  id: z.string().min(1),
+  symbol: z.string().min(1),
+  strategy: StrategySchema,
+  direction: DirectionSchema,
+  legs: z.array(TradeLegSchema).min(1),
+  quantity: z.number().int().positive(),
+  openedAt: z.string().nullable(),
+});
+export type TradePosition = z.infer<typeof TradePositionSchema>;
+
+export const TradePositionListSchema = z.array(TradePositionSchema);
 
 export interface PositionProvider {
   /** Get open positions, optionally filtered by underlying symbol. */

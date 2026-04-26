@@ -9,7 +9,6 @@ import type { LegAction, OptionType, OrderCategory } from '@/lib/enums.js';
 import type { TradeLeg } from '@/db/schema.js';
 import { createLogger } from '@/lib/logger.js';
 import { extractUnderlying } from '@/lib/occ-symbology.js';
-import { addTradeFlags } from '@/trades/trade-flags.js';
 import type {
   ParseResult,
   OrchestratorContext,
@@ -75,7 +74,7 @@ function orderTypeFromLegs(legs: Leg[]): OrderCategory {
 function matchPosition(
   positions: TradePosition[],
   parse: ParseResult,
-): { position: TradePosition; strategyMismatch?: boolean } | { flagReason: string } {
+): { position: TradePosition } | { flagReason: string } {
   const symbol = parse.symbol!; // caller ensures non-null
 
   // Primary filter: symbol match
@@ -87,36 +86,14 @@ function matchPosition(
 
   // Strategy filter
   let candidates = bySymbol;
-  let strategyMismatch = false;
   if (parse.strategy !== null) {
     const byStrategy = bySymbol.filter((p) => p.strategy === parse.strategy);
 
     if (byStrategy.length === 0) {
-      // Fuzzy fallback: if only one position for this symbol, use it regardless of strategy
-      if (bySymbol.length === 1) {
-        log.warn(
-          `strategy mismatch for ${symbol}: parse=${parse.strategy}, position=${bySymbol[0].strategy} — using fuzzy fallback`,
-        );
-        candidates = bySymbol;
-        strategyMismatch = true;
-
-        // Block STOCK <-> non-STOCK cross-type mismatches — these are never benign.
-        // OPTION <-> SPREAD mismatches ARE benign (e.g., "exit my calls" on a CDS
-        // after LEG_OFF, or "exit puts" on a PDS).
-        const posIsStock = bySymbol[0].strategy === 'STOCK';
-        const parseIsStock = parse.strategy === 'STOCK';
-        if (posIsStock !== parseIsStock) {
-          return {
-            flagReason: `strategy mismatch: parse=${parse.strategy}, ` +
-              `position=${bySymbol[0].strategy} — refusing STOCK/non-STOCK cross-type close`,
-          };
-        }
-      } else {
-        // Multiple positions with no strategy match — ambiguous
-        return {
-          flagReason: `multiple positions found for ${symbol}, cannot determine which to close`,
-        };
-      }
+      const strategies = [...new Set(bySymbol.map((p) => p.strategy))].join(', ');
+      return {
+        flagReason: `strategy mismatch for ${symbol}: parse=${parse.strategy}, open positions=[${strategies}]`,
+      };
     } else {
       candidates = byStrategy;
     }
@@ -124,27 +101,15 @@ function matchPosition(
 
   // Exactly one candidate — use it
   if (candidates.length === 1) {
-    return { position: candidates[0], strategyMismatch };
+    return { position: candidates[0] };
   }
 
   // Multiple candidates — try direction tie-breaking only when direction was explicitly parsed
   if (parse.direction !== null) {
     const byDirection = candidates.filter((p) => p.direction === parse.direction);
     if (byDirection.length === 1) {
-      return { position: byDirection[0], strategyMismatch };
+      return { position: byDirection[0] };
     }
-  }
-
-  // Fallback: close the most recently opened position (LIFO heuristic).
-  // Traders typically reference their most recent entry when posting exits.
-  const withTimestamp = candidates.filter(p => p.openedAt != null);
-  if (withTimestamp.length > 0) {
-    withTimestamp.sort((a, b) => b.openedAt!.localeCompare(a.openedAt!));
-    log.warn(
-      `multiple positions for ${symbol} — using most-recent heuristic: ` +
-      `${withTimestamp[0].id.slice(0, 8)} (${withTimestamp.length} candidates)`,
-    );
-    return { position: withTimestamp[0], strategyMismatch };
   }
 
   return {
@@ -156,7 +121,7 @@ function matchPosition(
  * Build reversal legs for a full CLOSE of the matched position.
  */
 function buildCloseLegs(position: TradePosition, underlyingSymbol: string): Leg[] {
-  const qty = position.quantity ?? 1;
+  const qty = position.quantity;
   return position.legs.map((leg) =>
     buildReversalLeg(leg, underlyingSymbol, qty),
   );
@@ -170,7 +135,7 @@ function buildTrimLegs(
   underlyingSymbol: string,
   exitPercent: number,
 ): Leg[] | { flagReason: string } {
-  const qty = position.quantity ?? 1;
+  const qty = position.quantity;
   const trimQuantity = Math.round(qty * exitPercent);
   if (trimQuantity < 1) {
     return {
@@ -200,7 +165,7 @@ function buildLegOffLegs(
   targetStrategy: NonNullable<ParseResult['targetStrategy']>,
 ): Leg[] | { flagReason: string } {
   const legs = position.legs;
-  const qty = position.quantity ?? 1;
+  const qty = position.quantity;
 
   if (legs.length < 2) {
     return { flagReason: `LEG_OFF requires a spread position but found ${legs.length} leg(s)` };
@@ -317,11 +282,7 @@ export async function resolvePositionPath(
     return { outcome: 'MANUAL_REVIEW', reason: matchResult.flagReason };
   }
 
-  const { position, strategyMismatch } = matchResult;
-
-  if (strategyMismatch) {
-    await addTradeFlags(position.id, 'strategyMismatch');
-  }
+  const { position } = matchResult;
 
   log.debug(
     `${action} matched position id=${position.id} symbol=${position.symbol} strategy=${position.strategy} direction=${position.direction} qty=${position.quantity}`,

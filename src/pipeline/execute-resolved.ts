@@ -32,6 +32,7 @@ import { addTradeFlags } from '../trades/trade-flags.js';
 import type { MarketGuard } from '../lib/market-guard.js';
 import { placeTradeStop, cancelTradeStop, cancelAndReplaceStop } from '../trades/stop-orders.js';
 import { computeStopParams, isStopSupportedStrategy } from '../config/stop-defaults.js';
+import { classifierSignalsSnapshotFromResolved } from '../safety/schemas.js';
 
 const log = createLogger('ExecuteResolved');
 
@@ -729,7 +730,7 @@ export async function executeResolvedSignals(ctx: {
       const outcome = result.executed ? 'EXECUTE' : (result.reason ? 'FAIL' : 'PENDING');
       await emitter.emit('SETTLED',
         { outcome, signalIndex: i, reasoning: result.reason, tradeId: result.tradeId, inputTokens: resolved.usage?.inputTokens, outputTokens: resolved.usage?.outputTokens },
-        { signal, result, resolved },
+        { signal, result, resolved, ...classifierSignalsSnapshotFromResolved(resolved) },
       );
     } catch (err) {
       if (err instanceof QuoteUnavailableError) {
@@ -745,7 +746,7 @@ export async function executeResolvedSignals(ctx: {
         }
         await emitter.emit('SETTLED',
           { outcome: 'FAIL', signalIndex: i, reasoning: failResult.reason },
-          { signal, result: failResult, resolved, quoteUnavailable: { symbol: err.symbol, detail: err.detail } },
+          { signal, result: failResult, resolved, ...classifierSignalsSnapshotFromResolved(resolved), quoteUnavailable: { symbol: err.symbol, detail: err.detail } },
         );
         continue;
       }
@@ -770,7 +771,7 @@ export async function executeResolvedSignals(ctx: {
           results.push(haltResult);
           await emitter.emit('SETTLED',
             { outcome: 'FAIL', signalIndex: i, reasoning: reason },
-            { signal, result: haltResult, resolved },
+            { signal, result: haltResult, resolved, ...classifierSignalsSnapshotFromResolved(resolved) },
           );
           continue;
         }
@@ -823,7 +824,7 @@ export async function executeResolvedSignals(ctx: {
               results.push(sameSymbolResult);
               await emitter.emit('SETTLED',
                 { outcome: 'FAIL', signalIndex: resolved.signals.length + ri, reasoning: sameSymbolResult.reason! },
-                { signal: retrySignal, result: sameSymbolResult, retryResolved, retryContext: { originalError: err.originalMessage } },
+                { signal: retrySignal, result: sameSymbolResult, retryResolved, ...classifierSignalsSnapshotFromResolved(retryResolved), retryContext: { originalError: err.originalMessage } },
               );
               continue;
             }
@@ -835,7 +836,7 @@ export async function executeResolvedSignals(ctx: {
             const outcome = retryResult.executed ? 'EXECUTE' : 'FAIL';
             await emitter.emit('SETTLED',
               { outcome, signalIndex: resolved.signals.length + ri, reasoning: retryResult.reason, tradeId: retryResult.tradeId, inputTokens: retryResolved.usage?.inputTokens, outputTokens: retryResolved.usage?.outputTokens },
-              { signal: retrySignal, result: retryResult, retryResolved, retryContext: { originalError: err.originalMessage } },
+              { signal: retrySignal, result: retryResult, retryResolved, ...classifierSignalsSnapshotFromResolved(retryResolved), retryContext: { originalError: err.originalMessage } },
             );
           } catch (retryErr) {
             const errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
@@ -847,7 +848,7 @@ export async function executeResolvedSignals(ctx: {
             results.push(retryFailResult);
             await emitter.emit('SETTLED',
               { outcome: 'FAIL', signalIndex: resolved.signals.length + ri, reasoning: retryFailResult.reason! },
-              { signal: retrySignal, result: retryFailResult, retryResolved, retryContext: { originalError: err.originalMessage }, error: errMsg },
+              { signal: retrySignal, result: retryFailResult, retryResolved, ...classifierSignalsSnapshotFromResolved(retryResolved), retryContext: { originalError: err.originalMessage }, error: errMsg },
             );
           }
         }

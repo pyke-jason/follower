@@ -195,7 +195,7 @@ async function buildPostmortemFindings(
     findings.push(finding('future_conditional_executed', 'warning', 'Executed message contains future or conditional language.', clip(text), 0.72));
   }
 
-  const signals = decisionContext.signals === null ? [] : decisionContext.signals;
+  const signals = decisionContext.signals;
   if (input.message.symbols.length > 1 && /\band\b|,/i.test(text) && signals.length > 0 && signals.length < input.message.symbols.length) {
     findings.push(finding('multi_trade_malformed', 'warning', 'Multi-symbol message produced fewer classifier signals than symbols.', `symbols=${input.message.symbols.join(',')}; signals=${signals.length}`, 0.76));
   }

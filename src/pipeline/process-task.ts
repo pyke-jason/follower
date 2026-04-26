@@ -10,7 +10,8 @@
 import type { Task, Trade } from '../db/schema.js';
 import { TaskContextSchema } from '../db/schema.js';
 import type { Agent } from '../agent/result.js';
-import type { OrchestratorResult, ResolvedSignal, SignalEventEmitter, SerializedParseResult } from '../intents/orchestrator/types.js';
+import { TradePositionListSchema } from '../intents/orchestrator/types.js';
+import type { OrchestratorResult, ResolvedSignal, SignalEventEmitter, SerializedParseResult, TradePosition } from '../intents/orchestrator/types.js';
 import type { ResolvedPipelineDeps, ResolvedPipelineResult, ExecuteEnv } from './execute-resolved.js';
 import type { TradeScope } from './build-deps.js';
 import type { PositionFilters } from '../trades/filters.js';
@@ -27,13 +28,21 @@ import { createEmitter } from '../decisions/emitter.js';
 import { stampHasUpdate } from '../trades/trade-flags.js';
 import { evaluateClassificationGate } from '../safety/classification-gate.js';
 import { enqueueClassificationAudit } from '../safety/classification-audit.js';
+import { classifierSignalsSnapshotFromResolved } from '../safety/schemas.js';
 import type { ClassificationGateResult } from '../safety/schemas.js';
 
 // ─── Types ──────────────────────────────────────────
 
 type ProcessTaskResult =
   | Extract<OrchestratorResult, { outcome: 'SKIP' | 'MANUAL_REVIEW' }>
-  | { outcome: 'EXECUTE'; reason: string; signals: ResolvedSignal[]; results: ResolvedPipelineResult[]; parseResult?: SerializedParseResult };
+  | {
+    outcome: 'EXECUTE';
+    reason: string;
+    signals: ResolvedSignal[];
+    results: ResolvedPipelineResult[];
+    classifierSignals: NonNullable<OrchestratorResult['classifierSignals']>;
+    parseResult?: SerializedParseResult;
+  };
 
 type TaskEnv = {
   getOpenPositions: (filters?: PositionFilters) => Promise<Trade[]>;
@@ -83,9 +92,10 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
   };
 
   // Derive position lookup from getOpenPositions + context.author
-  const getPositions = async (symbol?: string) => {
+  const getPositions = async (symbol?: string): Promise<TradePosition[]> => {
     const filters: PositionFilters = symbol ? { symbol } : {};
-    return env.getOpenPositions({ ...filters, trader: context.author ?? undefined });
+    const positions = await env.getOpenPositions({ ...filters, trader: context.author ?? undefined });
+    return TradePositionListSchema.parse(positions);
   };
 
   const [message] = await db
@@ -173,7 +183,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
 
     await emitter.emit('SETTLED',
       { outcome: mappedOutcome, phase: 'orchestrator', reasoning: resolved.reason, skipCategory, inputTokens: resolved.usage?.inputTokens, outputTokens: resolved.usage?.outputTokens },
-      { resolved },
+      { resolved, ...classifierSignalsSnapshotFromResolved(resolved) },
     );
 
     await maybeAlertSkippedHeldSymbols(resolved.reason);
@@ -220,7 +230,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
         inputTokens: resolved.usage?.inputTokens,
         outputTokens: resolved.usage?.outputTokens,
       },
-      { gate: gateResult, resolved },
+      { gate: gateResult, resolved, ...classifierSignalsSnapshotFromResolved(resolved) },
     );
 
     if (symbols.length > 0 && context.author) {
@@ -283,6 +293,7 @@ export async function processTask(task: Task, env: TaskEnv): Promise<void> {
     reason: `${resolved.signals.length} signal(s)`,
     signals: resolved.signals,
     results,
+    classifierSignals: classifierSignalsSnapshotFromResolved(resolved).classifierSignals,
     parseResult: resolved.parseResult,
   }, emitter);
 }

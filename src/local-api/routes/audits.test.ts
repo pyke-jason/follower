@@ -57,7 +57,7 @@ const payload = {
     outcome: 'EXECUTE',
     reasoning: 'test',
     route: 'test route',
-    signals: null,
+    signals: [],
   },
   execution: {
     runDecisionId: 'decision-1',

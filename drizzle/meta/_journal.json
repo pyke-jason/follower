@@ -29,6 +29,13 @@
       "when": 1777171761372,
       "tag": "0003_prune_malformed_trade_legs",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777173140000,
+      "tag": "0004_trade_quantity_invariant",
+      "breakpoints": true
     }
   ]
 }

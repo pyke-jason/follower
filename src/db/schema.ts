@@ -91,7 +91,7 @@ export const trades = pgTable('trades', {
   status:          text('status').notNull().default('OPEN'), // OPEN | CLOSED | CANCELLED
   entryPrice:      text('entry_price'),
   exitPrice:       text('exit_price'),
-  quantity:        integer('quantity').default(1),
+  quantity:        integer('quantity').notNull().default(1),
   pnl:             text('pnl'),
   openedAt:        text('opened_at'),
   closedAt:        text('closed_at'),
