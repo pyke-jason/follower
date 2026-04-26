@@ -10,11 +10,11 @@ export const BACKTEST_RISK_DEFAULTS: RiskCheckConfig = {
 };
 
 export const LIVE_RISK_DEFAULTS: RiskCheckConfig = {
-  maxOnSymbol: 5,
-  maxTotalPositions: 20,
-  maxDrawdownPct: 5,
-  maxNotionalMultiplier: 2,
-  minMarginCushionPct: 0.20,
+  maxOnSymbol: 3,
+  maxTotalPositions: 10,
+  maxDrawdownPct: 3,
+  maxNotionalMultiplier: 1.5,
+  minMarginCushionPct: 0.25,
 };
 
 export const DEFAULT_SIZING_CONFIG: NotionalSizingConfig = {
