@@ -50,26 +50,29 @@ export async function injectSignalRListener(
   page: Page,
   handler: MessageHandler,
   onReaction?: ReactionHandler,
+  opts: { skipBridgeExpose?: boolean } = {},
 ): Promise<SignalRInjectionStatus> {
-  await page.exposeFunction('__onSignalRMessage', (raw: unknown) => {
-    const msg = normalizeMessage(raw);
-    if (!msg) return;
+  if (!opts.skipBridgeExpose) {
+    await page.exposeFunction('__onSignalRMessage', (raw: unknown) => {
+      const msg = normalizeMessage(raw);
+      if (!msg) return;
 
-    return handler(msg);
-  });
+      return handler(msg);
+    });
 
-  await page.exposeFunction('__onReactionUpdate', (id: unknown, reactions: unknown) => {
-    if (!onReaction) return;
-    const compacted = Array.isArray(reactions) ? compactReactions(reactions as RawReaction[]) : [];
-    return onReaction({ messageId: String(id), reactions: compacted });
-  });
+    await page.exposeFunction('__onReactionUpdate', (id: unknown, reactions: unknown) => {
+      if (!onReaction) return;
+      const compacted = Array.isArray(reactions) ? compactReactions(reactions as RawReaction[]) : [];
+      return onReaction({ messageId: String(id), reactions: compacted });
+    });
 
-  page.on('console', (consoleMsg) => {
-    const text = consoleMsg.text();
-    if (text.includes('[SignalR]') || text.includes('[Hook]')) {
-      console.log(`[Browser] ${text}`);
-    }
-  });
+    page.on('console', (consoleMsg) => {
+      const text = consoleMsg.text();
+      if (text.includes('[SignalR]') || text.includes('[Hook]')) {
+        console.log(`[Browser] ${text}`);
+      }
+    });
+  }
 
   try {
     await page.waitForFunction(
@@ -79,6 +82,23 @@ export async function injectSignalRListener(
     );
   } catch {
     console.warn('[SignalR] Timed out waiting for jQuery SignalR on page');
+  }
+
+  // Wait for the page's own app code to create $.connection.chatHub. The proxy
+  // is created lazily the first time the app accesses it; until then reactions
+  // can't be attached. domcontentloaded resolves before app JS runs, so this
+  // gap is normal — give it 20s before declaring the subscription degraded.
+  try {
+    await page.waitForFunction(
+      () => {
+        const conn = (window as unknown as { $?: { connection?: { chatHub?: { on?: unknown } } } }).$?.connection;
+        return Boolean(conn?.chatHub && typeof conn.chatHub.on === 'function');
+      },
+      undefined,
+      { timeout: 20_000 },
+    );
+  } catch {
+    console.warn('[SignalR] Timed out waiting for page chatHub proxy');
   }
 
   const status = await page.evaluate(async (): Promise<SignalRInjectionStatus> => {

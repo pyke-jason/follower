@@ -1,6 +1,7 @@
 import { launchBrowser, attemptLogin, waitForAuth, getAuthState, closeBrowser, startAuthMonitor, stopAuthMonitor, shouldRotateProactively, clearProactiveRotationFlag, CHAT_URL } from './browser.js';
 import { rotateAccount } from './account-rotation.js';
 import { injectSignalRListener, isSignalRSubscriptionReady, compactReactions, type SignalRMessage, type ReactionUpdate } from './signalr.js';
+import type { Page } from 'playwright';
 import { classifyMessage } from '../parsing/classify.js';
 import { db, schema } from '../db/client.js';
 import type { Message } from '../db/schema.js';
@@ -28,7 +29,8 @@ const WATCHDOG_CHECK_INTERVAL_MS = 60_000; // check every minute
 const WATCHDOG_SILENCE_THRESHOLD_MS = 5 * 60_000; // alert after 5 min silence
 
 const WATCHDOG_FORCE_RESTART_MS = 10 * 60_000; // force restart after 10 min silence
-const SUBSCRIPTION_RECOVERY_RESTART_MS = 30_000;
+const SUBSCRIPTION_RECOVERY_DELAY_MS = 60_000; // wait 60s between page-reload retries
+const SUBSCRIPTION_RECOVERY_MAX_ATTEMPTS = 5; // after this many reloads, restart browser
 const REST_SAFETY_NET_INTERVAL_MS = 60_000;
 const REST_RECOVERY_GRACE_MS = 45_000;
 const REST_RECOVERY_ALERT_COOLDOWN_MS = 5 * 60_000;
@@ -169,7 +171,96 @@ export function stopIngestion(): void {
   stopMessageWatchdog();
   stopRestSafetyNet();
   stopPollingFallback();
+  cancelSubscriptionRecovery();
   stopAuthMonitor();
+}
+
+// ─── Subscription Recovery (in-place page reload) ─────
+// When SignalR's addMessage is connected but the page's chatHub proxy is
+// missing, reactions can't be observed but live messages still flow. Instead
+// of tearing the browser down, reload the page so its app code re-creates the
+// chatHub proxy, then re-attach our hooks. REST polling stays on as a safety
+// net. Falls back to a full browser restart only after several reload attempts.
+
+let subscriptionRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let subscriptionRecoveryAttempts = 0;
+let subscriptionRecoveryInFlight = false;
+
+function cancelSubscriptionRecovery(): void {
+  if (subscriptionRecoveryTimer) {
+    clearTimeout(subscriptionRecoveryTimer);
+    subscriptionRecoveryTimer = null;
+  }
+  subscriptionRecoveryAttempts = 0;
+  subscriptionRecoveryInFlight = false;
+}
+
+function scheduleSubscriptionRecovery(
+  page: Page,
+  onMessage: (msg: SignalRMessage) => Promise<void>,
+  onReaction: (update: ReactionUpdate) => Promise<void>,
+): void {
+  if (subscriptionRecoveryTimer || subscriptionRecoveryInFlight) return;
+  if (subscriptionRecoveryAttempts >= SUBSCRIPTION_RECOVERY_MAX_ATTEMPTS) {
+    console.warn(`[Ingest] Subscription recovery exhausted ${SUBSCRIPTION_RECOVERY_MAX_ATTEMPTS} reload attempts — restarting browser`);
+    sendSystemAlert({
+      title: 'Chat room subscription unrecoverable',
+      message: `${SUBSCRIPTION_RECOVERY_MAX_ATTEMPTS} page reloads did not restore the chat room proxy. Restarting browser as a last resort.`,
+      severity: 'warning',
+    });
+    subscriptionRecoveryAttempts = 0;
+    closeBrowser().catch(() => {});
+    return;
+  }
+
+  subscriptionRecoveryTimer = setTimeout(() => {
+    subscriptionRecoveryTimer = null;
+    runSubscriptionRecovery(page, onMessage, onReaction).catch((err) => {
+      console.warn('[Ingest] Subscription recovery error:', err instanceof Error ? err.message : err);
+      scheduleSubscriptionRecovery(page, onMessage, onReaction);
+    });
+  }, SUBSCRIPTION_RECOVERY_DELAY_MS);
+  subscriptionRecoveryTimer.unref?.();
+}
+
+async function runSubscriptionRecovery(
+  page: Page,
+  onMessage: (msg: SignalRMessage) => Promise<void>,
+  onReaction: (update: ReactionUpdate) => Promise<void>,
+): Promise<void> {
+  if (page.isClosed()) return;
+  subscriptionRecoveryInFlight = true;
+  subscriptionRecoveryAttempts++;
+  try {
+    console.log(`[Ingest] Subscription recovery: reloading page (attempt ${subscriptionRecoveryAttempts}/${SUBSCRIPTION_RECOVERY_MAX_ATTEMPTS})`);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
+
+    // Re-accept policies if the gate reappears after reload
+    const policiesCheckbox = page.locator('#understand');
+    if (await policiesCheckbox.count() > 0) {
+      try {
+        await policiesCheckbox.check();
+        await page.locator('#continue').click();
+        await page.waitForLoadState('domcontentloaded');
+      } catch {
+        // Ignore — reload retry will catch any persistent issue
+      }
+    }
+
+    // Bridge functions persist across reloads in Playwright; only re-run the
+    // page-evaluate that wires up the hub proxies.
+    const newStatus = await injectSignalRListener(page, onMessage, onReaction, { skipBridgeExpose: true });
+    if (isSignalRSubscriptionReady(newStatus)) {
+      console.log('[Ingest] Subscription recovered after page reload');
+      stopPollingFallback();
+      subscriptionRecoveryAttempts = 0;
+    } else {
+      console.warn('[Ingest] Subscription still degraded after reload:', newStatus.details);
+      scheduleSubscriptionRecovery(page, onMessage, onReaction);
+    }
+  } finally {
+    subscriptionRecoveryInFlight = false;
+  }
 }
 
 async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promise<void> {
@@ -183,6 +274,7 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
       stopMessageWatchdog();
       stopRestSafetyNet();
       stopPollingFallback();
+      cancelSubscriptionRecovery();
       lastMessageReceivedAt = null;
       watchdogAlertFired = false;
 
@@ -282,7 +374,7 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
       }
 
       // Wire up SignalR + monitors
-      const signalRStatus = await injectSignalRListener(page, async (msg) => {
+      const onSignalRMessage = async (msg: SignalRMessage) => {
         lastMessageReceivedAt = new Date();
         try {
           const stored = await processMessage(msg);
@@ -297,13 +389,15 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
             severity: 'critical',
           });
         }
-      }, async (update) => {
+      };
+      const onSignalRReaction = async (update: ReactionUpdate) => {
         try {
           await processReactionUpdate(update);
         } catch (err) {
           console.error('[Ingest] Error processing reaction update:', err);
         }
-      });
+      };
+      const signalRStatus = await injectSignalRListener(page, onSignalRMessage, onSignalRReaction);
 
       startAuthMonitor();
 
@@ -341,17 +435,13 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
             });
           }
         } else {
-          sendSystemAlert({
-            title: 'Chat room subscription degraded',
-            message: `${signalRStatus.details}. Polling REST fallback is active and the browser will restart in ${SUBSCRIPTION_RECOVERY_RESTART_MS / 1000}s.`,
-            severity: 'critical',
-          });
-          console.warn('[Ingest] SignalR subscription degraded:', signalRStatus);
+          // addMessage IS connected (broadcast via Clients.All), so live messages
+          // still flow — only reactions are degraded. Rather than tearing the
+          // browser down, soft-reload the page so its app code re-creates the
+          // chatHub proxy. REST polling stays on as a safety net for reactions.
+          console.warn('[Ingest] SignalR subscription degraded (reactions only):', signalRStatus);
           startPollingFallback(onStoredMessage);
-          const recoveryTimer = setTimeout(() => {
-            closeBrowser().catch(() => {});
-          }, SUBSCRIPTION_RECOVERY_RESTART_MS);
-          recoveryTimer.unref?.();
+          scheduleSubscriptionRecovery(page, onSignalRMessage, onSignalRReaction);
         }
       } else {
         // Fallback: poll REST API when browser can't reach the chat page or SignalR did not attach.
@@ -370,10 +460,7 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
           });
         }
         if (onChatPage) {
-          const recoveryTimer = setTimeout(() => {
-            closeBrowser().catch(() => {});
-          }, SUBSCRIPTION_RECOVERY_RESTART_MS);
-          recoveryTimer.unref?.();
+          scheduleSubscriptionRecovery(page, onSignalRMessage, onSignalRReaction);
         }
       }
 
@@ -381,6 +468,7 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
       await crashed;
       stopPollingFallback();
       stopRestSafetyNet();
+      cancelSubscriptionRecovery();
 
       console.log('[Ingest] Browser closed — will restart');
       sendSystemAlert({
