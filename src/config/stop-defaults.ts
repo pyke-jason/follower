@@ -55,7 +55,7 @@ export function computeStopParams(
   if (legs.length !== 1) return null;
 
   const leg = legs[0];
-  const symbol = legs[0].symbol.split(' ')[0]; // extract underlying from OCC symbol
+  const symbol = leg.symbol.split(' ')[0]; // extract underlying from OCC symbol
 
   if (strategy === 'STOCK') {
     const isLong = direction === 'LONG';
