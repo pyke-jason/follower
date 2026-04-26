@@ -3,7 +3,7 @@ import pg from 'pg';
 import * as schema from './schema.js';
 import { runStartupMaintenance } from './startup-maintenance.js';
 
-const DEFAULT_DATABASE_URL = 'postgres://jason@127.0.0.1:5432/trade_follower';
+const DEFAULT_DATABASE_URL = `postgres://${process.env.USER ?? 'postgres'}@127.0.0.1:5432/trade_follower`;
 const databaseUrl = process.env.POSTGRES_DATABASE_URL ?? process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;
 
 if (databaseUrl.startsWith('file:')) {

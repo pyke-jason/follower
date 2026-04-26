@@ -4,6 +4,7 @@ await loadSecrets();
 import { installProcessErrorHandlers } from '../lib/log-safety.js';
 installProcessErrorHandlers();
 
+import { existsSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
@@ -96,12 +97,16 @@ app.route('/web', dbBrowser);
 app.get('/health', (c) => c.json({ ok: true }));
 
 // ─── Static SPA Serving ─────────────────────────────
-
-app.use('/assets/*', serveStatic({ root: 'web/dist' }));
-app.use('/favicon.ico', serveStatic({ root: 'web/dist' }));
-
-// SPA fallback: any GET not matching API routes serves index.html
-app.get('*', serveStatic({ root: 'web/dist', path: 'index.html' }));
+// Only mount when a built SPA exists. In dev (`npm run up`) the Vite server
+// at :3000 serves the SPA, and web/dist is empty — leaving these mounted
+// generated three "root path 'web/dist' is not found" warnings per request.
+const WEB_DIST = 'web/dist';
+if (existsSync(WEB_DIST)) {
+  app.use('/assets/*', serveStatic({ root: WEB_DIST }));
+  app.use('/favicon.ico', serveStatic({ root: WEB_DIST }));
+  // SPA fallback: any GET not matching API routes serves index.html
+  app.get('*', serveStatic({ root: WEB_DIST, path: 'index.html' }));
+}
 
 // ─── Stale Run Sweeper ───────────────────────────────
 

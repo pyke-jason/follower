@@ -16,7 +16,7 @@ export async function createPgTestPool(name: string): Promise<{ pool: pg.Pool; s
   const baseUrl = process.env.TEST_POSTGRES_DATABASE_URL
     ?? process.env.POSTGRES_DATABASE_URL
     ?? process.env.DATABASE_URL
-    ?? 'postgres://jason@127.0.0.1:5432/trade_follower_test';
+    ?? `postgres://${process.env.USER ?? 'postgres'}@127.0.0.1:5432/trade_follower_test`;
 
   if (baseUrl.startsWith('file:')) {
     throw new Error('Tests require TEST_POSTGRES_DATABASE_URL or a postgres:// database URL.');

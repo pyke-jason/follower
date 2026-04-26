@@ -5,11 +5,14 @@ import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('ReconScheduler');
 
+const RECON_FAILURE_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+
 export class ReconciliationScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastResult: ReconciliationAlertInput[] = [];
   private running = false;
   private currentRun: Promise<void> | null = null;
+  private lastFailureAlertAt = 0;
 
   constructor(
     private broker: BrokerService,
@@ -39,9 +42,25 @@ export class ReconciliationScheduler {
   }
 
   private async _run(): Promise<void> {
+    // Skip the run entirely when the broker is unreachable. Otherwise each cycle
+    // produces ~10 retry warnings (5× getPositions + 5× getAccountBalance) plus a
+    // ReconScheduler error log, all for the same root cause the operator already knows.
+    try {
+      if (!(await this.broker.isHealthy())) {
+        log.debug('Broker unhealthy — skipping reconciliation cycle');
+        return;
+      }
+    } catch {
+      // isHealthy throwing is itself a "broker is down" signal — treat the same.
+      log.debug('Broker isHealthy() threw — skipping reconciliation cycle');
+      return;
+    }
+
     try {
       const newAlerts = await runReconciliation(this.broker, this.channelId);
       this.lastResult = newAlerts;
+      // Successful run — reset the failure-alert cooldown so any future failure alerts immediately.
+      this.lastFailureAlertAt = 0;
 
       // Fire critical alert immediately on any new drift — don't wait for the next cycle.
       if (newAlerts.length > 0) {
@@ -55,11 +74,17 @@ export class ReconciliationScheduler {
       }
     } catch (err) {
       log.error('Reconciliation failed:', err);
-      sendSystemAlert({
-        title: 'Reconciliation failed',
-        message: `Scheduled reconciliation threw: ${err instanceof Error ? err.message : String(err)}`,
-        severity: 'warning',
-      });
+      // Throttle: when the broker is down, this fires every 5 min cycle.
+      // Once per 15 min is enough to know it's still failing.
+      const now = Date.now();
+      if (now - this.lastFailureAlertAt >= RECON_FAILURE_ALERT_COOLDOWN_MS) {
+        this.lastFailureAlertAt = now;
+        sendSystemAlert({
+          title: 'Reconciliation failed',
+          message: `Scheduled reconciliation threw: ${err instanceof Error ? err.message : String(err)}`,
+          severity: 'warning',
+        });
+      }
     } finally {
       this.running = false;
       this.currentRun = null;

@@ -15,10 +15,13 @@ function status(overrides: Partial<SignalRInjectionStatus>): SignalRInjectionSta
 }
 
 describe('isSignalRSubscriptionReady', () => {
-  test('requires SignalR, addMessage, and the page chat-room proxy', () => {
+  test('requires SignalR and addMessage; reaction proxy is optional', () => {
     expect(isSignalRSubscriptionReady(status({}))).toBe(true);
     expect(isSignalRSubscriptionReady(status({ signalRAvailable: false }))).toBe(false);
     expect(isSignalRSubscriptionReady(status({ addMessageConnected: false }))).toBe(false);
-    expect(isSignalRSubscriptionReady(status({ reactionProxyAttached: false }))).toBe(false);
+    // reactionProxyAttached=false no longer downgrades readiness — addMessage
+    // carries every new message; the reaction proxy is only used for emoji
+    // updates the trade pipeline never consumes.
+    expect(isSignalRSubscriptionReady(status({ reactionProxyAttached: false }))).toBe(true);
   });
 });

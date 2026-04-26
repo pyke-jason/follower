@@ -24,6 +24,7 @@ let restPollingFailures = 0;
 let restSafetyNetFailures = 0;
 let lastRecoveryAlertAt: Date | null = null;
 let lastRestFailureAlertAt: Date | null = null;
+let lastBrowserClosedAlertAt: Date | null = null;
 
 const WATCHDOG_CHECK_INTERVAL_MS = 60_000; // check every minute
 const WATCHDOG_SILENCE_THRESHOLD_MS = 5 * 60_000; // alert after 5 min silence
@@ -31,6 +32,9 @@ const WATCHDOG_SILENCE_THRESHOLD_MS = 5 * 60_000; // alert after 5 min silence
 const WATCHDOG_FORCE_RESTART_MS = 10 * 60_000; // force restart after 10 min silence
 const SUBSCRIPTION_RECOVERY_DELAY_MS = 60_000; // wait 60s between page-reload retries
 const SUBSCRIPTION_RECOVERY_MAX_ATTEMPTS = 5; // after this many reloads, restart browser
+// Browser-close alert is throttled separately — the close itself happens once
+// per recovery cycle, not per dashboard tick, so 5 min is plenty.
+const BROWSER_CLOSED_ALERT_COOLDOWN_MS = 5 * 60_000;
 const REST_SAFETY_NET_INTERVAL_MS = 60_000;
 const REST_RECOVERY_GRACE_MS = 45_000;
 const REST_RECOVERY_ALERT_COOLDOWN_MS = 5 * 60_000;
@@ -445,11 +449,12 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
         }
       } else {
         // Fallback: poll REST API when browser can't reach the chat page or SignalR did not attach.
+        const reason = onChatPage
+          ? `${signalRStatus.details} — polling REST API every 15s`
+          : 'Browser not on chat page — polling REST API every 15s';
         sendSystemAlert({
           title: 'Chat room connected (polling mode)',
-          message: onChatPage
-            ? `${signalRStatus.details} — polling REST API every 15s`
-            : 'Browser not on chat page — polling REST API every 15s',
+          message: reason,
           severity: onChatPage ? 'critical' : 'warning',
         });
         console.log('[Ingest] Using REST API polling fallback');
@@ -471,11 +476,17 @@ async function superviseIngestion(onStoredMessage?: StoredMessageHandler): Promi
       cancelSubscriptionRecovery();
 
       console.log('[Ingest] Browser closed — will restart');
-      sendSystemAlert({
-        title: 'Browser closed',
-        message: 'Ingestion browser was closed. Restarting automatically.',
-        severity: 'warning',
-      });
+      // Browser-close happens on every recovery cycle; throttle the external
+      // alert so Discord/Pushover don't get one notification per restart.
+      const closedNow = new Date();
+      if (shouldSendRecoveryAlert(lastBrowserClosedAlertAt, closedNow, BROWSER_CLOSED_ALERT_COOLDOWN_MS)) {
+        sendSystemAlert({
+          title: 'Browser closed',
+          message: 'Ingestion browser was closed. Restarting automatically.',
+          severity: 'warning',
+        });
+        lastBrowserClosedAlertAt = closedNow;
+      }
     } catch (err) {
       consecutiveFailures++;
       const delay = RETRY_DELAYS[Math.min(consecutiveFailures - 1, RETRY_DELAYS.length - 1)];
@@ -559,6 +570,16 @@ async function syncTodayFromRest(
 
 function handleRestSyncFailure(source: RestSyncSource, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
+  // Browser-close/launch races with in-flight ticks during normal restart cycles —
+  // they're not real REST failures and shouldn't count toward the alert threshold.
+  if (
+    message.includes('Target page, context or browser has been closed') ||
+    message.includes('Target closed') ||
+    message.includes('Browser not launched')
+  ) {
+    console.log(`[RestSync] ${source} tick raced with browser lifecycle (${message}) — ignoring`);
+    return;
+  }
   if (source === 'polling') {
     restPollingFailures++;
   } else {

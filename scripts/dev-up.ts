@@ -368,6 +368,20 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper', exp
     }
   };
 
+  // Distinguishes a *dead* sidecar process (HTTP unreachable) from one that's
+  // alive but disconnected from IB Gateway. The sidecar has its own backoff
+  // reconnect loop — restarting it here when the gateway is the issue (e.g.
+  // login popup blocking API) just resets that loop's counter and produces
+  // log churn.
+  const isSidecarProcessAlive = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(sidecarStatusUrl, { signal: AbortSignal.timeout(3_000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
   const startGatewayAndSidecar = async (): Promise<void> => {
     killOnPort(8090, 'sidecar');
 
@@ -401,22 +415,37 @@ async function superviseSidecar(sidecarBase: string, mode: 'live' | 'paper', exp
       intervalMs: 2_000,
     });
 
-    log('orch', ready ? 'Sidecar connected to IB Gateway' : 'Sidecar failed to connect — will retry');
+    log('orch', ready
+      ? 'Sidecar connected to IB Gateway'
+      : 'Sidecar started but not yet connected to IB Gateway — sidecar will keep retrying with backoff');
   };
 
   await startGatewayAndSidecar();
 
-  // Monitor loop: check every 30s, restart on disconnect. Retries forever —
-  // a silent give-up after N attempts is worse than ongoing log noise.
+  // Monitor loop: check every 30s, restart only when the sidecar process is
+  // dead (HTTP unreachable). When the sidecar is alive but disconnected from
+  // IB Gateway, let the sidecar's own exponential-backoff reconnect handle it
+  // — restarting from here drops state and resets the backoff counter.
+  const SIDECAR_DISCONNECT_LOG_INTERVAL_MS = 5 * 60_000;
   const monitor = async () => {
+    let lastDisconnectLogAt = 0;
     while (!shuttingDown) {
       await new Promise((r) => setTimeout(r, 30_000));
       if (shuttingDown) break;
 
-      if (!(await isSidecarConnected())) {
-        log('orch', `Sidecar lost connection — restarting in ${SIDECAR_RESTART_DELAY_MS / 1000}s`);
+      if (!(await isSidecarProcessAlive())) {
+        log('orch', `Sidecar process unreachable — restarting in ${SIDECAR_RESTART_DELAY_MS / 1000}s`);
         await new Promise((r) => setTimeout(r, SIDECAR_RESTART_DELAY_MS));
         if (!shuttingDown) await startGatewayAndSidecar();
+        lastDisconnectLogAt = 0;
+      } else if (!(await isSidecarConnected())) {
+        const now = Date.now();
+        if (now - lastDisconnectLogAt >= SIDECAR_DISCONNECT_LOG_INTERVAL_MS) {
+          log('orch', 'Sidecar alive but not connected to IB Gateway — sidecar will reconnect with backoff');
+          lastDisconnectLogAt = now;
+        }
+      } else {
+        lastDisconnectLogAt = 0;
       }
     }
   };

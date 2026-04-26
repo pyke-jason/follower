@@ -82,7 +82,8 @@ export class KeychainProvider implements SecretProvider {
     }
 
     if (skipped > 0) {
-      console.warn(`[secrets] keychain: ${skipped} key(s) not found or timed out — will fall back to .env`);
+      // Optional keys (XAI_API_KEY, GMAIL_*, etc.) are usually unset in dev — demoted from warn.
+      console.log(`[secrets] keychain: ${skipped} of ${SECRET_KEYS.length} key(s) not found — will fall back to .env`);
     }
 
     return secrets;

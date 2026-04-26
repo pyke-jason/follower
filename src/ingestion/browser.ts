@@ -104,7 +104,9 @@ async function acceptPoliciesIfNeeded(p: Page): Promise<boolean> {
 async function checkAuth(p: Page): Promise<AuthState> {
   const url = p.url();
   if (url.includes('/Account/Login') || url.includes('/login')) {
-    console.log('[Browser] Not authenticated (on login page)');
+    if (authState !== 'unauthenticated') {
+      console.log('[Browser] Not authenticated (on login page)');
+    }
     return 'unauthenticated';
   }
 
@@ -127,12 +129,16 @@ async function checkAuth(p: Page): Promise<AuthState> {
   }, testUrl);
 
   if (result.isJson && !result.isRedirect && !result.hasError) {
-    console.log('[Browser] Authenticated');
+    if (authState !== 'authenticated') {
+      console.log('[Browser] Authenticated');
+    }
     return 'authenticated';
   }
 
   if (result.hasError) {
-    console.log('[Browser] Not authenticated (API returned error — chat not permed)');
+    if (authState !== 'unauthenticated') {
+      console.log('[Browser] Not authenticated (API returned error — chat not permed)');
+    }
     return 'unauthenticated';
   }
 
@@ -140,7 +146,9 @@ async function checkAuth(p: Page): Promise<AuthState> {
     console.warn('[Browser] Auth check returned ambiguous result — response was neither JSON nor a redirect');
   }
 
-  console.log('[Browser] Not authenticated');
+  if (authState !== 'unauthenticated') {
+    console.log('[Browser] Not authenticated');
+  }
   return 'unauthenticated';
 }
 
@@ -273,10 +281,21 @@ export function startAuthMonitor(intervalMs = 30_000): void {
         await checkTrialStatus(currentPage);
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Race between the browser lifecycle (close/relaunch) and an in-flight tick
+      // is benign — don't promote it to a WARNING alert.
+      if (
+        msg.includes('Target page, context or browser has been closed') ||
+        msg.includes('Target closed') ||
+        msg.includes('Browser not launched')
+      ) {
+        console.log(`[Browser] Auth monitor tick raced with browser lifecycle (${msg}) — ignoring`);
+        return;
+      }
       console.error('[Browser] Auth monitor check failed:', err);
       sendSystemAlert({
         title: 'Auth monitor error',
-        message: `Auth check threw: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Auth check threw: ${msg}`,
         severity: 'warning',
       });
     }

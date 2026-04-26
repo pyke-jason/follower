@@ -44,14 +44,13 @@ function existingSize(p: string): number {
 export function createRollingFileStream(opts: RollingOptions): Writable {
   mkdirSync(opts.dir, { recursive: true });
 
+  // Lazy: don't open the file until something is actually written. Otherwise
+  // any process that imports the logger module (even via a transitive import
+  // that never logs) creates an empty <prefix>-YYYY-MM-DD.log on disk.
   let currentDay = dayKey(new Date());
   let currentPath = pathFor(opts.dir, opts.prefix, currentDay);
-  let bytesWritten = existingSize(currentPath);
-  let currentStream: WriteStream = createWriteStream(currentPath, { flags: 'a' });
-
-  currentStream.on('error', (err) => {
-    process.stderr.write(`[log-rotation] write error: ${err.message}\n`);
-  });
+  let bytesWritten = 0;
+  let currentStream: WriteStream | null = null;
 
   const openStream = (p: string): WriteStream => {
     const s = createWriteStream(p, { flags: 'a' });
@@ -61,6 +60,13 @@ export function createRollingFileStream(opts: RollingOptions): Writable {
     return s;
   };
 
+  const ensureStream = (): WriteStream => {
+    if (currentStream) return currentStream;
+    bytesWritten = existingSize(currentPath);
+    currentStream = openStream(currentPath);
+    return currentStream;
+  };
+
   const roll = (chunkSize: number): void => {
     const now = new Date();
     const day = dayKey(now);
@@ -68,6 +74,18 @@ export function createRollingFileStream(opts: RollingOptions): Writable {
     const sizeExceeded = bytesWritten + chunkSize > MAX_FILE_BYTES;
 
     if (!dateChanged && !sizeExceeded) return;
+    if (!currentStream) {
+      // Stream wasn't opened yet — just update the path; ensureStream will
+      // open the new file on the upcoming write.
+      if (dateChanged) {
+        currentDay = day;
+        currentPath = pathFor(opts.dir, opts.prefix, currentDay);
+      } else {
+        currentPath = pathFor(opts.dir, opts.prefix, tsKey(now));
+      }
+      bytesWritten = 0;
+      return;
+    }
 
     const old = currentStream;
     if (dateChanged) {
@@ -86,10 +104,11 @@ export function createRollingFileStream(opts: RollingOptions): Writable {
     write(chunk: Buffer, _enc, cb) {
       roll(chunk.length);
       bytesWritten += chunk.length;
-      currentStream.write(chunk, cb);
+      ensureStream().write(chunk, cb);
     },
     final(cb) {
-      currentStream.end(cb);
+      if (currentStream) currentStream.end(cb);
+      else cb();
     },
   });
 }

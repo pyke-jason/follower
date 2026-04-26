@@ -41,6 +41,14 @@ type IbkrRuntime = {
   // Map keyed by symbol -> epoch ms of last 402 alert. Bounded via 24h TTL
   // eviction in the 402 handler so the map cannot grow unbounded across runs.
   alertedSubscriptionAt: Map<string, number>;
+  // Coalesces parallel getPositions callers onto a single sidecar fetch.
+  // The dashboard hits /web/status from multiple components on each render,
+  // and each call cascaded into a fresh /api/positions request (with 5×
+  // retries), saturating the Jetty thread pool and spamming the log with
+  // "fetch failed" lines. With this in place, in-flight calls share the
+  // promise; results aren't cached after resolution so freshness is intact.
+  positionsInflight: Promise<BrokerPosition[]> | null;
+  accountBalanceInflight: Promise<AccountBalance> | null;
 };
 
 const SUBSCRIPTION_ALERT_TTL_MS = 24 * 60 * 60_000;
@@ -440,7 +448,10 @@ async function cancelAllOrders(runtime: IbkrRuntime): Promise<void> {
 }
 
 async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
-  return withRetry(async (signal) => {
+  // Coalesce concurrent callers onto a single in-flight request.
+  if (runtime.positionsInflight) return runtime.positionsInflight;
+
+  const promise = withRetry(async (signal) => {
     const data = await sidecar(runtime.sidecarUrl, '/positions', { signal });
 
     // Sidecar returns an array directly
@@ -475,6 +486,14 @@ async function getPositions(runtime: IbkrRuntime): Promise<BrokerPosition[]> {
       return pos;
     });
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, 'getPositions');
+
+  runtime.positionsInflight = promise;
+  try {
+    return await promise;
+  } finally {
+    // Clear so the next caller after resolution issues a fresh request.
+    runtime.positionsInflight = null;
+  }
 }
 
 async function placeStopOrder(params: StopOrderParams, runtime: IbkrRuntime): Promise<OrderResult> {
@@ -527,7 +546,8 @@ async function placeStopOrder(params: StopOrderParams, runtime: IbkrRuntime): Pr
 }
 
 async function getAccountBalance(runtime: IbkrRuntime): Promise<AccountBalance> {
-  return withRetry(async (signal) => {
+  if (runtime.accountBalanceInflight) return runtime.accountBalanceInflight;
+  const promise = withRetry(async (signal) => {
     const data = await sidecar(runtime.sidecarUrl, '/account/summary', { signal });
 
     const summary = parseSidecarResponse(
@@ -551,6 +571,12 @@ async function getAccountBalance(runtime: IbkrRuntime): Promise<AccountBalance> 
       timestamp: new Date().toISOString(),
     };
   }, { ...READ_DEFAULTS, classify: ibkrClassify }, 'getAccountBalance');
+  runtime.accountBalanceInflight = promise;
+  try {
+    return await promise;
+  } finally {
+    runtime.accountBalanceInflight = null;
+  }
 }
 
 // ── Health Check ─────────────────────────────────────────────────────
@@ -576,6 +602,8 @@ export function createIbkrService(options: IbkrServiceOptions): BrokerService {
     accountId: options.accountId,
     creditComboOrderIds: new Set<string>(),
     alertedSubscriptionAt: new Map<string, number>(),
+    positionsInflight: null,
+    accountBalanceInflight: null,
   };
   return {
     getQuote: (symbol) => getQuote(symbol, runtime),

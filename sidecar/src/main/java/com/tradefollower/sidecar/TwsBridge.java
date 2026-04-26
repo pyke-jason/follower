@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * EWrapper implementation bridging TWS async callbacks to synchronous REST via CompletableFuture.
@@ -25,6 +26,8 @@ public class TwsBridge extends DefaultEWrapper {
     private static final Logger log = LoggerFactory.getLogger(TwsBridge.class);
     private static final ZoneId ET = ZoneId.of("America/New_York");
     private static final long RECONNECT_DELAY_MS = 5000;
+    private static final long RECONNECT_DELAY_MAX_MS = 60_000;
+    private static final long CONNECT_HANDSHAKE_TIMEOUT_MS = 20_000;
     static final long REQUEST_TIMEOUT_SECONDS = 15;
 
     // Informational codes — log at debug, don't push to WS
@@ -97,6 +100,8 @@ public class TwsBridge extends DefaultEWrapper {
     private volatile ScheduledFuture<?> heartbeatTask;
     private volatile ScheduledFuture<?> reconnectTask;
     private volatile ScheduledFuture<?> reaperTask;
+    private volatile int consecutiveReconnectFailures = 0;
+    private final AtomicLong connectGeneration = new AtomicLong();
 
     public TwsBridge(WsHandler wsHandler) {
         this.wsHandler = wsHandler;
@@ -121,6 +126,8 @@ public class TwsBridge extends DefaultEWrapper {
         // Clean up old EReader/dispatch threads before creating new ones
         stopEReader();
 
+        final long myGen = connectGeneration.incrementAndGet();
+
         client.eConnect(host, port, clientId);
 
         // CRITICAL: EReader thread pattern — without this, ZERO callbacks fire
@@ -128,17 +135,59 @@ public class TwsBridge extends DefaultEWrapper {
         this.eReader = reader;
         reader.start();
         Thread dispatch = new Thread(() -> {
+            // Some IBKR-server messages trip a null-pointer in the TwsApi.jar
+            // decoder (notably "Cannot invoke String.isEmpty() because currency
+            // is null" on certain contract-detail records). The same parse
+            // error fires once per affected message, so a single account-
+            // subscription burst can spam dozens of identical lines. Collapse
+            // consecutive identical errors with a count.
+            String lastErr = null;
+            int repeatCount = 0;
+            final int FLUSH_THRESHOLD = 100;
             while (client.isConnected()) {
                 signal.waitForSignal();
                 try {
                     reader.processMsgs();
+                    if (repeatCount > 0) {
+                        log.warn("EReader processMsgs error repeated {}× and recovered: {}", repeatCount, lastErr);
+                        repeatCount = 0;
+                        lastErr = null;
+                    }
                 } catch (Exception e) {
-                    log.error("EReader processMsgs error: {}", e.getMessage());
+                    String msg = e.getMessage();
+                    if (msg != null && msg.equals(lastErr)) {
+                        repeatCount++;
+                        if (repeatCount >= FLUSH_THRESHOLD) {
+                            log.warn("EReader processMsgs error repeated {}× (still recurring): {}", repeatCount, lastErr);
+                            repeatCount = 0;
+                        }
+                    } else {
+                        if (repeatCount > 0) {
+                            log.warn("EReader processMsgs error repeated {}× then changed: {}", repeatCount, lastErr);
+                        }
+                        log.error("EReader processMsgs error: {}", msg);
+                        lastErr = msg;
+                        repeatCount = 0;
+                    }
                 }
             }
         }, "ereader-dispatch");
         this.dispatchThread = dispatch;
         dispatch.start();
+
+        // Handshake watchdog: if nextValidId never arrives (e.g. Gateway has a
+        // blocking popup), force-disconnect AND schedule the next reconnect ourselves.
+        // The IBKR client doesn't always emit connectionClosed when the handshake
+        // never completes — relying on it stalls the whole backoff loop.
+        // Generation guard ensures a stale watchdog can't kill a newer connect attempt.
+        watchdog.schedule(() -> {
+            if (!shuttingDown && !connected && connectGeneration.get() == myGen) {
+                log.warn("Handshake timed out after {}ms — forcing disconnect and scheduling reconnect", CONNECT_HANDSHAKE_TIMEOUT_MS);
+                try { client.eDisconnect(); } catch (Exception e) { log.debug("eDisconnect: {}", e.getMessage()); }
+                consecutiveReconnectFailures++;
+                scheduleReconnect();
+            }
+        }, CONNECT_HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
     }
 
     /** Interrupt and join old EReader + dispatch threads. */
@@ -208,11 +257,18 @@ public class TwsBridge extends DefaultEWrapper {
         stopEReader();
     }
 
+    private long nextReconnectDelay() {
+        // Exponential backoff capped at RECONNECT_DELAY_MAX_MS — Gateway popups
+        // and login states often need user action; thrashing every 5s spams logs.
+        long delay = (long) (RECONNECT_DELAY_MS * Math.pow(2, Math.min(consecutiveReconnectFailures, 6)));
+        return Math.min(delay, RECONNECT_DELAY_MAX_MS);
+    }
+
     private void scheduleReconnect() {
         if (shuttingDown) return;
         if (reconnectTask != null && !reconnectTask.isDone()) return;
 
-        reconnectTask = watchdog.schedule(this::attemptReconnect, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
+        reconnectTask = watchdog.schedule(this::attemptReconnect, nextReconnectDelay(), TimeUnit.MILLISECONDS);
     }
 
     private void attemptReconnect() {
@@ -224,13 +280,14 @@ public class TwsBridge extends DefaultEWrapper {
             return;
         }
 
-        log.info("Attempting reconnect to IB Gateway...");
+        log.info("Attempting reconnect to IB Gateway (attempt {})...", consecutiveReconnectFailures + 1);
         try {
             connect();
         } catch (Exception e) {
             log.warn("Reconnect failed: {}", e.getMessage());
             if (!shuttingDown && !connected) {
-                reconnectTask = watchdog.schedule(this::attemptReconnect, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
+                consecutiveReconnectFailures++;
+                reconnectTask = watchdog.schedule(this::attemptReconnect, nextReconnectDelay(), TimeUnit.MILLISECONDS);
             }
         }
     }
@@ -365,6 +422,7 @@ public class TwsBridge extends DefaultEWrapper {
     public void nextValidId(int orderId) {
         nextReqId.set(orderId);
         connected = true;
+        consecutiveReconnectFailures = 0;
         serverVersion = client.serverVersion();
         lastHeartbeatResponse = System.currentTimeMillis();
         log.info("Connected to IB Gateway (serverVersion={}, nextValidId={})", serverVersion, orderId);
@@ -393,6 +451,7 @@ public class TwsBridge extends DefaultEWrapper {
     @Override
     public void connectionClosed() {
         connected = false;
+        consecutiveReconnectFailures++;
         log.warn("Connection to IB Gateway closed");
         wsHandler.broadcastDisconnected();
 

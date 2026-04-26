@@ -43,7 +43,18 @@ export type SignalRInjectionStatus = {
 };
 
 export function isSignalRSubscriptionReady(status: SignalRInjectionStatus): boolean {
-  return status.signalRAvailable && status.addMessageConnected && status.reactionProxyAttached;
+  // Reaction proxy is a nice-to-have: it carries `updateMessageReactions`
+  // events for emoji reactions on existing messages. Production trade
+  // parsing/classification code does not consume reactions (only test
+  // fixtures do), and the page only attaches a chatHub proxy after the
+  // user has joined a specific chat room.
+  //
+  // Treating its absence as "subscription degraded" caused a 30s→10m
+  // exponential-backoff browser-restart loop and a CRITICAL alert per
+  // cycle, all chasing a capability we never use. Real-time message
+  // ingestion works through the secondary SignalR connection's
+  // addMessage handler, which only requires `addMessageConnected`.
+  return status.signalRAvailable && status.addMessageConnected;
 }
 
 export async function injectSignalRListener(

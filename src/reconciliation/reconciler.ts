@@ -174,7 +174,36 @@ export async function runReconciliation(broker: BrokerService, channelId: string
     `${type}|${symbol}|${tradeId ?? ''}`;
   const existingKeys = new Set(existingUnresolved.map((a) => dedupKey(a.type, a.symbol, a.tradeId)));
 
-  const newAlerts = alerts.filter((a) => !existingKeys.has(dedupKey(a.type, a.symbol, a.tradeId ?? null)));
+  // Broker is source of truth: once a BROKER_ONLY drift has been resolved for a (symbol, quantity)
+  // pair, suppress regenerated alerts for the same exact state. If the broker quantity changes,
+  // a fresh alert still fires because the dedup key includes the quantity.
+  const resolvedBrokerOnly = await db.select({
+    symbol: schema.reconciliationAlerts.symbol,
+    actual: schema.reconciliationAlerts.actual,
+  })
+    .from(schema.reconciliationAlerts)
+    .where(and(
+      eq(schema.reconciliationAlerts.channelId, channelId),
+      eq(schema.reconciliationAlerts.type, 'BROKER_ONLY'),
+      eq(schema.reconciliationAlerts.resolved, true),
+    ));
+
+  const ackedBrokerOnly = new Set<string>();
+  for (const a of resolvedBrokerOnly) {
+    const actual = a.actual as { quantity?: number } | null;
+    if (actual?.quantity !== undefined) {
+      ackedBrokerOnly.add(`${a.symbol}|${actual.quantity}`);
+    }
+  }
+
+  const newAlerts = alerts.filter((a) => {
+    if (existingKeys.has(dedupKey(a.type, a.symbol, a.tradeId ?? null))) return false;
+    if (a.type === 'BROKER_ONLY') {
+      const actualQty = (a.actual as { quantity?: number } | null)?.quantity;
+      if (actualQty !== undefined && ackedBrokerOnly.has(`${a.symbol}|${actualQty}`)) return false;
+    }
+    return true;
+  });
   const suppressed = alerts.length - newAlerts.length;
 
   if (newAlerts.length > 0) {
