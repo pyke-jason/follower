@@ -78,12 +78,18 @@ export class ReconciliationScheduler {
         const fresh = newAlerts.filter((a) =>
           trulyNewKeys.includes(`${a.type}|${a.symbol}|${a.tradeId ?? ''}`),
         );
-        const symbols = Array.from(new Set(fresh.map((a) => a.symbol))).join(', ');
-        const types = Array.from(new Set(fresh.map((a) => a.type))).join(', ');
+        const sortedSymbols = Array.from(new Set(fresh.map((a) => a.symbol))).sort();
+        const sortedTypes = Array.from(new Set(fresh.map((a) => a.type))).sort();
+        const symbols = sortedSymbols.join(', ');
+        const types = sortedTypes.join(', ');
         sendSystemAlert({
           title: `Reconciliation drift: ${types}`,
           message: `${fresh.length} new alert(s) on ${symbols}. New OPEN trades are blocked until resolved.`,
           severity: 'critical',
+          // Cross-restart backstop: in-memory lastPagedKeys resets on every
+          // backend restart, which is what was spamming Jason overnight.
+          // The DB cooldown (default 1800s) survives restarts.
+          cooldownKey: `recon-drift|${types}|${symbols}|${this.channelId}`,
         });
       }
     } catch (err) {

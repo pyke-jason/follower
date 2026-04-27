@@ -325,6 +325,18 @@ export const reconciliationAlerts = pgTable('reconciliation_alerts', {
   index('idx_recon_alerts_channel_resolved').on(table.channelId, table.resolved),
 ]);
 
+// ─── Pushover Cooldowns ─────────────────────────────
+
+// Persistent cross-restart cooldown for Pushover pages keyed by stable alertKey.
+// In-memory dedupes (e.g. ReconciliationScheduler.lastPagedKeys) reset every
+// backend restart; this table is the durable backstop.
+export const pushoverCooldowns = pgTable('pushover_cooldowns', {
+  alertKey:    text('alert_key').primaryKey(),
+  lastPagedAt: text('last_paged_at').notNull(), // ISO 8601
+  severity:    text('severity'),
+  title:       text('title'),
+});
+
 // ─── Orphan Fills ─────────────────────────────────────
 
 export const orphanFills = pgTable('orphan_fills', {

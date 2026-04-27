@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { runTx, schema } from '../db/client.js';
 import { isMarketHoursWithBuffer, nextMarketOpenWithBufferUTC } from './et-date.js';
 import { PATHS } from './paths.js';
 
@@ -14,7 +16,85 @@ type SystemAlertParams = {
   message: string;
   severity: Severity;
   fields?: AlertField[];
+  /**
+   * If provided, suppress the Pushover page when another page with the same
+   * key was sent within PUSHOVER_COOLDOWN_SECONDS (default 1800). Survives
+   * backend restarts via the pushover_cooldowns table.
+   */
+  cooldownKey?: string;
 };
+
+type SendPushoverOptions = {
+  /** See SystemAlertParams.cooldownKey. */
+  cooldownKey?: string;
+  severity?: Severity;
+};
+
+const DEFAULT_PUSHOVER_COOLDOWN_SECONDS = 1800;
+
+function pushoverCooldownSeconds(): number {
+  const raw = process.env.PUSHOVER_COOLDOWN_SECONDS;
+  if (!raw) return DEFAULT_PUSHOVER_COOLDOWN_SECONDS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_PUSHOVER_COOLDOWN_SECONDS;
+}
+
+/**
+ * Atomic check-and-set against pushover_cooldowns. Returns true if the page
+ * should proceed (no recent entry, or window elapsed) and updates the row to
+ * "now". Returns false if a recent page was already sent within the window.
+ *
+ * Never throws — alerting must not crash callers. On DB error we err on the
+ * side of paging (return true) so we don't silently drop critical alerts.
+ */
+async function shouldSendPushover(
+  cooldownKey: string,
+  title: string,
+  severity: Severity | undefined,
+): Promise<boolean> {
+  const cooldownMs = pushoverCooldownSeconds() * 1000;
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  try {
+    return await runTx(async (tx) => {
+      const existing = await tx
+        .select({ lastPagedAt: schema.pushoverCooldowns.lastPagedAt })
+        .from(schema.pushoverCooldowns)
+        .where(eq(schema.pushoverCooldowns.alertKey, cooldownKey))
+        .limit(1);
+
+      const row = existing[0];
+      if (row) {
+        const last = Date.parse(row.lastPagedAt);
+        if (Number.isFinite(last) && now.getTime() - last < cooldownMs) {
+          return false;
+        }
+      }
+
+      await tx
+        .insert(schema.pushoverCooldowns)
+        .values({
+          alertKey: cooldownKey,
+          lastPagedAt: nowIso,
+          severity: severity ?? null,
+          title,
+        })
+        .onConflictDoUpdate({
+          target: schema.pushoverCooldowns.alertKey,
+          set: {
+            lastPagedAt: nowIso,
+            severity: severity ?? null,
+            title,
+          },
+        });
+      return true;
+    });
+  } catch (err) {
+    console.warn('[Alert] Pushover cooldown check failed; sending anyway:', err);
+    return true;
+  }
+}
 
 const COLORS: Record<Severity, number> = {
   critical: 0xff0000, // Red
@@ -183,9 +263,23 @@ export function stopPushoverQueue(): void {
  * Send an emergency push notification via Pushover.
  * Never throws — alerting must not crash callers.
  * Queues outside buffered market hours and flushes once paging is allowed.
+ *
+ * When `options.cooldownKey` is provided, the page is gated by the
+ * pushover_cooldowns table (cross-restart dedupe) using
+ * PUSHOVER_COOLDOWN_SECONDS (default 1800). Without a cooldownKey the
+ * behavior is unchanged — every call enqueues.
  */
-export async function sendPushover(title: string, message: string): Promise<void> {
+export async function sendPushover(
+  title: string,
+  message: string,
+  options: SendPushoverOptions = {},
+): Promise<void> {
   if (process.env.ALERTS_PUSHOVER_ENABLED === '0') return;
+
+  if (options.cooldownKey) {
+    const proceed = await shouldSendPushover(options.cooldownKey, title, options.severity);
+    if (!proceed) return;
+  }
 
   try {
     await enqueuePushoverPage(title, message);
@@ -200,7 +294,7 @@ export async function sendPushover(title: string, message: string): Promise<void
  * Never throws — alerting must not crash callers.
  */
 export async function sendSystemAlert(params: SystemAlertParams): Promise<void> {
-  const { title, message, severity, fields } = params;
+  const { title, message, severity, fields, cooldownKey } = params;
 
   // Always log to console first (survives Discord outages)
   const logFn = severity === 'critical' ? console.error : severity === 'warning' ? console.warn : console.log;
@@ -238,6 +332,6 @@ export async function sendSystemAlert(params: SystemAlertParams): Promise<void> 
   }
 
   if (severity === 'critical') {
-    await sendPushover(title, message);
+    await sendPushover(title, message, { cooldownKey, severity });
   }
 }

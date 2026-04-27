@@ -43,6 +43,13 @@
       "when": 1777292938232,
       "tag": "0005_elite_vulcan",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777295919608,
+      "tag": "0006_nosy_stephen_strange",
+      "breakpoints": true
     }
   ]
 }
