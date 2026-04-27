@@ -225,7 +225,7 @@ export async function runReconciliation(broker: BrokerService, channelId: string
     log.info('No discrepancies found');
   }
 
-  return alerts;
+  return newAlerts;
 }
 
 

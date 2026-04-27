@@ -10,6 +10,7 @@ const RECON_FAILURE_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 export class ReconciliationScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastResult: ReconciliationAlertInput[] = [];
+  private lastPagedKeys: Set<string> = new Set();
   private running = false;
   private currentRun: Promise<void> | null = null;
   private lastFailureAlertAt = 0;
@@ -62,13 +63,26 @@ export class ReconciliationScheduler {
       // Successful run — reset the failure-alert cooldown so any future failure alerts immediately.
       this.lastFailureAlertAt = 0;
 
-      // Fire critical alert immediately on any new drift — don't wait for the next cycle.
-      if (newAlerts.length > 0) {
-        const symbols = Array.from(new Set(newAlerts.map((a) => a.symbol))).join(', ');
-        const types = Array.from(new Set(newAlerts.map((a) => a.type))).join(', ');
+      // State-change page: runReconciliation returns the FULL current drift set (the DB-side
+      // dedup happens inside the reconciler), so naive "length > 0" pages every 5-min cycle
+      // for the same persistent drift. Only emit Pushover/Discord when at least one drift
+      // KEY (type|symbol|tradeId) is newly seen vs the last cycle. Resolved keys silently
+      // drop out; persistent BSX/TSCO-style drift pages once and stays quiet until it changes.
+      const currentKeys = new Set(
+        newAlerts.map((a) => `${a.type}|${a.symbol}|${a.tradeId ?? ''}`),
+      );
+      const trulyNewKeys = [...currentKeys].filter((k) => !this.lastPagedKeys.has(k));
+      this.lastPagedKeys = currentKeys;
+
+      if (trulyNewKeys.length > 0) {
+        const fresh = newAlerts.filter((a) =>
+          trulyNewKeys.includes(`${a.type}|${a.symbol}|${a.tradeId ?? ''}`),
+        );
+        const symbols = Array.from(new Set(fresh.map((a) => a.symbol))).join(', ');
+        const types = Array.from(new Set(fresh.map((a) => a.type))).join(', ');
         sendSystemAlert({
           title: `Reconciliation drift: ${types}`,
-          message: `${newAlerts.length} new alert(s) on ${symbols}. New OPEN trades are blocked until resolved.`,
+          message: `${fresh.length} new alert(s) on ${symbols}. New OPEN trades are blocked until resolved.`,
           severity: 'critical',
         });
       }
