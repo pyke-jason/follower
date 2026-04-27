@@ -30,9 +30,7 @@
     "gateway": "~/ibc/gatewaystartmacos.sh -inline",
     "up": "tsx scripts/dev-up.ts",
     "up:ui": "tsx scripts/dev-up.ts --no-backend",
-    "up:full": "tsx scripts/dev-up.ts",
-    "triage": "tsx scripts/triage-cron.ts",
-    "triage:once": "tsx scripts/triage-cron.ts --once"
+    "up:full": "tsx scripts/dev-up.ts"
   },
   "dependencies": {
     "@ai-sdk/xai": "^3.0.83",
