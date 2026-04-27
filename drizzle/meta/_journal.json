@@ -36,6 +36,13 @@
       "when": 1777173140000,
       "tag": "0004_trade_quantity_invariant",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777292938232,
+      "tag": "0005_elite_vulcan",
+      "breakpoints": true
     }
   ]
 }

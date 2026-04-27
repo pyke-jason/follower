@@ -10,8 +10,8 @@ export async function createTaskFromMessage(
   message: Message,
   channelId: string,
 ): Promise<Task | null> {
-  // Only create tasks for tracked traders
-  if (!await isTrackedTrader(message.author)) {
+  // Only create tasks for tracked traders associated with this channel
+  if (!await isTrackedTrader(message.author, channelId)) {
     return null;
   }
 

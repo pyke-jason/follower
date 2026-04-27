@@ -263,6 +263,26 @@ export const trackedTraders = pgTable('tracked_traders', {
   positionSizingConfig: typedJson<PositionSizingConfig>('position_sizing_config'),
 });
 
+// ─── Tracked Trader ↔ Channel Associations ──────────
+//
+// Junction table that gates per-channel firing. A trader fires on a channel
+// only when a row exists here AND `tracked_traders.enabled = true`.
+// `positionSizingConfigOverride` (nullable) lets a channel override the
+// trader's default sizing config without touching the parent row. When null,
+// the parent's `positionSizingConfig` is used.
+
+export const trackedTraderChannels = pgTable('tracked_trader_channels', {
+  traderName:                   text('trader_name').notNull().references(() => trackedTraders.name, { onDelete: 'cascade' }),
+  channelId:                    text('channel_id').notNull(),
+  positionSizingConfigOverride: typedJson<PositionSizingConfig>('position_sizing_config_override'),
+  createdAt:                    text('created_at').$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('idx_tracked_trader_channels_pk').on(table.traderName, table.channelId),
+  index('idx_tracked_trader_channels_channel').on(table.channelId),
+]);
+
+export type TrackedTraderChannel = typeof trackedTraderChannels.$inferSelect;
+
 // ─── Daily Balances ─────────────────────────────────
 
 export const dailyBalances = pgTable('daily_balances', {
