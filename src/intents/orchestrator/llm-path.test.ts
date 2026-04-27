@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { sanitizeForPrompt, buildNLUPrompt, evaluateLlmBudget } from './llm-path.js';
-import type { ParseResult, OrchestratorContext } from './types.js';
+import { describe, expect, it, vi } from 'vitest';
+import { sanitizeForPrompt, buildNLUPrompt, evaluateLlmBudget, routeLLMSignals } from './llm-path.js';
+import type { ParseResult, OrchestratorContext, TradePosition } from './types.js';
 import type { Message } from '@/db/schema.js';
+import type { Signal } from '@/agent/schemas.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -211,5 +212,153 @@ describe('evaluateLlmBudget', () => {
     expect(result.alert?.severity).toBe('critical');
     expect(result.alert?.message).toContain('Routing message msg-1 to MANUAL_REVIEW');
     expect(result.blockReason).toContain('LLM daily budget hard limit');
+  });
+});
+
+// ── routeLLMSignals SKIP-reason propagation ─────────────────────────────────
+
+function makeRoutingCtx(positions: TradePosition[] = []): OrchestratorContext {
+  const msg = makeMessage({ cleanText: 'closed CRWV here' });
+  return {
+    message: msg,
+    marketData: {
+      getQuote: vi.fn(async () => ({
+        symbol: 'CRWV',
+        bid: 99.9,
+        ask: 100.1,
+        last: 100,
+        volume: 0,
+        timestamp: '2026-04-24T14:00:00.000Z',
+      })),
+      getOptionChain: vi.fn(async () => null),
+      getExpiryDates: vi.fn(async () => []),
+    },
+    positions: {
+      getPositions: vi.fn(async () => positions),
+    },
+    chatHistory: { getRecentMessages: vi.fn(async () => '') },
+  };
+}
+
+describe('routeLLMSignals', () => {
+  it('surfaces sub-signal SKIP reason when no open position matches a CLOSE', async () => {
+    // Reproduces the message-520698 case: classifier returns CLOSE/LONG/STOCK
+    // for a symbol with no open position. position-path returns SKIP with
+    // reason "no open position found for CRWV". The wrapper must surface
+    // that reason rather than the generic "no executable signals" fallback,
+    // otherwise the safety-audit critic flags it as suspicious_skip.
+    const signals: Signal[] = [
+      {
+        action: 'CLOSE',
+        symbol: 'CRWV',
+        direction: 'LONG',
+        strategy: 'STOCK',
+        strikes: null,
+        expiry: null,
+        statedPrice: null,
+        quantity: null,
+      },
+    ];
+    const result = await routeLLMSignals(signals, makeMinimalParse(), makeRoutingCtx([]));
+
+    expect(result.outcome).toBe('MANUAL_REVIEW');
+    if (result.outcome !== 'MANUAL_REVIEW') return;
+    expect(result.reason).toContain('no open position found for CRWV');
+    expect(result.reason).not.toBe('LLM path produced no executable signals');
+  });
+
+  it('falls back to the generic reason when no sub-signals carry a reason', async () => {
+    // Empty signal list → no sub-resolutions → no reasons collected.
+    const result = await routeLLMSignals([], makeMinimalParse(), makeRoutingCtx([]));
+
+    expect(result.outcome).toBe('MANUAL_REVIEW');
+    if (result.outcome !== 'MANUAL_REVIEW') return;
+    expect(result.reason).toBe('LLM path produced no executable signals');
+  });
+
+  it('joins reasons from multiple failing sub-signals', async () => {
+    const signals: Signal[] = [
+      {
+        action: 'CLOSE',
+        symbol: 'AAA',
+        direction: 'LONG',
+        strategy: 'STOCK',
+        strikes: null,
+        expiry: null,
+        statedPrice: null,
+        quantity: null,
+      },
+      {
+        action: 'CLOSE',
+        symbol: 'BBB',
+        direction: 'LONG',
+        strategy: 'STOCK',
+        strikes: null,
+        expiry: null,
+        statedPrice: null,
+        quantity: null,
+      },
+    ];
+    const result = await routeLLMSignals(signals, makeMinimalParse(), makeRoutingCtx([]));
+
+    expect(result.outcome).toBe('MANUAL_REVIEW');
+    if (result.outcome !== 'MANUAL_REVIEW') return;
+    expect(result.reason).toContain('AAA');
+    expect(result.reason).toContain('BBB');
+    expect(result.reason).toContain(';');
+  });
+
+  it('prefers MANUAL_REVIEW reason over SKIP reason when both occur', async () => {
+    // Two sub-signals: one will produce MANUAL_REVIEW (strategy mismatch),
+    // one will produce SKIP (no open position). MANUAL_REVIEW wins because
+    // it indicates a routing problem, not a clean "trader doesn't hold this"
+    // skip. The clean-skip diagnostic still gets surfaced when no
+    // MANUAL_REVIEW exists (covered by the first test).
+    const aaaPosition: TradePosition = {
+      id: 'trade-1',
+      symbol: 'AAA',
+      strategy: 'STOCK',
+      direction: 'LONG',
+      quantity: 100,
+      openedAt: '2026-04-24T13:00:00.000Z',
+      legs: [{
+        symbol: 'AAA',
+        strike: 0,
+        expiry: '',
+        type: 'STOCK',
+        action: 'BUY',
+        quantity: 100,
+      }],
+    };
+    const signals: Signal[] = [
+      {
+        action: 'CLOSE',
+        symbol: 'AAA',
+        direction: 'LONG',
+        strategy: 'CALL', // strategy mismatch vs the STOCK position → MANUAL_REVIEW
+        strikes: null,
+        expiry: null,
+        statedPrice: null,
+        quantity: null,
+      },
+      {
+        action: 'CLOSE',
+        symbol: 'BBB',
+        direction: 'LONG',
+        strategy: 'STOCK', // no position → SKIP
+        strikes: null,
+        expiry: null,
+        statedPrice: null,
+        quantity: null,
+      },
+    ];
+    const result = await routeLLMSignals(signals, makeMinimalParse(), makeRoutingCtx([aaaPosition]));
+
+    expect(result.outcome).toBe('MANUAL_REVIEW');
+    if (result.outcome !== 'MANUAL_REVIEW') return;
+    expect(result.reason).toContain('strategy mismatch');
+    // The clean-skip ("no open position found for BBB") is suppressed when a
+    // MANUAL_REVIEW reason exists — flagReasons takes precedence.
+    expect(result.reason).not.toContain('no open position found');
   });
 });

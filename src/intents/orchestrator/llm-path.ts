@@ -544,16 +544,25 @@ export function buildNLUPrompt(parse: ParseResult, ctx: OrchestratorContext): st
 // ── Signal routing ────────────────────────────────────────────────────────────
 
 /**
- * Convert LLM Signal[] into ParseResults and route each through
- * the appropriate resolution path (open-path or position-path).
+ * Convert LLM Signal[] into ParseResults and route each through the appropriate
+ * resolution path (open-path or position-path).
+ *
+ * Exported for unit testing — the production caller is `resolveLLMPath`.
  */
-async function routeLLMSignals(
+export async function routeLLMSignals(
   llmSignals: Signal[],
   originalParse: ParseResult,
   ctx: OrchestratorContext,
 ): Promise<OrchestratorResult> {
   const allSignals: ResolvedSignal[] = [];
   const flagReasons: string[] = [];
+  // Capture sub-signal SKIP reasons separately. When the wrapper produces zero
+  // executable signals AND no MANUAL_REVIEW reasons exist, surface the most
+  // specific SKIP reason instead of the generic fallback. This is operator-
+  // visible diagnostic text (used by the safety-audit critic) — without it,
+  // legitimate "no open position found for X" outcomes look like the resolver
+  // silently dropped a signal.
+  const skipReasons: string[] = [];
 
   for (const signal of llmSignals) {
     const signalParse = signalToParseResult(signal, originalParse);
@@ -588,19 +597,30 @@ async function routeLLMSignals(
       allSignals.push(...result.signals);
     } else if (result.outcome === 'MANUAL_REVIEW') {
       flagReasons.push(result.reason);
+    } else {
+      // SKIP from a sub-signal is not propagated as a top-level SKIP (the
+      // wrapper always returns MANUAL_REVIEW when it has zero executables),
+      // but its reason is the most specific diagnostic we have. Capture it
+      // so the fallback below can surface something better than "no
+      // executable signals".
+      skipReasons.push(result.reason);
     }
-    // SKIP from a sub-signal is treated as no output (not propagated as top-level SKIP)
   }
 
   if (allSignals.length > 0) {
     return { outcome: 'EXECUTE', signals: allSignals };
   }
 
+  // Prefer MANUAL_REVIEW reasons over SKIP reasons (they indicate a routing
+  // problem), and either over the generic fallback. Joining preserves
+  // diagnostic detail when multiple sub-signals all failed for different
+  // reasons (e.g. one symbol mismatched, another had no open position).
+  const reasonParts = flagReasons.length > 0 ? flagReasons : skipReasons;
   return {
     outcome: 'MANUAL_REVIEW',
     reason:
-      flagReasons.length > 0
-        ? flagReasons.join('; ')
+      reasonParts.length > 0
+        ? reasonParts.join('; ')
         : 'LLM path produced no executable signals',
   };
 }
