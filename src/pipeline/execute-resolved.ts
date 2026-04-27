@@ -91,7 +91,7 @@ export type PendingResumeData = {
 export type ResolvedPipelineDeps = {
   broker: BrokerService;
   orderManager: OrderManager;
-  sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info' }) => Promise<void> | void;
+  sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info'; cooldownKey?: string }) => Promise<void> | void;
   calculatePositionSize: (input: {
     trader: string;
     symbol: string;

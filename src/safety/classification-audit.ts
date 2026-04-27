@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull } from 'drizzle-orm';
 import { db, schema } from '@/db/client.js';
 import type { Agent } from '@/agent/result.js';
 import type { Message, RunDecision, Task } from '@/db/schema.js';
+import { isOpen, forChannel, forSymbol } from '@/trades/filters.js';
 import type { ClassificationGateResult, SafetyFinding } from './schemas.js';
 import {
   ClassificationAuditDecisionContextSchema,
@@ -31,8 +32,10 @@ type AuditInput = {
   runDecision: RunDecision;
   agent: Agent;
   gateResult: ClassificationGateResult | null;
-  sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info' }) => Promise<void> | void;
+  sendAlert?: (params: { title: string; message: string; severity: 'critical' | 'warning' | 'info'; cooldownKey?: string }) => Promise<void> | void;
 };
+
+const DEFAULT_AUDIT_RECENT_SIGNAL_HOURS = 24;
 
 export function enqueueClassificationAudit(input: AuditInput): void {
   if (process.env.CLASSIFICATION_AUDIT_ENABLED === '0') return;
@@ -242,14 +245,79 @@ async function pageCriticalOnce(
     .limit(1);
   if (!audit) return;
 
+  // Context-aware severity: only escalate to Pushover (critical) when the
+  // audit's symbol is actually held on the channel or has a recent active
+  // signal/idea. Otherwise route to Discord at warning. Audit row was already
+  // written above; this only gates paging.
+  const symbol = audit.payload?.message?.symbols?.[0] ?? null;
+  const trader = audit.payload?.message?.author ?? 'unknown';
+  const actionable = await isAuditActionable(audit.channelId, symbol);
+  const pageSeverity: 'critical' | 'warning' = actionable ? 'critical' : 'warning';
+
+  const titleSuffix = symbol ? ` on $${symbol}` : '';
+  const title = `Classification audit: ${audit.category ?? 'critical'}${titleSuffix} (from ${trader})`;
+  const cooldownKey = symbol
+    ? `audit-${audit.category ?? 'critical'}|${symbol}|${audit.channelId}`
+    : `audit-${audit.category ?? 'critical'}|${audit.messageId}|${audit.channelId}`;
+
   await sendAlert({
-    title: `Classification audit: ${audit.category ? audit.category : 'critical'}`,
+    title,
     message: `${audit.title}\n${audit.details}\nMessage ${audit.messageId} [${audit.channelId}]`,
-    severity: 'critical',
+    severity: pageSeverity,
+    cooldownKey,
   });
   await db.update(schema.classificationAudits)
     .set({ alertSentAt: new Date().toISOString() })
     .where(eq(schema.classificationAudits.id, auditId));
+}
+
+/**
+ * Decide whether an audit warrants a Pushover page (critical) or just a
+ * Discord post (warning).
+ *
+ * Actionable when, on the audit's channel:
+ *   - There is an open trade for the audit's symbol, OR
+ *   - There is a recent trade (open or closed) on the symbol — used as a
+ *     proxy for "active idea/signal", configurable via
+ *     AUDIT_RECENT_SIGNAL_HOURS (default 24h).
+ *
+ * Failures are treated as non-actionable (warning) — silent-fail-safe, since
+ * a DB error in the gate should never silently page Pushover.
+ */
+async function isAuditActionable(
+  channelId: string,
+  symbol: string | null,
+): Promise<boolean> {
+  if (!symbol) return false;
+  try {
+    // 1. Held: any open trade matching channelId + symbol.
+    const openTrade = await db.select({ id: schema.trades.id })
+      .from(schema.trades)
+      .where(and(isOpen, forChannel(channelId), forSymbol(symbol)))
+      .limit(1);
+    if (openTrade.length > 0) return true;
+
+    // 2. Active idea/signal: recent trade (open or closed) on this channel +
+    //    symbol within the lookback window. A trade row is the materialized
+    //    form of an EXECUTE outcome, so this captures "there's recent active
+    //    interest in this name on this channel".
+    const lookbackHours = Number(process.env.AUDIT_RECENT_SIGNAL_HOURS) || DEFAULT_AUDIT_RECENT_SIGNAL_HOURS;
+    const cutoff = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
+    const recentTrade = await db.select({ id: schema.trades.id })
+      .from(schema.trades)
+      .where(and(
+        forChannel(channelId),
+        forSymbol(symbol),
+        gt(schema.trades.openedAt, cutoff),
+      ))
+      .limit(1);
+    if (recentTrade.length > 0) return true;
+
+    return false;
+  } catch (err) {
+    console.warn('[ClassificationAudit] actionability check failed (defaulting to non-actionable):', err);
+    return false;
+  }
 }
 
 function finding(
