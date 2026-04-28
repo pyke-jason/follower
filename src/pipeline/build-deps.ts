@@ -166,7 +166,9 @@ export function buildPipelineDeps(infra: PipelineInfra): PipelineBundle {
               eq(schema.reconciliationAlerts.channelId, scope),
               eq(schema.reconciliationAlerts.resolved, false),
             ));
-          return alerts[0]?.count ?? 0;
+          // pg returns COUNT(*) (bigint) as a string by default; coerce so
+          // strict comparisons in checkRiskLimits (`alertCount === 0`) work.
+          return Number(alerts[0]?.count ?? 0);
         },
 
     getWorkingOrderExposure: () => orderManager.getExposure(),
