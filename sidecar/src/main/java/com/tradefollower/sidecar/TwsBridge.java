@@ -630,7 +630,7 @@ public class TwsBridge extends DefaultEWrapper {
 
     @Override
     public void updateAccountValue(String key, String value, String currency, String accountName) {
-        if (currency.isEmpty() || "USD".equals(currency)) {
+        if (currency == null || currency.isEmpty() || "USD".equals(currency)) {
             accountValues.put(key, value);
         }
     }
