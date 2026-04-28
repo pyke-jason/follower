@@ -12,6 +12,7 @@ import type {
 } from './result.js';
 import { summarizeToolOutput, summarizeToolInput } from './result.js';
 import { xaiCostTicksToUsd } from '../lib/llm-cost.js';
+import { withRetry, LLM_DEFAULTS, oaiClassify } from '../lib/resilient.js';
 
 // xAI chat completions include `usage.cost_in_usd_ticks` on the raw response.
 // The @ai-sdk/xai Zod schema for chat usage DROPS this field (it's only
@@ -58,17 +59,45 @@ export class XAIAgent implements Agent {
     const model = this.provider.languageModel(this.identity.model);
     const maxTurns = opts.maxTurns ?? 10;
     const temperature = opts.temperature ?? 0;
+    const requestTimeoutMs = opts.timeoutMs ?? 120_000;
 
-    const result = await generateText({
-      model,
-      system: opts.systemPrompt,
-      prompt: opts.userPrompt,
-      tools: toolSet,
-      stopWhen: stepCountIs(maxTurns),
-      temperature,
-      abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
-      ...(opts.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
-    });
+    // Wrap the SDK call in withRetry so 429 / 5xx / network errors back off and
+    // retry. Tool-set construction is outside (no side effects until the SDK
+    // invokes tools); recoverToolCallsFromText post-processing is also outside
+    // because it only fires when capturedResult is still null after the run.
+    const result = await withRetry(
+      async (retrySignal) => {
+        // Combine retrySignal with a per-call timeout. Either aborts the
+        // request: outer caller deadline, withRetry's per-attempt timer
+        // (LLM_DEFAULTS.timeoutMs = 60s), or the explicit requestTimeoutMs.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(
+          () => controller.abort(new Error(`LLM request timed out after ${requestTimeoutMs}ms`)),
+          requestTimeoutMs,
+        );
+        const onRetryAbort = () => controller.abort(retrySignal.reason);
+        if (retrySignal.aborted) controller.abort(retrySignal.reason);
+        else retrySignal.addEventListener('abort', onRetryAbort, { once: true });
+
+        try {
+          return await generateText({
+            model,
+            system: opts.systemPrompt,
+            prompt: opts.userPrompt,
+            tools: toolSet,
+            stopWhen: stepCountIs(maxTurns),
+            temperature,
+            abortSignal: controller.signal,
+            ...(opts.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
+          });
+        } finally {
+          clearTimeout(timeoutId);
+          retrySignal.removeEventListener('abort', onRetryAbort);
+        }
+      },
+      { ...LLM_DEFAULTS, classify: oaiClassify },
+      'XAIAgent.run',
+    );
 
     const details = result.totalUsage.inputTokenDetails;
     const cacheRead = details?.cacheReadTokens ?? 0;

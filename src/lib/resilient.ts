@@ -63,7 +63,7 @@ export function classifyError(err: unknown): ErrorCategory {
 }
 
 /** OpenAI-compatible SDK error classifier: reads .status directly from error objects. */
-function oaiClassify(err: unknown): ErrorCategory {
+export function oaiClassify(err: unknown): ErrorCategory {
   if (err != null && typeof err === 'object' && 'status' in err) {
     const status = (err as { status: number }).status;
     if (typeof status === 'number') {
@@ -73,6 +73,26 @@ function oaiClassify(err: unknown): ErrorCategory {
     }
   }
   return classifyError(err);
+}
+
+/**
+ * Read a `Retry-After` header value from an error object. Provider SDKs surface
+ * the raw response headers as `err.headers`. We support the seconds-form only —
+ * HTTP-date form is rare for 429s and adds parser surface area; treat it as
+ * unparseable and fall back to exponential backoff. Negative / NaN / missing
+ * values return 0 so the caller can `Math.max(...)` against it without branch.
+ */
+function parseRetryAfterMs(err: unknown): number {
+  if (err == null || typeof err !== 'object') return 0;
+  const headers = (err as { headers?: unknown }).headers;
+  if (headers == null || typeof headers !== 'object') return 0;
+  const raw = (headers as Record<string, unknown>)['retry-after'];
+  if (typeof raw !== 'string') return 0;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return 0;
+  const seconds = Number(trimmed);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return Math.floor(seconds * 1000);
 }
 
 export async function withRetry<T>(
@@ -115,9 +135,12 @@ export async function withRetry<T>(
 
       const baseDelay = Math.min(cfg.initialBackoffMs * cfg.multiplier ** attempt, cfg.maxBackoffMs);
       const jitter = Math.random() * baseDelay * 0.2;
-      const delay = baseDelay + jitter;
+      const exponentialDelay = baseDelay + jitter;
+      const retryAfterMs = parseRetryAfterMs(err);
+      const delay = Math.max(retryAfterMs, exponentialDelay);
 
-      log.warn(`${label}: Transient error (attempt ${attempt + 1}/${cfg.maxRetries}), retrying in ${Math.round(delay)}ms: ${err instanceof Error ? err.message : String(err)}`);
+      const retryAfterNote = retryAfterMs > 0 ? ` (Retry-After=${retryAfterMs}ms)` : '';
+      log.warn(`${label}: Transient error (attempt ${attempt + 1}/${cfg.maxRetries}), retrying in ${Math.round(delay)}ms${retryAfterNote}: ${err instanceof Error ? err.message : String(err)}`);
       await new Promise(r => setTimeout(r, delay));
       attempt++;
     } finally {

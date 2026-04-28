@@ -1,13 +1,66 @@
 /**
- * Tests for text-to-tool-call recovery in the XAI agent.
+ * Tests for the XAI agent.
  *
- * Pure functions — no API calls, no DB.
+ * - Pure-function tests for text-to-tool-call recovery (no API / no DB).
+ * - Retry-behavior tests against a mocked `@ai-sdk/xai` provider that exercise
+ *   the LLM-retry policy added in B-real (429, Retry-After, 401 cap, 400
+ *   permanent, 429 exhaustion, network-error transient).
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { _testing } from './xai-agent.js';
 
 const { recoverToolCallsFromText, extractReasoning, parseSignalText, parseLegsText } = _testing;
+
+// ── Mocks for retry tests ────────────────────────────────────────────
+//
+// NOTE: vi.mock is hoisted, so the mocks below apply to every dynamic
+// `import('./xai-agent.js')` in this file as well as the static import above.
+// The static import only consumes `_testing` (pure functions, no SDK use), so
+// it is unaffected by the mocks.
+
+const { generateTextMock } = vi.hoisted(() => ({ generateTextMock: vi.fn() }));
+
+vi.mock('ai', async () => {
+  const actual = await vi.importActual<typeof import('ai')>('ai');
+  return {
+    ...actual,
+    generateText: generateTextMock,
+  };
+});
+
+vi.mock('@ai-sdk/xai', () => ({
+  createXai: () => ({
+    languageModel: (id: string) => ({ id }),
+  }),
+}));
+
+// Provide an XAI_API_KEY so the constructor doesn't throw.
+beforeEach(() => {
+  process.env.XAI_API_KEY = 'test-key';
+});
+
+type SdkError = Error & { status?: number; headers?: Record<string, string> };
+
+function makeError(status: number | null, message: string, headers?: Record<string, string>): SdkError {
+  const err: SdkError = Object.assign(new Error(message), {});
+  if (status != null) err.status = status;
+  if (headers != null) err.headers = headers;
+  return err;
+}
+
+/**
+ * Minimal generateText return value matching the shape XAIAgent.run reads:
+ * `totalUsage`, `text`, and a `steps` array. Sufficient for the retry tests —
+ * we only need run() to complete successfully on the success attempt.
+ */
+function makeSuccessResult(): unknown {
+  return {
+    totalUsage: { inputTokens: 10, outputTokens: 5, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } },
+    text: '',
+    steps: [],
+  };
+}
 
 // ── recoverToolCallsFromText ─────────────────────────────────────────
 
@@ -260,5 +313,117 @@ describe('parseLegsText', () => {
   test('parses zero-strike LEAP leg', () => {
     const result = parseLegsText('BUY 0C expiry=LEAP');
     expect(result).toEqual([{ action: 'BUY', strike: 0, optionType: 'CALL', expiry: 'LEAP' }]);
+  });
+});
+
+// ── XAIAgent.run retry behavior ──────────────────────────────────────
+
+describe('XAIAgent retry behavior', () => {
+  beforeEach(() => {
+    generateTextMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('retries once on 429 and succeeds on the second attempt', async () => {
+    vi.useFakeTimers();
+    const { XAIAgent } = await import('./xai-agent.js');
+    generateTextMock
+      .mockRejectedValueOnce(makeError(429, 'rate limited'))
+      .mockResolvedValueOnce(makeSuccessResult());
+
+    const agent = new XAIAgent({ provider: 'xai', model: 'grok-test' });
+    const promise = agent.run({ systemPrompt: 'sys', userPrompt: 'user', tools: [] });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await promise;
+
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('honors Retry-After header (delay >= retry-after seconds)', async () => {
+    vi.useFakeTimers();
+    const { XAIAgent } = await import('./xai-agent.js');
+    generateTextMock
+      .mockRejectedValueOnce(makeError(429, 'rate limited', { 'retry-after': '2' }))
+      .mockResolvedValueOnce(makeSuccessResult());
+
+    const agent = new XAIAgent({ provider: 'xai', model: 'grok-test' });
+    const promise = agent.run({ systemPrompt: 'sys', userPrompt: 'user', tools: [] });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+
+    // 1.9s elapsed: not yet retried.
+    await vi.advanceTimersByTimeAsync(1_900);
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+
+    // After total 2.5s the retry fires (Retry-After=2s is the floor).
+    await vi.advanceTimersByTimeAsync(600);
+    await promise;
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('401 retries up to 2 auth attempts then throws', async () => {
+    vi.useFakeTimers();
+    const { XAIAgent } = await import('./xai-agent.js');
+    const err = makeError(401, 'unauthorized');
+    generateTextMock.mockRejectedValue(err);
+
+    const agent = new XAIAgent({ provider: 'xai', model: 'grok-test' });
+    const promise = agent.run({ systemPrompt: 'sys', userPrompt: 'user', tools: [] });
+    const expectation = expect(promise).rejects.toBe(err);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expectation;
+
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
+  });
+
+  test('400 fails fast as permanent (no retry)', async () => {
+    const { XAIAgent } = await import('./xai-agent.js');
+    const err = makeError(400, 'bad request');
+    generateTextMock.mockRejectedValue(err);
+
+    const agent = new XAIAgent({ provider: 'xai', model: 'grok-test' });
+    await expect(
+      agent.run({ systemPrompt: 'sys', userPrompt: 'user', tools: [] }),
+    ).rejects.toBe(err);
+
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('repeated 429 exhausts maxRetries=3 then throws', async () => {
+    vi.useFakeTimers();
+    const { XAIAgent } = await import('./xai-agent.js');
+    const err = makeError(429, 'rate limited');
+    generateTextMock.mockRejectedValue(err);
+
+    const agent = new XAIAgent({ provider: 'xai', model: 'grok-test' });
+    const promise = agent.run({ systemPrompt: 'sys', userPrompt: 'user', tools: [] });
+    const expectation = expect(promise).rejects.toBe(err);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expectation;
+
+    expect(generateTextMock).toHaveBeenCalledTimes(4);
+  });
+
+  test('network error (no .status) retried as transient', async () => {
+    vi.useFakeTimers();
+    const { XAIAgent } = await import('./xai-agent.js');
+    const netErr = new Error('ECONNRESET');
+    generateTextMock
+      .mockRejectedValueOnce(netErr)
+      .mockResolvedValueOnce(makeSuccessResult());
+
+    const agent = new XAIAgent({ provider: 'xai', model: 'grok-test' });
+    const promise = agent.run({ systemPrompt: 'sys', userPrompt: 'user', tools: [] });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await promise;
+
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
   });
 });

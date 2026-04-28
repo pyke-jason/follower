@@ -15,6 +15,7 @@ import type {
 } from './result.js';
 import { summarizeToolOutput, summarizeToolInput } from './result.js';
 import { estimateLlmCost } from '../lib/llm-cost.js';
+import { withRetry, LLM_DEFAULTS, oaiClassify } from '../lib/resilient.js';
 
 const log = createLogger('AnthropicAgent');
 
@@ -41,10 +42,16 @@ export class AnthropicAgent implements Agent {
   }
 
   async run(opts: AgentRunOptions): Promise<AgentResult> {
-    const steps: AgentStep[] = [];
+    // Side-effect-free state that lives across retries — only the latest
+    // attempt's tool calls / reasoning / usage end up in the result.
+    let steps: AgentStep[] = [];
     let capturedResult: unknown | null = null;
     let usage: AgentUsage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
 
+    // MCP tool registration happens once: tool() and createSdkMcpServer()
+    // construct objects without firing side effects until query() runs.
+    // The handler closure references the mutable `steps` / `capturedResult`
+    // bindings above, so each retry's tool calls land in the fresh arrays.
     const mcpTools = opts.tools.map((def) =>
       tool(
         def.name,
@@ -78,56 +85,78 @@ export class AnthropicAgent implements Agent {
     });
 
     const allowedTools = opts.tools.map((t) => `mcp__${MCP_SERVER_NAME}__${t.name}`);
+    const requestTimeoutMs = opts.timeoutMs ?? 120_000;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(new Error(`LLM request timed out after ${opts.timeoutMs ?? 120_000}ms`)),
-      opts.timeoutMs ?? 120_000,
-    );
+    await withRetry(
+      async (retrySignal) => {
+        // Reset per-attempt state so a partial prior attempt's steps/usage
+        // don't leak into the final result. capturedResult is reset because
+        // a 429 mid-stream may have left a tool-call interception from the
+        // failed attempt.
+        steps = [];
+        capturedResult = null;
+        usage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
 
-    const q = query({
-      prompt: opts.userPrompt,
-      options: {
-        model: this.identity.model,
-        // Mark the entire caller-provided systemPrompt as the static,
-        // cross-session-cacheable prefix. Every trade-classifier call reuses
-        // the same NLU prompt, so this turns ~6K input tokens per message
-        // into cache reads after the first write.
-        systemPrompt: [opts.systemPrompt, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
-        mcpServers: { [MCP_SERVER_NAME]: server },
-        allowedTools,
-        tools: [],
-        settingSources: [],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        maxTurns: opts.maxTurns ?? 10,
-        abortController: controller,
-      },
-    });
+        // Per-attempt abort controller. We tie it to both the per-call
+        // timeout and the retrySignal so withRetry's per-attempt timeout
+        // (LLM_DEFAULTS.timeoutMs = 60s) and the SDK's own timeout race.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(
+          () => controller.abort(new Error(`LLM request timed out after ${requestTimeoutMs}ms`)),
+          requestTimeoutMs,
+        );
+        const onRetryAbort = () => controller.abort(retrySignal.reason);
+        if (retrySignal.aborted) controller.abort(retrySignal.reason);
+        else retrySignal.addEventListener('abort', onRetryAbort, { once: true });
 
-    try {
-    for await (const msg of q) {
-      if (msg.type === 'assistant') {
-        for (const block of msg.message.content) {
-          if (block.type === 'text') {
-            steps.push({ reasoning: block.text });
+        try {
+          const q = query({
+            prompt: opts.userPrompt,
+            options: {
+              model: this.identity.model,
+              // Mark the entire caller-provided systemPrompt as the static,
+              // cross-session-cacheable prefix. Every trade-classifier call reuses
+              // the same NLU prompt, so this turns ~6K input tokens per message
+              // into cache reads after the first write.
+              systemPrompt: [opts.systemPrompt, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
+              mcpServers: { [MCP_SERVER_NAME]: server },
+              allowedTools,
+              tools: [],
+              settingSources: [],
+              permissionMode: 'bypassPermissions',
+              allowDangerouslySkipPermissions: true,
+              maxTurns: opts.maxTurns ?? 10,
+              abortController: controller,
+            },
+          });
+
+          for await (const msg of q) {
+            if (msg.type === 'assistant') {
+              for (const block of msg.message.content) {
+                if (block.type === 'text') {
+                  steps.push({ reasoning: block.text });
+                }
+              }
+            } else if (msg.type === 'result') {
+              const u = msg.usage;
+              const tokenUsage = {
+                inputTokens: u.input_tokens,
+                outputTokens: u.output_tokens,
+                cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
+                cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+              };
+              // Anthropic does not return a cost field — compute from published rates.
+              usage = { ...tokenUsage, costUsd: estimateLlmCost(this.identity.model, tokenUsage) };
+            }
           }
+        } finally {
+          clearTimeout(timeoutId);
+          retrySignal.removeEventListener('abort', onRetryAbort);
         }
-      } else if (msg.type === 'result') {
-        const u = msg.usage;
-        const tokenUsage = {
-          inputTokens: u.input_tokens,
-          outputTokens: u.output_tokens,
-          cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
-          cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
-        };
-        // Anthropic does not return a cost field — compute from published rates.
-        usage = { ...tokenUsage, costUsd: estimateLlmCost(this.identity.model, tokenUsage) };
-      }
-    }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+      },
+      { ...LLM_DEFAULTS, classify: oaiClassify },
+      'AnthropicAgent.run',
+    );
 
     return { model: this.identity, steps, result: capturedResult, usage };
   }
